@@ -13,7 +13,7 @@ import (
 	"time"
 	"os/exec"
 	"runtime"
-	"encoding/xml"
+	"github.com/DHowett/go-plist"
 )
 
 // Configuration structure to hold settings
@@ -44,7 +44,7 @@ func getConfigPath() string {
 	return "config.json"
 }
 
-// loadConfig loads the configuration from a plist file or returns default settings
+// loadConfig loads the configuration from a plist or JSON file or returns default settings
 func loadConfig(configPath string) (Config, error) {
 	config := defaultConfig
 
@@ -60,7 +60,7 @@ func loadConfig(configPath string) (Config, error) {
 		}
 		defer file.Close()
 
-		decoder := xml.NewDecoder(file)
+		decoder := plist.NewDecoder(file)
 		if err := decoder.Decode(&config); err != nil {
 			return config, err
 		}
@@ -96,9 +96,9 @@ func saveConfig(configPath string, config Config) error {
 		}
 		defer file.Close()
 
-		xmlEncoder := xml.NewEncoder(file)
-		xmlEncoder.Indent("", "    ")
-		return xmlEncoder.Encode(config)
+		encoder := plist.NewEncoder(file)
+		encoder.Indent("	")
+		return encoder.Encode(config)
 	} else {
 		// Save configuration to JSON file (for Windows and others)
 		configPath = filepath.Join(os.Getenv("APPDATA"), "gorilla", "import.json")
@@ -112,36 +112,6 @@ func saveConfig(configPath string, config Config) error {
 		encoder.SetIndent("", "    ")
 		return encoder.Encode(config)
 	}
-}
-
-// configureGorillaImport interactively configures gorillaimport settings
-func configureGorillaImport(configPath string) error {
-	config := defaultConfig
-
-	fmt.Println("Configuring gorillaimport...")
-
-	fmt.Printf("Repo URL (default: %s): ", config.RepoPath)
-	fmt.Scanln(&config.RepoPath)
-	if config.RepoPath == "" {
-		config.RepoPath = defaultConfig.RepoPath
-	}
-
-	fmt.Printf("Pkginfo extension (default: .plist): ")
-	fmt.Scanln(&config.OutputDir)
-	if config.OutputDir == "" {
-		config.OutputDir = defaultConfig.OutputDir
-	}
-
-	fmt.Printf("Pkginfo editor (example: /usr/bin/vi or TextMate.app): ")
-	fmt.Scanln(&config.PkginfoEditor)
-
-	fmt.Printf("Default catalog to use (default: %s): ", config.DefaultCatalog)
-	fmt.Scanln(&config.DefaultCatalog)
-	if config.DefaultCatalog == "" {
-		config.DefaultCatalog = defaultConfig.DefaultCatalog
-	}
-
-	return saveConfig(configPath, config)
 }
 
 // calculateSHA256 calculates the SHA-256 hash of the given file.
@@ -357,7 +327,6 @@ func main() {
 	packagePath := flag.String("package", "", "Path to the package to import.")
 	outputDir := flag.String("output", "", "Directory to output pkginfo file.")
 	configPath := flag.String("config", getConfigPath(), "Path to configuration file.")
-	configure := flag.Bool("configure", false, "Run interactive configuration setup.")
 	flag.Parse() // Parse the command-line flags
 
 	// Load configuration if a config path is provided
@@ -365,15 +334,6 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error loading config: %s\n", err)
 		os.Exit(1)
-	}
-
-	// Run configuration if requested
-	if *configure {
-		if err := configureGorillaImport(*configPath); err != nil {
-			fmt.Printf("Error during configuration: %s\n", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
 	}
 
 	// Use command-line arguments if provided, otherwise use config values
