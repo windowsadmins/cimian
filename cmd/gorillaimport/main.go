@@ -281,8 +281,7 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 func main() {
-	// Define command-line flags for package path, output directory, and config
-	packagePath := flag.String("package", "", "Path to the package to import.")
+	// Define command-line flags for output directory and config
 	outputDir := flag.String("output", "", "Directory to output pkginfo file.")
 	config := flag.Bool("config", false, "Run interactive configuration setup.")
 	flag.Parse() // Parse the command-line flags
@@ -293,7 +292,7 @@ func main() {
 		configData = configureGorillaImport()
 	} else {
 		// Load configuration from default path
-		configData = configureGorillaImport()
+		configData = defaultConfig
 	}
 
 	// Use command-line arguments if provided, otherwise use config values
@@ -302,15 +301,19 @@ func main() {
 		finalOutputDir = *outputDir
 	}
 
-	// Ensure both package and output arguments are provided
-	if *packagePath == "" || finalOutputDir == "" {
-		fmt.Println("Error: Both package and output arguments are required.")
+	// Ensure package argument is provided by prompting the user
+	fmt.Printf("Enter the path to the package to import: ")
+	var packagePath string
+	fmt.Scanln(&packagePath)
+
+	if packagePath == "" {
+		fmt.Println("Error: Package argument is required.")
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	// Call gorillaImport to handle the import process
-	if err := gorillaImport(*packagePath, configData); err != nil {
+	if err := gorillaImport(packagePath, configData); err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
