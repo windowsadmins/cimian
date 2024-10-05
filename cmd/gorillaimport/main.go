@@ -295,7 +295,7 @@ func main() {
 		// Load configuration from default path
 		configPath := getConfigPath()
 		var err error
-		configData, err = loadConfig(configPath)
+		configData, err = configureGorillaImport()
 		if err != nil {
 			fmt.Printf("Error loading config: %s\n", err)
 			os.Exit(1)
