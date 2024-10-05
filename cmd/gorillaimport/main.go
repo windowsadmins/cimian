@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/yaml"
 	"flag"
 	"fmt"
 	"io"
@@ -134,7 +135,7 @@ func calculateSHA256(filePath string) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-// createPkgInfo generates a pkginfo JSON file for the provided package.
+// createPkgInfo generates a pkginfo YAML file for the provided package.
 func createPkgInfo(filePath string, outputDir string, version string, catalog string) error {
 	// Calculate the SHA-256 hash of the package file
 	hash, err := calculateSHA256(filePath)
@@ -171,7 +172,7 @@ func createPkgInfo(filePath string, outputDir string, version string, catalog st
 	}
 
 	// Define the output path for the pkginfo file
-	outputPath := filepath.Join(outputDir, filepath.Base(filePath)+".pkginfo")
+	outputPath := filepath.Join(outputDir, filepath.Base(filePath)+".yaml")
 
 	// Create the pkginfo file for writing
 	outputFile, err := os.Create(outputPath)
@@ -180,9 +181,8 @@ func createPkgInfo(filePath string, outputDir string, version string, catalog st
 	}
 	defer outputFile.Close() // Ensure the file is closed when the function exits
 
-	// Encode the pkginfo map as JSON and write it to the file
-	encoder := json.NewEncoder(outputFile)
-	encoder.SetIndent("", "    ") // Pretty-print the JSON with indentation
+	// Encode the pkginfo map as YAML and write it to the file
+	encoder := yaml.NewEncoder(outputFile)
 	if err := encoder.Encode(pkgInfo); err != nil {
 		return err
 	}
@@ -275,7 +275,7 @@ func gorillaImport(packagePath string, config Config) error {
 	// Optionally edit pkginfo
 	if config.PkginfoEditor != "" {
 		if confirmAction("Edit pkginfo before upload?") {
-			pkginfoPath := filepath.Join(config.OutputDir, filepath.Base(packagePath)+".pkginfo")
+			pkginfoPath := filepath.Join(config.OutputDir, filepath.Base(packagePath)+".yaml")
 			if strings.HasSuffix(config.PkginfoEditor, ".app") {
 				exec.Command("open", "-a", config.PkginfoEditor, pkginfoPath).Run()
 			} else {
