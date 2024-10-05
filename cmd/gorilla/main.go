@@ -5,13 +5,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/1dustindavis/gorilla/pkg/catalog"
-	"github.com/1dustindavis/gorilla/pkg/config"
-	"github.com/1dustindavis/gorilla/pkg/download"
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
-	"github.com/1dustindavis/gorilla/pkg/manifest"
-	"github.com/1dustindavis/gorilla/pkg/process"
-	"github.com/1dustindavis/gorilla/pkg/report"
+	"github.com/rodchristiansen/gorilla/pkg/catalog"
+	"github.com/rodchristiansen/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/download"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/manifest"
+	"github.com/rodchristiansen/gorilla/pkg/process"
+	"github.com/rodchristiansen/gorilla/pkg/report"
 )
 
 func main() {

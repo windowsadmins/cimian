@@ -9,8 +9,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/1dustindavis/gorilla/pkg/report"
-	"github.com/1dustindavis/gorilla/pkg/version"
+	"github.com/rodchristiansen/gorilla/pkg/report"
+	"github.com/rodchristiansen/gorilla/pkg/version"
 )
 
 var (
@@ -39,7 +39,7 @@ var (
 
 const usage = `
 Gorilla - Munki-like Application Management for Windows
-https://github.com/1dustindavis/gorilla
+https://github.com/rodchristiansen/gorilla
 
 Usage: gorilla.exe [options]
 

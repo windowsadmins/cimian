@@ -8,10 +8,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/1dustindavis/gorilla/pkg/catalog"
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
-	"github.com/1dustindavis/gorilla/pkg/installer"
-	"github.com/1dustindavis/gorilla/pkg/manifest"
+	"github.com/rodchristiansen/gorilla/pkg/catalog"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/installer"
+	"github.com/rodchristiansen/gorilla/pkg/manifest"
 )
 
 // firstItem returns the first occurrence of an item in a map of catalogs

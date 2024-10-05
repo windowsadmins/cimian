@@ -110,7 +110,7 @@ func Example() {
 	// unknown unknown
 	//
 	// Gorilla - Munki-like Application Management for Windows
-	// https://github.com/1dustindavis/gorilla
+	// https://github.com/rodchristiansen/gorilla
 	//
 	// Usage: gorilla.exe [options]
 	//
