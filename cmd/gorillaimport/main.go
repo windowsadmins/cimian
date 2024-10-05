@@ -295,12 +295,6 @@ func main() {
 		configData = defaultConfig
 	}
 
-	// Use command-line arguments if provided, otherwise use config values
-	finalOutputDir := configData.OutputDir
-	if *outputDir != "" {
-		finalOutputDir = *outputDir
-	}
-
 	// Ensure package argument is provided by prompting the user
 	fmt.Printf("Enter the path to the package to import: ")
 	var packagePath string
