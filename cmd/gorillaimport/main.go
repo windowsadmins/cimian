@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"os/exec"
+	"runtime"
 )
 
 // Configuration structure to hold settings
@@ -18,6 +19,8 @@ type Config struct {
 	RepoPath       string `json:"repo_path"`
 	DefaultVersion string `json:"default_version"`
 	OutputDir      string `json:"output_dir"`
+	PkginfoEditor  string `json:"pkginfo_editor"`
+	DefaultCatalog string `json:"default_catalog"`
 }
 
 // Default configuration values
@@ -25,6 +28,18 @@ var defaultConfig = Config{
 	RepoPath:       "./repo",
 	DefaultVersion: "1.0.0",
 	OutputDir:      "./pkginfo",
+	PkginfoEditor:  "",
+	DefaultCatalog: "production",
+}
+
+// getConfigPath returns the appropriate configuration file path based on the OS
+func getConfigPath() string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.plist")
+	} else if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("APPDATA"), "Gorilla", "import.json")
+	}
+	return "config.json"
 }
 
 // loadConfig loads the configuration from a JSON file or returns default settings
@@ -49,6 +64,55 @@ func loadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
+// saveConfig saves the configuration to a JSON file
+func saveConfig(configPath string, config Config) error {
+	if runtime.GOOS == "darwin" {
+		configPath = filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.plist")
+	} else if runtime.GOOS == "windows" {
+		configPath = filepath.Join(os.Getenv("APPDATA"), "gorilla", "import.json")
+	}
+
+	file, err := os.Create(configPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "    ")
+	return encoder.Encode(config)
+}
+
+// configureGorillaImport interactively configures gorillaimport settings
+func configureGorillaImport(configPath string) error {
+	config := defaultConfig
+
+	fmt.Println("Configuring gorillaimport...")
+
+	fmt.Printf("Repo URL (default: %s): ", config.RepoPath)
+	fmt.Scanln(&config.RepoPath)
+	if config.RepoPath == "" {
+		config.RepoPath = defaultConfig.RepoPath
+	}
+
+	fmt.Printf("Pkginfo extension (default: .plist): ")
+	fmt.Scanln(&config.OutputDir)
+	if config.OutputDir == "" {
+		config.OutputDir = defaultConfig.OutputDir
+	}
+
+	fmt.Printf("Pkginfo editor (example: /usr/bin/vi or TextMate.app): ")
+	fmt.Scanln(&config.PkginfoEditor)
+
+	fmt.Printf("Default catalog to use (default: %s): ", config.DefaultCatalog)
+	fmt.Scanln(&config.DefaultCatalog)
+	if config.DefaultCatalog == "" {
+		config.DefaultCatalog = defaultConfig.DefaultCatalog
+	}
+
+	return saveConfig(configPath, config)
+}
+
 // calculateSHA256 calculates the SHA-256 hash of the given file.
 func calculateSHA256(filePath string) (string, error) {
 	// Open the file for reading
@@ -71,7 +135,7 @@ func calculateSHA256(filePath string) (string, error) {
 }
 
 // createPkgInfo generates a pkginfo JSON file for the provided package.
-func createPkgInfo(filePath string, outputDir string, version string) error {
+func createPkgInfo(filePath string, outputDir string, version string, catalog string) error {
 	// Calculate the SHA-256 hash of the package file
 	hash, err := calculateSHA256(filePath)
 	if err != nil {
@@ -86,12 +150,18 @@ func createPkgInfo(filePath string, outputDir string, version string) error {
 
 	// Define the pkginfo structure with relevant metadata
 	pkgInfo := map[string]interface{}{
-		"name":    filepath.Base(filePath), // Use the file name as the package name
-		"version": version,                 // Use the provided version
-		"installer_item_hash": hash,        // The calculated hash of the package file
-		"installer_item_size": fileInfo.Size(), // Size of the package file in bytes
+		"name":                filepath.Base(filePath), // Use the file name as the package name
+		"version":             version,                 // Use the provided version
+		"installer_item_hash": hash,                    // The calculated hash of the package file
+		"installer_item_size": fileInfo.Size(),         // Size of the package file in bytes
 		"description":         "Package imported via GorillaImport", // Description of the package
 		"import_date":         time.Now().Format(time.RFC3339),        // Timestamp of the import
+		"catalogs":            []string{catalog},
+		"category":            "Apps",
+		"developer":           "Unknown",
+		"supported_architectures": []string{"x86_64", "arm64"},
+		"unattended_install":  true,
+		"unattended_uninstall": false,
 	}
 
 	// Handle special case for PowerShell scripts (.ps1)
@@ -136,7 +206,13 @@ func confirmAction(prompt string) bool {
 }
 
 // gorillaImport handles the overall process of importing a package and generating a pkginfo file.
-func gorillaImport(packagePath string, outputDir string, version string) error {
+func gorillaImport(packagePath string, config Config) error {
+	// Ensure the package file is of a supported type
+	ext := strings.ToLower(filepath.Ext(packagePath))
+	if ext != ".msi" && ext != ".ps1" && ext != ".exe" && ext != ".nupkg" {
+		return fmt.Errorf("unsupported package type: %s", ext)
+	}
+
 	// Check if the package path exists
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return fmt.Errorf("package path '%s' does not exist", packagePath)
@@ -148,20 +224,68 @@ func gorillaImport(packagePath string, outputDir string, version string) error {
 		return nil
 	}
 
+	// Prompt user for metadata
+	fmt.Printf("Item name [default: %s]: ", filepath.Base(packagePath))
+	var itemName string
+	fmt.Scanln(&itemName)
+	if itemName == "" {
+		itemName = filepath.Base(packagePath)
+	}
+
+	fmt.Printf("Version [default: %s]: ", config.DefaultVersion)
+	var version string
+	fmt.Scanln(&version)
+	if version == "" {
+		version = config.DefaultVersion
+	}
+
+	fmt.Printf("Description [default: Package imported via GorillaImport]: ")
+	var description string
+	fmt.Scanln(&description)
+	if description == "" {
+		description = "Package imported via GorillaImport"
+	}
+
+	fmt.Printf("Category [default: Apps]: ")
+	var category string
+	fmt.Scanln(&category)
+	if category == "" {
+		category = "Apps"
+	}
+
+	fmt.Printf("Developer [default: Unknown]: ")
+	var developer string
+	fmt.Scanln(&developer)
+	if developer == "" {
+		developer = "Unknown"
+	}
+
 	// Check if the output directory exists, and create it if it does not
-	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if _, err := os.Stat(config.OutputDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
 			return err
 		}
 	}
 
 	// Create the pkginfo file for the specified package
-	if err := createPkgInfo(packagePath, outputDir, version); err != nil {
+	if err := createPkgInfo(packagePath, config.OutputDir, version, config.DefaultCatalog); err != nil {
 		return err
 	}
 
+	// Optionally edit pkginfo
+	if config.PkginfoEditor != "" {
+		if confirmAction("Edit pkginfo before upload?") {
+			pkginfoPath := filepath.Join(config.OutputDir, filepath.Base(packagePath)+".pkginfo")
+			if strings.HasSuffix(config.PkginfoEditor, ".app") {
+				exec.Command("open", "-a", config.PkginfoEditor, pkginfoPath).Run()
+			} else {
+				exec.Command(config.PkginfoEditor, pkginfoPath).Run()
+			}
+		}
+	}
+
 	// Copy package to the repository's pkgs folder
-	repoPkgPath := filepath.Join(outputDir, "..", "pkgs", filepath.Base(packagePath))
+	repoPkgPath := filepath.Join(config.OutputDir, "..", "pkgs", filepath.Base(packagePath))
 	if _, err := copyFile(packagePath, repoPkgPath); err != nil {
 		return fmt.Errorf("failed to copy package to repo: %v", err)
 	}
@@ -170,7 +294,7 @@ func gorillaImport(packagePath string, outputDir string, version string) error {
 
 	// Upload pkgs to S3 bucket (example command)
 	s3BucketPath := "s3://your-s3-bucket/repo/pkgs/"
-	cmd := exec.Command("aws", "s3", "sync", filepath.Join(outputDir, "..", "pkgs/"), s3BucketPath, "--exclude", "*.git/*", "--exclude", "**/.DS_Store")
+	cmd := exec.Command("aws", "s3", "sync", filepath.Join(config.OutputDir, "..", "pkgs/"), s3BucketPath, "--exclude", "*.git/*", "--exclude", "**/.DS_Store")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -202,7 +326,8 @@ func main() {
 	// Define command-line flags for package path, output directory, and config file
 	packagePath := flag.String("package", "", "Path to the package to import.")
 	outputDir := flag.String("output", "", "Directory to output pkginfo file.")
-	configPath := flag.String("config", "", "Path to configuration file.")
+	configPath := flag.String("config", getConfigPath(), "Path to configuration file.")
+	configure := flag.Bool("configure", false, "Run interactive configuration setup.")
 	flag.Parse() // Parse the command-line flags
 
 	// Load configuration if a config path is provided
@@ -210,6 +335,15 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error loading config: %s\n", err)
 		os.Exit(1)
+	}
+
+	// Run configuration if requested
+	if *configure {
+		if err := configureGorillaImport(*configPath); err != nil {
+			fmt.Printf("Error during configuration: %s\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	// Use command-line arguments if provided, otherwise use config values
@@ -226,7 +360,7 @@ func main() {
 	}
 
 	// Call gorillaImport to handle the import process
-	if err := gorillaImport(*packagePath, finalOutputDir, config.DefaultVersion); err != nil {
+	if err := gorillaImport(*packagePath, config); err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
