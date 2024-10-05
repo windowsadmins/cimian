@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/1dustindavis/gorilla/pkg/config"
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
 )
 
 var (

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/1dustindavis/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/config"
 )
 
 var (
