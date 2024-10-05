@@ -13,6 +13,7 @@ import (
 	"time"
 	"os/exec"
 	"runtime"
+	"encoding/xml"
 )
 
 // Configuration structure to hold settings
@@ -30,7 +31,7 @@ var defaultConfig = Config{
 	DefaultVersion: "1.0.0",
 	OutputDir:      "./pkginfo",
 	PkginfoEditor:  "",
-	DefaultCatalog: "production",
+	DefaultCatalog: "testing",
 }
 
 // getConfigPath returns the appropriate configuration file path based on the OS
@@ -43,45 +44,74 @@ func getConfigPath() string {
 	return "config.json"
 }
 
-// loadConfig loads the configuration from a JSON file or returns default settings
+// loadConfig loads the configuration from a plist file or returns default settings
 func loadConfig(configPath string) (Config, error) {
 	config := defaultConfig
 
-	file, err := os.Open(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// If the config file does not exist, return the default config
-			return config, nil
+	if runtime.GOOS == "darwin" {
+		// Load configuration from plist file
+		file, err := os.Open(configPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// If the config file does not exist, return the default config
+				return config, nil
+			}
+			return config, err
 		}
-		return config, err
-	}
-	defer file.Close()
+		defer file.Close()
 
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
-		return config, err
+		decoder := xml.NewDecoder(file)
+		if err := decoder.Decode(&config); err != nil {
+			return config, err
+		}
+	} else {
+		// Load configuration from JSON file (for Windows and others)
+		file, err := os.Open(configPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// If the config file does not exist, return the default config
+				return config, nil
+			}
+			return config, err
+		}
+		defer file.Close()
+
+		decoder := json.NewDecoder(file)
+		if err := decoder.Decode(&config); err != nil {
+			return config, err
+		}
 	}
 
 	return config, nil
 }
 
-// saveConfig saves the configuration to a JSON file
+// saveConfig saves the configuration to a plist or JSON file
 func saveConfig(configPath string, config Config) error {
 	if runtime.GOOS == "darwin" {
+		// Save configuration to plist file
 		configPath = filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.plist")
-	} else if runtime.GOOS == "windows" {
+		file, err := os.Create(configPath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		xmlEncoder := xml.NewEncoder(file)
+		xmlEncoder.Indent("", "    ")
+		return xmlEncoder.Encode(config)
+	} else {
+		// Save configuration to JSON file (for Windows and others)
 		configPath = filepath.Join(os.Getenv("APPDATA"), "gorilla", "import.json")
-	}
+		file, err := os.Create(configPath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
 
-	file, err := os.Create(configPath)
-	if err != nil {
-		return err
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "    ")
+		return encoder.Encode(config)
 	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "    ")
-	return encoder.Encode(config)
 }
 
 // configureGorillaImport interactively configures gorillaimport settings
