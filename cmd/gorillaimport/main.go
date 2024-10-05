@@ -293,13 +293,7 @@ func main() {
 		configData = configureGorillaImport()
 	} else {
 		// Load configuration from default path
-		configPath := getConfigPath()
-		var err error
-		configData, err = configureGorillaImport()
-		if err != nil {
-			fmt.Printf("Error loading config: %s\n", err)
-			os.Exit(1)
-		}
+		configData = configureGorillaImport()
 	}
 
 	// Use command-line arguments if provided, otherwise use config values
