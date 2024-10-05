@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"gopkg.in/yaml.v3"
 	"flag"
 	"fmt"
@@ -17,11 +16,11 @@ import (
 
 // Configuration structure to hold settings
 type Config struct {
-	RepoPath       string `json:"repo_path"`
-	DefaultVersion string `json:"default_version"`
-	OutputDir      string `json:"output_dir"`
-	PkginfoEditor  string `json:"pkginfo_editor"`
-	DefaultCatalog string `json:"default_catalog"`
+	RepoPath       string `yaml:"repo_path"`
+	DefaultVersion string `yaml:"default_version"`
+	OutputDir      string `yaml:"output_dir"`
+	PkginfoEditor  string `yaml:"pkginfo_editor"`
+	DefaultCatalog string `yaml:"default_catalog"`
 }
 
 // Default configuration values
@@ -38,80 +37,39 @@ func getConfigPath() string {
 	if runtime.GOOS == "darwin" {
 		return filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.plist")
 	} else if runtime.GOOS == "windows" {
-		return filepath.Join(os.Getenv("APPDATA"), "Gorilla", "import.json")
+		return filepath.Join(os.Getenv("APPDATA"), "Gorilla", "import.yaml")
 	}
-	return "config.json"
+	return "config.yaml"
 }
 
-// loadConfig loads the configuration from a plist or JSON file or returns default settings
-func loadConfig(configPath string) (Config, error) {
+// configureGorillaImport interactively configures gorillaimport settings
+func configureGorillaImport() Config {
 	config := defaultConfig
 
-	if runtime.GOOS == "darwin" {
-		// Load configuration using `defaults read`
-		cmd := exec.Command("defaults", "read", configPath)
-		output, err := cmd.Output()
-		if err != nil {
-			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
-				// If the config file does not exist, return the default config
-				return config, nil
-			}
-			return config, err
-		}
-		if err := json.Unmarshal(output, &config); err != nil {
-			return config, err
-		}
-	} else {
-		// Load configuration from JSON file (for Windows and others)
-		file, err := os.Open(configPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// If the config file does not exist, return the default config
-				return config, nil
-			}
-			return config, err
-		}
-		defer file.Close()
+	fmt.Println("Configuring gorillaimport...")
 
-		decoder := json.NewDecoder(file)
-		if err := decoder.Decode(&config); err != nil {
-			return config, err
-		}
+	fmt.Printf("Repo URL (default: %s): ", config.RepoPath)
+	fmt.Scanln(&config.RepoPath)
+	if config.RepoPath == "" {
+		config.RepoPath = defaultConfig.RepoPath
 	}
 
-	return config, nil
-}
-
-// saveConfig saves the configuration using `defaults write` on macOS or JSON for others
-func saveConfig(configPath string, config Config) error {
-	if runtime.GOOS == "darwin" {
-		// Save configuration using `defaults write`
-		commands := []string{
-			fmt.Sprintf("defaults write %s repo_path '%s'", configPath, config.RepoPath),
-			fmt.Sprintf("defaults write %s default_version '%s'", configPath, config.DefaultVersion),
-			fmt.Sprintf("defaults write %s output_dir '%s'", configPath, config.OutputDir),
-			fmt.Sprintf("defaults write %s pkginfo_editor '%s'", configPath, config.PkginfoEditor),
-			fmt.Sprintf("defaults write %s default_catalog '%s'", configPath, config.DefaultCatalog),
-		}
-		for _, cmd := range commands {
-			if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
-				return err
-			}
-		}
-		return nil
-	} else {
-		// Save configuration to JSON file (for Windows and others)
-		configPath = filepath.Join(os.Getenv("APPDATA"), "gorilla", "import.json")
-		file, err := os.Create(configPath)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-
-		encoder := json.NewEncoder(file)
-		encoder.SetIndent("", "    ")
-		return encoder.Encode(config)
+	fmt.Printf("Pkginfo extension (default: .yaml): ")
+	fmt.Scanln(&config.OutputDir)
+	if config.OutputDir == "" {
+		config.OutputDir = defaultConfig.OutputDir
 	}
+
+	fmt.Printf("Pkginfo editor (example: /usr/bin/vi or TextMate.app): ")
+	fmt.Scanln(&config.PkginfoEditor)
+
+	fmt.Printf("Default catalog to use (default: %s): ", config.DefaultCatalog)
+	fmt.Scanln(&config.DefaultCatalog)
+	if config.DefaultCatalog == "" {
+		config.DefaultCatalog = defaultConfig.DefaultCatalog
+	}
+
+	return config
 }
 
 // calculateSHA256 calculates the SHA-256 hash of the given file.
@@ -323,21 +281,29 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 func main() {
-	// Define command-line flags for package path, output directory, and config file
+	// Define command-line flags for package path, output directory, and config
 	packagePath := flag.String("package", "", "Path to the package to import.")
 	outputDir := flag.String("output", "", "Directory to output pkginfo file.")
-	configPath := flag.String("config", getConfigPath(), "Path to configuration file.")
+	config := flag.Bool("config", false, "Run interactive configuration setup.")
 	flag.Parse() // Parse the command-line flags
 
-	// Load configuration if a config path is provided
-	config, err := loadConfig(*configPath)
-	if err != nil {
-		fmt.Printf("Error loading config: %s\n", err)
-		os.Exit(1)
+	// Run configuration if requested
+	var configData Config
+	if *config {
+		configData = configureGorillaImport()
+	} else {
+		// Load configuration from default path
+		configPath := getConfigPath()
+		var err error
+		configData, err = loadConfig(configPath)
+		if err != nil {
+			fmt.Printf("Error loading config: %s\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Use command-line arguments if provided, otherwise use config values
-	finalOutputDir := config.OutputDir
+	finalOutputDir := configData.OutputDir
 	if *outputDir != "" {
 		finalOutputDir = *outputDir
 	}
@@ -350,7 +316,7 @@ func main() {
 	}
 
 	// Call gorillaImport to handle the import process
-	if err := gorillaImport(*packagePath, config); err != nil {
+	if err := gorillaImport(*packagePath, configData); err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
