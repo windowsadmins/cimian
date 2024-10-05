@@ -221,4 +221,13 @@ func main() {
 	// Ensure both package and output arguments are provided
 	if *packagePath == "" || finalOutputDir == "" {
 		fmt.Println("Error: Both package and output arguments are required.")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// Call gorillaImport to handle the import process
+	if err := gorillaImport(*packagePath, finalOutputDir, config.DefaultVersion); err != nil {
+		fmt.Printf("Error: %s\n", err)
+		os.Exit(1)
+	}
 }
