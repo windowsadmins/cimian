@@ -13,7 +13,6 @@ import (
 	"time"
 	"os/exec"
 	"runtime"
-	"github.com/DHowett/go-plist"
 )
 
 // Configuration structure to hold settings
@@ -49,19 +48,17 @@ func loadConfig(configPath string) (Config, error) {
 	config := defaultConfig
 
 	if runtime.GOOS == "darwin" {
-		// Load configuration from plist file
-		file, err := os.Open(configPath)
+		// Load configuration using `defaults read`
+		cmd := exec.Command("defaults", "read", configPath)
+		output, err := cmd.Output()
 		if err != nil {
-			if os.IsNotExist(err) {
+			if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
 				// If the config file does not exist, return the default config
 				return config, nil
 			}
 			return config, err
 		}
-		defer file.Close()
-
-		decoder := plist.NewDecoder(file)
-		if err := decoder.Decode(&config); err != nil {
+		if err := json.Unmarshal(output, &config); err != nil {
 			return config, err
 		}
 	} else {
@@ -85,20 +82,23 @@ func loadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
-// saveConfig saves the configuration to a plist or JSON file
+// saveConfig saves the configuration using `defaults write` on macOS or JSON for others
 func saveConfig(configPath string, config Config) error {
 	if runtime.GOOS == "darwin" {
-		// Save configuration to plist file
-		configPath = filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.plist")
-		file, err := os.Create(configPath)
-		if err != nil {
-			return err
+		// Save configuration using `defaults write`
+		commands := []string{
+			fmt.Sprintf("defaults write %s repo_path '%s'", configPath, config.RepoPath),
+			fmt.Sprintf("defaults write %s default_version '%s'", configPath, config.DefaultVersion),
+			fmt.Sprintf("defaults write %s output_dir '%s'", configPath, config.OutputDir),
+			fmt.Sprintf("defaults write %s pkginfo_editor '%s'", configPath, config.PkginfoEditor),
+			fmt.Sprintf("defaults write %s default_catalog '%s'", configPath, config.DefaultCatalog),
 		}
-		defer file.Close()
-
-		encoder := plist.NewEncoder(file)
-		encoder.Indent("	")
-		return encoder.Encode(config)
+		for _, cmd := range commands {
+			if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
+				return err
+			}
+		}
+		return nil
 	} else {
 		// Save configuration to JSON file (for Windows and others)
 		configPath = filepath.Join(os.Getenv("APPDATA"), "gorilla", "import.json")
