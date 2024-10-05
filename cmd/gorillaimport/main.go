@@ -281,8 +281,7 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 func main() {
-	// Define command-line flags for output directory and config
-	outputDir := flag.String("output", "", "Directory to output pkginfo file.")
+	// Define command-line flag for config
 	config := flag.Bool("config", false, "Run interactive configuration setup.")
 	flag.Parse() // Parse the command-line flags
 
