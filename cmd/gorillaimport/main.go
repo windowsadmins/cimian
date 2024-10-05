@@ -3,7 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"encoding/yaml"
+	"gopkg.in/yaml.v3"
 	"flag"
 	"fmt"
 	"io"
