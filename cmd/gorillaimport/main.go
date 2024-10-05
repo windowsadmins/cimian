@@ -221,3 +221,4 @@ func main() {
 	// Ensure both package and output arguments are provided
 	if *packagePath == "" || finalOutputDir == "" {
 		fmt.Println("Error: Both package and output arguments are required.")
+}
