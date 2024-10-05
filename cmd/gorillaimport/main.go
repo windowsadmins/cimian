@@ -289,6 +289,7 @@ func main() {
 	var configData Config
 	if *config {
 		configData = configureGorillaImport()
+		return
 	} else {
 		// Load configuration from default path
 		configData = defaultConfig
