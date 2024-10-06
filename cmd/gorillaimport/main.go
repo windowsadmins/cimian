@@ -302,116 +302,107 @@ func copyFile(src, dst string) (int64, error) {
 
 // gorillaImport handles the overall process of importing a package and generating a pkginfo file.
 func gorillaImport(packagePath string, config Config) error {
-	// Check if the package path exists
-	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-		// Create the directory if it doesn't exist
-		if err := os.MkdirAll(packagePath, 0755); err != nil {
-			fmt.Printf("Failed to create directory '%s': %v\n", packagePath, err)
-			return fmt.Errorf("failed to create directory '%s': %v", packagePath, err)
-		}
-		fmt.Printf("Directory '%s' created successfully.\n", packagePath)
-	} else {
-		fmt.Printf("Package path '%s' exists.\n", packagePath)
-	}
+    packageName := filepath.Base(packagePath)
+    
+    // Check if the package path exists
+    if _, err := os.Stat(packagePath); os.IsNotExist(err) {
+        fmt.Printf("Package '%s' does not exist.\n", packagePath)
+        return fmt.Errorf("package '%s' does not exist", packagePath)
+    }
+    
+    fmt.Printf("Package path '%s' exists.\n", packagePath)
+    
+    // Simulate checking for a similar item in the repo
+    // In reality, you'd compare against your existing pkginfo items
+    fmt.Println("Checking for similar items in the repo...")
+    existingItem := checkForSimilarItem(packageName)
+    
+    if existingItem != nil {
+        fmt.Printf("This item is similar to an existing item in the repo:\n")
+        fmt.Printf("    Item name: %s\n", existingItem["name"])
+        fmt.Printf("    Version: %s\n", existingItem["version"])
+        fmt.Printf("    Installer item path: %s\n", existingItem["path"])
+        
+        if confirmAction("Use existing item as a template?") {
+            // Copy relevant fields from the existing item
+            fmt.Println("Copying attributes from the existing item...")
+            // Example fields to copy
+            config.Category = existingItem["category"].(string)
+            config.Developer = existingItem["developer"].(string)
+            // Add more fields as necessary
+        }
+    }
+    
+    // Collect metadata from the user
+    fmt.Printf("Item name [default: %s]: ", packageName)
+    var itemName string
+    fmt.Scanln(&itemName)
+    if itemName == "" {
+        itemName = packageName
+    }
+    fmt.Printf("Item name set to: %s\n", itemName)
 
-	// Confirm action with the user before proceeding
-	if !confirmAction(fmt.Sprintf("Are you sure you want to import '%s' into the repository?", packagePath)) {
-		fmt.Println("Import canceled.")
-		return nil
-	}
+    fmt.Printf("Version [default: %s]: ", config.DefaultVersion)
+    var version string
+    fmt.Scanln(&version)
+    if version == "" {
+        version = config.DefaultVersion
+    }
+    fmt.Printf("Version set to: %s\n", version)
 
-	// Prompt user for metadata
-	fmt.Printf("Item name [default: %s]: ", filepath.Base(packagePath))
-	var itemName string
-	fmt.Scanln(&itemName)
-	if itemName == "" {
-		itemName = filepath.Base(packagePath)
-	}
-	fmt.Printf("Item name set to: %s\n", itemName)
+    fmt.Printf("Category [default: %s]: ", config.Category)
+    var category string
+    fmt.Scanln(&category)
+    if category == "" {
+        category = config.Category
+    }
+    fmt.Printf("Category set to: %s\n", category)
 
-	fmt.Printf("Version [default: %s]: ", config.DefaultVersion)
-	var version string
-	fmt.Scanln(&version)
-	if version == "" {
-		version = config.DefaultVersion
-	}
-	fmt.Printf("Version set to: %s\n", version)
+    fmt.Printf("Developer [default: %s]: ", config.Developer)
+    var developer string
+    fmt.Scanln(&developer)
+    if developer == "" {
+        developer = config.Developer
+    }
+    fmt.Printf("Developer set to: %s\n", developer)
 
-	fmt.Printf("Description [default: Package imported via GorillaImport]: ")
-	var description string
-	fmt.Scanln(&description)
-	if description == "" {
-		description = "Package imported via GorillaImport"
-	}
-	fmt.Printf("Description set to: %s\n", description)
+    // Define paths for pkginfo and pkgs
+    pkgsPath := filepath.Join("pkgs", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s", itemName, version))
+    pkginfoPath := filepath.Join("pkginfo", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s.yaml", itemName, version))
 
-	fmt.Printf("Category [default: Apps]: ")
-	var category string
-	fmt.Scanln(&category)
-	if category == "" {
-		category = "Apps"
-	}
-	fmt.Printf("Category set to: %s\n", category)
+    // Create directories as needed
+    if err := os.MkdirAll(filepath.Dir(pkgsPath), 0755); err != nil {
+        fmt.Printf("Failed to create directory: %v\n", err)
+        return err
+    }
+    if err := os.MkdirAll(filepath.Dir(pkginfoPath), 0755); err != nil {
+        fmt.Printf("Failed to create directory: %v\n", err)
+        return err
+    }
 
-	fmt.Printf("Developer [default: Unknown]: ")
-	var developer string
-	fmt.Scanln(&developer)
-	if developer == "" {
-		developer = "Unknown"
-	}
-	fmt.Printf("Developer set to: %s\n", developer)
+    // Copy package to the repository
+    fmt.Printf("Copying package to %s...\n", pkgsPath)
+    if _, err := copyFile(packagePath, pkgsPath); err != nil {
+        fmt.Printf("Failed to copy package to repo: %v\n", err)
+        return fmt.Errorf("failed to copy package to repo: %v", err)
+    }
+    fmt.Printf("Package copied to repository: %s\n", pkgsPath)
 
-	// Check if the output directory exists, and create it if it does not
-	if _, err := os.Stat(config.OutputDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
-			fmt.Printf("Failed to create output directory '%s': %v\n", config.OutputDir, err)
-			return err
-		}
-		fmt.Printf("Output directory '%s' created successfully.\n", config.OutputDir)
-	} else {
-		fmt.Printf("Output directory '%s' exists.\n", config.OutputDir)
-	}
+    // Create pkginfo for the item
+    fmt.Printf("Creating pkginfo at %s...\n", pkginfoPath)
+    if err := createPkgInfo(packagePath, pkginfoPath, version, category); err != nil {
+        fmt.Printf("Failed to create pkginfo: %v\n", err)
+        return fmt.Errorf("failed to create pkginfo: %v", err)
+    }
+    fmt.Printf("Pkginfo created at: %s\n", pkginfoPath)
 
-	// Create the pkginfo file for the specified package
-	fmt.Println("Creating pkginfo...")
-	if err := createPkgInfo(packagePath, config.OutputDir, version, config.DefaultCatalog); err != nil {
-		fmt.Printf("Failed to create pkginfo: %v\n", err)
-		return err
-	}
+    // Prompt for catalog rebuild
+    if confirmAction("Rebuild catalogs?") {
+        fmt.Println("Rebuilding catalogs...")
+        rebuildCatalogs()
+    }
 
-	// Optionally edit pkginfo
-	if config.PkginfoEditor != "" {
-		if confirmAction("Edit pkginfo before upload?") {
-			pkginfoPath := filepath.Join(config.OutputDir, filepath.Base(packagePath)+".yaml")
-			if strings.HasSuffix(config.PkginfoEditor, ".app") {
-				exec.Command("open", "-a", config.PkginfoEditor, pkginfoPath).Run()
-			} else {
-				exec.Command(config.PkginfoEditor, pkginfoPath).Run()
-			}
-		}
-	}
-
-	// Copy package to the repository's pkgs folder
-	repoPkgPath := filepath.Join(config.OutputDir, "..", "pkgs", filepath.Base(packagePath))
-	if _, err := copyFile(packagePath, repoPkgPath); err != nil {
-		fmt.Printf("Failed to copy package to repo: %v\n", err)
-		return fmt.Errorf("failed to copy package to repo: %v", err)
-	}
-	fmt.Printf("Package copied to repository: %s\n", repoPkgPath)
-
-	// Upload pkgs to S3 bucket (example command)
-	s3BucketPath := "s3://your-s3-bucket/repo/pkgs/"
-	cmd := exec.Command("aws", "s3", "sync", filepath.Join(config.OutputDir, "..", "pkgs/"), s3BucketPath, "--exclude", "*.git/*", "--exclude", "**/.DS_Store")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Failed to upload to S3: %v\n", err)
-		return fmt.Errorf("failed to upload to S3: %v", err)
-	}
-
-	fmt.Println("Successfully synced pkgs directory to S3")
-
-	return nil
+    return nil
 }
 
 func main() {
