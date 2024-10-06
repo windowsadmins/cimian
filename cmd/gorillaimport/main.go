@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,6 +21,10 @@ type PkgsInfo struct {
 	InstallerItemHash string   `yaml:"installer_item_hash"`
 	InstallerItemPath string   `yaml:"installer_item_location"`
 	Catalogs          []string `yaml:"catalogs"`
+	Category          string   `yaml:"category"`
+	Developer         string   `yaml:"developer"`
+	Description       string   `yaml:"description"`
+	SupportedArch     []string `yaml:"supported_architectures"`
 }
 
 // Configuration structure to hold settings
@@ -29,8 +32,8 @@ type Config struct {
 	RepoPath       string `yaml:"repo_path"`
 	DefaultVersion string `yaml:"default_version"`
 	OutputDir      string `yaml:"output_dir"`
-	PkgsinfoEditor string `yaml:"pkgsinfo_editor"`
 	DefaultCatalog string `yaml:"default_catalog"`
+	DefaultArch    string `yaml:"default_arch"`
 }
 
 // Default configuration values
@@ -38,8 +41,8 @@ var defaultConfig = Config{
 	RepoPath:       "./repo",
 	DefaultVersion: "",
 	OutputDir:      "./pkgsinfo",
-	PkgsinfoEditor: "",
 	DefaultCatalog: "testing",
+	DefaultArch:    "x86_64",
 }
 
 // scanRepo scans the pkgsinfo directory recursively to find existing pkgsinfo files.
@@ -257,7 +260,7 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package.
-func createPkgsInfo(filePath, outputDir, name, version, catalog string) error {
+func createPkgsInfo(filePath, outputDir, name, version, catalog, category, developer, arch string) error {
 	hash, err := calculateSHA256(filePath)
 	if err != nil {
 		return err
@@ -268,19 +271,16 @@ func createPkgsInfo(filePath, outputDir, name, version, catalog string) error {
 		return err
 	}
 
-	pkgsInfo := map[string]interface{}{
-		"name":                name,
-		"version":             version,
-		"installer_item_hash": hash,
-		"installer_item_size": fileInfo.Size(),
-		"description":         "Package imported via GorillaImport",
-		"import_date":         time.Now().Format(time.RFC3339),
-		"catalogs":            []string{catalog},
-		"category":            "Apps",
-		"developer":           "Unknown",
-		"supported_architectures": []string{"x86_64", "arm64"},
-		"unattended_install":  true,
-		"unattended_uninstall": false,
+	pkgsInfo := PkgsInfo{
+		Name:              name,
+		Version:           version,
+		InstallerItemHash: hash,
+		InstallerItemPath: filepath.Base(filePath),
+		Catalogs:          []string{catalog},
+		Category:          category,
+		Developer:         developer,
+		Description:       "",
+		SupportedArch:     []string{arch},
 	}
 
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
@@ -323,8 +323,6 @@ func gorillaImport(packagePath string, config Config) error {
 		return fmt.Errorf("package '%s' does not exist", packagePath)
 	}
 
-	fmt.Printf("Package path '%s' exists.\n", packagePath)
-
 	// Scan the repo for existing pkgsinfo items
 	pkgsInfos, err := scanRepo(config.RepoPath)
 	if err != nil {
@@ -338,7 +336,6 @@ func gorillaImport(packagePath string, config Config) error {
 		fmt.Printf("This item is similar to an existing item in the repo:\n")
 		fmt.Printf("    Item name: %s\n", matchingItem.Name)
 		fmt.Printf("    Version: %s\n", matchingItem.Version)
-		fmt.Printf("    Installer item path: %s\n", matchingItem.InstallerItemPath)
 
 		// Check if the new package is identical to the existing one
 		newItemHash, hashErr := calculateSHA256(packagePath)
@@ -362,7 +359,7 @@ func gorillaImport(packagePath string, config Config) error {
 	}
 
 	// Collect metadata from the user
-	var itemName, version, category, developer string
+	var itemName, version, category, developer, arch string
 
 	fmt.Printf("Item name: ")
 	fmt.Scanln(&itemName)
@@ -376,9 +373,24 @@ func gorillaImport(packagePath string, config Config) error {
 	fmt.Printf("Developer: ")
 	fmt.Scanln(&developer)
 
+	// Prompt for the architecture
+	fmt.Printf("Architecture (default: %s): ", config.DefaultArch)
+	fmt.Scanln(&arch)
+	if arch == "" {
+		arch = config.DefaultArch
+	}
+
+	// Prompt for the repo path
+	var customPath string
+	fmt.Printf("Enter custom path for the repo (default: %s): ", config.RepoPath)
+	fmt.Scanln(&customPath)
+	if customPath == "" {
+		customPath = config.RepoPath
+	}
+
 	// Use the configured repo path for storage, and retain the package extension
-	pkgsPath := filepath.Join(config.RepoPath, "pkgs", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s%s", itemName, version, packageExt))
-	pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s.yaml", itemName, version))
+	pkgsPath := filepath.Join(customPath, "pkgs", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s%s", itemName, version, packageExt))
+	pkgsinfoPath := filepath.Join(customPath, "pkgsinfo", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s.yaml", itemName, version))
 
 	// Create directories as needed
 	if err := os.MkdirAll(filepath.Dir(pkgsPath), 0755); err != nil {
@@ -390,21 +402,17 @@ func gorillaImport(packagePath string, config Config) error {
 		return err
 	}
 
-	// Copy package to the repository
-	fmt.Printf("Copying package to %s...\n", pkgsPath)
-	if _, err := copyFile(packagePath, pkgsPath); err != nil {
-		fmt.Printf("Failed to copy package to repo: %v\n", err)
+	// Copy package to the repository, but suppress the output feedback
+	_, err = copyFile(packagePath, pkgsPath)
+	if err != nil {
 		return fmt.Errorf("failed to copy package to repo: %v", err)
 	}
-	fmt.Printf("Package copied to repository: %s\n", pkgsPath)
 
-	// Create pkgsinfo for the item
-	fmt.Printf("Creating pkgsinfo at %s...\n", pkgsinfoPath)
-	if err := createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), itemName, version, config.DefaultCatalog); err != nil {
-		fmt.Printf("Failed to create pkgsinfo: %v\n", err)
+	// Create pkgsinfo for the item, without showing the creation feedback twice
+	err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), itemName, version, config.DefaultCatalog, category, developer, arch)
+	if err != nil {
 		return fmt.Errorf("failed to create pkgsinfo: %v", err)
 	}
-	fmt.Printf("Pkgsinfo created at: %s\n", pkgsinfoPath)
 
 	// Prompt for catalog rebuild
 	if confirmAction("Rebuild catalogs?") {
@@ -422,6 +430,7 @@ func rebuildCatalogs() {
 
 func main() {
 	config := flag.Bool("config", false, "Run interactive configuration setup.")
+	archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
 	flag.Parse()
 
 	if *config {
@@ -432,25 +441,24 @@ func main() {
 	configData := defaultConfig
 	configPath := getConfigPath()
 
+	// Load config if available
 	if _, err := os.Stat(configPath); err == nil {
-		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-			loadedConfig, err := loadConfig(configPath)
-			if err == nil {
-				if loadedConfig.RepoPath != "" {
-					configData.RepoPath = loadedConfig.RepoPath
-				}
-				if loadedConfig.DefaultVersion != "" {
-					configData.DefaultVersion = loadedConfig.DefaultVersion
-				}
-				if loadedConfig.OutputDir != "" {
-					configData.OutputDir = loadedConfig.OutputDir
-				}
-				if loadedConfig.PkgsinfoEditor != "" {
-					configData.PkgsinfoEditor = loadedConfig.PkgsinfoEditor
-				}
-				if loadedConfig.DefaultCatalog != "" {
-					configData.DefaultCatalog = loadedConfig.DefaultCatalog
-				}
+		loadedConfig, err := loadConfig(configPath)
+		if err == nil {
+			if loadedConfig.RepoPath != "" {
+				configData.RepoPath = loadedConfig.RepoPath
+			}
+			if loadedConfig.DefaultVersion != "" {
+				configData.DefaultVersion = loadedConfig.DefaultVersion
+			}
+			if loadedConfig.OutputDir != "" {
+				configData.OutputDir = loadedConfig.OutputDir
+			}
+			if loadedConfig.DefaultCatalog != "" {
+				configData.DefaultCatalog = loadedConfig.DefaultCatalog
+			}
+			if loadedConfig.DefaultArch != "" {
+				configData.DefaultArch = loadedConfig.DefaultArch
 			}
 		}
 	}
@@ -473,7 +481,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := gorillaImport(packagePath, configData); err != nil {
+	// If --arch flag is provided, override the default architecture
+	if *archFlag != "" {
+		configData.DefaultArch = *archFlag
+	}
+
+	err = gorillaImport(packagePath, configData)
+	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
