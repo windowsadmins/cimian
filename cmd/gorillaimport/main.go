@@ -94,45 +94,69 @@ func getConfigPath() string {
 	return "config.yaml"
 }
 
-// configureGorillaImport interactively configures gorillaimport settings
+// configureGorillaImport interactively configures gorillaimport settings with sanity checks
 func configureGorillaImport() Config {
-	config := defaultConfig
+    config := defaultConfig
+    fmt.Println("Configuring gorillaimport...")
 
-	fmt.Println("Configuring gorillaimport...")
+    // Sanity check for repo path
+    for {
+        fmt.Printf("Repo URL (must be an absolute path, e.g., /Users/username/DevOps/Gorilla): ")
+        fmt.Scanln(&config.RepoPath)
 
-	fmt.Printf("Repo URL: ")
-	fmt.Scanln(&config.RepoPath)
+        // Check if the path starts with "/"
+        if filepath.IsAbs(config.RepoPath) {
+            break
+        }
+        fmt.Println("Invalid repo path. Please ensure it's an absolute path starting with '/'.")
+    }
 
-	fmt.Printf("Default catalog: ")
-	fmt.Scanln(&config.DefaultCatalog)
+    // Validate the cloud provider
+    for {
+        fmt.Printf("Cloud Provider (aws/azure or leave blank for none): ")
+        fmt.Scanln(&config.CloudProvider)
 
-	fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
-	fmt.Scanln(&config.DefaultArch)
-	if config.DefaultArch == "" {
-		config.DefaultArch = defaultConfig.DefaultArch
-	}
+        config.CloudProvider = strings.ToLower(config.CloudProvider) // Normalize case
+        if config.CloudProvider == "" || config.CloudProvider == "aws" || config.CloudProvider == "azure" {
+            break
+        }
+        fmt.Println("Invalid cloud provider. Please enter 'aws', 'azure', or leave blank for none.")
+    }
 
-	fmt.Printf("Cloud Provider (aws/azure/none): ")
-	fmt.Scanln(&config.CloudProvider)
-	config.CloudProvider = strings.ToLower(config.CloudProvider)
+    // Validate the cloud bucket if cloud provider is set
+    if config.CloudProvider != "" {
+        for {
+            fmt.Printf("Cloud Bucket (e.g., your-bucket-name/path/to/repo, no s3:// or https://): ")
+            fmt.Scanln(&config.CloudBucket)
 
-	if config.CloudProvider != "aws" && config.CloudProvider != "azure" && config.CloudProvider != "none" {
-		fmt.Println("Invalid cloud provider specified. Defaulting to 'none'.")
-		config.CloudProvider = "none"
-	}
+            // Check if the cloud bucket doesn't start with a protocol
+            if !strings.HasPrefix(config.CloudBucket, "s3://") && !strings.HasPrefix(config.CloudBucket, "https://") {
+                break
+            }
+            fmt.Println("Invalid cloud bucket. Please remove any 's3://' or 'https://' prefix and enter only the bucket path.")
+        }
+    }
 
-	fmt.Printf("Cloud Bucket: ")
-	fmt.Scanln(&config.CloudBucket)
-	if config.CloudBucket == "" {
-		config.CloudBucket = defaultConfig.CloudBucket
-	}
+    // Default catalog and architecture prompts
+    fmt.Printf("Default catalog (default: %s): ", config.DefaultCatalog)
+    fmt.Scanln(&config.DefaultCatalog)
+    if config.DefaultCatalog == "" {
+        config.DefaultCatalog = defaultConfig.DefaultCatalog
+    }
 
-	err := saveConfig(getConfigPath(), config)
-	if err != nil {
-		fmt.Printf("Error saving config: %s\n", err)
-	}
+    fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
+    fmt.Scanln(&config.DefaultArch)
+    if config.DefaultArch == "" {
+        config.DefaultArch = defaultConfig.DefaultArch
+    }
 
-	return config
+    // Save the configuration
+    err := saveConfig(getConfigPath(), config)
+    if err != nil {
+        fmt.Printf("Error saving config: %s\n", err)
+    }
+
+    return config
 }
 
 // saveConfig saves the configuration to a YAML file
