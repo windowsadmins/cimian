@@ -504,7 +504,7 @@ func gorillaImport(packagePath string, config Config) error {
 }
 
 // Custom prompt template to remove `?`
-var customPromptTemplate = &survey.IconSet{
+var customPromptTemplate = survey.IconSet{
     Question: survey.Icon{
         Text: "",
     },
@@ -515,7 +515,9 @@ func promptSurvey(value *string, prompt string, defaultValue string) {
     survey.AskOne(&survey.Input{
         Message: prompt,
         Default: defaultValue,
-    }, value, survey.WithIcons(customPromptTemplate))
+    }, value, survey.WithIcons(func(icons *survey.IconSet) {
+        *icons = customPromptTemplate
+    }))
 }
 
 // cleanTextForPrompt ensures text is clean and doesn't cause issues in terminal input
