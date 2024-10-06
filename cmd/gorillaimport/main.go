@@ -264,28 +264,40 @@ func confirmAction(prompt string) bool {
 	return response == "y" || response == "yes"
 }
 
-// copyFile copies a file from src to dst.
+// copyFile copies a file from src to dst, creating directories as needed.
 // If dst already exists, it will be overwritten.
 func copyFile(src, dst string) (int64, error) {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer sourceFile.Close()
+    // Create the directory if it doesn't exist
+    destDir := filepath.Dir(dst)
+    if _, err := os.Stat(destDir); os.IsNotExist(err) {
+        if err := os.MkdirAll(destDir, 0755); err != nil {
+            return 0, fmt.Errorf("failed to create directory '%s': %v", destDir, err)
+        }
+    }
 
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	defer destFile.Close()
+    // Open the source file
+    sourceFile, err := os.Open(src)
+    if err != nil {
+        return 0, err
+    }
+    defer sourceFile.Close()
 
-	nBytes, err := io.Copy(destFile, sourceFile)
-	if err != nil {
-		return 0, err
-	}
+    // Create the destination file
+    destFile, err := os.Create(dst)
+    if err != nil {
+        return 0, err
+    }
+    defer destFile.Close()
 
-	err = destFile.Sync()
-	return nBytes, err
+    // Copy the contents from the source file to the destination file
+    nBytes, err := io.Copy(destFile, sourceFile)
+    if err != nil {
+        return 0, err
+    }
+
+    // Sync the destination file to ensure all changes are flushed to disk
+    err = destFile.Sync()
+    return nBytes, err
 }
 
 // gorillaImport handles the overall process of importing a package and generating a pkginfo file.
