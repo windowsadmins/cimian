@@ -368,7 +368,17 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 		UnattendedUninstall: unattendedUninstall,
 	}
 
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
+	// Ensure that the subfolder path in pkgsinfo exists
+	outputFilePath := filepath.Join(outputDir, installerSubPath)
+	if _, err := os.Stat(outputFilePath); os.IsNotExist(err) {
+		// Create the directories if they don't exist
+		err = os.MkdirAll(outputFilePath, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to create directory structure: %v", err)
+		}
+	}
+
+	outputFile := filepath.Join(outputFilePath, fmt.Sprintf("%s-%s.yaml", name, version))
 
 	file, err := os.Create(outputFile)
 	if err != nil {
@@ -441,7 +451,7 @@ func gorillaImport(packagePath string, config Config) error {
 
 	// Prompt for subfolder if no match found or user doesn't want to use existing item
 	if installerSubPath == "" {
-		promptSurvey(&installerSubPath, "Enter subfolder path to save the pkg and pkgsinfo", "apps")
+		promptSurvey(&installerSubPath, "Choose the item path:", "apps")
 	}
 	promptSurvey(&catalogs, "Catalogs", catalogs)
 
