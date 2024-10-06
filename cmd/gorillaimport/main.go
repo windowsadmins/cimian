@@ -126,6 +126,21 @@ func loadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
+func saveConfig(configPath string, config Config) error {
+	file, err := os.Create(configPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := yaml.NewEncoder(file)
+	if err := encoder.Encode(config); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // configureGorillaImport interactively configures gorillaimport settings with sanity checks
 func configureGorillaImport() Config {
     config := defaultConfig
@@ -396,8 +411,28 @@ func gorillaImport(packagePath string, config Config) error {
 		return nil
 	}
 
-	// Continue import process...
-	fmt.Printf("Importing %s version %s...\n", productName, version)
+	// Create pkgsinfo YAML file using extracted metadata
+	err = createPkgsInfo(
+		packagePath,
+		filepath.Join(config.RepoPath, "pkgsinfo"),
+		productName,
+		version,
+		config.DefaultCatalog,
+		"", // You can add category here if needed
+		developer,
+		config.DefaultArch,
+		config.RepoPath,
+		"apps", // Define subpath for the installer location
+		productCode,
+		upgradeCode,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create pkgsinfo: %v", err)
+	}
+
+	// Continue with the import process
+	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
 	return nil
 }
