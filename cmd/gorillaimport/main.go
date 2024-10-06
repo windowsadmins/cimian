@@ -216,7 +216,10 @@ func confirmAction(prompt string) bool {
 func gorillaImport(packagePath string, config Config) error {
 	// Check if the package path exists
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-		return fmt.Errorf("package path '%s' does not exist", packagePath)
+		// Create the directory if it doesn't exist
+		if err := os.MkdirAll(packagePath, 0755); err != nil {
+			return fmt.Errorf("failed to create directory '%s': %v", packagePath, err)
+		}
 	}
 
 	// Confirm action with the user before proceeding
