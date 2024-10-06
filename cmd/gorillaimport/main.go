@@ -111,10 +111,13 @@ func configureGorillaImport() Config {
 		config.DefaultArch = defaultConfig.DefaultArch
 	}
 
-	fmt.Printf("Cloud Bucket: ")
+	fmt.Printf("Cloud Bucket (e.g., s3://your-bucket/path/to/repo/ or https://youraccount.blob.core.windows.net/container/path): ")
 	fmt.Scanln(&config.CloudBucket)
-	if config.CloudBucket == "" {
-		config.CloudBucket = defaultConfig.CloudBucket
+
+	fmt.Printf("Cloud Provider (aws, azure, or none): ")
+	fmt.Scanln(&config.CloudProvider)
+	if config.CloudProvider == "" {
+		config.CloudProvider = "none"
 	}
 
 	err := saveConfig(getConfigPath(), config)
@@ -378,25 +381,45 @@ func gorillaImport(packagePath string, config Config) error {
 }
 
 // uploadToS3 handles uploading files to S3 if a valid bucket is provided
-func uploadToS3(bucket string) error {
-	if bucket == "" {
-		fmt.Println("No S3 bucket provided, skipping upload.")
+func uploadToCloud(config Config) error {
+	// Skip if cloud provider is none
+	if config.CloudProvider == "none" {
 		return nil
 	}
 
-	fmt.Println("Starting upload for pkgs")
-	cmd := exec.Command("/usr/local/bin/aws", "s3", "sync",
-		filepath.Join(os.Getenv("HOME"), "DevOps/Munki/deployment/pkgs/"),
-		fmt.Sprintf("s3://%s/repo/deployment/pkgs/", bucket),
-		"--exclude", "*.git/*", "--exclude", "**/.DS_Store")
+	// Construct the local pkgs path based on the RepoPath
+	localPkgsPath := filepath.Join(config.RepoPath, "pkgs")
 
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if config.CloudProvider == "aws" {
+		fmt.Println("Starting upload for pkgs to AWS S3")
+		cmd := exec.Command("/usr/local/bin/aws", "s3", "sync",
+			localPkgsPath,
+			fmt.Sprintf("s3://%s/pkgs/", config.CloudBucket),
+			"--exclude", "*.git/*", "--exclude", "**/.DS_Store")
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("error syncing pkgs directory to S3: %v", err)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("error syncing pkgs directory to S3: %v", err)
+		}
+		fmt.Println("Upload to S3 completed successfully")
+	} else if config.CloudProvider == "azure" {
+		fmt.Println("Starting upload for pkgs to Azure Blob Storage")
+		cmd := exec.Command("/opt/homebrew/bin/azcopy", "sync",
+			localPkgsPath,
+			fmt.Sprintf("https://%s/pkgs/", config.CloudBucket),
+			"--exclude-path", "*/.git/*;*/.DS_Store", "--recursive", "--put-md5")
+
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("error syncing pkgs directory to Azure Blob Storage: %v", err)
+		}
+		fmt.Println("Upload to Azure completed successfully")
 	}
-	fmt.Println("Upload to S3 completed successfully")
+
 	return nil
 }
 
@@ -434,6 +457,9 @@ func main() {
 			if loadedConfig.CloudBucket != "" {
 				configData.CloudBucket = loadedConfig.CloudBucket
 			}
+			if loadedConfig.CloudProvider != "" {  // Changed from CloudType to CloudProvider
+				configData.CloudProvider = loadedConfig.CloudProvider
+			}
 		}
 	}
 
@@ -459,9 +485,11 @@ func main() {
 		os.Exit(1)
 	}
 	
-	// After creating pkgs and pkgsinfo, upload to S3 if bucket is set
-	if err := uploadToS3(configData.CloudBucket); err != nil {
-	    fmt.Printf("Error uploading to S3: %s\n", err)
+	// After creating pkgs and pkgsinfo, upload to the appropriate cloud provider only if not "none"
+	if configData.CloudProvider != "none" {
+		if err := uploadToCloud(configData.CloudBucket, configData.CloudProvider); err != nil {
+			fmt.Printf("Error uploading to cloud: %s\n", err)
+		}
 	}
-
 }
+
