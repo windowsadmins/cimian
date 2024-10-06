@@ -2,17 +2,16 @@ package main
 
 import (
 	"crypto/sha256"
+	"gopkg.in/yaml.v3"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
+	"os/exec"
+	"runtime"
 )
 
 // Configuration structure to hold settings
@@ -158,18 +157,18 @@ func createPkgInfo(filePath string, outputDir string, version string, catalog st
 
 	// Define the pkginfo structure with relevant metadata
 	pkgInfo := map[string]interface{}{
-		"name":                    filepath.Base(filePath),              // Use the file name as the package name
-		"version":                 version,                              // Use the provided version
-		"installer_item_hash":     hash,                                 // The calculated hash of the package file
-		"installer_item_size":     fileInfo.Size(),                      // Size of the package file in bytes
-		"description":             "Package imported via GorillaImport", // Description of the package
-		"import_date":             time.Now().Format(time.RFC3339),      // Timestamp of the import
-		"catalogs":                []string{catalog},
-		"category":                "Apps",
-		"developer":               "Unknown",
+		"name":                filepath.Base(filePath), // Use the file name as the package name
+		"version":             version,                 // Use the provided version
+		"installer_item_hash": hash,                    // The calculated hash of the package file
+		"installer_item_size": fileInfo.Size(),         // Size of the package file in bytes
+		"description":         "Package imported via GorillaImport", // Description of the package
+		"import_date":         time.Now().Format(time.RFC3339),        // Timestamp of the import
+		"catalogs":            []string{catalog},
+		"category":            "Apps",
+		"developer":           "Unknown",
 		"supported_architectures": []string{"x86_64", "arm64"},
-		"unattended_install":      true,
-		"unattended_uninstall":    false,
+		"unattended_install":  true,
+		"unattended_uninstall": false,
 	}
 
 	// Handle special case for PowerShell scripts (.ps1)
@@ -218,8 +217,12 @@ func gorillaImport(packagePath string, config Config) error {
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		// Create the directory if it doesn't exist
 		if err := os.MkdirAll(packagePath, 0755); err != nil {
+			fmt.Printf("Failed to create directory '%s': %v\n", packagePath, err)
 			return fmt.Errorf("failed to create directory '%s': %v", packagePath, err)
 		}
+		fmt.Printf("Directory '%s' created successfully.\n", packagePath)
+	} else {
+		fmt.Printf("Package path '%s' exists.\n", packagePath)
 	}
 
 	// Confirm action with the user before proceeding
@@ -235,6 +238,7 @@ func gorillaImport(packagePath string, config Config) error {
 	if itemName == "" {
 		itemName = filepath.Base(packagePath)
 	}
+	fmt.Printf("Item name set to: %s\n", itemName)
 
 	fmt.Printf("Version [default: %s]: ", config.DefaultVersion)
 	var version string
@@ -242,6 +246,7 @@ func gorillaImport(packagePath string, config Config) error {
 	if version == "" {
 		version = config.DefaultVersion
 	}
+	fmt.Printf("Version set to: %s\n", version)
 
 	fmt.Printf("Description [default: Package imported via GorillaImport]: ")
 	var description string
@@ -249,6 +254,7 @@ func gorillaImport(packagePath string, config Config) error {
 	if description == "" {
 		description = "Package imported via GorillaImport"
 	}
+	fmt.Printf("Description set to: %s\n", description)
 
 	fmt.Printf("Category [default: Apps]: ")
 	var category string
@@ -256,6 +262,7 @@ func gorillaImport(packagePath string, config Config) error {
 	if category == "" {
 		category = "Apps"
 	}
+	fmt.Printf("Category set to: %s\n", category)
 
 	fmt.Printf("Developer [default: Unknown]: ")
 	var developer string
@@ -263,16 +270,23 @@ func gorillaImport(packagePath string, config Config) error {
 	if developer == "" {
 		developer = "Unknown"
 	}
+	fmt.Printf("Developer set to: %s\n", developer)
 
 	// Check if the output directory exists, and create it if it does not
 	if _, err := os.Stat(config.OutputDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(config.OutputDir, 0755); err != nil {
+			fmt.Printf("Failed to create output directory '%s': %v\n", config.OutputDir, err)
 			return err
 		}
+		fmt.Printf("Output directory '%s' created successfully.\n", config.OutputDir)
+	} else {
+		fmt.Printf("Output directory '%s' exists.\n", config.OutputDir)
 	}
 
 	// Create the pkginfo file for the specified package
+	fmt.Println("Creating pkginfo...")
 	if err := createPkgInfo(packagePath, config.OutputDir, version, config.DefaultCatalog); err != nil {
+		fmt.Printf("Failed to create pkginfo: %v\n", err)
 		return err
 	}
 
@@ -291,9 +305,9 @@ func gorillaImport(packagePath string, config Config) error {
 	// Copy package to the repository's pkgs folder
 	repoPkgPath := filepath.Join(config.OutputDir, "..", "pkgs", filepath.Base(packagePath))
 	if _, err := copyFile(packagePath, repoPkgPath); err != nil {
+		fmt.Printf("Failed to copy package to repo: %v\n", err)
 		return fmt.Errorf("failed to copy package to repo: %v", err)
 	}
-
 	fmt.Printf("Package copied to repository: %s\n", repoPkgPath)
 
 	// Upload pkgs to S3 bucket (example command)
@@ -302,6 +316,7 @@ func gorillaImport(packagePath string, config Config) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
+		fmt.Printf("Failed to upload to S3: %v\n", err)
 		return fmt.Errorf("failed to upload to S3: %v", err)
 	}
 
@@ -339,6 +354,13 @@ func main() {
 
 	// Load configuration from default path
 	configData := defaultConfig
+	configPath := getConfigPath()
+
+	if _, err := os.Stat(configPath); err == nil {
+		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+			configData, _ = loadConfig(configPath)
+		}
+	}
 
 	// Ensure package argument is provided by prompting the user
 	fmt.Printf("Enter the path to the package to import: ")
