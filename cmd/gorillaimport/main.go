@@ -440,27 +440,26 @@ func main() {
 			}
 		}
 	}
-
-	// Ensure package argument is provided by prompting the user
-	fmt.Printf("Enter the path to the package file to import: ")
+	
+	// Check if a package path was provided via command-line argument
 	var packagePath string
-	fmt.Scanln(&packagePath)
-
-	if packagePath == "" {
-		fmt.Println("Error: Package argument is required.")
-		flag.Usage()
-		os.Exit(1)
+	if flag.NArg() > 0 {
+	    packagePath = flag.Arg(0)
+	} else {
+	    // If no argument, prompt the user
+	    fmt.Printf("Enter the path to the package file to import: ")
+	    fmt.Scanln(&packagePath)
 	}
-
+	
 	// Ensure the provided path is a file
 	fileInfo, err := os.Stat(packagePath)
 	if err != nil {
-		fmt.Printf("Error: %s\n", err)
-		os.Exit(1)
+	    fmt.Printf("Error: %s\n", err)
+	    os.Exit(1)
 	}
 	if fileInfo.IsDir() {
-		fmt.Println("Error: The provided path is a directory. Please provide a valid package file.")
-		os.Exit(1)
+	    fmt.Println("Error: The provided path is a directory. Please provide a valid package file, not a directory.")
+	    os.Exit(1)
 	}
 
 	// Call gorillaImport to handle the import process
