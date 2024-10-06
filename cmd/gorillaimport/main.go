@@ -15,15 +15,15 @@ import (
 
 // PkgsInfo structure
 type PkgsInfo struct {
-	Catalogs          []string `yaml:"catalogs"`
 	Name              string   `yaml:"name"`
 	Version           string   `yaml:"version"`
-	Description       string   `yaml:"description"`
+	Catalogs          []string `yaml:"catalogs"`
 	Category          string   `yaml:"category"`
 	Developer         string   `yaml:"developer"`
-	SupportedArch     []string `yaml:"supported_architectures"`
+	Description       string   `yaml:"description"`
 	InstallerItemPath string   `yaml:"installer_item_location"`
 	InstallerItemHash string   `yaml:"installer_item_hash"`
+	SupportedArch     []string `yaml:"supported_architectures"`
 }
 
 // Configuration structure to hold settings
@@ -208,39 +208,41 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package.
-func createPkgsInfo(filePath, outputDir, name, version, catalog, category, developer, arch string) error {
-	hash, err := calculateSHA256(filePath)
-	if err != nil {
-		return err
-	}
+func createPkgsInfo(filePath, outputDir, name, version, catalog, category, developer, arch, repoPath, installerSubPath string) error {
+    hash, err := calculateSHA256(filePath)
+    if err != nil {
+        return err
+    }
 
-	pkgsInfo := PkgsInfo{
-		Name:              name,
-		Version:           version,
-		InstallerItemHash: hash,
-		InstallerItemPath: filepath.Base(filePath),
-		Catalogs:          []string{catalog},
-		Category:          category,
-		Developer:         developer,
-		Description:       "",
-		SupportedArch:     []string{arch},
-	}
+    installerItemLocation := filepath.Join(installerSubPath, filepath.Base(filePath))
 
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
+    pkgsInfo := PkgsInfo{
+        Name:              name,
+        Version:           version,
+        InstallerItemHash: hash,
+        InstallerItemPath: installerItemLocation,  // Adjusted to include the relative path
+        Catalogs:          []string{catalog},
+        Category:          category,
+        Developer:         developer,
+        Description:       "",
+        SupportedArch:     []string{arch},
+    }
 
-	file, err := os.Create(outputFile)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+    outputFile := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
 
-	encoder := yaml.NewEncoder(file)
-	if err := encoder.Encode(pkgsInfo); err != nil {
-		return err
-	}
+    file, err := os.Create(outputFile)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
 
-	fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
-	return nil
+    encoder := yaml.NewEncoder(file)
+    if err := encoder.Encode(pkgsInfo); err != nil {
+        return err
+    }
+
+    fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
+    return nil
 }
 
 // confirmAction prompts the user to confirm an action.
