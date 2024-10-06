@@ -99,26 +99,17 @@ func configureGorillaImport() Config {
 
 	fmt.Println("Configuring gorillaimport...")
 
-	fmt.Printf("Repo URL (default: %s): ", config.RepoPath)
+	fmt.Printf("Repo URL: ")
 	fmt.Scanln(&config.RepoPath)
-	if config.RepoPath == "" {
-		config.RepoPath = defaultConfig.RepoPath
-	}
 
-	fmt.Printf("Pkginfo extension (default: .yaml): ")
+	fmt.Printf("Pkgsinfo extension: ")
 	fmt.Scanln(&config.OutputDir)
-	if config.OutputDir == "" {
-		config.OutputDir = defaultConfig.OutputDir
-	}
 
-	fmt.Printf("Pkginfo editor (example: /usr/bin/vi or TextMate.app): ")
-	fmt.Scanln(&config.PkginfoEditor)
+	fmt.Printf("Pkgsinfo editor (example: /usr/bin/vi or TextMate.app): ")
+	fmt.Scanln(&config.PkgsinfoEditor)
 
-	fmt.Printf("Default catalog to use (default: %s): ", config.DefaultCatalog)
+	fmt.Printf("Default catalog: ")
 	fmt.Scanln(&config.DefaultCatalog)
-	if config.DefaultCatalog == "" {
-		config.DefaultCatalog = defaultConfig.DefaultCatalog
-	}
 
 	err := saveConfig(getConfigPath(), config)
 	if err != nil {
@@ -143,7 +134,7 @@ func saveConfig(configPath string, config Config) error {
 		if err := cmd.Run(); err != nil {
 			return err
 		}
-		cmd = exec.Command("defaults", "write", configPath[:len(configPath)-6], "pkginfo_editor", config.PkginfoEditor)
+		cmd = exec.Command("defaults", "write", configPath[:len(configPath)-6], "pkgsinfo_editor", config.PkgsinfoEditor)
 		if err := cmd.Run(); err != nil {
 			return err
 		}
@@ -192,10 +183,10 @@ func loadConfig(configPath string) (Config, error) {
 			config.OutputDir = strings.TrimSpace(string(output))
 		}
 
-		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "pkginfo_editor")
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "pkgsinfo_editor")
 		output, err = cmd.Output()
 		if err == nil {
-			config.PkginfoEditor = strings.TrimSpace(string(output))
+			config.PkgsinfoEditor = strings.TrimSpace(string(output))
 		}
 
 		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_catalog")
