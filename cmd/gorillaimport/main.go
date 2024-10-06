@@ -70,25 +70,33 @@ func configureGorillaImport() Config {
 	}
 
 	// Save the configuration to the appropriate path
-	saveConfig(getConfigPath(), config)
+	err := saveConfig(getConfigPath(), config)
+	if err != nil {
+		fmt.Printf("Error saving config: %s\n", err)
+	}
 
 	return config
 }
 
-// saveConfig saves the configuration to a YAML or plist file
+// saveConfig saves the configuration to a plist or YAML file
 func saveConfig(configPath string, config Config) error {
-	file, err := os.Create(configPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
 	if runtime.GOOS == "darwin" {
-		// Save as plist
-		encoder := plist.NewEncoder(file)
-		return encoder.Encode(config)
+		// Save as plist using native macOS command
+		cmd := exec.Command("defaults", "write", configPath[:len(configPath)-6], // Remove .plist extension for defaults command
+			"repo_path", config.RepoPath,
+			"default_version", config.DefaultVersion,
+			"output_dir", config.OutputDir,
+			"pkginfo_editor", config.PkginfoEditor,
+			"default_catalog", config.DefaultCatalog)
+		return cmd.Run()
 	} else {
 		// Save as YAML
+		file, err := os.Create(configPath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
 		yamlEncoder := yaml.NewEncoder(file)
 		return yamlEncoder.Encode(config)
 	}
