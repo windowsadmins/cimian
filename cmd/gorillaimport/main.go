@@ -1,4 +1,17 @@
+package main
+
 import (
+	"crypto/sha256"
+	"gopkg.in/yaml.v3"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"os/exec"
+	"runtime"
     "gopkg.in/yaml.v3"
     "io/ioutil"
     "path/filepath"
