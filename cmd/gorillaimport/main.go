@@ -217,23 +217,34 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
 
 	switch runtime.GOOS {
 	case "windows":
+		// Run msiexec with the correct working directory
 		msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
+		msiexecCmd.Dir = tempDir // Set the working directory
 		err = msiexecCmd.Run()
 		if err != nil {
 			return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
 		}
+
 	case "darwin":
+		// On macOS, we use msidump
 		msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
+		msidumpCmd.Dir = tempDir // Set the working directory
 		err = msidumpCmd.Run()
 		if err != nil {
 			return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
 		}
+
 	default:
 		return "", "", "", "", "", fmt.Errorf("unsupported platform")
 	}
 
-	// Parse _SummaryInformation.idt for productName, developer, version
+	// Validate that the expected files were extracted
 	summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
+	if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
+		return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
+	}
+
+	// Parse _SummaryInformation.idt for productName, developer, version
 	summaryData, err := os.ReadFile(summaryInfoFile)
 	if err != nil {
 		return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
