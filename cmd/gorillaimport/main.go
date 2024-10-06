@@ -469,6 +469,16 @@ func gorillaImport(packagePath string, config Config) error {
         catalogList[i] = strings.TrimSpace(catalogList[i])
     }
 
+    // Show all gathered info for confirmation
+    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
+
+    // Ask for final confirmation to import
+    importItem := getInputWithDefault("Import this item? [y/N]", "N")
+    if strings.ToLower(importItem) != "y" {
+        fmt.Println("Import canceled.")
+        return nil  // Stop further execution if the import is canceled
+    }
+
     // Ensure that the package path exists and create it if not
     pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
     if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
@@ -492,16 +502,6 @@ func gorillaImport(packagePath string, config Config) error {
     }
     if upgradeCode != "" {
         upgradeCode = strings.Trim(upgradeCode, "{}\r")
-    }
-
-    // Show all gathered info for confirmation
-    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
-
-    // Ask for final confirmation to import
-    importItem := getInputWithDefault("Import this item? [y/N]", "N")
-    if strings.ToLower(importItem) != "y" {
-        fmt.Println("Import canceled.")
-        return nil
     }
 
     // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
