@@ -271,11 +271,13 @@ func gorillaImport(packagePath string, config Config) error {
 		return fmt.Errorf("failed to scan repo: %v", err)
 	}
 
-	// Check for a matching item in the repo by name and version
+	// Check for a matching item in the repo by both name and version
 	var matchingItem *PkgsInfo
+	var installerSubPath string
 	for _, item := range pkgsInfos {
-		if item.Name == packageName && item.Version == config.DefaultVersion {
+		if item.Name == packageName && item.Version == item.Version { // Compare both name and version
 			matchingItem = &item
+			installerSubPath = filepath.Dir(item.InstallerItemPath) // Capture subfolder structure
 			break
 		}
 	}
@@ -299,10 +301,15 @@ func gorillaImport(packagePath string, config Config) error {
 		config.DefaultCatalog = matchingItem.Catalogs[0]
 
 		// Reuse the subfolder from the existing item for pkgsinfo
-		installerSubPath := filepath.Dir(matchingItem.InstallerItemPath)
 		pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", matchingItem.Name, matchingItem.Version))
 
-		return handlePkgCreation(packagePath, pkgsinfoPath, matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch)
+		// Create pkgsinfo directly
+		err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch)
+		if err != nil {
+			return fmt.Errorf("failed to create pkgsinfo: %v", err)
+		}
+
+		return nil
 	}
 
 	// Collect metadata from the user if no match was found
