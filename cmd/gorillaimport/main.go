@@ -306,7 +306,7 @@ func gorillaImport(packagePath string, config Config) error {
 		pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", matchingItem.Name, matchingItem.Version))
 
 		// Create pkgsinfo directly
-		err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch)
+		err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch, config.RepoPath, installerSubPath)
 		if err != nil {
 			return fmt.Errorf("failed to create pkgsinfo: %v", err)
 		}
@@ -362,7 +362,7 @@ func gorillaImport(packagePath string, config Config) error {
 	}
 
 	// Create pkgsinfo for the item
-	err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), itemName, version, config.DefaultCatalog, category, developer, arch)
+	err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), itemName, version, config.DefaultCatalog, category, developer, arch, config.RepoPath, installerPath)
 	if err != nil {
 		return fmt.Errorf("failed to create pkgsinfo: %v", err)
 	}
