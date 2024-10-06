@@ -409,14 +409,18 @@ func main() {
 		fmt.Scanln(&packagePath)
 	}
 
+	var err error
+	
 	// If --arch flag is provided, override the default architecture
 	if *archFlag != "" {
 		configData.DefaultArch = *archFlag
 	}
-
+	
+	// Now assign err from gorillaImport function
 	err = gorillaImport(packagePath, configData)
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
+
 }
