@@ -214,13 +214,14 @@ func createPkgsInfo(filePath, outputDir, name, version, catalog, category, devel
         return err
     }
 
-    installerItemLocation := filepath.Join(installerSubPath, filepath.Base(filePath))
+    // Adjust installer item location to use the name and version instead of the original file name
+    installerItemLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
     pkgsInfo := PkgsInfo{
         Name:              name,
         Version:           version,
         InstallerItemHash: hash,
-        InstallerItemPath: installerItemLocation,  // Adjusted to include the relative path
+        InstallerItemPath: installerItemLocation,
         Catalogs:          []string{catalog},
         Category:          category,
         Developer:         developer,
