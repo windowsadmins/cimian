@@ -127,6 +127,7 @@ func loadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
+// saveConfig saves the configuration to YAML file when running `--config`
 func saveConfig(configPath string, config Config) error {
 	file, err := os.Create(configPath)
 	if err != nil {
@@ -400,7 +401,33 @@ func gorillaImport(packagePath string, config Config) error {
 		fmt.Println("Fallback to manual input.")
 	}
 
+	// Duplicate checking
+	pkgsInfos, err := scanRepo(config.RepoPath)
+	if err != nil {
+		return fmt.Errorf("error scanning repo: %v", err)
+	}
+
+	// Check for duplicate
+	var matchingItem *PkgsInfo
+	if matchingItem = findMatchingItem(pkgsInfos, productName, version); matchingItem != nil {
+		fmt.Printf("This item is similar to an existing item in the repo:\n")
+		fmt.Printf("            Item name: %s\n", matchingItem.Name)
+		fmt.Printf("              Version: %s\n", matchingItem.Version)
+		fmt.Printf("  Installer item path: %s\n\n", matchingItem.InstallerItemPath)
+
+		useTemplate := getInputWithDefault("Use existing item as a template? [y/N]", "N")
+		if strings.ToLower(useTemplate) == "y" {
+			// Copy fields from existing item to the current one
+			developer = matchingItem.Developer
+			// Add more fields here as needed
+		}
+	}
+
 	// Prepopulate and allow user confirmation/modification using survey
+	productName = cleanTextForPrompt(productName)
+	version = cleanTextForPrompt(version)
+	developer = cleanTextForPrompt(developer)
+
 	promptSurvey(&productName, "Item name", productName)
 	if productName == "" {
 		fmt.Println("Item name cannot be empty. Exiting.")
@@ -421,26 +448,6 @@ func gorillaImport(packagePath string, config Config) error {
 	}
 	if upgradeCode != "" {
 		fmt.Printf("Adding UpgradeCode silently: %s\n", upgradeCode)
-	}
-
-	// Duplicate checking
-	pkgsInfos, err := scanRepo(config.RepoPath)
-	if err != nil {
-		return fmt.Errorf("error scanning repo: %v", err)
-	}
-
-	// Check for duplicate
-	if matchingItem := findMatchingItem(pkgsInfos, productName, version); matchingItem != nil {
-		fmt.Printf("This item is similar to an existing item in the repo:\n")
-		fmt.Printf("            Item name: %s\n", matchingItem.Name)
-		fmt.Printf("              Version: %s\n", matchingItem.Version)
-		fmt.Printf("  Installer item path: %s\n\n", matchingItem.InstallerItemPath)
-		useTemplate := getInputWithDefault("Use existing item as a template? [y/N]", "N")
-		if strings.ToLower(useTemplate) == "y" {
-			// Prepopulate more fields using the template if chosen
-			fmt.Printf("Copying developer: %s\n", matchingItem.Developer)
-			developer = matchingItem.Developer
-		}
 	}
 
 	// Confirm import
@@ -473,13 +480,6 @@ func gorillaImport(packagePath string, config Config) error {
 	// Continue with the import process
 	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
-	// After creating pkgsinfo, you may proceed to upload
-	if config.CloudProvider != "none" {
-		if err := uploadToCloud(config); err != nil {
-			fmt.Printf("Error uploading to cloud: %s\n", err)
-		}
-	}
-
 	return nil
 }
 
@@ -489,6 +489,12 @@ func promptSurvey(value *string, prompt string, defaultValue string) {
 		Message: prompt,
 		Default: defaultValue,
 	}, value)
+}
+
+// cleanTextForPrompt ensures text is clean and doesn't cause issues in terminal input
+func cleanTextForPrompt(input string) string {
+	// Remove problematic characters that may cause issues in the terminal
+	return strings.TrimSpace(input)
 }
 
 // getInputWithDefault prompts the user with a prepopulated value and allows them to confirm or modify it
