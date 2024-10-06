@@ -424,11 +424,6 @@ func gorillaImport(packagePath string, config Config) error {
 		}
 	}
 
-	// Prompt for subfolder if no match found or user doesn't want to use existing item
-	if installerSubPath == "" {
-		promptSurvey(&installerSubPath, "Enter subfolder path to save the pkg and pkgsinfo", "apps")
-	}
-
 	// Prepopulate and allow user confirmation/modification using survey
 	productName = cleanTextForPrompt(productName)
 	version = cleanTextForPrompt(version)
@@ -442,8 +437,13 @@ func gorillaImport(packagePath string, config Config) error {
 	promptSurvey(&version, "Version", version)
 	promptSurvey(&category, "Category", category)
 	promptSurvey(&developer, "Developer", developer)
-	promptSurvey(&supportedArch, "Supported Architectures", supportedArch)
-	promptSurvey(&catalogs, "Catalogs (comma-separated)", catalogs)
+	promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
+
+	// Prompt for subfolder if no match found or user doesn't want to use existing item
+	if installerSubPath == "" {
+		promptSurvey(&installerSubPath, "Enter subfolder path to save the pkg and pkgsinfo", "apps")
+	}
+	promptSurvey(&catalogs, "Catalogs", catalogs)
 
 	// Convert catalogs to a list
 	catalogList := strings.Split(catalogs, ",")
@@ -460,12 +460,12 @@ func gorillaImport(packagePath string, config Config) error {
 	}
 
 	// Show all gathered info for confirmation
-	fmt.Printf("\nItem name: %s\n", productName)
-	fmt.Printf("Version: %s\n", version)
-	fmt.Printf("Category: %s\n", category)
-	fmt.Printf("Developer: %s\n", developer)
-	fmt.Printf("Supported Architectures: %s\n", supportedArch)
-	fmt.Printf("Catalogs: %v\n", catalogList)
+// 	fmt.Printf("\nItem name: %s\n", productName)
+// 	fmt.Printf("Version: %s\n", version)
+// 	fmt.Printf("Category: %s\n", category)
+// 	fmt.Printf("Developer: %s\n", developer)
+// 	fmt.Printf("Supported Architectures: %s\n", supportedArch)
+// 	fmt.Printf("Catalogs: %v\n", catalogList)
 	fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
 	// Ask for final confirmation to import
@@ -503,12 +503,21 @@ func gorillaImport(packagePath string, config Config) error {
 	return nil
 }
 
+// Custom prompt template to remove `?`
+var customPromptTemplate = &survey.PromptConfig{
+	Icons: survey.IconSet{
+		Question: core.Icon{
+			Text: "",
+		},
+	},
+}
+
 // promptSurvey prompts the user with a prepopulated value using survey and allows them to modify it
 func promptSurvey(value *string, prompt string, defaultValue string) {
 	survey.AskOne(&survey.Input{
 		Message: prompt,
 		Default: defaultValue,
-	}, value)
+	}, value, survey.WithIcons(*customPromptTemplate))
 }
 
 // cleanTextForPrompt ensures text is clean and doesn't cause issues in terminal input
