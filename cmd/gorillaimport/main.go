@@ -69,7 +69,29 @@ func configureGorillaImport() Config {
 		config.DefaultCatalog = defaultConfig.DefaultCatalog
 	}
 
+	// Save the configuration to the appropriate path
+	saveConfig(getConfigPath(), config)
+
 	return config
+}
+
+// saveConfig saves the configuration to a YAML or plist file
+func saveConfig(configPath string, config Config) error {
+	file, err := os.Create(configPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if runtime.GOOS == "darwin" {
+		// Save as plist
+		encoder := plist.NewEncoder(file)
+		return encoder.Encode(config)
+	} else {
+		// Save as YAML
+		yamlEncoder := yaml.NewEncoder(file)
+		return yamlEncoder.Encode(config)
+	}
 }
 
 // calculateSHA256 calculates the SHA-256 hash of the given file.
@@ -286,14 +308,13 @@ func main() {
 	flag.Parse() // Parse the command-line flags
 
 	// Run configuration if requested
-	var configData Config
 	if *config {
-		configData = configureGorillaImport()
+		configureGorillaImport()
 		return
-	} else {
-		// Load configuration from default path
-		configData = defaultConfig
 	}
+
+	// Load configuration from default path
+	configData := defaultConfig
 
 	// Ensure package argument is provided by prompting the user
 	fmt.Printf("Enter the path to the package to import: ")
