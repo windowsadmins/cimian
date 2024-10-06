@@ -264,6 +264,30 @@ func confirmAction(prompt string) bool {
 	return response == "y" || response == "yes"
 }
 
+// copyFile copies a file from src to dst.
+// If dst already exists, it will be overwritten.
+func copyFile(src, dst string) (int64, error) {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer destFile.Close()
+
+	nBytes, err := io.Copy(destFile, sourceFile)
+	if err != nil {
+		return 0, err
+	}
+
+	err = destFile.Sync()
+	return nBytes, err
+}
+
 // gorillaImport handles the overall process of importing a package and generating a pkginfo file.
 func gorillaImport(packagePath string, config Config) error {
 	// Check if the package path exists
