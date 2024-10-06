@@ -258,7 +258,6 @@ func confirmAction(prompt string) bool {
 
 // gorillaImport handles the overall process of importing a package and generating a pkgsinfo file.
 func gorillaImport(packagePath string, config Config) error {
-	packageName := filepath.Base(packagePath)
 	packageExt := filepath.Ext(packagePath)
 
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
