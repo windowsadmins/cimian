@@ -351,7 +351,7 @@ func main() {
 	if packagePath == "" {
 		fmt.Println("Error: Package argument is required.")
 		flag.Usage()
-		sos.Exit(1)
+		os.Exit(1)
 	}
 
 	// Call gorillaImport to handle the import process
