@@ -15,15 +15,15 @@ import (
 
 // PkgsInfo structure
 type PkgsInfo struct {
+	Catalogs          []string `yaml:"catalogs"`
 	Name              string   `yaml:"name"`
 	Version           string   `yaml:"version"`
-	InstallerItemHash string   `yaml:"installer_item_hash"`
-	InstallerItemPath string   `yaml:"installer_item_location"`
-	Catalogs          []string `yaml:"catalogs"`
+	Description       string   `yaml:"description"`
 	Category          string   `yaml:"category"`
 	Developer         string   `yaml:"developer"`
-	Description       string   `yaml:"description"`
 	SupportedArch     []string `yaml:"supported_architectures"`
+	InstallerItemPath string   `yaml:"installer_item_location"`
+	InstallerItemHash string   `yaml:"installer_item_hash"`
 }
 
 // Configuration structure to hold settings
