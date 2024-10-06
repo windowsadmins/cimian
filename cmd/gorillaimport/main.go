@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 	"gopkg.in/yaml.v3"
 )
 
@@ -206,11 +205,6 @@ func copyFile(src, dst string) (int64, error) {
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package.
 func createPkgsInfo(filePath, outputDir, name, version, catalog, category, developer, arch string) error {
 	hash, err := calculateSHA256(filePath)
-	if err != nil {
-		return err
-	}
-
-	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		return err
 	}
@@ -413,16 +407,6 @@ func main() {
 	} else {
 		fmt.Printf("Enter the path to the package file to import: ")
 		fmt.Scanln(&packagePath)
-	}
-
-	fileInfo, err := os.Stat(packagePath)
-	if err != nil {
-		fmt.Printf("Error: %s\n", err)
-		os.Exit(1)
-	}
-	if fileInfo.IsDir() {
-		fmt.Println("Error: The provided path is a directory. Please provide a valid package file, not a directory.")
-		os.Exit(1)
 	}
 
 	// If --arch flag is provided, override the default architecture
