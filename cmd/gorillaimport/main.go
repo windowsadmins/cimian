@@ -340,7 +340,7 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package
-func createPkgsInfo(filePath, outputDir, name, version, catalog, category, developer, arch, repoPath, installerSubPath, productCode, upgradeCode string) error {
+func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string, category, developer string, supportedArch []string, repoPath, installerSubPath, productCode, upgradeCode string) error {
 	hash, err := calculateSHA256(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to calculate SHA256 hash: %v", err)
@@ -353,11 +353,11 @@ func createPkgsInfo(filePath, outputDir, name, version, catalog, category, devel
 		Version:           version,
 		InstallerItemHash: hash,
 		InstallerItemPath: installerItemLocation,
-		Catalogs:          []string{catalog},
+		Catalogs:          catalogs,
 		Category:          category,
 		Developer:         developer,
 		Description:       "",
-		SupportedArch:     []string{arch},
+		SupportedArch:     supportedArch,
 		ProductCode:       productCode,
 		UpgradeCode:       upgradeCode,
 	}
@@ -376,19 +376,6 @@ func createPkgsInfo(filePath, outputDir, name, version, catalog, category, devel
 	}
 
 	return nil
-}
-
-// confirmAction prompts the user to confirm an action.
-func confirmAction(prompt string) bool {
-	fmt.Printf("%s (y/n): ", prompt)
-	var response string
-	_, err := fmt.Scanln(&response)
-	if err != nil {
-		fmt.Println("Error reading input, assuming 'no'")
-		return false
-	}
-	response = strings.ToLower(strings.TrimSpace(response))
-	return response == "y" || response == "yes"
 }
 
 // gorillaImport handles the import process and metadata extraction
@@ -422,7 +409,6 @@ func gorillaImport(packagePath string, config Config) error {
 		if strings.ToLower(useTemplate) == "y" {
 			// Copy fields from existing item to the current one
 			developer = matchingItem.Developer
-			// Add more fields here as needed
 		}
 	}
 
@@ -431,25 +417,34 @@ func gorillaImport(packagePath string, config Config) error {
 	version = cleanTextForPrompt(version)
 	developer = cleanTextForPrompt(developer)
 
-	// Add default fields that may not need changes, like supported architectures and catalogs
-	supportedArch := strings.Join(config.DefaultArch, ",")
-	catalogs := strings.Join(config.DefaultCatalog, ",")
+	// Handle supportedArch and catalogs input as comma-separated strings
+	supportedArch := config.DefaultArch
+	catalogs := config.DefaultCatalog
 
 	promptSurvey(&productName, "Item name", productName)
 	promptSurvey(&version, "Version", version)
 	promptSurvey(&developer, "Developer", developer)
 	promptSurvey(&supportedArch, "Supported Architectures", supportedArch)
-	promptSurvey(&catalogs, "Catalogs", catalogs)
+	promptSurvey(&catalogs, "Catalogs (comma-separated)", catalogs)
 
 	// Silent handling of ProductCode and UpgradeCode
-	if productCode != "" || upgradeCode != "" {
-		// Add silently to the pkgsinfo structure, not showing it to the user
+	if productCode != "" {
+		fmt.Printf("Adding ProductCode silently.\n")
+	}
+	if upgradeCode != "" {
+		fmt.Printf("Adding UpgradeCode silently.\n")
 	}
 
 	// Convert catalogs to slice
 	catalogList := strings.Split(catalogs, ",")
 	for i := range catalogList {
 		catalogList[i] = strings.TrimSpace(catalogList[i])
+	}
+
+	// Convert supportedArch to slice
+	archList := strings.Split(supportedArch, ",")
+	for i := range archList {
+		archList[i] = strings.TrimSpace(archList[i])
 	}
 
 	// Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
@@ -461,7 +456,7 @@ func gorillaImport(packagePath string, config Config) error {
 		catalogList,  // Catalogs as a list
 		"",           // Add category here if needed
 		developer,
-		config.DefaultArch,
+		archList,     // Supported Architectures
 		config.RepoPath,
 		"apps",       // Define subpath for the installer location
 		productCode,  // Silently added if extracted
@@ -476,6 +471,19 @@ func gorillaImport(packagePath string, config Config) error {
 	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
 	return nil
+}
+
+// confirmAction prompts the user to confirm an action.
+func confirmAction(prompt string) bool {
+	fmt.Printf("%s (y/n): ", prompt)
+	var response string
+	_, err := fmt.Scanln(&response)
+	if err != nil {
+		fmt.Println("Error reading input, assuming 'no'")
+		return false
+	}
+	response = strings.ToLower(strings.TrimSpace(response))
+	return response == "y" || response == "yes"
 }
 
 // promptSurvey prompts the user with a prepopulated value using survey and allows them to modify it
