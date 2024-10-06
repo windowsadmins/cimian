@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,18 +28,16 @@ type PkgsInfo struct {
 
 // Configuration structure to hold settings
 type Config struct {
-	RepoPath       string `yaml:"repo_path"`
-	DefaultVersion string `yaml:"default_version"`
-	OutputDir      string `yaml:"output_dir"`
+	RepoPath      string `yaml:"repo_path"`
+	CloudBucket   string `yaml:"cloud_bucket"`
 	DefaultCatalog string `yaml:"default_catalog"`
-	DefaultArch    string `yaml:"default_arch"`
+	DefaultArch   string `yaml:"default_arch"`
 }
 
 // Default configuration values
 var defaultConfig = Config{
 	RepoPath:       "./repo",
-	DefaultVersion: "",
-	OutputDir:      "./pkgsinfo",
+	CloudBucket:    "",
 	DefaultCatalog: "testing",
 	DefaultArch:    "x86_64",
 }
@@ -103,14 +102,20 @@ func configureGorillaImport() Config {
 	fmt.Printf("Repo URL: ")
 	fmt.Scanln(&config.RepoPath)
 
-	fmt.Printf("Pkgsinfo output directory: ")
-	fmt.Scanln(&config.OutputDir)
-
 	fmt.Printf("Default catalog: ")
 	fmt.Scanln(&config.DefaultCatalog)
 
 	fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
 	fmt.Scanln(&config.DefaultArch)
+	if config.DefaultArch == "" {
+		config.DefaultArch = defaultConfig.DefaultArch
+	}
+
+	fmt.Printf("Cloud Bucket: ")
+	fmt.Scanln(&config.CloudBucket)
+	if config.CloudBucket == "" {
+		config.CloudBucket = defaultConfig.CloudBucket
+	}
 
 	err := saveConfig(getConfigPath(), config)
 	if err != nil {
@@ -268,8 +273,30 @@ func gorillaImport(packagePath string, config Config) error {
 		return err
 	}
 
-	// Check for a matching item in the repo
-	matchingItem := findMatchingItem(pkgsInfos, packageName, config.DefaultVersion)
+	// Collect metadata from the user
+	var itemName, version, category, developer, arch string
+
+	fmt.Printf("Item name: ")
+	fmt.Scanln(&itemName)
+
+	fmt.Printf("Version: ")
+	fmt.Scanln(&version)
+
+	fmt.Printf("Category: ")
+	fmt.Scanln(&category)
+
+	fmt.Printf("Developer: ")
+	fmt.Scanln(&developer)
+
+	// Prompt for the architecture
+	fmt.Printf("Architecture (default: %s): ", config.DefaultArch)
+	fmt.Scanln(&arch)
+	if arch == "" {
+		arch = config.DefaultArch
+	}
+
+	// Check for a matching item in the repo by both name and version
+	matchingItem := findMatchingItem(pkgsInfos, itemName, version)
 	if matchingItem != nil {
 		fmt.Printf("This item is similar to an existing item in the repo:\n")
 		fmt.Printf("    Item name: %s\n", matchingItem.Name)
@@ -294,28 +321,6 @@ func gorillaImport(packagePath string, config Config) error {
 			fmt.Println("Copying attributes from the existing item...")
 			config.DefaultCatalog = matchingItem.Catalogs[0]
 		}
-	}
-
-	// Collect metadata from the user
-	var itemName, version, category, developer, arch string
-
-	fmt.Printf("Item name: ")
-	fmt.Scanln(&itemName)
-
-	fmt.Printf("Version: ")
-	fmt.Scanln(&version)
-
-	fmt.Printf("Category: ")
-	fmt.Scanln(&category)
-
-	fmt.Printf("Developer: ")
-	fmt.Scanln(&developer)
-
-	// Prompt for the architecture
-	fmt.Printf("Architecture (default: %s): ", config.DefaultArch)
-	fmt.Scanln(&arch)
-	if arch == "" {
-		arch = config.DefaultArch
 	}
 
 	// Prompt for the repo path
@@ -361,6 +366,29 @@ func gorillaImport(packagePath string, config Config) error {
 	return nil
 }
 
+// uploadToS3 handles uploading files to S3 if a valid bucket is provided
+func uploadToS3(bucket string) error {
+	if bucket == "" {
+		fmt.Println("No S3 bucket provided, skipping upload.")
+		return nil
+	}
+
+	fmt.Println("Starting upload for pkgs")
+	cmd := exec.Command("/usr/local/bin/aws", "s3", "sync",
+		filepath.Join(os.Getenv("HOME"), "DevOps/Munki/deployment/pkgs/"),
+		fmt.Sprintf("s3://%s/repo/deployment/pkgs/", bucket),
+		"--exclude", "*.git/*", "--exclude", "**/.DS_Store")
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("error syncing pkgs directory to S3: %v", err)
+	}
+	fmt.Println("Upload to S3 completed successfully")
+	return nil
+}
+
 // Stub function to avoid the error
 func rebuildCatalogs() {
 	fmt.Println("Rebuild catalogs not implemented yet.")
@@ -386,17 +414,14 @@ func main() {
 			if loadedConfig.RepoPath != "" {
 				configData.RepoPath = loadedConfig.RepoPath
 			}
-			if loadedConfig.DefaultVersion != "" {
-				configData.DefaultVersion = loadedConfig.DefaultVersion
-			}
-			if loadedConfig.OutputDir != "" {
-				configData.OutputDir = loadedConfig.OutputDir
-			}
 			if loadedConfig.DefaultCatalog != "" {
 				configData.DefaultCatalog = loadedConfig.DefaultCatalog
 			}
 			if loadedConfig.DefaultArch != "" {
 				configData.DefaultArch = loadedConfig.DefaultArch
+			}
+			if loadedConfig.CloudBucket != "" {
+				configData.CloudBucket = loadedConfig.CloudBucket
 			}
 		}
 	}
@@ -421,6 +446,11 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
+	}
+	
+	// After creating pkgs and pkgsinfo, upload to S3 if bucket is set
+	if err := uploadToS3(configData.CloudBucket); err != nil {
+	    fmt.Printf("Error uploading to S3: %s\n", err)
 	}
 
 }
