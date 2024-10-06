@@ -16,17 +16,20 @@ import (
 
 // PkgsInfo structure holds package metadata
 type PkgsInfo struct {
-	Name              string   `yaml:"name"`
-	Version           string   `yaml:"version"`
-	Catalogs          []string `yaml:"catalogs"`
-	Category          string   `yaml:"category"`
-	Developer         string   `yaml:"developer"`
-	Description       string   `yaml:"description"`
-	InstallerItemPath string   `yaml:"installer_item_location"`
-	InstallerItemHash string   `yaml:"installer_item_hash"`
-	SupportedArch     []string `yaml:"supported_architectures"`
-	ProductCode       string   `yaml:"product_code"`
-	UpgradeCode       string   `yaml:"upgrade_code"`
+	Name                string   `yaml:"name"`
+	DisplayName         string   `yaml:"display_name"`
+	Version             string   `yaml:"version"`
+	Description         string   `yaml:"description"`
+	Catalogs            []string `yaml:"catalogs"`
+	Category            string   `yaml:"category"`
+	Developer           string   `yaml:"developer"`
+	UnattendedInstall   bool     `yaml:"unattended_install"`
+	UnattendedUninstall bool     `yaml:"unattended_uninstall"`
+	InstallerItemPath   string   `yaml:"installer_item_location"`
+	InstallerItemHash   string   `yaml:"installer_item_hash"`
+	SupportedArch       []string `yaml:"supported_architectures"`
+	ProductCode         string   `yaml:"product_code,omitempty"`
+	UpgradeCode         string   `yaml:"upgrade_code,omitempty"`
 }
 
 // Config structure holds the configuration settings
@@ -428,33 +431,25 @@ func gorillaImport(packagePath string, config Config) error {
 	version = cleanTextForPrompt(version)
 	developer = cleanTextForPrompt(developer)
 
+	// Add default fields that may not need changes, like supported architectures and catalogs
+	supportedArch := strings.Join(config.DefaultArch, ",")
+	catalogs := strings.Join(config.DefaultCatalog, ",")
+
 	promptSurvey(&productName, "Item name", productName)
-	if productName == "" {
-		fmt.Println("Item name cannot be empty. Exiting.")
-		return nil
-	}
-
 	promptSurvey(&version, "Version", version)
-	if version == "" {
-		fmt.Println("Version cannot be empty. Exiting.")
-		return nil
-	}
-
 	promptSurvey(&developer, "Developer", developer)
+	promptSurvey(&supportedArch, "Supported Architectures", supportedArch)
+	promptSurvey(&catalogs, "Catalogs", catalogs)
 
 	// Silent handling of ProductCode and UpgradeCode
-	if productCode != "" {
-		fmt.Printf("Adding ProductCode silently: %s\n", productCode)
-	}
-	if upgradeCode != "" {
-		fmt.Printf("Adding UpgradeCode silently: %s\n", upgradeCode)
+	if productCode != "" || upgradeCode != "" {
+		// Add silently to the pkgsinfo structure, not showing it to the user
 	}
 
-	// Confirm import
-	importItem := getInputWithDefault("Import this item? [y/N]", "N")
-	if strings.ToLower(importItem) != "y" {
-		fmt.Println("Import canceled.")
-		return nil
+	// Convert catalogs to slice
+	catalogList := strings.Split(catalogs, ",")
+	for i := range catalogList {
+		catalogList[i] = strings.TrimSpace(catalogList[i])
 	}
 
 	// Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
@@ -463,12 +458,12 @@ func gorillaImport(packagePath string, config Config) error {
 		filepath.Join(config.RepoPath, "pkgsinfo"),
 		productName,
 		version,
-		config.DefaultCatalog,
-		"", // You can add category here if needed
+		catalogList,  // Catalogs as a list
+		"",           // Add category here if needed
 		developer,
 		config.DefaultArch,
 		config.RepoPath,
-		"apps", // Define subpath for the installer location
+		"apps",       // Define subpath for the installer location
 		productCode,  // Silently added if extracted
 		upgradeCode,  // Silently added if extracted
 	)
