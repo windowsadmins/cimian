@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"gopkg.in/yaml.v3"
+	"github.com/AlecAivazis/survey/v2"
 )
 
 // PkgsInfo structure holds package metadata
@@ -399,24 +400,28 @@ func gorillaImport(packagePath string, config Config) error {
 		fmt.Println("Fallback to manual input.")
 	}
 
-	// Prepopulate and allow user confirmation/modification
-	productName = getInputWithDefault("Item name", productName)
+	// Prepopulate and allow user confirmation/modification using survey
+	promptSurvey(&productName, "Item name", productName)
 	if productName == "" {
 		fmt.Println("Item name cannot be empty. Exiting.")
 		return nil
 	}
 
-	version = getInputWithDefault("Version", version)
+	promptSurvey(&version, "Version", version)
 	if version == "" {
 		fmt.Println("Version cannot be empty. Exiting.")
 		return nil
 	}
 
-	developer = getInputWithDefault("Developer", developer)
+	promptSurvey(&developer, "Developer", developer)
 
-	productCode = getInputWithDefault("ProductCode", productCode)
-
-	upgradeCode = getInputWithDefault("UpgradeCode", upgradeCode)
+	// Silent handling of ProductCode and UpgradeCode
+	if productCode != "" {
+		fmt.Printf("Adding ProductCode silently: %s\n", productCode)
+	}
+	if upgradeCode != "" {
+		fmt.Printf("Adding UpgradeCode silently: %s\n", upgradeCode)
+	}
 
 	// Duplicate checking
 	pkgsInfos, err := scanRepo(config.RepoPath)
@@ -457,8 +462,8 @@ func gorillaImport(packagePath string, config Config) error {
 		config.DefaultArch,
 		config.RepoPath,
 		"apps", // Define subpath for the installer location
-		productCode,
-		upgradeCode,
+		productCode,  // Silently added if extracted
+		upgradeCode,  // Silently added if extracted
 	)
 
 	if err != nil {
@@ -478,6 +483,14 @@ func gorillaImport(packagePath string, config Config) error {
 	return nil
 }
 
+// promptSurvey prompts the user with a prepopulated value using survey and allows them to modify it
+func promptSurvey(value *string, prompt string, defaultValue string) {
+	survey.AskOne(&survey.Input{
+		Message: prompt,
+		Default: defaultValue,
+	}, value)
+}
+
 // getInputWithDefault prompts the user with a prepopulated value and allows them to confirm or modify it
 func getInputWithDefault(prompt, defaultValue string) string {
 	if defaultValue != "" {
@@ -493,7 +506,6 @@ func getInputWithDefault(prompt, defaultValue string) string {
 	}
 	return input
 }
-
 
 // uploadToCloud handles uploading files to AWS or AZURE if a valid bucket is provided
 func uploadToCloud(config Config) error {
@@ -573,6 +585,7 @@ func rebuildCatalogs() {
 	fmt.Println("Rebuild catalogs not implemented yet.")
 }
 
+// main handles the configuration and running gorillaImport
 func main() {
 	config := flag.Bool("config", false, "Run interactive configuration setup.")
 	archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
