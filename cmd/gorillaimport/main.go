@@ -15,21 +15,27 @@ import (
 )
 
 // PkgsInfo structure holds package metadata
+type Installer struct {
+	Location  string   `yaml:"location"`
+	Hash      string   `yaml:"hash"`
+	Arguments []string `yaml:"arguments,omitempty"`
+	Type      string   `yaml:"type"`
+}
+
 type PkgsInfo struct {
-	Name                string   `yaml:"name"`
-	DisplayName         string   `yaml:"display_name"`
-	Version             string   `yaml:"version"`
-	Description         string   `yaml:"description"`
-	Catalogs            []string `yaml:"catalogs"`
-	Category            string   `yaml:"category"`
-	Developer           string   `yaml:"developer"`
-	UnattendedInstall   bool     `yaml:"unattended_install"`
-	UnattendedUninstall bool     `yaml:"unattended_uninstall"`
-	InstallerItemPath   string   `yaml:"installer_item_location"`
-	InstallerItemHash   string   `yaml:"installer_item_hash"`
-	SupportedArch       []string `yaml:"supported_architectures"`
-	ProductCode         string   `yaml:"product_code,omitempty"`
-	UpgradeCode         string   `yaml:"upgrade_code,omitempty"`
+	Name                string     `yaml:"name"`
+	DisplayName         string     `yaml:"display_name"`
+	Version             string     `yaml:"version"`
+	Description         string     `yaml:"description"`
+	Catalogs            []string   `yaml:"catalogs"`
+	Category            string     `yaml:"category"`
+	Developer           string     `yaml:"developer"`
+	UnattendedInstall   bool       `yaml:"unattended_install"`
+	UnattendedUninstall bool       `yaml:"unattended_uninstall"`
+	Installer           *Installer `yaml:"installer"`
+	SupportedArch       []string   `yaml:"supported_architectures"`
+	ProductCode         string     `yaml:"product_code,omitempty"`
+	UpgradeCode         string     `yaml:"upgrade_code,omitempty"`
 }
 
 // Config structure holds the configuration settings
@@ -346,7 +352,7 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 		return fmt.Errorf("failed to calculate SHA256 hash: %v", err)
 	}
 
-	installerItemLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
+	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
 	// Ensure that productCode and upgradeCode don't contain artifacts
 	cleanProductCode := strings.Trim(productCode, "{}\r")
@@ -355,8 +361,11 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 	pkgsInfo := PkgsInfo{
 		Name:                name,
 		Version:             version,
-		InstallerItemHash:   hash,
-		InstallerItemPath:   installerItemLocation,
+		Installer: &Installer{
+			Location: installerLocation,
+			Hash:     hash,
+			Type:     filepath.Ext(filePath)[1:],
+		},
 		Catalogs:            catalogs,
 		Category:            category,
 		Developer:           developer,
@@ -422,14 +431,14 @@ func gorillaImport(packagePath string, config Config) error {
         fmt.Printf("This item is similar to an existing item in the repo:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
-        fmt.Printf("  Installer item path: %s\n\n", matchingItem.InstallerItemPath)
+        fmt.Printf("  Installer item path: %s\n\n", matchingItem.Installer.Location)
 
         // Ask if the user wants to use the existing item as a template
         useTemplate := getInputWithDefault("Use existing item as a template? [y/N]", "N")
         if strings.ToLower(useTemplate) == "y" {
             // Copy fields from existing item to the current one
             developer = matchingItem.Developer
-            installerSubPath = filepath.Dir(matchingItem.InstallerItemPath)
+            installerSubPath = filepath.Dir(matchingItem.Installer.Location)
         }
     }
 
