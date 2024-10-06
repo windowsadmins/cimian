@@ -2,16 +2,17 @@ package main
 
 import (
 	"crypto/sha256"
-	"gopkg.in/yaml.v3"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
-	"os/exec"
-	"runtime"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Configuration structure to hold settings
@@ -102,6 +103,13 @@ func saveConfig(configPath string, config Config) error {
 		return cmd.Run()
 	} else {
 		// Save as YAML
+		if _, err := os.Stat(filepath.Dir(configPath)); os.IsNotExist(err) {
+			err = os.MkdirAll(filepath.Dir(configPath), 0755)
+			if err != nil {
+				return err
+			}
+		}
+
 		file, err := os.Create(configPath)
 		if err != nil {
 			return err
@@ -150,18 +158,18 @@ func createPkgInfo(filePath string, outputDir string, version string, catalog st
 
 	// Define the pkginfo structure with relevant metadata
 	pkgInfo := map[string]interface{}{
-		"name":                filepath.Base(filePath), // Use the file name as the package name
-		"version":             version,                 // Use the provided version
-		"installer_item_hash": hash,                    // The calculated hash of the package file
-		"installer_item_size": fileInfo.Size(),         // Size of the package file in bytes
-		"description":         "Package imported via GorillaImport", // Description of the package
-		"import_date":         time.Now().Format(time.RFC3339),        // Timestamp of the import
-		"catalogs":            []string{catalog},
-		"category":            "Apps",
-		"developer":           "Unknown",
+		"name":                    filepath.Base(filePath),              // Use the file name as the package name
+		"version":                 version,                              // Use the provided version
+		"installer_item_hash":     hash,                                 // The calculated hash of the package file
+		"installer_item_size":     fileInfo.Size(),                      // Size of the package file in bytes
+		"description":             "Package imported via GorillaImport", // Description of the package
+		"import_date":             time.Now().Format(time.RFC3339),      // Timestamp of the import
+		"catalogs":                []string{catalog},
+		"category":                "Apps",
+		"developer":               "Unknown",
 		"supported_architectures": []string{"x86_64", "arm64"},
-		"unattended_install":  true,
-		"unattended_uninstall": false,
+		"unattended_install":      true,
+		"unattended_uninstall":    false,
 	}
 
 	// Handle special case for PowerShell scripts (.ps1)
@@ -343,7 +351,7 @@ func main() {
 	if packagePath == "" {
 		fmt.Println("Error: Package argument is required.")
 		flag.Usage()
-		os.Exit(1)
+		sos.Exit(1)
 	}
 
 	// Call gorillaImport to handle the import process
