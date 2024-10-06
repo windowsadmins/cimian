@@ -524,7 +524,7 @@ func main() {
 	
 	// After creating pkgs and pkgsinfo, upload to the appropriate cloud provider only if not "none"
 	if configData.CloudProvider != "none" {
-		if err := uploadToCloud(configData.CloudBucket, configData.CloudProvider); err != nil {
+		if err := uploadToCloud(configData); err != nil {
 			fmt.Printf("Error uploading to cloud: %s\n", err)
 		}
 	}
