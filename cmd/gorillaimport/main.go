@@ -43,19 +43,19 @@ var defaultConfig = Config{
 	DefaultArch:    "x86_64",
 }
 
-// checkTools checks if necessary tools are installed on the system (msiexec, sigcheck, etc.)
+// checkTools checks if necessary tools are installed on the system (msiexec, sigcheck for Windows; msiextract for macOS)
 func checkTools() error {
 	switch runtime.GOOS {
 	case "windows":
-		// Check for msiexec
+		// Check for msiexec (Windows)
 		_, err := exec.LookPath("msiexec")
 		if err != nil {
 			fmt.Println("msiexec is not found. This is necessary for extracting .msi metadata on Windows.")
 			fmt.Println("msiexec is pre-installed on Windows. If it is not working, make sure the system PATH is configured correctly.")
 		}
 
-		// Check for sigcheck
-		_, err = exec.LookPath("sigcheck")
+		// Check for sigcheck (Windows)
+		_, err = exec.LookPath("sigcheck.exe")
 		if err != nil {
 			fmt.Println("sigcheck.exe is not found. You can download it from the Sysinternals Suite at:")
 			fmt.Println("https://docs.microsoft.com/en-us/sysinternals/downloads/sysinternals-suite")
@@ -63,26 +63,15 @@ func checkTools() error {
 		}
 
 	case "darwin": // MacOS
-		// Check for msitools
+		// Check for msiextract (from msitools) on macOS
 		_, err := exec.LookPath("msiextract")
 		if err != nil {
 			fmt.Println("msiextract (from msitools) is not found. You can install it using Homebrew:")
-			fmt.Println("Run the following command in the terminal:")
-			fmt.Println("    /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
 			fmt.Println("Then install msitools:")
 			fmt.Println("    brew install msitools")
 		}
-
-		// Check for Mono if sigcheck is needed
-		_, err = exec.LookPath("mono")
-		if err != nil {
-			fmt.Println("Mono is not found. You can install it to run sigcheck.exe on macOS. Install Mono using Homebrew:")
-			fmt.Println("    brew install mono")
-			fmt.Println("Then download sigcheck.exe from the Sysinternals Suite:")
-			fmt.Println("    https://docs.microsoft.com/en-us/sysinternals/downloads/sysinternals-suite")
-			fmt.Println("To run sigcheck, use:")
-			fmt.Println("    mono sigcheck.exe <your-exe-file>")
-		}
+	default:
+		fmt.Println("This script is only supported on Windows and macOS.")
 	}
 	return nil
 }
@@ -337,122 +326,186 @@ func confirmAction(prompt string) bool {
 	return response == "y" || response == "yes"
 }
 
+// extractPackageMetadata extracts ProductName, ProductCode, and ProductVersion from MSI/EXE files
+func extractPackageMetadata(packagePath string) (string, string, string, error) {
+    var productName, productCode, productVersion string
+    var err error
+
+    if runtime.GOOS == "windows" {
+        // On Windows, use sigcheck or msiexec for MSI and EXE files
+        if filepath.Ext(packagePath) == ".msi" {
+            // Using msiexec to extract MSI metadata on Windows
+            productName, productVersion, productCode, err = extractMSIMetadataWindows(packagePath)
+        } else if filepath.Ext(packagePath) == ".exe" {
+            // Use sigcheck for EXE metadata on Windows
+            productName, productVersion, err = extractEXEMetadataWindows(packagePath)
+        }
+    } else if runtime.GOOS == "darwin" {
+        // On macOS, use msiextract from msitools
+        if filepath.Ext(packagePath) == ".msi" {
+            productName, productVersion, productCode, err = extractMSIMetadataMac(packagePath)
+        } else {
+            err = fmt.Errorf("unsupported package type on macOS")
+        }
+    }
+    return productName, productVersion, productCode, err
+}
+
+// extractMSIMetadataWindows extracts MSI metadata on Windows using msiexec
+func extractMSIMetadataWindows(packagePath string) (string, string, string, error) {
+    cmd := exec.Command("msiexec", "/I", packagePath, "/quiet", "/qn", "PROPERTY=ProductName", "PROPERTY=ProductVersion", "PROPERTY=ProductCode")
+    output, err := cmd.CombinedOutput()
+    if err != nil {
+        return "", "", "", fmt.Errorf("failed to extract MSI metadata on Windows: %v", err)
+    }
+    // Parse the output to extract productName, productVersion, and productCode
+    productName, productVersion, productCode := parseMSIOutput(string(output))
+    return productName, productVersion, productCode, nil
+}
+
+// extractEXEMetadataWindows uses sigcheck to extract EXE metadata on Windows
+func extractEXEMetadataWindows(packagePath string) (string, string, error) {
+    cmd := exec.Command("sigcheck.exe", "-n", "-v", packagePath)
+    output, err := cmd.CombinedOutput()
+    if err != nil {
+        return "", "", fmt.Errorf("failed to extract EXE metadata: %v", err)
+    }
+    // Parse the sigcheck output to get productName and productVersion
+    productName, productVersion := parseEXEOutput(string(output))
+    return productName, productVersion, nil
+}
+
+// extractMSIMetadataMac extracts MSI metadata on macOS using msiextract from msitools
+func extractMSIMetadataMac(packagePath string) (string, string, string, error) {
+    cmd := exec.Command("msiextract", "--info", packagePath)
+    output, err := cmd.CombinedOutput()
+    if err != nil {
+        return "", "", "", fmt.Errorf("failed to extract MSI metadata on macOS: %v", err)
+    }
+    productName, productVersion, productCode := parseMSIOutput(string(output))
+    return productName, productVersion, productCode, nil
+}
+
+// parseMSIOutput parses the output of msiexec/msiextract and returns name, version, and code
+func parseMSIOutput(output string) (string, string, string) {
+    var productName, productVersion, productCode string
+    lines := strings.Split(output, "\n")
+    for _, line := range lines {
+        if strings.Contains(line, "ProductName") {
+            productName = strings.TrimSpace(strings.Split(line, ":")[1])
+        }
+        if strings.Contains(line, "ProductVersion") {
+            productVersion = strings.TrimSpace(strings.Split(line, ":")[1])
+        }
+        if strings.Contains(line, "ProductCode") {
+            productCode = strings.TrimSpace(strings.Split(line, ":")[1])
+        }
+    }
+    return productName, productVersion, productCode
+}
+
+// parseEXEOutput parses the output of sigcheck for EXE files and returns name and version
+func parseEXEOutput(output string) (string, string) {
+    var productName, productVersion string
+    lines := strings.Split(output, "\n")
+    for _, line := range lines {
+        if strings.Contains(line, "Product name") {
+            productName = strings.TrimSpace(strings.Split(line, ":")[1])
+        }
+        if strings.Contains(line, "File version") {
+            productVersion = strings.TrimSpace(strings.Split(line, ":")[1])
+        }
+    }
+    return productName, productVersion
+}
+
+// gorillaImport handles the overall process of importing a package and generating a pkgsinfo file.
 // gorillaImport handles the overall process of importing a package and generating a pkgsinfo file.
 func gorillaImport(packagePath string, config Config) error {
-	packageName := filepath.Base(packagePath)
-	packageExt := filepath.Ext(packagePath)
+    // Extract metadata from the package
+    productName, productVersion, productCode, err := extractPackageMetadata(packagePath)
+    if err != nil {
+        fmt.Printf("Error extracting metadata: %v\n", err)
+    } else {
+        fmt.Printf("Extracted Name: %s, Version: %s, Product Code: %s\n", productName, productVersion, productCode)
+    }
 
-	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-		return fmt.Errorf("package '%s' does not exist", packagePath)
-	}
+    // Fallback to user input if extraction fails or is incomplete
+    if productName == "" || productVersion == "" {
+        fmt.Println("Fallback to manual input.")
+        fmt.Printf("Item name: ")
+        fmt.Scanln(&productName)
 
-	// Scan the repo for existing pkgsinfo items
-	pkgsInfos, err := scanRepo(config.RepoPath)
-	if err != nil {
-	    return fmt.Errorf("failed to scan repo: %v", err)
-	}
+        fmt.Printf("Version: ")
+        fmt.Scanln(&productVersion)
+    }
 
-	// Check for a matching item in the repo by both name and version
-	var matchingItem *PkgsInfo
-	var installerSubPath string
-	for _, item := range pkgsInfos {
-		if item.Name == packageName && item.Version == item.Version { // Compare both name and version
-			matchingItem = &item
-			installerSubPath = filepath.Dir(item.InstallerItemPath) // Capture subfolder structure
-			break
-		}
-	}
+    packageExt := filepath.Ext(packagePath)
+    pkgsInfos, err := scanRepo(config.RepoPath)
+    if err != nil {
+        return fmt.Errorf("failed to scan repo: %v", err)
+    }
 
-	// If a matching item is found, check if the package is identical
-	if matchingItem != nil {
-		newItemHash, hashErr := calculateSHA256(packagePath)
-		if hashErr != nil {
-			return hashErr
-		}
+    // Check for matching item by comparing name and version
+    matchingItem := findMatchingItem(pkgsInfos, productName, productVersion)
+    if matchingItem != nil {
+        newItemHash, err := calculateSHA256(packagePath)
+        if err != nil {
+            return err
+        }
 
-		if matchingItem.InstallerItemHash == newItemHash {
-			fmt.Println("*** This item is identical to an existing item in the repo ***")
-			if !confirmAction("Import this item anyway?") {
-				fmt.Println("Import canceled.")
-				return nil
-			}
-		}
+        // Compare hashes to determine if it's an identical package
+        if matchingItem.InstallerItemHash == newItemHash {
+            fmt.Println("*** This item is identical to an existing item in the repo ***")
+            if !confirmAction("Import this item anyway?") {
+                fmt.Println("Import canceled.")
+                return nil
+            }
+        }
 
-		fmt.Println("Copying attributes from the existing item...")
-		config.DefaultCatalog = matchingItem.Catalogs[0]
+        fmt.Println("Reusing existing metadata for the import.")
+        // Use the existing matching item's metadata
+        config.DefaultCatalog = matchingItem.Catalogs[0]
+        installerSubPath := filepath.Dir(matchingItem.InstallerItemPath)
+        pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", matchingItem.Name, matchingItem.Version))
 
-		// Reuse the subfolder from the existing item for pkgsinfo
-		pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", matchingItem.Name, matchingItem.Version))
+        // Create new pkgsinfo based on matching item
+        err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch, config.RepoPath, installerSubPath)
+        if err != nil {
+            return fmt.Errorf("failed to create pkgsinfo: %v", err)
+        }
+        return nil
+    }
 
-		// Create pkgsinfo directly
-		err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch, config.RepoPath, installerSubPath)
-		if err != nil {
-			return fmt.Errorf("failed to create pkgsinfo: %v", err)
-		}
+    // If no matching item, prompt for further info and proceed with the import
+    fmt.Printf("Category: ")
+    var category string
+    fmt.Scanln(&category)
 
-		return nil
-	}
+    fmt.Printf("Developer: ")
+    var developer string
+    fmt.Scanln(&developer)
 
-	// Collect metadata from the user if no match was found
-	var itemName, version, category, developer, arch string
-	fmt.Printf("Item name: ")
-	fmt.Scanln(&itemName)
+    // Prompt for the installer item path
+    var installerPath string
+    fmt.Printf("What is the installer item path? ")
+    fmt.Scanln(&installerPath)
 
-	fmt.Printf("Version: ")
-	fmt.Scanln(&version)
+    // Use the configured repo path for storage
+    pkgsPath := filepath.Join(config.RepoPath, "pkgs", installerPath, fmt.Sprintf("%s-%s%s", productName, productVersion, packageExt))
+    pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerPath, fmt.Sprintf("%s-%s.yaml", productName, productVersion))
 
-	fmt.Printf("Category: ")
-	fmt.Scanln(&category)
+    // Copy the package to the repository and create the pkgsinfo file
+    if _, err := copyFile(packagePath, pkgsPath); err != nil {
+        return fmt.Errorf("failed to copy package to repo: %v", err)
+    }
 
-	fmt.Printf("Developer: ")
-	fmt.Scanln(&developer)
+    err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), productName, productVersion, config.DefaultCatalog, category, developer, config.DefaultArch, config.RepoPath, installerPath)
+    if err != nil {
+        return fmt.Errorf("failed to create pkgsinfo: %v", err)
+    }
 
-	// Prompt for the architecture
-	fmt.Printf("Architecture (default: %s): ", config.DefaultArch)
-	fmt.Scanln(&arch)
-	if arch == "" {
-		arch = config.DefaultArch
-	}
-
-	// Prompt for the installer item path
-	var installerPath string
-	fmt.Printf("What is the installer item path? ")
-	fmt.Scanln(&installerPath)
-
-	if installerPath == "" {
-		installerPath = "apps" // Default subpath if none provided
-	}
-
-	// Use the configured repo path for storage
-	pkgsPath := filepath.Join(config.RepoPath, "pkgs", installerPath, fmt.Sprintf("%s-%s%s", itemName, version, packageExt))
-	pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerPath, fmt.Sprintf("%s-%s.yaml", itemName, version))
-
-	// Create directories as needed
-	if err := os.MkdirAll(filepath.Dir(pkgsPath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(pkgsinfoPath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	// Copy package to the repository
-	if _, err := copyFile(packagePath, pkgsPath); err != nil {
-		return fmt.Errorf("failed to copy package to repo: %v", err)
-	}
-
-	// Create pkgsinfo for the item
-	err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), itemName, version, config.DefaultCatalog, category, developer, arch, config.RepoPath, installerPath)
-	if err != nil {
-		return fmt.Errorf("failed to create pkgsinfo: %v", err)
-	}
-
-	// Prompt for catalog rebuild
-	if confirmAction("Rebuild catalogs?") {
-		fmt.Println("Rebuilding catalogs...")
-		rebuildCatalogs()
-	}
-
-	return nil
+    return nil
 }
 
 // uploadToS3 handles uploading files to AWS or AZURE if a valid bucket is provided
