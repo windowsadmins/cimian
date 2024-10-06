@@ -258,23 +258,55 @@ func confirmAction(prompt string) bool {
 
 // gorillaImport handles the overall process of importing a package and generating a pkgsinfo file.
 func gorillaImport(packagePath string, config Config) error {
+	packageName := filepath.Base(packagePath)
 	packageExt := filepath.Ext(packagePath)
 
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-		fmt.Printf("Package '%s' does not exist.\n", packagePath)
 		return fmt.Errorf("package '%s' does not exist", packagePath)
 	}
 
 	// Scan the repo for existing pkgsinfo items
 	pkgsInfos, err := scanRepo(config.RepoPath)
 	if err != nil {
-		fmt.Printf("Failed to scan repo: %v\n", err)
-		return err
+		return fmt.Errorf("failed to scan repo: %v", err)
 	}
 
-	// Collect metadata from the user
-	var itemName, version, category, developer, arch string
+	// Check for a matching item in the repo by name and version
+	var matchingItem *PkgsInfo
+	for _, item := range pkgsInfos {
+		if item.Name == packageName && item.Version == config.DefaultVersion {
+			matchingItem = &item
+			break
+		}
+	}
 
+	// If a matching item is found, check if the package is identical
+	if matchingItem != nil {
+		newItemHash, hashErr := calculateSHA256(packagePath)
+		if hashErr != nil {
+			return hashErr
+		}
+
+		if matchingItem.InstallerItemHash == newItemHash {
+			fmt.Println("*** This item is identical to an existing item in the repo ***")
+			if !confirmAction("Import this item anyway?") {
+				fmt.Println("Import canceled.")
+				return nil
+			}
+		}
+
+		fmt.Println("Copying attributes from the existing item...")
+		config.DefaultCatalog = matchingItem.Catalogs[0]
+
+		// Reuse the subfolder from the existing item for pkgsinfo
+		installerSubPath := filepath.Dir(matchingItem.InstallerItemPath)
+		pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", matchingItem.Name, matchingItem.Version))
+
+		return handlePkgCreation(packagePath, pkgsinfoPath, matchingItem.Name, matchingItem.Version, config.DefaultCatalog, matchingItem.Category, matchingItem.Developer, config.DefaultArch)
+	}
+
+	// Collect metadata from the user if no match was found
+	var itemName, version, category, developer, arch string
 	fmt.Printf("Item name: ")
 	fmt.Scanln(&itemName)
 
@@ -294,63 +326,33 @@ func gorillaImport(packagePath string, config Config) error {
 		arch = config.DefaultArch
 	}
 
-	// Check for a matching item in the repo by both name and version
-	matchingItem := findMatchingItem(pkgsInfos, itemName, version)
-	if matchingItem != nil {
-		fmt.Printf("This item is similar to an existing item in the repo:\n")
-		fmt.Printf("    Item name: %s\n", matchingItem.Name)
-		fmt.Printf("    Version: %s\n", matchingItem.Version)
+	// Prompt for the installer item path
+	var installerPath string
+	fmt.Printf("What is the installer item path? ")
+	fmt.Scanln(&installerPath)
 
-		// Check if the new package is identical to the existing one
-		newItemHash, hashErr := calculateSHA256(packagePath)
-		if hashErr != nil {
-			fmt.Printf("Error calculating hash: %v\n", hashErr)
-			return hashErr
-		}
-
-		if matchingItem.InstallerItemHash == newItemHash {
-			fmt.Println("*** This item is identical to an existing item in the repo ***")
-			if !confirmAction("Import this item anyway?") {
-				fmt.Println("Import canceled.")
-				return nil
-			}
-		}
-
-		if confirmAction("Use existing item as a template?") {
-			fmt.Println("Copying attributes from the existing item...")
-			config.DefaultCatalog = matchingItem.Catalogs[0]
-		}
+	if installerPath == "" {
+		installerPath = "apps" // Default subpath if none provided
 	}
 
-	// Prompt for the repo path
-	var customPath string
-	fmt.Printf("Enter custom path for the repo (default: %s): ", config.RepoPath)
-	fmt.Scanln(&customPath)
-	if customPath == "" {
-		customPath = config.RepoPath
-	}
-
-	// Use the configured repo path for storage, and retain the package extension
-	pkgsPath := filepath.Join(customPath, "pkgs", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s%s", itemName, version, packageExt))
-	pkgsinfoPath := filepath.Join(customPath, "pkgsinfo", "apps", strings.ToLower(developer), fmt.Sprintf("%s-%s.yaml", itemName, version))
+	// Use the configured repo path for storage
+	pkgsPath := filepath.Join(config.RepoPath, "pkgs", installerPath, fmt.Sprintf("%s-%s%s", itemName, version, packageExt))
+	pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", installerPath, fmt.Sprintf("%s-%s.yaml", itemName, version))
 
 	// Create directories as needed
 	if err := os.MkdirAll(filepath.Dir(pkgsPath), 0755); err != nil {
-		fmt.Printf("Failed to create directory: %v\n", err)
-		return err
+		return fmt.Errorf("failed to create directory: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(pkgsinfoPath), 0755); err != nil {
-		fmt.Printf("Failed to create directory: %v\n", err)
-		return err
+		return fmt.Errorf("failed to create directory: %v", err)
 	}
 
-	// Copy package to the repository, but suppress the output feedback
-	_, err = copyFile(packagePath, pkgsPath)
-	if err != nil {
+	// Copy package to the repository
+	if _, err := copyFile(packagePath, pkgsPath); err != nil {
 		return fmt.Errorf("failed to copy package to repo: %v", err)
 	}
 
-	// Create pkgsinfo for the item, without showing the creation feedback twice
+	// Create pkgsinfo for the item
 	err = createPkgsInfo(packagePath, filepath.Dir(pkgsinfoPath), itemName, version, config.DefaultCatalog, category, developer, arch)
 	if err != nil {
 		return fmt.Errorf("failed to create pkgsinfo: %v", err)
