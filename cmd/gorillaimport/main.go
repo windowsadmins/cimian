@@ -214,21 +214,6 @@ func confirmAction(prompt string) bool {
 
 // gorillaImport handles the overall process of importing a package and generating a pkginfo file.
 func gorillaImport(packagePath string, config Config) error {
-	// Ensure the package file is of a supported type
-	supportedExtensions := []string{".msi", ".ps1", ".exe", ".nupkg"}
-	ext := strings.ToLower(filepath.Ext(packagePath))
-	isSupported := false
-	for _, extension := range supportedExtensions {
-		if ext == extension {
-			isSupported = true
-			break
-		}
-	}
-
-	if !isSupported {
-		return fmt.Errorf("unsupported package type: %s", ext)
-	}
-
 	// Check if the package path exists
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return fmt.Errorf("package path '%s' does not exist", packagePath)
