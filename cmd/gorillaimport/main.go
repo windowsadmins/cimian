@@ -1,18 +1,64 @@
-package main
-
 import (
-	"crypto/sha256"
-	"gopkg.in/yaml.v3"
-	"flag"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-	"os/exec"
-	"runtime"
+    "gopkg.in/yaml.v3"
+    "io/ioutil"
+    "path/filepath"
+    "os"
+    "fmt"
 )
+
+type PkgInfo struct {
+    Name               string   `yaml:"name"`
+    Version            string   `yaml:"version"`
+    InstallerItemHash  string   `yaml:"installer_item_hash"`
+    InstallerItemPath  string   `yaml:"installer_item_location"`
+    Catalogs           []string `yaml:"catalogs"`
+    // Add other fields as necessary
+}
+
+// scanRepo scans the pkginfo directory recursively to find existing pkginfo files.
+func scanRepo(repoPath string) ([]PkgInfo, error) {
+    var pkgInfos []PkgInfo
+
+    // Walk through all files in the repo directory
+    err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+
+        // Only process YAML files
+        if filepath.Ext(path) == ".yaml" {
+            fileContent, err := ioutil.ReadFile(path)
+            if err != nil {
+                return err
+            }
+
+            // Parse the YAML file into a PkgInfo struct
+            var pkgInfo PkgInfo
+            if err := yaml.Unmarshal(fileContent, &pkgInfo); err != nil {
+                return err
+            }
+
+            // Append the parsed PkgInfo to the list
+            pkgInfos = append(pkgInfos, pkgInfo)
+        }
+        return nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+    return pkgInfos, nil
+}
+
+// findMatchingItem looks for an item with the same name and/or version.
+func findMatchingItem(pkgInfos []PkgInfo, name string, version string) *PkgInfo {
+    for _, item := range pkgInfos {
+        if item.Name == name && item.Version == version {
+            return &item
+        }
+    }
+    return nil
+}
 
 // Configuration structure to hold settings
 type Config struct {
@@ -301,6 +347,7 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // gorillaImport handles the overall process of importing a package and generating a pkginfo file.
+// gorillaImport handles the overall process of importing a package and generating a pkginfo file.
 func gorillaImport(packagePath string, config Config) error {
     packageName := filepath.Base(packagePath)
     
@@ -312,24 +359,40 @@ func gorillaImport(packagePath string, config Config) error {
     
     fmt.Printf("Package path '%s' exists.\n", packagePath)
     
-    // Simulate checking for a similar item in the repo
-    // In reality, you'd compare against your existing pkginfo items
-    fmt.Println("Checking for similar items in the repo...")
-    existingItem := checkForSimilarItem(packageName)
+    // Scan the repo for existing pkginfo items
+    pkgInfos, err := scanRepo(config.RepoPath)
+    if err != nil {
+        fmt.Printf("Failed to scan repo: %v\n", err)
+        return err
+    }
     
-    if existingItem != nil {
+    // Check for a matching item in the repo
+    matchingItem := findMatchingItem(pkgInfos, packageName, config.DefaultVersion)
+    if matchingItem != nil {
         fmt.Printf("This item is similar to an existing item in the repo:\n")
-        fmt.Printf("    Item name: %s\n", existingItem["name"])
-        fmt.Printf("    Version: %s\n", existingItem["version"])
-        fmt.Printf("    Installer item path: %s\n", existingItem["path"])
+        fmt.Printf("    Item name: %s\n", matchingItem.Name)
+        fmt.Printf("    Version: %s\n", matchingItem.Version)
+        fmt.Printf("    Installer item path: %s\n", matchingItem.InstallerItemPath)
+        
+        // Check if the new package is identical to the existing one
+        newItemHash, hashErr := calculateSHA256(packagePath)
+        if hashErr != nil {
+            fmt.Printf("Error calculating hash: %v\n", hashErr)
+            return hashErr
+        }
+        
+        if matchingItem.InstallerItemHash == newItemHash {
+            fmt.Println("*** This item is identical to an existing item in the repo ***")
+            if !confirmAction("Import this item anyway?") {
+                fmt.Println("Import canceled.")
+                return nil
+            }
+        }
         
         if confirmAction("Use existing item as a template?") {
             // Copy relevant fields from the existing item
             fmt.Println("Copying attributes from the existing item...")
-            // Example fields to copy
-            config.Category = existingItem["category"].(string)
-            config.Developer = existingItem["developer"].(string)
-            // Add more fields as necessary
+            config.DefaultCatalog = matchingItem.Catalogs[0]
         }
     }
     
@@ -350,19 +413,19 @@ func gorillaImport(packagePath string, config Config) error {
     }
     fmt.Printf("Version set to: %s\n", version)
 
-    fmt.Printf("Category [default: %s]: ", config.Category)
+    fmt.Printf("Category [default: %s]: ", "Apps")
     var category string
     fmt.Scanln(&category)
     if category == "" {
-        category = config.Category
+        category = "Apps"
     }
     fmt.Printf("Category set to: %s\n", category)
 
-    fmt.Printf("Developer [default: %s]: ", config.Developer)
+    fmt.Printf("Developer [default: %s]: ", "Unknown")
     var developer string
     fmt.Scanln(&developer)
     if developer == "" {
-        developer = config.Developer
+        developer = "Unknown"
     }
     fmt.Printf("Developer set to: %s\n", developer)
 
@@ -390,7 +453,7 @@ func gorillaImport(packagePath string, config Config) error {
 
     // Create pkginfo for the item
     fmt.Printf("Creating pkginfo at %s...\n", pkginfoPath)
-    if err := createPkgInfo(packagePath, pkginfoPath, version, category); err != nil {
+    if err := createPkgInfo(packagePath, pkginfoPath, version, config.DefaultCatalog); err != nil {
         fmt.Printf("Failed to create pkginfo: %v\n", err)
         return fmt.Errorf("failed to create pkginfo: %v", err)
     }
