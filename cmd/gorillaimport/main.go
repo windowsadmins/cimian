@@ -388,7 +388,6 @@ func confirmAction(prompt string) bool {
 
 // gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) error {
-
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return fmt.Errorf("package '%s' does not exist", packagePath)
 	}
@@ -400,15 +399,24 @@ func gorillaImport(packagePath string, config Config) error {
 		fmt.Println("Fallback to manual input.")
 	}
 
-	// Fallback to manual input if metadata is missing
+	// Prepopulate and allow user confirmation/modification
+	productName = getInputWithDefault("Item name", productName)
 	if productName == "" {
-		fmt.Printf("Item name: ")
-		fmt.Scanln(&productName)
+		fmt.Println("Item name cannot be empty. Exiting.")
+		return nil
 	}
+
+	version = getInputWithDefault("Version", version)
 	if version == "" {
-		fmt.Printf("Version: ")
-		fmt.Scanln(&version)
+		fmt.Println("Version cannot be empty. Exiting.")
+		return nil
 	}
+
+	developer = getInputWithDefault("Developer", developer)
+
+	productCode = getInputWithDefault("ProductCode", productCode)
+
+	upgradeCode = getInputWithDefault("UpgradeCode", upgradeCode)
 
 	// Duplicate checking
 	pkgsInfos, err := scanRepo(config.RepoPath)
@@ -416,12 +424,28 @@ func gorillaImport(packagePath string, config Config) error {
 		return fmt.Errorf("error scanning repo: %v", err)
 	}
 
+	// Check for duplicate
 	if matchingItem := findMatchingItem(pkgsInfos, productName, version); matchingItem != nil {
-		fmt.Printf("Duplicate found: %s version %s already exists. Skipping import.\n", productName, version)
+		fmt.Printf("This item is similar to an existing item in the repo:\n")
+		fmt.Printf("            Item name: %s\n", matchingItem.Name)
+		fmt.Printf("              Version: %s\n", matchingItem.Version)
+		fmt.Printf("  Installer item path: %s\n\n", matchingItem.InstallerItemPath)
+		useTemplate := getInputWithDefault("Use existing item as a template? [y/N]", "N")
+		if strings.ToLower(useTemplate) == "y" {
+			// Prepopulate more fields using the template if chosen
+			fmt.Printf("Copying developer: %s\n", matchingItem.Developer)
+			developer = matchingItem.Developer
+		}
+	}
+
+	// Confirm import
+	importItem := getInputWithDefault("Import this item? [y/N]", "N")
+	if strings.ToLower(importItem) != "y" {
+		fmt.Println("Import canceled.")
 		return nil
 	}
 
-	// Create pkgsinfo YAML file using extracted metadata
+	// Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
 	err = createPkgsInfo(
 		packagePath,
 		filepath.Join(config.RepoPath, "pkgsinfo"),
@@ -444,8 +468,32 @@ func gorillaImport(packagePath string, config Config) error {
 	// Continue with the import process
 	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
+	// After creating pkgsinfo, you may proceed to upload
+	if config.CloudProvider != "none" {
+		if err := uploadToCloud(config); err != nil {
+			fmt.Printf("Error uploading to cloud: %s\n", err)
+		}
+	}
+
 	return nil
 }
+
+// getInputWithDefault prompts the user with a prepopulated value and allows them to confirm or modify it
+func getInputWithDefault(prompt, defaultValue string) string {
+	if defaultValue != "" {
+		fmt.Printf("%s [%s]: ", prompt, defaultValue)
+	} else {
+		fmt.Printf("%s: ", prompt)
+	}
+	var input string
+	fmt.Scanln(&input)
+
+	if input == "" {
+		return defaultValue
+	}
+	return input
+}
+
 
 // uploadToCloud handles uploading files to AWS or AZURE if a valid bucket is provided
 func uploadToCloud(config Config) error {
