@@ -341,6 +341,60 @@ func copyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
+// loadConfig loads the configuration from a plist or YAML file
+func loadConfig(configPath string) (Config, error) {
+	var config Config
+
+	if runtime.GOOS == "darwin" {
+		// Load plist using macOS native command
+		config = defaultConfig
+		cmd := exec.Command("defaults", "read", configPath[:len(configPath)-6], "repo_path")
+		output, err := cmd.Output()
+		if err == nil {
+			config.RepoPath = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_version")
+		output, err = cmd.Output()
+		if err == nil {
+			config.DefaultVersion = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "output_dir")
+		output, err = cmd.Output()
+		if err == nil {
+			config.OutputDir = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "pkginfo_editor")
+		output, err = cmd.Output()
+		if err == nil {
+			config.PkginfoEditor = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_catalog")
+		output, err = cmd.Output()
+		if err == nil {
+			config.DefaultCatalog = strings.TrimSpace(string(output))
+		}
+	} else {
+		// Load YAML config
+		file, err := os.Open(configPath)
+		if err != nil {
+			return config, err
+		}
+		defer file.Close()
+
+		yamlDecoder := yaml.NewDecoder(file)
+		if err := yamlDecoder.Decode(&config); err != nil {
+			return config, err
+		}
+	}
+
+	return config, nil
+}
+
+
 func main() {
 	// Define command-line flag for config
 	config := flag.Bool("config", false, "Run interactive configuration setup.")
@@ -379,3 +433,4 @@ func main() {
 		os.Exit(1)
 	}
 }
+
