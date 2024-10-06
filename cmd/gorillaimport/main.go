@@ -377,7 +377,6 @@ func confirmAction(prompt string) bool {
 
 // gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) error {
-	packageName := filepath.Base(packagePath)
 
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return fmt.Errorf("package '%s' does not exist", packagePath)
