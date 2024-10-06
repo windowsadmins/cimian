@@ -340,7 +340,7 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package
-func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string, category, developer string, supportedArch []string, repoPath, installerSubPath, productCode, upgradeCode string) error {
+func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string, category, developer string, supportedArch []string, repoPath, installerSubPath, productCode, upgradeCode string, unattendedInstall, unattendedUninstall bool) error {
 	hash, err := calculateSHA256(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to calculate SHA256 hash: %v", err)
@@ -348,18 +348,24 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 
 	installerItemLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
+	// Ensure that productCode and upgradeCode don't contain artifacts
+	cleanProductCode := strings.Trim(productCode, "{}\r")
+	cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r")
+
 	pkgsInfo := PkgsInfo{
-		Name:              name,
-		Version:           version,
-		InstallerItemHash: hash,
-		InstallerItemPath: installerItemLocation,
-		Catalogs:          catalogs,
-		Category:          category,
-		Developer:         developer,
-		Description:       "",
-		SupportedArch:     supportedArch,
-		ProductCode:       productCode,
-		UpgradeCode:       upgradeCode,
+		Name:                name,
+		Version:             version,
+		InstallerItemHash:   hash,
+		InstallerItemPath:   installerItemLocation,
+		Catalogs:            catalogs,
+		Category:            category,
+		Developer:           developer,
+		Description:         "",
+		SupportedArch:       supportedArch,
+		ProductCode:         cleanProductCode,
+		UpgradeCode:         cleanUpgradeCode,
+		UnattendedInstall:   unattendedInstall,
+		UnattendedUninstall: unattendedUninstall,
 	}
 
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
@@ -397,6 +403,9 @@ func gorillaImport(packagePath string, config Config) error {
 		return fmt.Errorf("error scanning repo: %v", err)
 	}
 
+	// Determine where to save the pkg and pkgsinfo
+	var installerSubPath string
+
 	// Check for duplicate
 	var matchingItem *PkgsInfo
 	if matchingItem = findMatchingItem(pkgsInfos, productName, version); matchingItem != nil {
@@ -405,46 +414,65 @@ func gorillaImport(packagePath string, config Config) error {
 		fmt.Printf("              Version: %s\n", matchingItem.Version)
 		fmt.Printf("  Installer item path: %s\n\n", matchingItem.InstallerItemPath)
 
+		// Ask if the user wants to use the existing item as a template
 		useTemplate := getInputWithDefault("Use existing item as a template? [y/N]", "N")
 		if strings.ToLower(useTemplate) == "y" {
 			// Copy fields from existing item to the current one
 			developer = matchingItem.Developer
+			installerSubPath = filepath.Dir(matchingItem.InstallerItemPath)
+			// Add more fields as needed here
 		}
+	}
+
+	// Prompt for subfolder if no match found or user doesn't want to use existing item
+	if installerSubPath == "" {
+		promptSurvey(&installerSubPath, "Enter subfolder path to save the pkg and pkgsinfo", "apps")
 	}
 
 	// Prepopulate and allow user confirmation/modification using survey
 	productName = cleanTextForPrompt(productName)
 	version = cleanTextForPrompt(version)
 	developer = cleanTextForPrompt(developer)
-
-	// Handle supportedArch and catalogs input as comma-separated strings
+	category := "Apps" // Set default category
 	supportedArch := config.DefaultArch
 	catalogs := config.DefaultCatalog
 
+	// Prompt user for fields
 	promptSurvey(&productName, "Item name", productName)
 	promptSurvey(&version, "Version", version)
+	promptSurvey(&category, "Category", category)
 	promptSurvey(&developer, "Developer", developer)
 	promptSurvey(&supportedArch, "Supported Architectures", supportedArch)
 	promptSurvey(&catalogs, "Catalogs (comma-separated)", catalogs)
 
-	// Silent handling of ProductCode and UpgradeCode
-	if productCode != "" {
-		fmt.Printf("Adding ProductCode silently.\n")
-	}
-	if upgradeCode != "" {
-		fmt.Printf("Adding UpgradeCode silently.\n")
-	}
-
-	// Convert catalogs to slice
+	// Convert catalogs to a list
 	catalogList := strings.Split(catalogs, ",")
 	for i := range catalogList {
 		catalogList[i] = strings.TrimSpace(catalogList[i])
 	}
 
-	// Convert supportedArch to slice
-	archList := strings.Split(supportedArch, ",")
-	for i := range archList {
-		archList[i] = strings.TrimSpace(archList[i])
+	// Silent handling of ProductCode and UpgradeCode
+	if productCode != "" {
+		productCode = strings.Trim(productCode, "{}\r")
+	}
+	if upgradeCode != "" {
+		upgradeCode = strings.Trim(upgradeCode, "{}\r")
+	}
+
+	// Show all gathered info for confirmation
+	fmt.Printf("\nItem name: %s\n", productName)
+	fmt.Printf("Version: %s\n", version)
+	fmt.Printf("Category: %s\n", category)
+	fmt.Printf("Developer: %s\n", developer)
+	fmt.Printf("Supported Architectures: %s\n", supportedArch)
+	fmt.Printf("Catalogs: %v\n", catalogList)
+	fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
+
+	// Ask for final confirmation to import
+	importItem := getInputWithDefault("Import this item? [y/N]", "N")
+	if strings.ToLower(importItem) != "y" {
+		fmt.Println("Import canceled.")
+		return nil
 	}
 
 	// Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
@@ -453,14 +481,16 @@ func gorillaImport(packagePath string, config Config) error {
 		filepath.Join(config.RepoPath, "pkgsinfo"),
 		productName,
 		version,
-		catalogList,  // Catalogs as a list
-		"",           // Add category here if needed
+		catalogList,
+		category,
 		developer,
-		archList,     // Supported Architectures
+		[]string{supportedArch},
 		config.RepoPath,
-		"apps",       // Define subpath for the installer location
-		productCode,  // Silently added if extracted
-		upgradeCode,  // Silently added if extracted
+		installerSubPath,
+		productCode,
+		upgradeCode,
+		true,  // Unattended install default
+		true,  // Unattended uninstall default
 	)
 
 	if err != nil {
@@ -471,19 +501,6 @@ func gorillaImport(packagePath string, config Config) error {
 	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
 	return nil
-}
-
-// confirmAction prompts the user to confirm an action.
-func confirmAction(prompt string) bool {
-	fmt.Printf("%s (y/n): ", prompt)
-	var response string
-	_, err := fmt.Scanln(&response)
-	if err != nil {
-		fmt.Println("Error reading input, assuming 'no'")
-		return false
-	}
-	response = strings.ToLower(strings.TrimSpace(response))
-	return response == "y" || response == "yes"
 }
 
 // promptSurvey prompts the user with a prepopulated value using survey and allows them to modify it
@@ -514,6 +531,19 @@ func getInputWithDefault(prompt, defaultValue string) string {
 		return defaultValue
 	}
 	return input
+}
+
+// confirmAction prompts the user to confirm an action.
+func confirmAction(prompt string) bool {
+	fmt.Printf("%s (y/n): ", prompt)
+	var response string
+	_, err := fmt.Scanln(&response)
+	if err != nil {
+		fmt.Println("Error reading input, assuming 'no'")
+		return false
+	}
+	response = strings.ToLower(strings.TrimSpace(response))
+	return response == "y" || response == "yes"
 }
 
 // uploadToCloud handles uploading files to AWS or AZURE if a valid bucket is provided
