@@ -28,10 +28,11 @@ type PkgsInfo struct {
 
 // Configuration structure to hold settings
 type Config struct {
-	RepoPath      string `yaml:"repo_path"`
-	CloudBucket   string `yaml:"cloud_bucket"`
+	RepoPath       string `yaml:"repo_path"`
+	CloudProvider  string `yaml:"cloud_provider"`
+	CloudBucket    string `yaml:"cloud_bucket"`
 	DefaultCatalog string `yaml:"default_catalog"`
-	DefaultArch   string `yaml:"default_arch"`
+	DefaultArch    string `yaml:"default_arch"`
 }
 
 // Default configuration values
@@ -111,13 +112,19 @@ func configureGorillaImport() Config {
 		config.DefaultArch = defaultConfig.DefaultArch
 	}
 
-	fmt.Printf("Cloud Bucket (e.g., s3://your-bucket/path/to/repo/ or https://youraccount.blob.core.windows.net/container/path): ")
-	fmt.Scanln(&config.CloudBucket)
-
-	fmt.Printf("Cloud Provider (aws, azure, or none): ")
+	fmt.Printf("Cloud Provider (aws/azure/none): ")
 	fmt.Scanln(&config.CloudProvider)
-	if config.CloudProvider == "" {
+	config.CloudProvider = strings.ToLower(config.CloudProvider)
+
+	if config.CloudProvider != "aws" && config.CloudProvider != "azure" && config.CloudProvider != "none" {
+		fmt.Println("Invalid cloud provider specified. Defaulting to 'none'.")
 		config.CloudProvider = "none"
+	}
+
+	fmt.Printf("Cloud Bucket: ")
+	fmt.Scanln(&config.CloudBucket)
+	if config.CloudBucket == "" {
+		config.CloudBucket = defaultConfig.CloudBucket
 	}
 
 	err := saveConfig(getConfigPath(), config)
@@ -380,7 +387,7 @@ func gorillaImport(packagePath string, config Config) error {
 	return nil
 }
 
-// uploadToS3 handles uploading files to S3 if a valid bucket is provided
+// uploadToS3 handles uploading files to AWS or AZURE if a valid bucket is provided
 func uploadToCloud(config Config) error {
 	// Skip if cloud provider is none
 	if config.CloudProvider == "none" {
@@ -390,9 +397,24 @@ func uploadToCloud(config Config) error {
 	// Construct the local pkgs path based on the RepoPath
 	localPkgsPath := filepath.Join(config.RepoPath, "pkgs")
 
+	// Check cloud provider and run the appropriate sync logic
 	if config.CloudProvider == "aws" {
+		// Check if AWS CLI exists
+		awsPath := "/usr/local/bin/aws"
+		if _, err := os.Stat(awsPath); os.IsNotExist(err) {
+			fmt.Println("AWS CLI not found at /usr/local/bin/aws. Please install AWS CLI.")
+			return err
+		}
+
+		// Check if AWS credentials are properly set up
+		awsCheckCmd := exec.Command(awsPath, "sts", "get-caller-identity")
+		if err := awsCheckCmd.Run(); err != nil {
+			fmt.Println("AWS CLI not properly configured or logged in. Please run `aws configure`.")
+			return err
+		}
+
 		fmt.Println("Starting upload for pkgs to AWS S3")
-		cmd := exec.Command("/usr/local/bin/aws", "s3", "sync",
+		cmd := exec.Command(awsPath, "s3", "sync",
 			localPkgsPath,
 			fmt.Sprintf("s3://%s/pkgs/", config.CloudBucket),
 			"--exclude", "*.git/*", "--exclude", "**/.DS_Store")
@@ -404,9 +426,24 @@ func uploadToCloud(config Config) error {
 			return fmt.Errorf("error syncing pkgs directory to S3: %v", err)
 		}
 		fmt.Println("Upload to S3 completed successfully")
+
 	} else if config.CloudProvider == "azure" {
+		// Check if AzCopy exists
+		azcopyPath := "/opt/homebrew/bin/azcopy"
+		if _, err := os.Stat(azcopyPath); os.IsNotExist(err) {
+			fmt.Println("AzCopy not found at /opt/homebrew/bin/azcopy. Please install AzCopy.")
+			return err
+		}
+
+		// Check if Azure is properly logged in
+		azureCheckCmd := exec.Command("/opt/homebrew/bin/az", "account", "show")
+		if err := azureCheckCmd.Run(); err != nil {
+			fmt.Println("AzCopy not properly configured or logged in. Please run `az login`.")
+			return err
+		}
+
 		fmt.Println("Starting upload for pkgs to Azure Blob Storage")
-		cmd := exec.Command("/opt/homebrew/bin/azcopy", "sync",
+		cmd := exec.Command(azcopyPath, "sync",
 			localPkgsPath,
 			fmt.Sprintf("https://%s/pkgs/", config.CloudBucket),
 			"--exclude-path", "*/.git/*;*/.DS_Store", "--recursive", "--put-md5")
