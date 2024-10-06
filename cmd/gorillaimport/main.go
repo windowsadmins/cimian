@@ -120,6 +120,59 @@ func saveConfig(configPath string, config Config) error {
 	}
 }
 
+// loadConfig loads the configuration from a plist or YAML file
+func loadConfig(configPath string) (Config, error) {
+	var config Config
+
+	if runtime.GOOS == "darwin" {
+		// Load plist using macOS native command
+		config = defaultConfig
+		cmd := exec.Command("defaults", "read", configPath[:len(configPath)-6], "repo_path")
+		output, err := cmd.Output()
+		if err == nil {
+			config.RepoPath = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_version")
+		output, err = cmd.Output()
+		if err == nil {
+			config.DefaultVersion = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "output_dir")
+		output, err = cmd.Output()
+		if err == nil {
+			config.OutputDir = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "pkginfo_editor")
+		output, err = cmd.Output()
+		if err == nil {
+			config.PkginfoEditor = strings.TrimSpace(string(output))
+		}
+
+		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_catalog")
+		output, err = cmd.Output()
+		if err == nil {
+			config.DefaultCatalog = strings.TrimSpace(string(output))
+		}
+	} else {
+		// Load YAML config
+		file, err := os.Open(configPath)
+		if err != nil {
+			return config, err
+		}
+		defer file.Close()
+
+		yamlDecoder := yaml.NewDecoder(file)
+		if err := yamlDecoder.Decode(&config); err != nil {
+			return config, err
+		}
+	}
+
+	return config, nil
+}
+
 // calculateSHA256 calculates the SHA-256 hash of the given file.
 func calculateSHA256(filePath string) (string, error) {
 	// Open the file for reading
@@ -325,76 +378,6 @@ func gorillaImport(packagePath string, config Config) error {
 	return nil
 }
 
-// copyFile copies a file from src to dst
-func copyFile(src, dst string) (int64, error) {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer sourceFile.Close()
-	destinationFile, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	defer destinationFile.Close()
-	nBytes, err := io.Copy(destinationFile, sourceFile)
-	return nBytes, err
-}
-
-// loadConfig loads the configuration from a plist or YAML file
-func loadConfig(configPath string) (Config, error) {
-	var config Config
-
-	if runtime.GOOS == "darwin" {
-		// Load plist using macOS native command
-		config = defaultConfig
-		cmd := exec.Command("defaults", "read", configPath[:len(configPath)-6], "repo_path")
-		output, err := cmd.Output()
-		if err == nil {
-			config.RepoPath = strings.TrimSpace(string(output))
-		}
-
-		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_version")
-		output, err = cmd.Output()
-		if err == nil {
-			config.DefaultVersion = strings.TrimSpace(string(output))
-		}
-
-		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "output_dir")
-		output, err = cmd.Output()
-		if err == nil {
-			config.OutputDir = strings.TrimSpace(string(output))
-		}
-
-		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "pkginfo_editor")
-		output, err = cmd.Output()
-		if err == nil {
-			config.PkginfoEditor = strings.TrimSpace(string(output))
-		}
-
-		cmd = exec.Command("defaults", "read", configPath[:len(configPath)-6], "default_catalog")
-		output, err = cmd.Output()
-		if err == nil {
-			config.DefaultCatalog = strings.TrimSpace(string(output))
-		}
-	} else {
-		// Load YAML config
-		file, err := os.Open(configPath)
-		if err != nil {
-			return config, err
-		}
-		defer file.Close()
-
-		yamlDecoder := yaml.NewDecoder(file)
-		if err := yamlDecoder.Decode(&config); err != nil {
-			return config, err
-		}
-	}
-
-	return config, nil
-}
-
-
 func main() {
 	// Define command-line flag for config
 	config := flag.Bool("config", false, "Run interactive configuration setup.")
@@ -412,12 +395,30 @@ func main() {
 
 	if _, err := os.Stat(configPath); err == nil {
 		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-			configData, _ = loadConfig(configPath)
+			loadedConfig, err := loadConfig(configPath)
+			if err == nil {
+				// Merge loadedConfig with defaultConfig
+				if loadedConfig.RepoPath != "" {
+					configData.RepoPath = loadedConfig.RepoPath
+				}
+				if loadedConfig.DefaultVersion != "" {
+					configData.DefaultVersion = loadedConfig.DefaultVersion
+				}
+				if loadedConfig.OutputDir != "" {
+					configData.OutputDir = loadedConfig.OutputDir
+				}
+				if loadedConfig.PkginfoEditor != "" {
+					configData.PkginfoEditor = loadedConfig.PkginfoEditor
+				}
+				if loadedConfig.DefaultCatalog != "" {
+					configData.DefaultCatalog = loadedConfig.DefaultCatalog
+				}
+			}
 		}
 	}
 
 	// Ensure package argument is provided by prompting the user
-	fmt.Printf("Enter the path to the package to import: ")
+	fmt.Printf("Enter the path to the package file to import: ")
 	var packagePath string
 	fmt.Scanln(&packagePath)
 
@@ -427,10 +428,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Ensure the provided path is a file
+	fileInfo, err := os.Stat(packagePath)
+	if err != nil {
+		fmt.Printf("Error: %s\n", err)
+		os.Exit(1)
+	}
+	if fileInfo.IsDir() {
+		fmt.Println("Error: The provided path is a directory. Please provide a valid package file.")
+		os.Exit(1)
+	}
+
 	// Call gorillaImport to handle the import process
 	if err := gorillaImport(packagePath, configData); err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
 }
-
