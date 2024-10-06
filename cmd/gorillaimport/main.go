@@ -82,11 +82,27 @@ func configureGorillaImport() Config {
 func saveConfig(configPath string, config Config) error {
 	if runtime.GOOS == "darwin" {
 		// Save as plist using native macOS command
-		cmd := exec.Command("defaults", "write", configPath[:len(configPath)-6], // Remove .plist extension for defaults command
-			"repo_path", config.RepoPath,
-			"default_version", config.DefaultVersion,
-			"output_dir", config.OutputDir,
-			"pkginfo_editor", config.PkginfoEditor,
+		cmd := exec.Command("defaults", "write", configPath[:len(configPath)-6], \
+			"repo_path", config.RepoPath)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		cmd = exec.Command("defaults", "write", configPath[:len(configPath)-6], \
+			"default_version", config.DefaultVersion)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		cmd = exec.Command("defaults", "write", configPath[:len(configPath)-6], \
+			"output_dir", config.OutputDir)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		cmd = exec.Command("defaults", "write", configPath[:len(configPath)-6], \
+			"pkginfo_editor", config.PkginfoEditor)
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+		cmd = exec.Command("defaults", "write", configPath[:len(configPath)-6], \
 			"default_catalog", config.DefaultCatalog)
 		return cmd.Run()
 	} else {
