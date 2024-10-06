@@ -43,6 +43,50 @@ var defaultConfig = Config{
 	DefaultArch:    "x86_64",
 }
 
+// checkTools checks if necessary tools are installed on the system (msiexec, sigcheck, etc.)
+func checkTools() error {
+	switch runtime.GOOS {
+	case "windows":
+		// Check for msiexec
+		_, err := exec.LookPath("msiexec")
+		if err != nil {
+			fmt.Println("msiexec is not found. This is necessary for extracting .msi metadata on Windows.")
+			fmt.Println("msiexec is pre-installed on Windows. If it is not working, make sure the system PATH is configured correctly.")
+		}
+
+		// Check for sigcheck
+		_, err = exec.LookPath("sigcheck")
+		if err != nil {
+			fmt.Println("sigcheck.exe is not found. You can download it from the Sysinternals Suite at:")
+			fmt.Println("https://docs.microsoft.com/en-us/sysinternals/downloads/sysinternals-suite")
+			fmt.Println("Extract the suite, and make sure sigcheck.exe is added to your PATH for easy access.")
+		}
+
+	case "darwin": // MacOS
+		// Check for msitools
+		_, err := exec.LookPath("msiextract")
+		if err != nil {
+			fmt.Println("msiextract (from msitools) is not found. You can install it using Homebrew:")
+			fmt.Println("Run the following command in the terminal:")
+			fmt.Println("    /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
+			fmt.Println("Then install msitools:")
+			fmt.Println("    brew install msitools")
+		}
+
+		// Check for Mono if sigcheck is needed
+		_, err = exec.LookPath("mono")
+		if err != nil {
+			fmt.Println("Mono is not found. You can install it to run sigcheck.exe on macOS. Install Mono using Homebrew:")
+			fmt.Println("    brew install mono")
+			fmt.Println("Then download sigcheck.exe from the Sysinternals Suite:")
+			fmt.Println("    https://docs.microsoft.com/en-us/sysinternals/downloads/sysinternals-suite")
+			fmt.Println("To run sigcheck, use:")
+			fmt.Println("    mono sigcheck.exe <your-exe-file>")
+		}
+	}
+	return nil
+}
+
 // scanRepo scans the pkgsinfo directory recursively to find existing pkgsinfo files.
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	var pkgsInfos []PkgsInfo
@@ -101,7 +145,7 @@ func configureGorillaImport() Config {
 
     // Sanity check for repo path
     for {
-        fmt.Printf("Repo URL (must be an absolute path, e.g., /Users/username/DevOps/Gorilla): ")
+        fmt.Printf("Repo URL (must be an absolute path, e.g., ~/DevOps/Gorilla/deployment): ")
         fmt.Scanln(&config.RepoPath)
 
         // Check if the path starts with "/"
@@ -305,7 +349,7 @@ func gorillaImport(packagePath string, config Config) error {
 	// Scan the repo for existing pkgsinfo items
 	pkgsInfos, err := scanRepo(config.RepoPath)
 	if err != nil {
-		return fmt.Errorf("failed to scan repo: %v", err)
+	    return fmt.Errorf("failed to scan repo: %v", err)
 	}
 
 	// Check for a matching item in the repo by both name and version
@@ -497,6 +541,12 @@ func main() {
 	if *config {
 		configureGorillaImport()
 		return
+	}
+
+	// Check for necessary tools
+	if err := checkTools(); err != nil {
+		fmt.Printf("Error: %s\n", err)
+		os.Exit(1)
 	}
 
 	configData := defaultConfig
