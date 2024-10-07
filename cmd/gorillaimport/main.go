@@ -500,16 +500,16 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     if err != nil {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
-    if matchingItem != nil {
+    if matchingItem != nil && matchingItem.Installer.Hash != currentFileHash {
         fmt.Printf("Item with the same name and version exists but with a different hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
         fmt.Printf("              Existing hash: %s\n", matchingItem.Installer.Hash)
         fmt.Printf("              New hash: %s\n", currentFileHash)
 
-        // Aggressively prompt to stop if hashes mismatch
-        importItem := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-        if strings.ToLower(importItem) != "y" {
+        // Prompt the user if they still want to proceed with the import
+        shouldImport := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
+        if strings.ToLower(shouldImport) != "y" {
             return false, fmt.Errorf("import canceled due to hash mismatch")
         }
     }
@@ -541,8 +541,8 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
-    importItem = getInputWithDefault("Import this item? [y/N]", "N")
-    if strings.ToLower(importItem) != "y" {
+    shouldImport = getInputWithDefault("Import this item? [y/N]", "N")
+    if strings.ToLower(shouldImport) != "y" {
         return false, fmt.Errorf("import canceled by user")
     }
 
@@ -560,6 +560,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
 
+    // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
     err = createPkgsInfo(
         packagePath,
         filepath.Join(config.RepoPath, "pkgsinfo"),
@@ -574,8 +575,8 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         productCode,
         upgradeCode,
         currentFileHash,
-        true,
-        true,
+        true, // Unattended install default
+        true, // Unattended uninstall default
     )
 
     if err != nil {
