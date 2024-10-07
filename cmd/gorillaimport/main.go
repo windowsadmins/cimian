@@ -378,53 +378,18 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
 	// Use block scalar for the script fields if they are multiline
 	if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
-		m["preinstall_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle, // block scalar
-			Value: pkgsInfo.PreinstallScript,
-		}
-	} else {
 		m["preinstall_script"] = pkgsInfo.PreinstallScript
 	}
-
 	if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
-		m["postinstall_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle, // block scalar
-			Value: pkgsInfo.PostinstallScript,
-		}
-	} else {
 		m["postinstall_script"] = pkgsInfo.PostinstallScript
 	}
-
 	if strings.Contains(pkgsInfo.UninstallScript, "\n") {
-		m["uninstall_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle, // block scalar
-			Value: pkgsInfo.UninstallScript,
-		}
-	} else {
 		m["uninstall_script"] = pkgsInfo.UninstallScript
 	}
-
-	// Handling installcheck_script and uninstallcheck_script similarly
 	if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
-		m["installcheck_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle, // block scalar
-			Value: pkgsInfo.InstallCheckScript,
-		}
-	} else {
 		m["installcheck_script"] = pkgsInfo.InstallCheckScript
 	}
-
 	if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
-		m["uninstallcheck_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle, // block scalar
-			Value: pkgsInfo.UninstallCheckScript,
-		}
-	} else {
 		m["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript
 	}
 
