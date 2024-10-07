@@ -507,7 +507,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Printf("              Existing hash: %s\n", matchingItem.Installer.Hash)
         fmt.Printf("              New hash: %s\n", currentFileHash)
 
-        // Prompt the user if they still want to proceed with the import
+        // Declare and initialize the `shouldImport` variable
         var shouldImport string
         shouldImport = getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
         if strings.ToLower(shouldImport) != "y" {
@@ -558,6 +558,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
     // Final confirmation for import
+    var shouldImport string
     shouldImport = getInputWithDefault("Import this item? [y/N]", "N")
     if strings.ToLower(shouldImport) != "y" {
         return false, fmt.Errorf("import canceled by user")
