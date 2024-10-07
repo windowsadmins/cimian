@@ -810,11 +810,13 @@ func gorillaImport(
         productCode,
         upgradeCode,
         currentFileHash,
-        true, // Unattended install default
-        true, // Unattended uninstall default
+        true,  // Unattended install default
+        true,  // Unattended uninstall default
         preinstallScriptContent,
         postinstallScriptContent,
-        uninstallScriptContent,
+        uninstallScriptContent, 
+        installCheckScriptContent,
+        uninstallCheckScriptContent,
         uninstaller,
     )
 
