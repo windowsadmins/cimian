@@ -219,90 +219,84 @@ func configureGorillaImport() Config {
 
 // extractMSIMetadata extracts MSI metadata depending on the platform (macOS or Windows)
 func extractMSIMetadata(msiFilePath string) (string, string, string, string, string, error) {
-	var productName, developer, version, productCode, upgradeCode string
-	tempDir, err := os.MkdirTemp("", "msi-extract-")
-	if err != nil {
-		return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+    var productName, developer, version, productCode, upgradeCode string
+    tempDir, err := os.MkdirTemp("", "msi-extract-")
+    if err != nil {
+        return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
+    }
+    defer os.RemoveAll(tempDir)
 
-	switch runtime.GOOS {
-	case "windows":
-		// Run msiexec with the correct working directory
-		msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
-		msiexecCmd.Dir = tempDir // Set the working directory
-		err = msiexecCmd.Run()
-		if err != nil {
-			return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
-		}
+    switch runtime.GOOS {
+    case "windows":
+        // Run msiexec with the correct working directory
+        msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
+        msiexecCmd.Dir = tempDir // Set the working directory
+        err = msiexecCmd.Run()
+        if err != nil {
+            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
+        }
 
-	case "darwin":
-		// On macOS, we use msidump
-		msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
-		msidumpCmd.Dir = tempDir // Set the working directory
-		err = msidumpCmd.Run()
-		if err != nil {
-			return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
-		}
+    case "darwin":
+        // On macOS, we use msidump
+        msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
+        msidumpCmd.Dir = tempDir // Set the working directory
+        err = msidumpCmd.Run()
+        if err != nil {
+            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
+        }
 
-	default:
-		return "", "", "", "", "", fmt.Errorf("unsupported platform")
-	}
+    default:
+        return "", "", "", "", "", fmt.Errorf("unsupported platform")
+    }
 
-	// Validate that the expected files were extracted
-	summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
-	if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
-		return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
-	}
+    // Validate that the expected files were extracted
+    summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
+    if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
+        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
+    }
 
-	// Parse _SummaryInformation.idt for productName, developer, version
-	summaryData, err := os.ReadFile(summaryInfoFile)
-	if err != nil {
-		return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
-	}
-	lines := strings.Split(string(summaryData), "\n")
-	for _, line := range lines {
-		cols := strings.Split(line, "\t")
-		if len(cols) < 2 {
-			continue
-		}
-		switch cols[0] {
-		case "3":
-			productName = cols[1]
-		case "4":
-			developer = cols[1]
-		case "6":
-			version = strings.Fields(cols[1])[0]
-		}
-	}
+    // Parse _SummaryInformation.idt for productName, developer, version
+    summaryData, err := os.ReadFile(summaryInfoFile)
+    if err != nil {
+        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
+    }
+    lines := strings.Split(string(summaryData), "\n")
+    for _, line := range lines {
+        cols := strings.Split(line, "\t")
+        if len(cols) < 2 {
+            continue
+        }
+        switch cols[0] {
+        case "3":
+            productName = cols[1]
+        case "4":
+            developer = cols[1]
+        case "6":
+            version = strings.Fields(cols[1])[0]
+        }
+    }
 
-	// Parse Property.idt for productCode and upgradeCode
-	propertyFile := filepath.Join(tempDir, "Property.idt")
-	propertyData, err := os.ReadFile(propertyFile)
-	if err != nil {
-		return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
-	}
-	lines = strings.Split(string(propertyData), "\n")
-	for _, line := range lines {
-		cols := strings.Split(line, "\t")
-		if len(cols) < 2 {
-			continue
-		}
-		switch cols[0] {
-		case "ProductCode":
-			productCode = cols[1]
-		case "UpgradeCode":
-			upgradeCode = cols[1]
-		}
-	}
+    // Parse Property.idt for productCode and upgradeCode
+    propertyFile := filepath.Join(tempDir, "Property.idt")
+    propertyData, err := os.ReadFile(propertyFile)
+    if err != nil {
+        return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
+    }
+    lines = strings.Split(string(propertyData), "\n")
+    for _, line := range lines {
+        cols := strings.Split(line, "\t")
+        if len(cols) < 2 {
+            continue
+        }
+        switch cols[0] {
+        case "ProductCode":
+            productCode = cols[1]
+        case "UpgradeCode":
+            upgradeCode = cols[1]
+        }
+    }
 
-	fmt.Printf("Extracted productName: '%s'\n", productName)
-	fmt.Printf("Extracted developer: '%s'\n", developer)
-	fmt.Printf("Extracted version: '%s'\n", version)
-	fmt.Printf("Extracted productCode: '%s'\n", productCode)
-	fmt.Printf("Extracted upgradeCode: '%s'\n", upgradeCode)
-
-	return productName, developer, version, productCode, upgradeCode, nil
+    return productName, developer, version, productCode, upgradeCode, nil
 }
 
 // calculateSHA256 calculates the SHA-256 hash of the given file.
@@ -436,18 +430,12 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
         itemProductCode := strings.Trim(strings.ToLower(item.ProductCode), "{}\r\n ")
         itemUpgradeCode := strings.Trim(strings.ToLower(item.UpgradeCode), "{}\r\n ")
 
-        // Debug statements to check the codes being compared
-        fmt.Printf("Comparing ProductCode: '%s' with '%s'\n", itemProductCode, cleanedProductCode)
-        fmt.Printf("Comparing UpgradeCode: '%s' with '%s'\n", itemUpgradeCode, cleanedUpgradeCode)
-
         // Compare product codes and upgrade codes
         if itemProductCode == cleanedProductCode && itemUpgradeCode == cleanedUpgradeCode {
             // Check if the hashes match
             if item.Installer != nil && item.Installer.Hash == currentFileHash {
-                fmt.Println("Exact match found based on product code, upgrade code, and hash.")
                 return &item, true, nil
             } else {
-                fmt.Printf("Match found but hash differs: existing hash: %s vs current hash: %s\n", item.Installer.Hash, currentFileHash)
                 return &item, false, nil
             }
         }
@@ -494,15 +482,11 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     productCode = strings.Trim(productCode, "{}\r\n ")
     upgradeCode = strings.Trim(upgradeCode, "{}\r\n ")
 
-    fmt.Printf("Cleaned productCode: '%s'\n", productCode)
-    fmt.Printf("Cleaned upgradeCode: '%s'\n", upgradeCode)
-
     // Calculate hash of the current package
     currentFileHash, err := calculateSHA256(packagePath)
     if err != nil {
         return false, fmt.Errorf("error calculating file hash: %v", err)
     }
-    fmt.Printf("Calculated hash for %s: %s\n", packagePath, currentFileHash)
 
     var matchingItem *PkgsInfo
     var hashMatches bool
@@ -518,29 +502,18 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         if matchingItem != nil {
             if hashMatches {
                 // Exact match found
-                fmt.Printf("This item already exists in All.yaml with the same product code, upgrade code, and hash:\n")
-                fmt.Printf("            Product Code: %s\n", matchingItem.ProductCode)
-                fmt.Printf("            Upgrade Code: %s\n", matchingItem.UpgradeCode)
-                fmt.Printf("            Hash: %s\n", matchingItem.Installer.Hash)
+                fmt.Println("This item already exists in the repo with the same product code, upgrade code, and hash.")
                 return false, nil // Prevent further import as it is identical
             } else {
                 // Hash differs
-                fmt.Printf("Item with the same product code and upgrade code exists but with a different hash:\n")
-                fmt.Printf("            Existing hash: %s\n", matchingItem.Installer.Hash)
-                fmt.Printf("            New hash: %s\n", currentFileHash)
-
+                fmt.Println("An item with the same product code and upgrade code exists but with a different hash.")
                 // Prompt the user
                 userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
                 if strings.ToLower(userDecision) != "y" {
                     return false, fmt.Errorf("import canceled due to hash mismatch")
                 }
             }
-        } else {
-            fmt.Println("No identical package found. Proceeding with import...")
         }
-    } else {
-        fmt.Println("ProductCode or UpgradeCode is empty. Proceeding without matching based on these codes.")
-        fmt.Println("No identical package found. Proceeding with import...")
     }
 
     // Proceed with the import since no exact match was found or user chose to proceed
