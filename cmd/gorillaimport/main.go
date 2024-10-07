@@ -422,10 +422,15 @@ func findMatchingItemInAllCatalog(repoPath, name, version, currentFileHash strin
         sanitizedNewName := strings.ToLower(strings.TrimSpace(name))
         sanitizedNewVersion := strings.ToLower(strings.TrimSpace(version))
 
+        fmt.Printf("Comparing item: Name: %s, Version: %s, Hash: %s\n", sanitizedExistingName, sanitizedExistingVersion, item.Installer.Hash)
+
         if sanitizedExistingName == sanitizedNewName && sanitizedExistingVersion == sanitizedNewVersion {
+            // Check if the hashes match
             if item.Installer != nil && item.Installer.Hash == currentFileHash {
-                // Exact match found based on name, version, and hash
+                fmt.Println("Exact match found (name, version, and hash)")
                 return &item, nil
+            } else {
+                fmt.Printf("Match found but hash differs: %s vs %s\n", item.Installer.Hash, currentFileHash)
             }
         }
     }
@@ -473,6 +478,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     if err != nil {
         return false, fmt.Errorf("error calculating file hash: %v", err)
     }
+    fmt.Printf("Calculated hash for %s: %s\n", packagePath, currentFileHash)
 
     // Check for an existing package with the same name, version, and hash in All.yaml
     matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version, currentFileHash)
@@ -480,7 +486,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
 
-    if matchingItem != nil {
+    if matchingItem != nil && matchingItem.Installer.Hash == currentFileHash {
         fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
@@ -488,7 +494,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, nil  // Prevent further import as it is identical
     }
 
-    // Check for an item with the same name and version but a different hash
+    // If the item exists with the same name and version but a different hash
     if matchingItem != nil && matchingItem.Installer.Hash != currentFileHash {
         fmt.Printf("Item with the same name and version exists but with a different hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
