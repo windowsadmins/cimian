@@ -503,9 +503,8 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Printf("              Existing hash: %s\n", matchingItem.Installer.Hash)
         fmt.Printf("              New hash: %s\n", currentFileHash)
 
-        var shouldImport string
-        shouldImport = getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-        if strings.ToLower(shouldImport) != "y" {
+        userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
+        if strings.ToLower(userDecision) != "y" {
             return false, fmt.Errorf("import canceled due to hash mismatch")
         }
     }
@@ -554,8 +553,8 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
     // Final confirmation for import
-    shouldImport = getInputWithDefault("Import this item? [y/N]", "N")
-    if strings.ToLower(shouldImport) != "y" {
+    userDecision = getInputWithDefault("Import this item? [y/N]", "N")
+    if strings.ToLower(userDecision) != "y" {
         return false, fmt.Errorf("import canceled by user")
     }
 
