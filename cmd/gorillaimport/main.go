@@ -350,119 +350,171 @@ func copyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
-// Custom wrapper function to enforce block scalar style for multiline scripts
+// Custom wrapper function to enforce block scalar style for specific script fields
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-    var buf bytes.Buffer
-    enc := yaml.NewEncoder(&buf)
-    enc.SetIndent(2)
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
 
-    // Marshal manually to control block scalar style on specific fields
-    enc.OpenTag(&yaml.Tag{Kind: yaml.Map, Name: ""})
+	// Manually marshal the PkgsInfo struct field by field
+	m := make(map[string]interface{})
 
-    // Loop over the struct fields and handle scripts with block style
-    value := reflect.ValueOf(pkgsInfo)
-    typeOfPkgsInfo := value.Type()
+	m["name"] = pkgsInfo.Name
+	m["display_name"] = pkgsInfo.DisplayName
+	m["version"] = pkgsInfo.Version
+	m["description"] = pkgsInfo.Description
+	m["catalogs"] = pkgsInfo.Catalogs
+	m["category"] = pkgsInfo.Category
+	m["developer"] = pkgsInfo.Developer
+	m["unattended_install"] = pkgsInfo.UnattendedInstall
+	m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
+	m["installer"] = pkgsInfo.Installer
+	m["uninstaller"] = pkgsInfo.Uninstaller
+	m["supported_architectures"] = pkgsInfo.SupportedArch
+	m["product_code"] = pkgsInfo.ProductCode
+	m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    for i := 0; i < value.NumField(); i++ {
-        fieldValue := value.Field(i)
-        fieldType := typeOfPkgsInfo.Field(i)
-        fieldName := fieldType.Name
-        yamlKey := fieldType.Tag.Get("yaml")
+	// Use block scalar for the script fields if they are multiline
+	if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
+		m["preinstall_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle, // block scalar
+			Value: pkgsInfo.PreinstallScript,
+		}
+	} else {
+		m["preinstall_script"] = pkgsInfo.PreinstallScript
+	}
 
-        enc.EncodeKey(yamlKey)
+	if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
+		m["postinstall_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle, // block scalar
+			Value: pkgsInfo.PostinstallScript,
+		}
+	} else {
+		m["postinstall_script"] = pkgsInfo.PostinstallScript
+	}
 
-        if fieldName == "PreinstallScript" || fieldName == "PostinstallScript" || fieldName == "UninstallScript" {
-            script := fieldValue.String()
-            // Apply block scalar style for multiline scripts
-            enc.SetScalarStyle(yaml.LiteralStyle)
-            enc.EncodeValue(script)
-            enc.SetScalarStyle(yaml.FlowStyle) // Revert back to flow style for the rest
-        } else {
-            enc.EncodeValue(fieldValue.Interface())
-        }
-    }
+	if strings.Contains(pkgsInfo.UninstallScript, "\n") {
+		m["uninstall_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle, // block scalar
+			Value: pkgsInfo.UninstallScript,
+		}
+	} else {
+		m["uninstall_script"] = pkgsInfo.UninstallScript
+	}
 
-    enc.Close()
-    return buf.Bytes(), nil
+	// Handling installcheck_script and uninstallcheck_script similarly
+	if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
+		m["installcheck_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle, // block scalar
+			Value: pkgsInfo.InstallCheckScript,
+		}
+	} else {
+		m["installcheck_script"] = pkgsInfo.InstallCheckScript
+	}
+
+	if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
+		m["uninstallcheck_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle, // block scalar
+			Value: pkgsInfo.UninstallCheckScript,
+		}
+	} else {
+		m["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript
+	}
+
+	// Encode the final map
+	err := enc.Encode(m)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // Updating createPkgsInfo to use the new encoder
 func createPkgsInfo(
-    filePath string,
-    outputDir string,
-    name string,
-    version string,
-    catalogs []string,
-    category string,
-    developer string,
-    supportedArch []string,
-    repoPath string,
-    installerSubPath string,
-    productCode string,
-    upgradeCode string,
-    fileHash string,
-    unattendedInstall bool,
-    unattendedUninstall bool,
-    preinstallScript string,
-    postinstallScript string,
-    uninstallScript string,
-    uninstaller *Installer,
+	filePath string,
+	outputDir string,
+	name string,
+	version string,
+	catalogs []string,
+	category string,
+	developer string,
+	supportedArch []string,
+	repoPath string,
+	installerSubPath string,
+	productCode string,
+	upgradeCode string,
+	fileHash string,
+	unattendedInstall bool,
+	unattendedUninstall bool,
+	preinstallScript string,
+	postinstallScript string,
+	uninstallScript string,
+	installCheckScript string,
+	uninstallCheckScript string,
+	uninstaller *Installer,
 ) error {
 
-    installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
+	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
-    // Ensure that productCode and upgradeCode don't contain artifacts
-    cleanProductCode := strings.Trim(productCode, "{}\r")
-    cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r")
+	// Ensure that productCode and upgradeCode don't contain artifacts
+	cleanProductCode := strings.Trim(productCode, "{}\r")
+	cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r")
 
-    pkgsInfo := PkgsInfo{
-        Name:                name,
-        Version:             version,
-        Installer: &Installer{
-            Location: installerLocation,
-            Hash:     fileHash,
-            Type:     strings.TrimPrefix(filepath.Ext(filePath), "."),
-        },
-        Uninstaller:         uninstaller,
-        Catalogs:            catalogs,
-        Category:            category,
-        Developer:           developer,
-        Description:         "",
-        SupportedArch:       supportedArch,
-        ProductCode:         cleanProductCode,
-        UpgradeCode:         cleanUpgradeCode,
-        UnattendedInstall:   unattendedInstall,
-        UnattendedUninstall: unattendedUninstall,
-        PreinstallScript:    preinstallScript,
-        PostinstallScript:   postinstallScript,
-        UninstallScript:     uninstallScript,
-    }
+	pkgsInfo := PkgsInfo{
+		Name:                name,
+		Version:             version,
+		Installer: &Installer{
+			Location: installerLocation,
+			Hash:     fileHash,
+			Type:     strings.TrimPrefix(filepath.Ext(filePath), "."),
+		},
+		Uninstaller:         uninstaller,
+		Catalogs:            catalogs,
+		Category:            category,
+		Developer:           developer,
+		Description:         "",
+		SupportedArch:       supportedArch,
+		ProductCode:         cleanProductCode,
+		UpgradeCode:         cleanUpgradeCode,
+		UnattendedInstall:   unattendedInstall,
+		UnattendedUninstall: unattendedUninstall,
+		PreinstallScript:    preinstallScript,
+		PostinstallScript:   postinstallScript,
+		UninstallScript:     uninstallScript,
+		InstallCheckScript:  installCheckScript,
+		UninstallCheckScript: uninstallCheckScript,
+	}
 
-    // Ensure that the subfolder path in pkgsinfo exists
-    outputFilePath := filepath.Join(outputDir, installerSubPath)
-    if _, err := os.Stat(outputFilePath); os.IsNotExist(err) {
-        // Create the directories if they don't exist
-        err = os.MkdirAll(outputFilePath, 0755)
-        if err != nil {
-            return fmt.Errorf("failed to create directory structure: %v", err)
-        }
-    }
+	// Ensure that the subfolder path in pkgsinfo exists
+	outputFilePath := filepath.Join(outputDir, installerSubPath)
+	if _, err := os.Stat(outputFilePath); os.IsNotExist(err) {
+		// Create the directories if they don't exist
+		err = os.MkdirAll(outputFilePath, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to create directory structure: %v", err)
+		}
+	}
 
-    outputFile := filepath.Join(outputFilePath, fmt.Sprintf("%s-%s.yaml", name, version))
+	outputFile := filepath.Join(outputFilePath, fmt.Sprintf("%s-%s.yaml", name, version))
 
-    // Use the selective block scalar encoder
-    pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
-    if err != nil {
-        return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
-    }
+	// Use the block scalar encoder
+	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
+	if err != nil {
+		return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
+	}
 
-    // Write the output to the file
-    if err := os.WriteFile(outputFile, pkgsInfoContent, 0644); err != nil {
-        return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
-    }
+	// Write the output to the file
+	if err := os.WriteFile(outputFile, pkgsInfoContent, 0644); err != nil {
+		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
+	}
 
-    fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
-    return nil
+	fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
+	return nil
 }
 
 func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
