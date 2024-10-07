@@ -486,8 +486,8 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
 
-    // If the matching item has the same hash, stop the import
-    if matchingItem != nil {
+    // If the matching item has the same hash, stop the import immediately
+    if matchingItem != nil && matchingItem.Installer.Hash == currentFileHash {
         fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
@@ -496,10 +496,6 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     }
 
     // If the item exists with the same name and version but a different hash
-    matchingItem, err = findMatchingItemInAllCatalog(config.RepoPath, productName, version, "")
-    if err != nil {
-        return false, fmt.Errorf("error checking All.yaml: %v", err)
-    }
     if matchingItem != nil && matchingItem.Installer.Hash != currentFileHash {
         fmt.Printf("Item with the same name and version exists but with a different hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
@@ -558,7 +554,6 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
     // Final confirmation for import
-    var shouldImport string
     shouldImport = getInputWithDefault("Import this item? [y/N]", "N")
     if strings.ToLower(shouldImport) != "y" {
         return false, fmt.Errorf("import canceled by user")
