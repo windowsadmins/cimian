@@ -718,6 +718,8 @@ func gorillaImport(
     var preinstallScriptContent string
     var postinstallScriptContent string
     var uninstallScriptContent string
+    var installCheckScriptContent string
+    var uninstallCheckScriptContent string
 
     // Process install script
     if installScriptPath != "" {
@@ -763,6 +765,24 @@ func gorillaImport(
         } else {
             return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
         }
+    }
+    
+    // Process install check script
+    if installCheckScriptPath != "" {
+        content, err := os.ReadFile(installCheckScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading install check script file: %v", err)
+        }
+        installCheckScriptContent = string(content)
+    }
+    
+    // Process uninstall check script
+    if uninstallCheckScriptPath != "" {
+        content, err := os.ReadFile(uninstallCheckScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading uninstall check script file: %v", err)
+        }
+        uninstallCheckScriptContent = string(content)
     }
 
     // Process uninstaller
