@@ -411,8 +411,8 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
         return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
     }
 
-    var allCatalog Catalog
-    if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
+    var allPackages []PkgsInfo
+    if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
         return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
     }
 
@@ -451,8 +451,8 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
         return nil, fmt.Errorf("failed to read All.yaml: %v", err)
     }
 
-    var allCatalog Catalog
-    if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
+    var allPackages []PkgsInfo
+    if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
         return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
     }
 
@@ -478,7 +478,6 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
 
     return nil, nil
 }
-
 
 // gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) (bool, error) {
