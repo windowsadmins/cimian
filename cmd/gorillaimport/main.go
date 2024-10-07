@@ -505,7 +505,6 @@ func createPkgsInfo(
 		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
 	}
 
-	fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
 	return nil
 }
 
