@@ -400,24 +400,29 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 
 // findMatchingItemInAllCatalog checks if the item already exists in 'All.yaml'
 func findMatchingItemInAllCatalog(repoPath, name, version string) (*PkgsInfo, error) {
-	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-	fileContent, err := os.ReadFile(allCatalogPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read All.yaml: %v", err)
-	}
+    allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+    fileContent, err := os.ReadFile(allCatalogPath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read All.yaml: %v", err)
+    }
 
-	var allCatalog Catalog
-	if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-	}
+    var allCatalog Catalog
+    if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+    }
 
-	for _, item := range allCatalog.Packages {
-		if item.Name == name && item.Version == version {
-			return &item, nil
-		}
-	}
+    for _, item := range allCatalog.Packages {
+        sanitizedExistingName := strings.ToLower(strings.TrimSpace(item.Name))
+        sanitizedExistingVersion := strings.ToLower(strings.TrimSpace(item.Version))
+        sanitizedNewName := strings.ToLower(strings.TrimSpace(name))
+        sanitizedNewVersion := strings.ToLower(strings.TrimSpace(version))
 
-	return nil, nil
+        if sanitizedExistingName == sanitizedNewName && sanitizedExistingVersion == sanitizedNewVersion {
+            return &item, nil
+        }
+    }
+
+    return nil, nil
 }
 
 // Catalog structure holds a list of packages for each catalog
@@ -433,10 +438,14 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 
     // Extract metadata
     productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
-    if err != nil {
-        fmt.Printf("Error extracting metadata: %v\n", err)
+    if err != nil || productName == "" || version == "" {
+        fmt.Printf("Error extracting metadata or metadata incomplete: %v\n", err)
         fmt.Println("Fallback to manual input.")
     }
+
+    // Ensure productName and version are sanitized before checking
+    productName = strings.TrimSpace(productName)
+    version = strings.TrimSpace(version)
 
     // Check for duplicate in All.yaml before proceeding
     matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version)
