@@ -404,9 +404,9 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 }
 
 // gorillaImport handles the import process and metadata extraction
-func gorillaImport(packagePath string, config Config) error {
+func gorillaImport(packagePath string, config Config) (bool, error) {
     if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-        return fmt.Errorf("package '%s' does not exist", packagePath)
+        return false, fmt.Errorf("package '%s' does not exist", packagePath)
     }
 
     // Extract metadata
@@ -419,7 +419,7 @@ func gorillaImport(packagePath string, config Config) error {
     // Duplicate checking
     pkgsInfos, err := scanRepo(config.RepoPath)
     if err != nil {
-        return fmt.Errorf("error scanning repo: %v", err)
+        return false, fmt.Errorf("error scanning repo: %v", err)
     }
 
     // Determine where to save the pkg and pkgsinfo
@@ -476,7 +476,7 @@ func gorillaImport(packagePath string, config Config) error {
     importItem := getInputWithDefault("Import this item? [y/N]", "N")
     if strings.ToLower(importItem) != "y" {
         fmt.Println("Import canceled.")
-        return nil  // Stop further execution if the import is canceled
+        return false, nil  // Return false if the import is canceled
     }
 
     // Ensure that the package path exists and create it if not
@@ -485,7 +485,7 @@ func gorillaImport(packagePath string, config Config) error {
         // Create the directories if they don't exist
         err = os.MkdirAll(pkgsFolderPath, 0755)
         if err != nil {
-            return fmt.Errorf("failed to create directory structure for package: %v", err)
+            return false, fmt.Errorf("failed to create directory structure for package: %v", err)
         }
     }
 
@@ -493,7 +493,7 @@ func gorillaImport(packagePath string, config Config) error {
     destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
     _, err = copyFile(packagePath, destinationPath)
     if err != nil {
-        return fmt.Errorf("failed to copy package to destination: %v", err)
+        return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
 
     // Silent handling of ProductCode and UpgradeCode
@@ -523,13 +523,13 @@ func gorillaImport(packagePath string, config Config) error {
     )
 
     if err != nil {
-        return fmt.Errorf("failed to create pkgsinfo: %v", err)
+        return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
     }
 
     // Continue with the import process
     fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
-    return nil
+    return true, nil // Return true if the import is successful
 }
 
 // Custom prompt template to remove `?`
@@ -717,18 +717,15 @@ func main() {
 		configData.DefaultArch = *archFlag
 	}
 
-	// Perform the import
-	success := false // Variable to track success
-	err := gorillaImport(packagePath, configData)
+	// Perform the import and check if it was successful
+	importSuccess, err := gorillaImport(packagePath, configData)
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
-	} else {
-		success = true
 	}
 
 	// Only upload if the import was successful
-	if success && configData.CloudProvider != "none" {
+	if importSuccess && configData.CloudProvider != "none" {
 		if err := uploadToCloud(configData); err != nil {
 			fmt.Printf("Error uploading to cloud: %s\n", err)
 		}
