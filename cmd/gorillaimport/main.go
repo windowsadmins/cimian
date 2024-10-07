@@ -445,36 +445,36 @@ type Catalog struct {
 
 // gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) (bool, error) {
-	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-		return false, fmt.Errorf("package '%s' does not exist", packagePath)
-	}
+    if _, err := os.Stat(packagePath); os.IsNotExist(err) {
+        return false, fmt.Errorf("package '%s' does not exist", packagePath)
+    }
 
-	// Extract metadata
-	productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
-	if err != nil {
-		fmt.Printf("Error extracting metadata: %v\n", err)
-		fmt.Println("Fallback to manual input.")
-	}
+    // Extract metadata
+    productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
+    if err != nil {
+        fmt.Printf("Error extracting metadata: %v\n", err)
+        fmt.Println("Fallback to manual input.")
+    }
 
-	// Calculate hash of the package
-	fileHash, err := calculateSHA256(packagePath)
-	if err != nil {
-		return false, fmt.Errorf("error calculating file hash: %v", err)
-	}
+    // Calculate hash of the package
+    fileHash, err := calculateSHA256(packagePath)
+    if err != nil {
+        return false, fmt.Errorf("error calculating file hash: %v", err)
+    }
 
-	// Check for an identical item in the catalogs
-	matchingItem, err := findMatchingItemInCatalog(config.RepoPath, productName, version, fileHash)
-	if err != nil {
-		return false, fmt.Errorf("error searching in catalogs: %v", err)
-	}
+    // Check for an identical item in the catalogs
+    matchingItem, err := findMatchingItemInCatalog(config.RepoPath, productName, version, fileHash)
+    if err != nil {
+        return false, fmt.Errorf("error searching in catalogs: %v", err)
+    }
 
-	if matchingItem != nil {
-		fmt.Printf("An identical item already exists in the catalogs:\n")
-		fmt.Printf("            Item name: %s\n", matchingItem.Name)
-		fmt.Printf("              Version: %s\n", matchingItem.Version)
-		fmt.Printf("        Installer Hash: %s\n", matchingItem.Installer.Hash)
-		return false, nil // Abort import since it's identical
-	}
+    if matchingItem != nil {
+        fmt.Printf("An identical item already exists in the catalogs:\n")
+        fmt.Printf("            Item name: %s\n", matchingItem.Name)
+        fmt.Printf("              Version: %s\n", matchingItem.Version)
+        fmt.Printf("        Installer Hash: %s\n", matchingItem.Installer.Hash)
+        return false, nil // Abort import since it's identical
+    }
 
 	// Determine where to save the pkg and pkgsinfo
 	var installerSubPath string
