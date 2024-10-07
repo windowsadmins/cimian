@@ -420,19 +420,21 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
 // Helper function to clean up and indent script content properly for YAML block scalars
 func indentScript(script string) string {
-    // Use regex to clean up extra backslashes (\\ -> \)
-    re := regexp.MustCompile(`\\\\`)
-    cleanedScript := re.ReplaceAllString(script, `\`)
+    // Step 1: Remove double backslashes (\\ -> \)
+    reDoubleBackslash := regexp.MustCompile(`\\\\`)
+    cleanedScript := reDoubleBackslash.ReplaceAllString(script, `\`)
 
-    // Split the cleaned script into lines and trim unnecessary whitespace
+    // Step 2: Ensure clean line breaks
+    reCarriageReturn := regexp.MustCompile(`\r\n`)
+    cleanedScript = reCarriageReturn.ReplaceAllString(cleanedScript, "\n")
+
+    // Step 3: Indent each line for YAML formatting
     lines := strings.Split(strings.TrimSpace(cleanedScript), "\n")
-    
-    // Indent each line with two spaces for YAML block scalar formatting
     for i, line := range lines {
-        lines[i] = "  " + line
+        lines[i] = "  " + line // Indent each line with two spaces
     }
-    
-    // Join the lines back together with proper indentation
+
+    // Join lines back into a single string with proper newlines
     return strings.Join(lines, "\n")
 }
 
