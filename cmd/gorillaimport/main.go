@@ -33,9 +33,13 @@ type PkgsInfo struct {
 	UnattendedInstall   bool       `yaml:"unattended_install"`
 	UnattendedUninstall bool       `yaml:"unattended_uninstall"`
 	Installer           *Installer `yaml:"installer"`
+	Uninstaller         *Installer `yaml:"uninstaller,omitempty"`
 	SupportedArch       []string   `yaml:"supported_architectures"`
 	ProductCode         string     `yaml:"product_code,omitempty"`
 	UpgradeCode         string     `yaml:"upgrade_code,omitempty"`
+	PreinstallScript    string     `yaml:"preinstall_script,omitempty"`
+	PostinstallScript   string     `yaml:"postinstall_script,omitempty"`
+	UninstallScript     string     `yaml:"uninstall_script,omitempty"`
 }
 
 // Config structure holds the configuration settings
@@ -64,9 +68,9 @@ func checkTools() error {
 			return fmt.Errorf("msiexec is missing. It is needed to extract MSI metadata on Windows.")
 		}
 	case "darwin":
-		_, err := exec.LookPath("msiextract")
+		_, err := exec.LookPath("msidump")
 		if err != nil {
-			return fmt.Errorf("msiextract is missing. You can install it using Homebrew.")
+			return fmt.Errorf("msidump is missing. You can install it using Homebrew.")
 		}
 	default:
 		return fmt.Errorf("Only supported on Windows and macOS.")
@@ -154,149 +158,149 @@ func saveConfig(configPath string, config Config) error {
 
 // configureGorillaImport interactively configures gorillaimport settings with sanity checks
 func configureGorillaImport() Config {
-    config := defaultConfig
-    fmt.Println("Configuring gorillaimport...")
+	config := defaultConfig
+	fmt.Println("Configuring gorillaimport...")
 
-    // Sanity check for repo path
-    for {
-        fmt.Printf("Repo URL (must be an absolute path, e.g., ~/DevOps/Gorilla/deployment): ")
-        fmt.Scanln(&config.RepoPath)
+	// Sanity check for repo path
+	for {
+		fmt.Printf("Repo URL (must be an absolute path, e.g., /Users/username/DevOps/Gorilla/deployment): ")
+		fmt.Scanln(&config.RepoPath)
 
-        // Check if the path starts with "/"
-        if filepath.IsAbs(config.RepoPath) {
-            break
-        }
-        fmt.Println("Invalid repo path. Please ensure it's an absolute path starting with '/'.")
-    }
+		// Check if the path starts with "/"
+		if filepath.IsAbs(config.RepoPath) {
+			break
+		}
+		fmt.Println("Invalid repo path. Please ensure it's an absolute path starting with '/'.")
+	}
 
-    // Validate the cloud provider
-    for {
-        fmt.Printf("Cloud Provider (aws/azure or leave blank for none): ")
-        fmt.Scanln(&config.CloudProvider)
+	// Validate the cloud provider
+	for {
+		fmt.Printf("Cloud Provider (aws/azure or leave blank for none): ")
+		fmt.Scanln(&config.CloudProvider)
 
-        config.CloudProvider = strings.ToLower(config.CloudProvider) // Normalize case
-        if config.CloudProvider == "" || config.CloudProvider == "aws" || config.CloudProvider == "azure" {
-            break
-        }
-        fmt.Println("Invalid cloud provider. Please enter 'aws', 'azure', or leave blank for none.")
-    }
+		config.CloudProvider = strings.ToLower(config.CloudProvider) // Normalize case
+		if config.CloudProvider == "" || config.CloudProvider == "aws" || config.CloudProvider == "azure" {
+			break
+		}
+		fmt.Println("Invalid cloud provider. Please enter 'aws', 'azure', or leave blank for none.")
+	}
 
-    // Validate the cloud bucket if cloud provider is set
-    if config.CloudProvider != "" {
-        for {
-            fmt.Printf("Cloud Bucket (e.g., your-bucket-name/path/to/repo, no s3:// or https://): ")
-            fmt.Scanln(&config.CloudBucket)
+	// Validate the cloud bucket if cloud provider is set
+	if config.CloudProvider != "" {
+		for {
+			fmt.Printf("Cloud Bucket (e.g., your-bucket-name/path/to/repo, no s3:// or https://): ")
+			fmt.Scanln(&config.CloudBucket)
 
-            // Check if the cloud bucket doesn't start with a protocol
-            if !strings.HasPrefix(config.CloudBucket, "s3://") && !strings.HasPrefix(config.CloudBucket, "https://") {
-                break
-            }
-            fmt.Println("Invalid cloud bucket. Please remove any 's3://' or 'https://' prefix and enter only the bucket path.")
-        }
-    }
+			// Check if the cloud bucket doesn't start with a protocol
+			if !strings.HasPrefix(config.CloudBucket, "s3://") && !strings.HasPrefix(config.CloudBucket, "https://") {
+				break
+			}
+			fmt.Println("Invalid cloud bucket. Please remove any 's3://' or 'https://' prefix and enter only the bucket path.")
+		}
+	}
 
-    // Default catalog and architecture prompts
-    fmt.Printf("Default catalog (default: %s): ", config.DefaultCatalog)
-    fmt.Scanln(&config.DefaultCatalog)
-    if config.DefaultCatalog == "" {
-        config.DefaultCatalog = defaultConfig.DefaultCatalog
-    }
+	// Default catalog and architecture prompts
+	fmt.Printf("Default catalog (default: %s): ", config.DefaultCatalog)
+	fmt.Scanln(&config.DefaultCatalog)
+	if config.DefaultCatalog == "" {
+		config.DefaultCatalog = defaultConfig.DefaultCatalog
+	}
 
-    fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
-    fmt.Scanln(&config.DefaultArch)
-    if config.DefaultArch == "" {
-        config.DefaultArch = defaultConfig.DefaultArch
-    }
+	fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
+	fmt.Scanln(&config.DefaultArch)
+	if config.DefaultArch == "" {
+		config.DefaultArch = defaultConfig.DefaultArch
+	}
 
-    // Save the configuration
-    err := saveConfig(getConfigPath(), config)
-    if err != nil {
-        fmt.Printf("Error saving config: %s\n", err)
-    }
+	// Save the configuration
+	err := saveConfig(getConfigPath(), config)
+	if err != nil {
+		fmt.Printf("Error saving config: %s\n", err)
+	}
 
-    return config
-}    
+	return config
+}
 
 // extractMSIMetadata extracts MSI metadata depending on the platform (macOS or Windows)
 func extractMSIMetadata(msiFilePath string) (string, string, string, string, string, error) {
-    var productName, developer, version, productCode, upgradeCode string
-    tempDir, err := os.MkdirTemp("", "msi-extract-")
-    if err != nil {
-        return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
-    }
-    defer os.RemoveAll(tempDir)
+	var productName, developer, version, productCode, upgradeCode string
+	tempDir, err := os.MkdirTemp("", "msi-extract-")
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
 
-    switch runtime.GOOS {
-    case "windows":
-        // Run msiexec with the correct working directory
-        msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
-        msiexecCmd.Dir = tempDir // Set the working directory
-        err = msiexecCmd.Run()
-        if err != nil {
-            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
-        }
+	switch runtime.GOOS {
+	case "windows":
+		// Run msiexec with the correct working directory
+		msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
+		msiexecCmd.Dir = tempDir // Set the working directory
+		err = msiexecCmd.Run()
+		if err != nil {
+			return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
+		}
 
-    case "darwin":
-        // On macOS, we use msidump
-        msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
-        msidumpCmd.Dir = tempDir // Set the working directory
-        err = msidumpCmd.Run()
-        if err != nil {
-            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
-        }
+	case "darwin":
+		// On macOS, we use msidump
+		msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
+		msidumpCmd.Dir = tempDir // Set the working directory
+		err = msidumpCmd.Run()
+		if err != nil {
+			return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
+		}
 
-    default:
-        return "", "", "", "", "", fmt.Errorf("unsupported platform")
-    }
+	default:
+		return "", "", "", "", "", fmt.Errorf("unsupported platform")
+	}
 
-    // Validate that the expected files were extracted
-    summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
-    if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
-        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
-    }
+	// Validate that the expected files were extracted
+	summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
+	if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
+		return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
+	}
 
-    // Parse _SummaryInformation.idt for productName, developer, version
-    summaryData, err := os.ReadFile(summaryInfoFile)
-    if err != nil {
-        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
-    }
-    lines := strings.Split(string(summaryData), "\n")
-    for _, line := range lines {
-        cols := strings.Split(line, "\t")
-        if len(cols) < 2 {
-            continue
-        }
-        switch cols[0] {
-        case "3":
-            productName = cols[1]
-        case "4":
-            developer = cols[1]
-        case "6":
-            version = strings.Fields(cols[1])[0]
-        }
-    }
+	// Parse _SummaryInformation.idt for productName, developer, version
+	summaryData, err := os.ReadFile(summaryInfoFile)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
+	}
+	lines := strings.Split(string(summaryData), "\n")
+	for _, line := range lines {
+		cols := strings.Split(line, "\t")
+		if len(cols) < 2 {
+			continue
+		}
+		switch cols[0] {
+		case "3":
+			productName = cols[1]
+		case "4":
+			developer = cols[1]
+		case "6":
+			version = strings.Fields(cols[1])[0]
+		}
+	}
 
-    // Parse Property.idt for productCode and upgradeCode
-    propertyFile := filepath.Join(tempDir, "Property.idt")
-    propertyData, err := os.ReadFile(propertyFile)
-    if err != nil {
-        return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
-    }
-    lines = strings.Split(string(propertyData), "\n")
-    for _, line := range lines {
-        cols := strings.Split(line, "\t")
-        if len(cols) < 2 {
-            continue
-        }
-        switch cols[0] {
-        case "ProductCode":
-            productCode = cols[1]
-        case "UpgradeCode":
-            upgradeCode = cols[1]
-        }
-    }
+	// Parse Property.idt for productCode and upgradeCode
+	propertyFile := filepath.Join(tempDir, "Property.idt")
+	propertyData, err := os.ReadFile(propertyFile)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
+	}
+	lines = strings.Split(string(propertyData), "\n")
+	for _, line := range lines {
+		cols := strings.Split(line, "\t")
+		if len(cols) < 2 {
+			continue
+		}
+		switch cols[0] {
+		case "ProductCode":
+			productCode = cols[1]
+		case "UpgradeCode":
+			upgradeCode = cols[1]
+		}
+	}
 
-    return productName, developer, version, productCode, upgradeCode, nil
+	return productName, developer, version, productCode, upgradeCode, nil
 }
 
 // calculateSHA256 calculates the SHA-256 hash of the given file.
@@ -346,12 +350,33 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package
-func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string, category, developer string, supportedArch []string, repoPath, installerSubPath, productCode, upgradeCode, fileHash string, unattendedInstall, unattendedUninstall bool) error {
+func createPkgsInfo(
+	filePath string,
+	outputDir string,
+	name string,
+	version string,
+	catalogs []string,
+	category string,
+	developer string,
+	supportedArch []string,
+	repoPath string,
+	installerSubPath string,
+	productCode string,
+	upgradeCode string,
+	fileHash string,
+	unattendedInstall bool,
+	unattendedUninstall bool,
+	preinstallScript string,
+	postinstallScript string,
+	uninstallScript string,
+	uninstaller *Installer,
+) error {
+
 	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
 	// Ensure that productCode and upgradeCode don't contain artifacts
-	cleanProductCode := strings.Trim(productCode, "{}\r")
-	cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r")
+	cleanProductCode := strings.Trim(productCode, "{}\r\n ")
+	cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r\n ")
 
 	pkgsInfo := PkgsInfo{
 		Name:                name,
@@ -361,6 +386,7 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 			Hash:     fileHash,
 			Type:     filepath.Ext(filePath)[1:],
 		},
+		Uninstaller:         uninstaller,
 		Catalogs:            catalogs,
 		Category:            category,
 		Developer:           developer,
@@ -370,6 +396,9 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 		UpgradeCode:         cleanUpgradeCode,
 		UnattendedInstall:   unattendedInstall,
 		UnattendedUninstall: unattendedUninstall,
+		PreinstallScript:    preinstallScript,
+		PostinstallScript:   postinstallScript,
+		UninstallScript:     uninstallScript,
 	}
 
 	// Ensure that the subfolder path in pkgsinfo exists
@@ -391,6 +420,7 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 	defer file.Close()
 
 	encoder := yaml.NewEncoder(file)
+	encoder.SetIndent(2)
 	if err := encoder.Encode(pkgsInfo); err != nil {
 		return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
 	}
@@ -472,188 +502,64 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
     return nil, nil
 }
 
-// gorillaImport handles the import process and metadata extraction
-func gorillaImport(packagePath string, config Config) (bool, error) {
-    if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-        return false, fmt.Errorf("package '%s' does not exist", packagePath)
-    }
+// generateWrapperScript wraps a batch script inside a PowerShell script
+func generateWrapperScript(batchContent string) string {
+	// Escape single quotes in batchContent
+	batchContentEscaped := strings.ReplaceAll(batchContent, "'", "''")
+	psScript := fmt.Sprintf(`
+$batchScriptContent = @'
+%s
+'@
 
-    // Extract metadata
-    productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
-    if err != nil {
-        fmt.Printf("Error extracting metadata: %v\n", err)
-        fmt.Println("Fallback to manual input.")
-    }
-
-    // Clean the productCode and upgradeCode
-    productCode = strings.Trim(productCode, "{}\r\n ")
-    upgradeCode = strings.Trim(upgradeCode, "{}\r\n ")
-
-    // Calculate hash of the current package
-    currentFileHash, err := calculateSHA256(packagePath)
-    if err != nil {
-        return false, fmt.Errorf("error calculating file hash: %v", err)
-    }
-
-    var matchingItem *PkgsInfo
-    var hashMatches bool
-
-    // Check if productCode and upgradeCode are not empty
-    if productCode != "" && upgradeCode != "" {
-        // Proceed with matching
-        matchingItem, hashMatches, err = findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
-        if err != nil {
-            return false, fmt.Errorf("error checking All.yaml: %v", err)
-        }
-
-        if matchingItem != nil {
-            if hashMatches {
-                // Exact match found
-                fmt.Println("This item already exists in the repo with the same product code, upgrade code, and hash.")
-                return false, nil // Prevent further import as it is identical
-            } else {
-                // Hash differs
-                fmt.Println("An item with the same product code and upgrade code exists but with a different hash.")
-                // Prompt the user
-                userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-                if strings.ToLower(userDecision) != "y" {
-                    return false, fmt.Errorf("import canceled due to hash mismatch")
-                }
-            }
-        }
-    }
-
-    // Proceed with the import since no exact match was found or user chose to proceed
-    // Check for an item with the same name but different version
-    matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
-    if err != nil {
-        return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
-    }
-    
-    // Prepopulate fields if an item with the same name but a different version exists
-    category := "Apps" // Set default category
-    supportedArch := config.DefaultArch
-    catalogs := config.DefaultCatalog
-    var installerSubPath string
-    
-    if matchingItemWithDiffVersion != nil {
-        fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
-        productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
-        developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
-        category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
-        installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
-    }
-
-    // Prompt user for fields
-    promptSurvey(&productName, "Item name", productName)
-    promptSurvey(&version, "Version", version)
-    promptSurvey(&category, "Category", category)
-    promptSurvey(&developer, "Developer", developer)
-    promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
-
-    // Prompt for subfolder if no match found or user doesn't want to use the existing path
-    if installerSubPath == "" {
-        promptSurvey(&installerSubPath, "Choose the item path", "apps")
-    }
-    promptSurvey(&catalogs, "Catalogs", catalogs)
-
-    catalogList := strings.Split(catalogs, ",")
-    for i := range catalogList {
-        catalogList[i] = strings.TrimSpace(catalogList[i])
-    }
-
-    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
-
-    // Final confirmation for import
-    userDecision := getInputWithDefault("Import this item? [y/N]", "N")
-    if strings.ToLower(userDecision) != "y" {
-        return false, fmt.Errorf("import canceled by user")
-    }
-
-    // Ensure that the package path exists and create it if not
-    pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
-    if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
-        err = os.MkdirAll(pkgsFolderPath, 0755)
-        if err != nil {
-            return false, fmt.Errorf("failed to create directory structure: %v", err)
-        }
-    }
-
-    // Copy the package to the determined path
-    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
-    _, err = copyFile(packagePath, destinationPath)
-    if err != nil {
-        return false, fmt.Errorf("failed to copy package to destination: %v", err)
-    }
-
-    // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
-    err = createPkgsInfo(
-        packagePath,
-        filepath.Join(config.RepoPath, "pkgsinfo"),
-        productName,
-        version,
-        catalogList,
-        category,
-        developer,
-        []string{supportedArch},
-        config.RepoPath,
-        installerSubPath,
-        productCode,
-        upgradeCode,
-        currentFileHash,
-        true, // Unattended install default
-        true, // Unattended uninstall default
-    )
-
-    if err != nil {
-        return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
-    }
-
-    fmt.Printf("Imported %s version %s successfully.\n", productName, version)
-    return true, nil
+$batchFile = "$env:TEMP\\temp_script.bat"
+Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
+& cmd.exe /c $batchFile
+Remove-Item $batchFile
+`, batchContentEscaped)
+	return psScript
 }
 
 // Custom prompt template to remove `?`
 var customPromptTemplate = survey.IconSet{
-    Question: survey.Icon{
-        Text: "",
-    },
+	Question: survey.Icon{
+		Text: "",
+	},
 }
 
 // promptSurvey prompts the user with a prepopulated value using survey and allows them to modify it
 func promptSurvey(value *string, prompt string, defaultValue string) {
-    // Clean default value
-    cleanDefault := cleanTextForPrompt(defaultValue)
+	// Clean default value
+	cleanDefault := cleanTextForPrompt(defaultValue)
 
-    survey.AskOne(&survey.Input{
-        Message: prompt,
-        Default: cleanDefault,
-    }, value, survey.WithIcons(func(icons *survey.IconSet) {
-        *icons = customPromptTemplate
-    }))
+	survey.AskOne(&survey.Input{
+		Message: prompt,
+		Default: cleanDefault,
+	}, value, survey.WithIcons(func(icons *survey.IconSet) {
+		*icons = customPromptTemplate
+	}))
 }
 
 // getInputWithDefault prompts the user with a prepopulated value and allows them to confirm or modify it
 func getInputWithDefault(prompt, defaultValue string) string {
-    cleanDefault := cleanTextForPrompt(defaultValue)
+	cleanDefault := cleanTextForPrompt(defaultValue)
 
-    if cleanDefault != "" {
-        fmt.Printf("%s [%s]: ", prompt, cleanDefault)
-    } else {
-        fmt.Printf("%s: ", prompt)
-    }
-    var input string
-    fmt.Scanln(&input)
+	if cleanDefault != "" {
+		fmt.Printf("%s [%s]: ", prompt, cleanDefault)
+	} else {
+		fmt.Printf("%s: ", prompt)
+	}
+	var input string
+	fmt.Scanln(&input)
 
-    if input == "" {
-        return cleanDefault
-    }
-    return input
+	if input == "" {
+		return cleanDefault
+	}
+	return input
 }
 
 // cleanTextForPrompt ensures text is clean and doesn't cause issues in terminal input
 func cleanTextForPrompt(input string) string {
-    return strings.TrimSpace(input)
+	return strings.TrimSpace(input)
 }
 
 // confirmAction prompts the user to confirm an action.
@@ -667,6 +573,198 @@ func confirmAction(prompt string) bool {
 	}
 	response = strings.ToLower(strings.TrimSpace(response))
 	return response == "y" || response == "yes"
+}
+
+// gorillaImport handles the import process and metadata extraction
+func gorillaImport(
+	installerPath string,
+	installScriptPath string,
+	uninstallScriptPath string,
+	postinstallScriptPath string,
+	uninstallerPath string,
+	config Config,
+) (bool, error) {
+
+	// Check if installer exists
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		return false, fmt.Errorf("installer '%s' does not exist", installerPath)
+	}
+
+	// Get installer extension
+	installerExtension := strings.ToLower(filepath.Ext(installerPath))
+
+	var productName, developer, version, productCode, upgradeCode string
+	var err error
+
+	if installerExtension == ".msi" {
+		// Extract metadata
+		productName, developer, version, productCode, upgradeCode, err = extractMSIMetadata(installerPath)
+		if err != nil {
+			fmt.Printf("Error extracting metadata from MSI: %v\n", err)
+			fmt.Println("Fallback to manual input.")
+		}
+	} else {
+		// Prompt user for metadata
+		fmt.Println("Installer is not an MSI. Please provide the following information.")
+		promptSurvey(&productName, "Product Name", "")
+		promptSurvey(&developer, "Developer", "")
+		promptSurvey(&version, "Version", "")
+		// ProductCode and UpgradeCode may not be available for EXE installers
+		productCode = ""
+		upgradeCode = ""
+	}
+
+	// Calculate hash of the installer
+	installerHash, err := calculateSHA256(installerPath)
+	if err != nil {
+		return false, fmt.Errorf("error calculating installer file hash: %v", err)
+	}
+
+	// Use 'apps' as default installerSubPath
+	installerSubPath := "apps"
+
+	// Copy installer to repo
+	installerFilename := fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(installerPath))
+	pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
+	if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
+		err = os.MkdirAll(pkgsFolderPath, 0755)
+		if err != nil {
+			return false, fmt.Errorf("failed to create directory structure: %v", err)
+		}
+	}
+	installerDestinationPath := filepath.Join(pkgsFolderPath, installerFilename)
+	_, err = copyFile(installerPath, installerDestinationPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to copy installer to destination: %v", err)
+	}
+
+	// Installer location in pkgs
+	installerLocation := filepath.Join("/", installerSubPath, installerFilename)
+
+	// Process scripts
+	var preinstallScriptContent string
+	var postinstallScriptContent string
+	var uninstallScriptContent string
+
+	// Process install script
+	if installScriptPath != "" {
+		content, err := os.ReadFile(installScriptPath)
+		if err != nil {
+			return false, fmt.Errorf("error reading install script file: %v", err)
+		}
+		extension := strings.ToLower(filepath.Ext(installScriptPath))
+		if extension == ".bat" {
+			preinstallScriptContent = generateWrapperScript(string(content))
+		} else if extension == ".ps1" {
+			preinstallScriptContent = string(content)
+		} else {
+			return false, fmt.Errorf("unsupported install script file type: %s", extension)
+		}
+	}
+
+	// Process uninstall script
+	if uninstallScriptPath != "" {
+		content, err := os.ReadFile(uninstallScriptPath)
+		if err != nil {
+			return false, fmt.Errorf("error reading uninstall script file: %v", err)
+		}
+		extension := strings.ToLower(filepath.Ext(uninstallScriptPath))
+		if extension == ".bat" {
+			uninstallScriptContent = generateWrapperScript(string(content))
+		} else if extension == ".ps1" {
+			uninstallScriptContent = string(content)
+		} else {
+			return false, fmt.Errorf("unsupported uninstall script file type: %s", extension)
+		}
+	}
+
+	// Process post-install script
+	if postinstallScriptPath != "" {
+		content, err := os.ReadFile(postinstallScriptPath)
+		if err != nil {
+			return false, fmt.Errorf("error reading post-install script file: %v", err)
+		}
+		extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
+		if extension == ".ps1" {
+			postinstallScriptContent = string(content)
+		} else {
+			return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
+		}
+	}
+
+	// Process uninstaller
+	var uninstaller *Installer
+	if uninstallerPath != "" {
+		if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
+			return false, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
+		}
+		uninstallerHash, err := calculateSHA256(uninstallerPath)
+		if err != nil {
+			return false, fmt.Errorf("error calculating uninstaller file hash: %v", err)
+		}
+		uninstallerExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(uninstallerPath)), ".")
+
+		// Copy uninstaller to repo
+		uninstallerFilename := filepath.Base(uninstallerPath)
+		uninstallerDestinationPath := filepath.Join(pkgsFolderPath, uninstallerFilename)
+		_, err = copyFile(uninstallerPath, uninstallerDestinationPath)
+		if err != nil {
+			return false, fmt.Errorf("failed to copy uninstaller to destination: %v", err)
+		}
+
+		uninstallerLocation := filepath.Join("/", installerSubPath, uninstallerFilename)
+
+		uninstaller = &Installer{
+			Location:  uninstallerLocation,
+			Hash:      uninstallerHash,
+			Arguments: []string{}, // You can add logic to handle uninstaller arguments if needed
+			Type:      uninstallerExtension,
+		}
+	}
+
+	// Prompt for additional metadata if not already set
+	category := "Apps"
+	supportedArch := config.DefaultArch
+	catalogs := config.DefaultCatalog
+
+	promptSurvey(&category, "Category", category)
+	promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
+	promptSurvey(&catalogs, "Catalogs", catalogs)
+
+	catalogList := strings.Split(catalogs, ",")
+	for i := range catalogList {
+		catalogList[i] = strings.TrimSpace(catalogList[i])
+	}
+
+	// Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
+	err = createPkgsInfo(
+		installerPath,
+		filepath.Join(config.RepoPath, "pkgsinfo"),
+		productName,
+		version,
+		catalogList,
+		category,
+		developer,
+		[]string{supportedArch},
+		config.RepoPath,
+		installerSubPath,
+		productCode,
+		upgradeCode,
+		installerHash,
+		true, // Unattended install default
+		true, // Unattended uninstall default
+		preinstallScriptContent,
+		postinstallScriptContent,
+		uninstallScriptContent,
+		uninstaller,
+	)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
+	}
+
+	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
+	return true, nil
 }
 
 // uploadToCloud handles uploading files to AWS or AZURE if a valid bucket is provided
@@ -749,11 +847,16 @@ func rebuildCatalogs() {
 
 // main handles the configuration and running gorillaImport
 func main() {
-	config := flag.Bool("config", false, "Run interactive configuration setup.")
+	configFlag := flag.Bool("config", false, "Run interactive configuration setup.")
 	archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
+	installerFlag := flag.String("installer", "", "Path to the installer .exe or .msi file.")
+	uninstallerFlag := flag.String("uninstaller", "", "Path to the uninstaller .exe or .msi file.")
+	installScriptFlag := flag.String("installscript", "", "Path to the install script (.bat or .ps1).")
+	uninstallScriptFlag := flag.String("uninstallscript", "", "Path to the uninstall script (.bat or .ps1).")
+	postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script (.ps1).")
 	flag.Parse()
 
-	if *config {
+	if *configFlag {
 		configureGorillaImport()
 		return
 	}
@@ -783,18 +886,30 @@ func main() {
 			if loadedConfig.CloudBucket != "" {
 				configData.CloudBucket = loadedConfig.CloudBucket
 			}
-			if loadedConfig.CloudProvider != "" { 
+			if loadedConfig.CloudProvider != "" {
 				configData.CloudProvider = loadedConfig.CloudProvider
 			}
 		}
 	}
 
-	var packagePath string
-	if flag.NArg() > 0 {
+	// Validate that if --installscript is provided and is a .bat, then --installer is mandatory
+	if *installScriptFlag != "" {
+		scriptExtension := strings.ToLower(filepath.Ext(*installScriptFlag))
+		if scriptExtension == ".bat" && *installerFlag == "" {
+			fmt.Println("Error: --installer is mandatory when using --installscript with a .bat file.")
+			os.Exit(1)
+		}
+	}
+
+	// Determine the installer path
+	packagePath := *installerFlag
+	if packagePath == "" && flag.NArg() > 0 {
 		packagePath = flag.Arg(0)
-	} else {
-		fmt.Printf("Enter the path to the package file to import: ")
-		fmt.Scanln(&packagePath)
+	}
+
+	if packagePath == "" {
+		fmt.Println("Error: No installer specified. Use --installer or provide the installer path as an argument.")
+		os.Exit(1)
 	}
 
 	// If --arch flag is provided, override the default architecture
@@ -803,7 +918,14 @@ func main() {
 	}
 
 	// Perform the import and check if it was successful
-	importSuccess, err := gorillaImport(packagePath, configData)
+	importSuccess, err := gorillaImport(
+		packagePath,
+		*installScriptFlag,
+		*uninstallScriptFlag,
+		*postinstallScriptFlag,
+		*uninstallerFlag,
+		configData,
+	)
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
@@ -839,3 +961,4 @@ func main() {
 		}
 	}
 }
+
