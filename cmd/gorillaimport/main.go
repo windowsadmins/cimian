@@ -403,39 +403,26 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 	return nil
 }
 
-// findMatchingItemInCatalog checks for existing packages with the same name, version, and hash in the catalogs
-func findMatchingItemInCatalog(repoPath, name, version, fileHash string) (*PkgsInfo, error) {
-	catalogsPath := filepath.Join(repoPath, "catalogs")
-	var matchingItem *PkgsInfo
+// findMatchingItemInAllCatalog checks if the item already exists in 'All.yaml'
+func findMatchingItemInAllCatalog(repoPath, name, version string) (*PkgsInfo, error) {
+	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+	fileContent, err := os.ReadFile(allCatalogPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read All.yaml: %v", err)
+	}
 
-	err := filepath.Walk(catalogsPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	var allCatalog Catalog
+	if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+	}
+
+	for _, item := range allCatalog.Packages {
+		if item.Name == name && item.Version == version {
+			return &item, nil
 		}
-		// Process only .yaml files
-		if filepath.Ext(path) == ".yaml" {
-			fileContent, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
+	}
 
-			var catalog Catalog
-			if err := yaml.Unmarshal(fileContent, &catalog); err != nil {
-				return err
-			}
-
-			// Check each package in the catalog
-			for _, pkg := range catalog.Packages {
-				if pkg.Name == name && pkg.Version == version && pkg.Installer.Hash == fileHash {
-					matchingItem = &pkg
-					return filepath.SkipDir // Exit early since we found a match
-				}
-			}
-		}
-		return nil
-	})
-
-	return matchingItem, err
+	return nil, nil
 }
 
 // Catalog structure holds a list of packages for each catalog
@@ -462,18 +449,16 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("error calculating file hash: %v", err)
     }
 
-    // Check for an identical item in the catalogs
-    matchingItem, err := findMatchingItemInCatalog(config.RepoPath, productName, version, fileHash)
+    // Check for duplicate in All.yaml
+    matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version)
     if err != nil {
-        return false, fmt.Errorf("error searching in catalogs: %v", err)
+        return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
-
     if matchingItem != nil {
-        fmt.Printf("An identical item already exists in the catalogs:\n")
+        fmt.Printf("This item already exists in All.yaml:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
-        fmt.Printf("        Installer Hash: %s\n", matchingItem.Installer.Hash)
-        return false, nil // Abort import since it's identical
+        return false, nil  // Prevent further import
     }
 
 	// Determine where to save the pkg and pkgsinfo
