@@ -404,16 +404,16 @@ type Catalog struct {
 }
 
 // findMatchingItemInAllCatalog checks if the item already exists in 'All.yaml'
-func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, error) {
+func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
     allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
     fileContent, err := os.ReadFile(allCatalogPath)
     if err != nil {
-        return nil, fmt.Errorf("failed to read All.yaml: %v", err)
+        return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
     }
 
     var allCatalog Catalog
     if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
-        return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+        return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
     }
 
     for _, item := range allCatalog.Packages {
@@ -422,13 +422,14 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
             // Check if the hashes match
             if item.Installer != nil && item.Installer.Hash == currentFileHash {
                 fmt.Println("Exact match found based on product code, upgrade code, and hash.")
-                return &item, nil
+                return &item, true, nil
             } else {
                 fmt.Printf("Match found but hash differs: existing hash: %s vs current hash: %s\n", item.Installer.Hash, currentFileHash)
+                return &item, false, nil
             }
         }
     }
-    return nil, nil
+    return nil, false, nil
 }
 
 // findMatchingItemInAllCatalogWithDifferentVersion checks if an item with the same name exists but with a different version
@@ -473,31 +474,34 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     }
     fmt.Printf("Calculated hash for %s: %s\n", packagePath, currentFileHash)
 
-    // Check for an existing package with the same name, version, and hash in All.yaml
-    matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
+    // Check for an existing package with the same product code and upgrade code in All.yaml
+    matchingItem, hashMatches, err := findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
     if err != nil {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
     
-    // If an exact match is found based on product code, upgrade code, and hash
     if matchingItem != nil {
-        fmt.Printf("This item already exists in All.yaml with the same product code, upgrade code, and hash:\n")
-        fmt.Printf("            Product Code: %s\n", matchingItem.ProductCode)
-        fmt.Printf("            Upgrade Code: %s\n", matchingItem.UpgradeCode)
-        fmt.Printf("            Hash: %s\n", matchingItem.Installer.Hash)
-        return false, nil // Prevent further import as it is identical
-    }
-
-    if matchingItem != nil {
-        fmt.Printf("Item with the same product code and upgrade code exists but with a different hash:\n")
-        fmt.Printf("            Existing hash: %s\n", matchingItem.Installer.Hash)
-        fmt.Printf("            New hash: %s\n", currentFileHash)
+        if hashMatches {
+            // Exact match found
+            fmt.Printf("This item already exists in All.yaml with the same product code, upgrade code, and hash:\n")
+            fmt.Printf("            Product Code: %s\n", matchingItem.ProductCode)
+            fmt.Printf("            Upgrade Code: %s\n", matchingItem.UpgradeCode)
+            fmt.Printf("            Hash: %s\n", matchingItem.Installer.Hash)
+            return false, nil // Prevent further import as it is identical
+        } else {
+            // Hash differs
+            fmt.Printf("Item with the same product code and upgrade code exists but with a different hash:\n")
+            fmt.Printf("            Existing hash: %s\n", matchingItem.Installer.Hash)
+            fmt.Printf("            New hash: %s\n", currentFileHash)
     
-        var userDecision string
-        userDecision = getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-        if strings.ToLower(userDecision) != "y" {
-            return false, fmt.Errorf("import canceled due to hash mismatch")
+            // Prompt the user
+            userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
+            if strings.ToLower(userDecision) != "y" {
+                return false, fmt.Errorf("import canceled due to hash mismatch")
+            }
         }
+    } else {
+        fmt.Println("No identical package found. Proceeding with import...")
     }
 
     // Proceed with the import since no exact match was found
