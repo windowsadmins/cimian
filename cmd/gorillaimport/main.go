@@ -503,7 +503,11 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Printf("              Existing hash: %s\n", matchingItem.Installer.Hash)
         fmt.Printf("              New hash: %s\n", currentFileHash)
 
-        userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
+        // Declare userDecision variable
+        var userDecision string
+
+        // Prompt the user if they still want to proceed with the import
+        userDecision = getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
         if strings.ToLower(userDecision) != "y" {
             return false, fmt.Errorf("import canceled due to hash mismatch")
         }
