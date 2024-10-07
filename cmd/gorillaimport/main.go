@@ -420,8 +420,9 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 // Helper function to indent script content properly for YAML block scalars
 func indentScript(script string) string {
     indentedLines := strings.Split(script, "\n")
+    // Only add indentation to lines that are not already empty or overly escaped
     for i, line := range indentedLines {
-        indentedLines[i] = "  " + line // 2-space indent for each line
+        indentedLines[i] = strings.TrimRight("  " + line, " ")
     }
     return strings.Join(indentedLines, "\n")
 }
