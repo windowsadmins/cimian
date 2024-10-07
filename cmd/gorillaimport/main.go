@@ -371,25 +371,63 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	m["unattended_install"] = pkgsInfo.UnattendedInstall
 	m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
 	m["installer"] = pkgsInfo.Installer
-	m["uninstaller"] = pkgsInfo.Uninstaller
+
+	if pkgsInfo.Uninstaller != nil {
+		m["uninstaller"] = pkgsInfo.Uninstaller
+	}
 	m["supported_architectures"] = pkgsInfo.SupportedArch
 	m["product_code"] = pkgsInfo.ProductCode
 	m["upgrade_code"] = pkgsInfo.UpgradeCode
 
 	// Use block scalar for the script fields if they are multiline
 	if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
+		m["preinstall_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle,
+			Value: pkgsInfo.PreinstallScript,
+		}
+	} else {
 		m["preinstall_script"] = pkgsInfo.PreinstallScript
 	}
+
 	if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
+		m["postinstall_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle,
+			Value: pkgsInfo.PostinstallScript,
+		}
+	} else {
 		m["postinstall_script"] = pkgsInfo.PostinstallScript
 	}
+
 	if strings.Contains(pkgsInfo.UninstallScript, "\n") {
+		m["uninstall_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle,
+			Value: pkgsInfo.UninstallScript,
+		}
+	} else {
 		m["uninstall_script"] = pkgsInfo.UninstallScript
 	}
+
+	// Handling installcheck_script and uninstallcheck_script similarly
 	if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
+		m["installcheck_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle,
+			Value: pkgsInfo.InstallCheckScript,
+		}
+	} else {
 		m["installcheck_script"] = pkgsInfo.InstallCheckScript
 	}
+
 	if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
+		m["uninstallcheck_script"] = yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Style: yaml.LiteralStyle,
+			Value: pkgsInfo.UninstallCheckScript,
+		}
+	} else {
 		m["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript
 	}
 
@@ -401,7 +439,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Updating createPkgsInfo to use the new encoder
+// Updating createPkgsInfo to ensure scripts use block scalars and fix the uninstaller and output issue
 func createPkgsInfo(
 	filePath string,
 	outputDir string,
@@ -480,8 +518,6 @@ func createPkgsInfo(
 		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
 	}
 
-	fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
-	return nil
 }
 
 func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
