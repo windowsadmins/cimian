@@ -352,91 +352,78 @@ func copyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
-// Custom wrapper function to enforce block scalar style for specific script fields
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
+    var buf bytes.Buffer
+    enc := yaml.NewEncoder(&buf)
+    enc.SetIndent(2)
 
-	// Manually marshal the PkgsInfo struct field by field
-	m := make(map[string]interface{})
+    // Manually construct the map while applying block scalars to script fields
+    m := make(map[string]interface{})
 
-	m["name"] = pkgsInfo.Name
-	m["display_name"] = pkgsInfo.DisplayName
-	m["version"] = pkgsInfo.Version
-	m["description"] = pkgsInfo.Description
-	m["catalogs"] = pkgsInfo.Catalogs
-	m["category"] = pkgsInfo.Category
-	m["developer"] = pkgsInfo.Developer
-	m["unattended_install"] = pkgsInfo.UnattendedInstall
-	m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
-	m["installer"] = pkgsInfo.Installer
+    m["name"] = pkgsInfo.Name
+    m["display_name"] = pkgsInfo.DisplayName
+    m["version"] = pkgsInfo.Version
+    m["description"] = pkgsInfo.Description
+    m["catalogs"] = pkgsInfo.Catalogs
+    m["category"] = pkgsInfo.Category
+    m["developer"] = pkgsInfo.Developer
+    m["unattended_install"] = pkgsInfo.UnattendedInstall
+    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
+    m["installer"] = pkgsInfo.Installer
+    if pkgsInfo.Uninstaller != nil {
+        m["uninstaller"] = pkgsInfo.Uninstaller
+    }
+    m["supported_architectures"] = pkgsInfo.SupportedArch
+    m["product_code"] = pkgsInfo.ProductCode
+    m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-	if pkgsInfo.Uninstaller != nil {
-		m["uninstaller"] = pkgsInfo.Uninstaller
-	}
-	m["supported_architectures"] = pkgsInfo.SupportedArch
-	m["product_code"] = pkgsInfo.ProductCode
-	m["upgrade_code"] = pkgsInfo.UpgradeCode
+    // Only apply block scalar style to script fields if they contain multiple lines
+    if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
+        m["preinstall_script"] = "|-\n" + indentScript(pkgsInfo.PreinstallScript)
+    } else {
+        m["preinstall_script"] = pkgsInfo.PreinstallScript
+    }
 
-	// Use block scalar for the script fields if they are multiline
-	if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
-		m["preinstall_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle,
-			Value: pkgsInfo.PreinstallScript,
-		}
-	} else {
-		m["preinstall_script"] = pkgsInfo.PreinstallScript
-	}
+    if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
+        m["postinstall_script"] = "|-\n" + indentScript(pkgsInfo.PostinstallScript)
+    } else {
+        m["postinstall_script"] = pkgsInfo.PostinstallScript
+    }
 
-	if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
-		m["postinstall_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle,
-			Value: pkgsInfo.PostinstallScript,
-		}
-	} else {
-		m["postinstall_script"] = pkgsInfo.PostinstallScript
-	}
+    if strings.Contains(pkgsInfo.UninstallScript, "\n") {
+        m["uninstall_script"] = "|-\n" + indentScript(pkgsInfo.UninstallScript)
+    } else {
+        m["uninstall_script"] = pkgsInfo.UninstallScript
+    }
 
-	if strings.Contains(pkgsInfo.UninstallScript, "\n") {
-		m["uninstall_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle,
-			Value: pkgsInfo.UninstallScript,
-		}
-	} else {
-		m["uninstall_script"] = pkgsInfo.UninstallScript
-	}
+    if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
+        m["installcheck_script"] = "|-\n" + indentScript(pkgsInfo.InstallCheckScript)
+    } else {
+        m["installcheck_script"] = pkgsInfo.InstallCheckScript
+    }
 
-	// Handling installcheck_script and uninstallcheck_script similarly
-	if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
-		m["installcheck_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle,
-			Value: pkgsInfo.InstallCheckScript,
-		}
-	} else {
-		m["installcheck_script"] = pkgsInfo.InstallCheckScript
-	}
+    if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
+        m["uninstallcheck_script"] = "|-\n" + indentScript(pkgsInfo.UninstallCheckScript)
+    } else {
+        m["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript
+    }
 
-	if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
-		m["uninstallcheck_script"] = yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Style: yaml.LiteralStyle,
-			Value: pkgsInfo.UninstallCheckScript,
-		}
-	} else {
-		m["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript
-	}
+    // Encode the final map
+    err := enc.Encode(m)
+    if err != nil {
+        return nil, err
+    }
 
-	// Encode the final map
-	err := enc.Encode(m)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+    return buf.Bytes(), nil
+}
+
+// Helper function to indent script content properly for YAML block scalars
+func indentScript(script string) string {
+    indentedLines := strings.Split(script, "\n")
+    for i, line := range indentedLines {
+        indentedLines[i] = "  " + line // 2-space indent for each line
+    }
+    return strings.Join(indentedLines, "\n")
 }
 
 // Updating createPkgsInfo to ensure scripts use block scalars and fix the uninstaller and output issue
@@ -518,6 +505,7 @@ func createPkgsInfo(
 		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
 	}
 
+	fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
 	return nil
 }
 
