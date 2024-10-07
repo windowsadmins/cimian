@@ -434,7 +434,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Printf("  Installer item path: %s\n\n", matchingItem.Installer.Location)
 
         // Ask if the user wants to use the existing item as a template
-        useTemplate := getInputWithDefault("Use existing item as a template? [y/N]", "N")
+        useTemplate := getInputWithDefault("Use existing item as a template? [y/n]", "y")
         if strings.ToLower(useTemplate) == "y" {
             // Copy fields from existing item to the current one
             developer = matchingItem.Developer
@@ -473,7 +473,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
     // Ask for final confirmation to import
-    importItem := getInputWithDefault("Import this item? [y/N]", "N")
+    importItem := getInputWithDefault("Import this item? [y/n]", "n")
     if strings.ToLower(importItem) != "y" {
         fmt.Println("Import canceled.")
         return false, nil  // Return false if the import is canceled
@@ -698,7 +698,7 @@ func main() {
 			if loadedConfig.CloudBucket != "" {
 				configData.CloudBucket = loadedConfig.CloudBucket
 			}
-			if loadedConfig.CloudProvider != "" {  // Changed from CloudType to CloudProvider
+			if loadedConfig.CloudProvider != "" { 
 				configData.CloudProvider = loadedConfig.CloudProvider
 			}
 		}
@@ -728,6 +728,29 @@ func main() {
 	if importSuccess && configData.CloudProvider != "none" {
 		if err := uploadToCloud(configData); err != nil {
 			fmt.Printf("Error uploading to cloud: %s\n", err)
+		}
+	}
+
+	// After successful import, ask the user if they want to run makecatalogs
+	if importSuccess {
+		confirm := getInputWithDefault("Would you like to run makecatalogs? [y/n]", "n")
+		if strings.ToLower(confirm) == "y" {
+			fmt.Println("Running makecatalogs to update catalogs...")
+
+			makeCatalogsBinary := filepath.Join(filepath.Dir(os.Args[0]), "makecatalogs")
+			cmd := exec.Command(makeCatalogsBinary)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+
+			err := cmd.Run()
+			if err != nil {
+				fmt.Printf("Error running makecatalogs: %v\n", err)
+				os.Exit(1)
+			}
+
+			fmt.Println("makecatalogs completed successfully.")
+		} else {
+			fmt.Println("Skipped running makecatalogs.")
 		}
 	}
 }
