@@ -377,7 +377,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Only apply block scalar style to script fields if they contain multiple lines
+    // Apply block scalar style to script fields if they contain multiple lines
     if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
         m["preinstall_script"] = "|-\n" + indentScript(pkgsInfo.PreinstallScript)
     } else {
@@ -419,12 +419,15 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
 // Helper function to indent script content properly for YAML block scalars
 func indentScript(script string) string {
-    indentedLines := strings.Split(script, "\n")
-    // Only add indentation to lines that are not already empty or overly escaped
-    for i, line := range indentedLines {
-        indentedLines[i] = strings.TrimRight("  " + line, " ")
+    // Split the script into lines and trim unnecessary whitespace
+    lines := strings.Split(strings.TrimSpace(script), "\n")
+    
+    // Indent each line with two spaces
+    for i, line := range lines {
+        lines[i] = "  " + line
     }
-    return strings.Join(indentedLines, "\n")
+    
+    return strings.Join(lines, "\n")
 }
 
 // Updating createPkgsInfo to ensure scripts use block scalars and fix the uninstaller and output issue
