@@ -486,16 +486,16 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
 
-    // Stop the import if an identical package already exists
+    // If the matching item has the same hash, stop the import
     if matchingItem != nil {
         fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
         fmt.Printf("              Hash: %s\n", matchingItem.Installer.Hash)
-        return false, fmt.Errorf("duplicate package detected. No need to import")
+        return false, nil // Prevent further import as it is identical
     }
 
-    // Check for an item with the same name and version but a different hash
+    // If the item exists with the same name and version but a different hash
     matchingItem, err = findMatchingItemInAllCatalog(config.RepoPath, productName, version, "")
     if err != nil {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
@@ -507,7 +507,6 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Printf("              Existing hash: %s\n", matchingItem.Installer.Hash)
         fmt.Printf("              New hash: %s\n", currentFileHash)
 
-        // Declare and initialize the `shouldImport` variable
         var shouldImport string
         shouldImport = getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
         if strings.ToLower(shouldImport) != "y" {
@@ -515,7 +514,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         }
     }
 
-    // Proceed with the import process since no identical package was found
+    // Proceed with the import since no exact match was found
     fmt.Println("No identical package found. Proceeding with import...")
 
     // Check for an item with the same name but different version
@@ -545,6 +544,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     promptSurvey(&developer, "Developer", developer)
     promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
 
+    // Prompt for subfolder if no match found or user doesn't want to use the existing path
     if installerSubPath == "" {
         promptSurvey(&installerSubPath, "Choose the item path", "apps")
     }
