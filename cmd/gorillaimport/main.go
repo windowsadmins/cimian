@@ -518,20 +518,26 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 
     // Show all gathered info for confirmation
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
-
+    
     // Ask for final confirmation to import
     importItem := getInputWithDefault("Import this item? [y/N]", "N")
     if strings.ToLower(importItem) != "y" {
         fmt.Println("Import canceled.")
         return false, nil // Return false if the import is canceled
     }
-
+    
+    // Ensure the package extension is properly handled (e.g., ".msi")
+    packageExt := filepath.Ext(packagePath)
+    if packageExt == "" {
+        return false, fmt.Errorf("invalid package file: missing file extension")
+    }
+    
     // Calculate hash of the package
     fileHash, err := calculateSHA256(packagePath)
     if err != nil {
         return false, fmt.Errorf("error calculating file hash: %v", err)
     }
-
+    
     // Ensure that the package path exists and create it if not
     pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
     if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
@@ -541,14 +547,14 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
             return false, fmt.Errorf("failed to create directory structure for package: %v", err)
         }
     }
-
-    // Copy the package to the determined path
-    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
+    
+    // Copy the package to the determined path, ensuring proper file name format
+    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, packageExt))
     _, err = copyFile(packagePath, destinationPath)
     if err != nil {
         return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
-
+    
     // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
     err = createPkgsInfo(
         packagePath,
@@ -567,13 +573,13 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         true,  // Unattended install default
         true,  // Unattended uninstall default
     )
-
+    
     if err != nil {
         return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
     }
-
+    
     fmt.Printf("Imported %s version %s successfully.\n", productName, version)
-
+    
     return true, nil // Return true if the import is successful
 }
 
