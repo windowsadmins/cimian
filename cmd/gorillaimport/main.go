@@ -600,6 +600,8 @@ func gorillaImport(
     uninstallScriptPath string,
     postinstallScriptPath string,
     uninstallerPath string,
+    installCheckScriptPath string,
+    uninstallCheckScriptPath string,
     config Config,
 ) (bool, error) {
     if _, err := os.Stat(packagePath); os.IsNotExist(err) {
@@ -1070,6 +1072,8 @@ func main() {
         *uninstallScriptFlag,
         *postinstallScriptFlag,
         *uninstallerFlag,
+        *installCheckScriptFlag,
+        *uninstallCheckScriptFlag,
         configData,
     )
     if err != nil {
