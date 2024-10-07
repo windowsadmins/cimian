@@ -484,7 +484,7 @@ func createPkgsInfo(
 		ProductCode:         cleanProductCode,
 		UpgradeCode:         cleanUpgradeCode,
 		UnattendedInstall:   unattendedInstall,
-		UnattendedUninstall: unattendedUnattended,
+		UnattendedUninstall: unattendedUninstall,
 		PreinstallScript:    preinstallScript,
 		PostinstallScript:   postinstallScript,
 		UninstallScript:     uninstallScript,
@@ -768,8 +768,8 @@ func gorillaImport(
     }
     
     // Process install check script
-    if installCheckScriptPath != "" {
-        content, err := os.ReadFile(installCheckScriptPath)
+    if *installCheckScriptFlag != "" {
+        content, err := os.ReadFile(*installCheckScriptFlag)
         if err != nil {
             return false, fmt.Errorf("error reading install check script file: %v", err)
         }
@@ -777,8 +777,8 @@ func gorillaImport(
     }
     
     // Process uninstall check script
-    if uninstallCheckScriptPath != "" {
-        content, err := os.ReadFile(uninstallCheckScriptPath)
+    if *uninstallCheckScriptFlag != "" {
+        content, err := os.ReadFile(*uninstallCheckScriptFlag)
         if err != nil {
             return false, fmt.Errorf("error reading uninstall check script file: %v", err)
         }
@@ -1008,6 +1008,8 @@ func main() {
     installScriptFlag := flag.String("installscript", "", "Path to the install script (.bat or .ps1).")
     uninstallScriptFlag := flag.String("uninstallscript", "", "Path to the uninstall script (.bat or .ps1).")
     postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script (.ps1).")
+    installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
+    uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")    
     flag.Parse()
 
     if *configFlag {
