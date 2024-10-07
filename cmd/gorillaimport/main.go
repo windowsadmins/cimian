@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -417,15 +418,18 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     return buf.Bytes(), nil
 }
 
-// Helper function to indent script content properly for YAML block scalars
+// Helper function to clean up and indent script content properly for YAML block scalars
 func indentScript(script string) string {
-    // Split the script into lines and trim unnecessary whitespace
-    lines := strings.Split(strings.TrimSpace(script), "\n")
+    // Use regex to clean up extra backslashes (\\ -> \)
+    re := regexp.MustCompile(`\\\\`)
+    cleanedScript := re.ReplaceAllString(script, `\`)
+
+    // Split the cleaned script into lines and trim unnecessary whitespace
+    lines := strings.Split(strings.TrimSpace(cleanedScript), "\n")
     
     // Indent each line with two spaces for YAML block scalar formatting
     for i, line := range lines {
-        // Replace unnecessary double backslashes with single backslashes
-        lines[i] = "  " + strings.ReplaceAll(line, "\\\\", "\\")
+        lines[i] = "  " + line
     }
     
     // Join the lines back together with proper indentation
