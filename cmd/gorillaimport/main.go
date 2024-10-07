@@ -372,8 +372,6 @@ func createPkgsInfo(
 	uninstaller *Installer,
 ) error {
 
-	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
-
 	// Ensure that productCode and upgradeCode don't contain artifacts
 	cleanProductCode := strings.Trim(productCode, "{}\r\n ")
 	cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r\n ")
