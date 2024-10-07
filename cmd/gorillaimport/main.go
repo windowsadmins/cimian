@@ -452,7 +452,6 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
 	return nil, nil
 }
 
-// gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) (bool, error) {
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return false, fmt.Errorf("package '%s' does not exist", packagePath)
@@ -465,16 +464,17 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 		fmt.Println("Fallback to manual input.")
 	}
 
-	// Check for duplicate in All.yaml
+	// Check for an existing package in All.yaml with the same name and version
 	matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version)
 	if err != nil {
 		return false, fmt.Errorf("error checking All.yaml: %v", err)
 	}
 	if matchingItem != nil {
-		fmt.Printf("This item already exists in All.yaml:\n")
-		fmt.Printf("            Item name: %s\n", matchingItem.Name)
-		fmt.Printf("              Version: %s\n", matchingItem.Version)
-		return false, nil // Prevent further import
+	    // Exact match found, do not proceed with the import
+	    fmt.Printf("This item already exists in All.yaml:\n")
+	    fmt.Printf("            Item name: %s\n", matchingItem.Name)
+	    fmt.Printf("              Version: %s\n", matchingItem.Version)
+	    return false, nil // Prevent import
 	}
 
 	// Check for an item with the same name but different version
@@ -483,7 +483,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 		return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
 	}
 
-	// Prepopulate and allow user confirmation/modification
+	// Prepopulate fields if an item with the same name but different version exists
 	category := "Apps" // Set default category
 	supportedArch := config.DefaultArch
 	catalogs := config.DefaultCatalog
@@ -497,7 +497,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 		installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
 	}
 
-	// Prompt user for fields
+	// Prompt user for fields if prepopulation is not enough
 	promptSurvey(&productName, "Item name", productName)
 	promptSurvey(&version, "Version", version)
 	promptSurvey(&category, "Category", category)
