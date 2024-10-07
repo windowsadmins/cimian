@@ -518,6 +518,7 @@ func createPkgsInfo(
 		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
 	}
 
+	return nil
 }
 
 func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
