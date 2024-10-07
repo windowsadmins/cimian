@@ -532,6 +532,13 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("invalid package file: missing file extension")
     }
     
+    // Correctly format the installer path
+    installerSubPath = strings.TrimSuffix(installerSubPath, "/")
+    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, packageExt))
+    
+    // Show all gathered info for confirmation
+    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, packageExt)
+    
     // Calculate hash of the package
     fileHash, err := calculateSHA256(packagePath)
     if err != nil {
