@@ -424,7 +424,7 @@ func indentScript(script string) string {
     
     // Indent each line with two spaces
     for i, line := range lines {
-        lines[i] = "  " + line
+        lines[i] = "  " + strings.ReplaceAll(line, "\\\\", "\\")
     }
     
     return strings.Join(lines, "\n")
