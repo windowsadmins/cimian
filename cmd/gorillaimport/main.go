@@ -445,25 +445,40 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
 
 // findMatchingItemInAllCatalogWithDifferentVersion checks if an item with the same name exists but with a different version
 func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version string) (*PkgsInfo, error) {
-	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-	fileContent, err := os.ReadFile(allCatalogPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read All.yaml: %v", err)
-	}
+    allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+    fileContent, err := os.ReadFile(allCatalogPath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read All.yaml: %v", err)
+    }
 
-	var allCatalog Catalog
-	if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-	}
+    var allCatalog Catalog
+    if err := yaml.Unmarshal(fileContent, &allCatalog); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+    }
 
-	for _, item := range allCatalog.Packages {
-		if item.Name == name && item.Version != version {
-			return &item, nil // Return if the name matches but the version is different
-		}
-	}
+    // Normalize input name and version
+    cleanName := strings.TrimSpace(strings.ToLower(name))
+    cleanVersion := strings.TrimSpace(strings.ToLower(version))
 
-	return nil, nil
+    for _, item := range allCatalog.Packages {
+        // Skip items with empty name or version
+        if item.Name == "" || item.Version == "" {
+            continue
+        }
+
+        // Normalize item name and version
+        itemName := strings.TrimSpace(strings.ToLower(item.Name))
+        itemVersion := strings.TrimSpace(strings.ToLower(item.Version))
+
+        // Compare names and versions
+        if itemName == cleanName && itemVersion != cleanVersion {
+            return &item, nil // Return if the name matches but the version is different
+        }
+    }
+
+    return nil, nil
 }
+
 
 // gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) (bool, error) {
@@ -522,13 +537,13 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     if err != nil {
         return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
     }
-
+    
     // Prepopulate fields if an item with the same name but a different version exists
     category := "Apps" // Set default category
     supportedArch := config.DefaultArch
     catalogs := config.DefaultCatalog
     var installerSubPath string
-
+    
     if matchingItemWithDiffVersion != nil {
         fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
         productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
