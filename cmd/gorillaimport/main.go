@@ -717,15 +717,18 @@ func main() {
 		configData.DefaultArch = *archFlag
 	}
 
-	// Now assign err from gorillaImport function
+	// Perform the import
+	success := false // Variable to track success
 	err := gorillaImport(packagePath, configData)
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
+	} else {
+		success = true
 	}
-	
-	// After creating pkgs and pkgsinfo, upload to the appropriate cloud provider only if not "none"
-	if configData.CloudProvider != "none" {
+
+	// Only upload if the import was successful
+	if success && configData.CloudProvider != "none" {
 		if err := uploadToCloud(configData); err != nil {
 			fmt.Printf("Error uploading to cloud: %s\n", err)
 		}
