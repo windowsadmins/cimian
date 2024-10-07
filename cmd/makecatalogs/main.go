@@ -61,6 +61,15 @@ type Installer struct {
 	Type      string   `yaml:"type"`
 }
 
+// Config structure holds the configuration settings
+type Config struct {
+	RepoPath       string `yaml:"repo_path"`
+	CloudProvider  string `yaml:"cloud_provider"`
+	CloudBucket    string `yaml:"cloud_bucket"`
+	DefaultCatalog string `yaml:"default_catalog"`
+	DefaultArch    string `yaml:"default_arch"`
+}
+
 // Catalog structure holds a list of packages for each catalog
 type Catalog struct {
 	Packages []PkgsInfo `yaml:"packages"`
@@ -68,6 +77,23 @@ type Catalog struct {
 
 // CatalogsMap is a map where the key is the catalog name and the value is the list of packages
 type CatalogsMap map[string]*Catalog
+
+// LoadConfig loads the configuration from a YAML file
+func loadConfig(configPath string) (Config, error) {
+	var config Config
+	file, err := os.Open(configPath)
+	if err != nil {
+		return config, err
+	}
+	defer file.Close()
+
+	yamlDecoder := yaml.NewDecoder(file)
+	if err := yamlDecoder.Decode(&config); err != nil {
+		return config, err
+	}
+
+	return config, nil
+}
 
 // scanRepo scans the pkgsinfo directory and reads all pkginfo YAML files
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
@@ -163,6 +189,7 @@ func main() {
 	force := flag.Bool("force", false, "Disable sanity checks.")
 	skipPkgCheck := flag.Bool("skip-pkg-check", false, "Skip checking of pkg existence.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
+	configPath := flag.String("config", "config.yaml", "Path to the config file")
 
 	flag.Parse()
 
@@ -171,9 +198,16 @@ func main() {
 		return
 	}
 
-	// Default to current directory if no repo path is provided
+	// Load the config
+	config, err := loadConfig(*configPath)
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Use the repo path from the config if not provided via the flag
 	if *repoPath == "" {
-		*repoPath, _ = os.Getwd()
+		*repoPath = config.RepoPath
 	}
 
 	// Run the makeCatalogs function
