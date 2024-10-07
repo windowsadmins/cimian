@@ -470,11 +470,20 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 		return false, fmt.Errorf("error checking All.yaml: %v", err)
 	}
 	if matchingItem != nil {
-	    // Exact match found, do not proceed with the import
-	    fmt.Printf("This item already exists in All.yaml:\n")
-	    fmt.Printf("            Item name: %s\n", matchingItem.Name)
-	    fmt.Printf("              Version: %s\n", matchingItem.Version)
-	    return false, nil // Prevent import
+	    // Calculate hash of the current package
+	    currentFileHash, err := calculateSHA256(packagePath)
+	    if err != nil {
+	        return false, fmt.Errorf("error calculating file hash: %v", err)
+	    }
+	
+	    // Compare the existing item's hash with the current package's hash
+	    if matchingItem.Installer.Hash == currentFileHash {
+	        fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
+	        fmt.Printf("            Item name: %s\n", matchingItem.Name)
+	        fmt.Printf("              Version: %s\n", matchingItem.Version)
+	        fmt.Printf("              Hash: %s\n", matchingItem.Installer.Hash)
+	        return false, nil // Stop the import if hash matches
+	    }
 	}
 
 	// Check for an item with the same name but different version
@@ -490,11 +499,11 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
 	var installerSubPath string
 
 	if matchingItemWithDiffVersion != nil {
-		fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
-		productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
-		developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
-		category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
-		installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
+	    fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
+	    productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
+	    developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
+	    category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
+	    installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
 	}
 
 	// Prompt user for fields if prepopulation is not enough
