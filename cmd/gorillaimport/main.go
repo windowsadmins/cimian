@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"bytes"
 	"strings"
 	"gopkg.in/yaml.v3"
 	"github.com/AlecAivazis/survey/v2"
@@ -349,7 +350,43 @@ func copyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
-// createPkgsInfo generates a pkgsinfo YAML file for the provided package
+// Custom wrapper function to enforce block scalar style for multiline scripts
+func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
+    var buf bytes.Buffer
+    enc := yaml.NewEncoder(&buf)
+    enc.SetIndent(2)
+
+    // Marshal manually to control block scalar style on specific fields
+    enc.OpenTag(&yaml.Tag{Kind: yaml.Map, Name: ""})
+
+    // Loop over the struct fields and handle scripts with block style
+    value := reflect.ValueOf(pkgsInfo)
+    typeOfPkgsInfo := value.Type()
+
+    for i := 0; i < value.NumField(); i++ {
+        fieldValue := value.Field(i)
+        fieldType := typeOfPkgsInfo.Field(i)
+        fieldName := fieldType.Name
+        yamlKey := fieldType.Tag.Get("yaml")
+
+        enc.EncodeKey(yamlKey)
+
+        if fieldName == "PreinstallScript" || fieldName == "PostinstallScript" || fieldName == "UninstallScript" {
+            script := fieldValue.String()
+            // Apply block scalar style for multiline scripts
+            enc.SetScalarStyle(yaml.LiteralStyle)
+            enc.EncodeValue(script)
+            enc.SetScalarStyle(yaml.FlowStyle) // Revert back to flow style for the rest
+        } else {
+            enc.EncodeValue(fieldValue.Interface())
+        }
+    }
+
+    enc.Close()
+    return buf.Bytes(), nil
+}
+
+// Updating createPkgsInfo to use the new encoder
 func createPkgsInfo(
     filePath string,
     outputDir string,
@@ -413,28 +450,18 @@ func createPkgsInfo(
 
     outputFile := filepath.Join(outputFilePath, fmt.Sprintf("%s-%s.yaml", name, version))
 
-    file, err := os.Create(outputFile)
+    // Use the selective block scalar encoder
+    pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
     if err != nil {
-        return fmt.Errorf("failed to create pkgsinfo file: %v", err)
-    }
-    defer file.Close()
-
-    encoder := yaml.NewEncoder(file)
-    defer encoder.Close()
-
-    // Customize YAML encoding to use block scalars for scripts
-    encoder.SetIndent(2)
-    if pkgsInfo.PreinstallScript != "" {
-        pkgsInfo.PreinstallScript = strings.TrimSpace(pkgsInfo.PreinstallScript)
-    }
-    if pkgsInfo.UninstallScript != "" {
-        pkgsInfo.UninstallScript = strings.TrimSpace(pkgsInfo.UninstallScript)
-    }
-
-    if err := encoder.Encode(pkgsInfo); err != nil {
         return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
     }
 
+    // Write the output to the file
+    if err := os.WriteFile(outputFile, pkgsInfoContent, 0644); err != nil {
+        return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
+    }
+
+    fmt.Printf("Pkgsinfo created at: %s\n", outputFile)
     return nil
 }
 
