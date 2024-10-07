@@ -404,7 +404,7 @@ type Catalog struct {
 }
 
 // findMatchingItemInAllCatalog checks if the item already exists in 'All.yaml'
-func findMatchingItemInAllCatalog(repoPath, name, version string) (*PkgsInfo, error) {
+func findMatchingItemInAllCatalog(repoPath, name, version, currentFileHash string) (*PkgsInfo, error) {
     allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
     fileContent, err := os.ReadFile(allCatalogPath)
     if err != nil {
@@ -423,7 +423,10 @@ func findMatchingItemInAllCatalog(repoPath, name, version string) (*PkgsInfo, er
         sanitizedNewVersion := strings.ToLower(strings.TrimSpace(version))
 
         if sanitizedExistingName == sanitizedNewName && sanitizedExistingVersion == sanitizedNewVersion {
-            return &item, nil
+            if item.Installer != nil && item.Installer.Hash == currentFileHash {
+                // Exact match found based on name, version, and hash
+                return &item, nil
+            }
         }
     }
 
@@ -471,14 +474,13 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("error calculating file hash: %v", err)
     }
 
-    // Check for an existing package with the same name and version in All.yaml
-    matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version)
+    // Check for an existing package with the same name, version, and hash in All.yaml
+    matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version, currentFileHash)
     if err != nil {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
 
-    // Check if name, version, and hash all match
-    if matchingItem != nil && matchingItem.Installer.Hash == currentFileHash {
+    if matchingItem != nil {
         fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
@@ -486,7 +488,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, nil  // Prevent further import as it is identical
     }
 
-    // If the item exists with the same name and version but a different hash
+    // Check for an item with the same name and version but a different hash
     if matchingItem != nil && matchingItem.Installer.Hash != currentFileHash {
         fmt.Printf("Item with the same name and version exists but with a different hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
