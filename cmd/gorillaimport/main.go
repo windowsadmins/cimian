@@ -770,8 +770,8 @@ func gorillaImport(
     }
     
     // Process install check script
-    if *installCheckScriptFlag != "" {
-        content, err := os.ReadFile(*installCheckScriptFlag)
+    if installCheckScriptPath != "" {
+        content, err := os.ReadFile(installCheckScriptPath)
         if err != nil {
             return false, fmt.Errorf("error reading install check script file: %v", err)
         }
@@ -779,8 +779,8 @@ func gorillaImport(
     }
     
     // Process uninstall check script
-    if *uninstallCheckScriptFlag != "" {
-        content, err := os.ReadFile(*uninstallCheckScriptFlag)
+    if uninstallCheckScriptPath != "" {
+        content, err := os.ReadFile(uninstallCheckScriptPath)
         if err != nil {
             return false, fmt.Errorf("error reading uninstall check script file: %v", err)
         }
