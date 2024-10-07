@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"gopkg.in/yaml.v3"
 )
 
@@ -61,6 +62,14 @@ type Installer struct {
 	Type      string   `yaml:"type"`
 }
 
+// Catalog structure holds a list of packages for each catalog
+type Catalog struct {
+	Packages []PkgsInfo `yaml:"packages"`
+}
+
+// CatalogsMap is a map where the key is the catalog name and the value is the list of packages
+type CatalogsMap map[string]*Catalog
+
 // Config structure holds the configuration settings
 type Config struct {
 	RepoPath       string `yaml:"repo_path"`
@@ -70,15 +79,17 @@ type Config struct {
 	DefaultArch    string `yaml:"default_arch"`
 }
 
-// Catalog structure holds a list of packages for each catalog
-type Catalog struct {
-	Packages []PkgsInfo `yaml:"packages"`
+// getConfigPath returns the appropriate configuration file path based on the OS
+func getConfigPath() string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.yaml")
+	} else if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("APPDATA"), "Gorilla", "import.yaml")
+	}
+	return "config.yaml" // Default path for other OSes
 }
 
-// CatalogsMap is a map where the key is the catalog name and the value is the list of packages
-type CatalogsMap map[string]*Catalog
-
-// LoadConfig loads the configuration from a YAML file
+// loadConfig loads the configuration from a YAML file
 func loadConfig(configPath string) (Config, error) {
 	var config Config
 	file, err := os.Open(configPath)
@@ -189,7 +200,6 @@ func main() {
 	force := flag.Bool("force", false, "Disable sanity checks.")
 	skipPkgCheck := flag.Bool("skip-pkg-check", false, "Skip checking of pkg existence.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
-	configPath := flag.String("config", "config.yaml", "Path to the config file")
 
 	flag.Parse()
 
@@ -198,8 +208,11 @@ func main() {
 		return
 	}
 
+	// Get the config path based on the OS
+	configPath := getConfigPath()
+
 	// Load the config
-	config, err := loadConfig(*configPath)
+	config, err := loadConfig(configPath)
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
