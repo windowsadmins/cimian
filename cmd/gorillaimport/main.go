@@ -398,12 +398,6 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 	return nil
 }
 
-// Catalog structure holds a list of packages for each catalog
-type Catalog struct {
-	Packages []PkgsInfo `yaml:"packages"`
-}
-
-// findMatchingItemInAllCatalog checks if the item already exists in 'All.yaml'
 func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
     allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
     fileContent, err := os.ReadFile(allCatalogPath)
@@ -420,7 +414,7 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
     cleanedProductCode := strings.Trim(strings.ToLower(productCode), "{}\r\n ")
     cleanedUpgradeCode := strings.Trim(strings.ToLower(upgradeCode), "{}\r\n ")
 
-    for _, item := range allCatalog.Packages {
+    for _, item := range allPackages {
         // Skip items where product codes are empty
         if item.ProductCode == "" || item.UpgradeCode == "" {
             continue
@@ -443,7 +437,6 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
     return nil, false, nil
 }
 
-// findMatchingItemInAllCatalogWithDifferentVersion checks if an item with the same name exists but with a different version
 func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version string) (*PkgsInfo, error) {
     allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
     fileContent, err := os.ReadFile(allCatalogPath)
@@ -460,7 +453,7 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
     cleanName := strings.TrimSpace(strings.ToLower(name))
     cleanVersion := strings.TrimSpace(strings.ToLower(version))
 
-    for _, item := range allCatalog.Packages {
+    for _, item := range allPackages {
         // Skip items with empty name or version
         if item.Name == "" || item.Version == "" {
             continue
