@@ -41,6 +41,8 @@ type PkgsInfo struct {
     PreinstallScript    string     `yaml:"preinstall_script,omitempty"`
     PostinstallScript   string     `yaml:"postinstall_script,omitempty"`
     UninstallScript     string     `yaml:"uninstall_script,omitempty"`
+    InstallCheckScript  string     `yaml:"installcheck_script,omitempty"`
+    UninstallCheckScript string    `yaml:"uninstallcheck_script,omitempty"`
 }
 
 // Config structure holds the configuration settings
@@ -220,7 +222,7 @@ func configureGorillaImport() Config {
     }
 
     return config
-}    
+}
 
 // extractMSIMetadata extracts MSI metadata depending on the platform (macOS or Windows)
 func extractMSIMetadata(msiFilePath string) (string, string, string, string, string, error) {
@@ -482,7 +484,7 @@ func createPkgsInfo(
 		ProductCode:         cleanProductCode,
 		UpgradeCode:         cleanUpgradeCode,
 		UnattendedInstall:   unattendedInstall,
-		UnattendedUninstall: unattendedUninstall,
+		UnattendedUninstall: unattendedUnattended,
 		PreinstallScript:    preinstallScript,
 		PostinstallScript:   postinstallScript,
 		UninstallScript:     uninstallScript,
