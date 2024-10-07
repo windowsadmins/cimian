@@ -403,7 +403,7 @@ func createPkgsInfo(filePath, outputDir, name, version string, catalogs []string
 	return nil
 }
 
-// findMatchingItem checks for existing packages with the same name, version, and hash in the catalogs
+// findMatchingItemInCatalog checks for existing packages with the same name, version, and hash in the catalogs
 func findMatchingItemInCatalog(repoPath, name, version, fileHash string) (*PkgsInfo, error) {
 	catalogsPath := filepath.Join(repoPath, "catalogs")
 	var matchingItem *PkgsInfo
@@ -412,6 +412,7 @@ func findMatchingItemInCatalog(repoPath, name, version, fileHash string) (*PkgsI
 		if err != nil {
 			return err
 		}
+		// Process only .yaml files
 		if filepath.Ext(path) == ".yaml" {
 			fileContent, err := os.ReadFile(path)
 			if err != nil {
@@ -435,6 +436,11 @@ func findMatchingItemInCatalog(repoPath, name, version, fileHash string) (*PkgsI
 	})
 
 	return matchingItem, err
+}
+
+// Catalog structure holds a list of packages for each catalog
+type Catalog struct {
+	Packages []PkgsInfo `yaml:"packages"`
 }
 
 // gorillaImport handles the import process and metadata extraction
