@@ -134,6 +134,7 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 // buildCatalogs builds catalogs based on the packages and their specified catalogs
 func buildCatalogs(pkgsInfos []PkgsInfo) CatalogsMap {
 	catalogs := make(CatalogsMap)
+	allPackages := []PkgsInfo{}
 
 	for _, pkg := range pkgsInfos {
 		for _, catalogName := range pkg.Catalogs {
@@ -142,7 +143,11 @@ func buildCatalogs(pkgsInfos []PkgsInfo) CatalogsMap {
 			}
 			catalogs[catalogName].Packages = append(catalogs[catalogName].Packages, pkg)
 		}
+		allPackages = append(allPackages, pkg)
 	}
+
+	// Add all packages to 'All.yaml'
+	catalogs["All"] = &Catalog{Packages: allPackages}
 
 	return catalogs
 }
