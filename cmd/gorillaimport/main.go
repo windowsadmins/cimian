@@ -296,6 +296,12 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
 		}
 	}
 
+	fmt.Printf("Extracted productName: '%s'\n", productName)
+	fmt.Printf("Extracted developer: '%s'\n", developer)
+	fmt.Printf("Extracted version: '%s'\n", version)
+	fmt.Printf("Extracted productCode: '%s'\n", productCode)
+	fmt.Printf("Extracted upgradeCode: '%s'\n", upgradeCode)
+
 	return productName, developer, version, productCode, upgradeCode, nil
 }
 
@@ -416,9 +422,26 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
         return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
     }
 
+    // Clean the input productCode and upgradeCode
+    cleanedProductCode := strings.Trim(strings.ToLower(productCode), "{}\r\n ")
+    cleanedUpgradeCode := strings.Trim(strings.ToLower(upgradeCode), "{}\r\n ")
+
     for _, item := range allCatalog.Packages {
+        // Skip items where product codes are empty
+        if item.ProductCode == "" || item.UpgradeCode == "" {
+            continue
+        }
+
+        // Clean the item product codes
+        itemProductCode := strings.Trim(strings.ToLower(item.ProductCode), "{}\r\n ")
+        itemUpgradeCode := strings.Trim(strings.ToLower(item.UpgradeCode), "{}\r\n ")
+
+        // Debug statements to check the codes being compared
+        fmt.Printf("Comparing ProductCode: '%s' with '%s'\n", itemProductCode, cleanedProductCode)
+        fmt.Printf("Comparing UpgradeCode: '%s' with '%s'\n", itemUpgradeCode, cleanedUpgradeCode)
+
         // Compare product codes and upgrade codes
-        if item.ProductCode == productCode && item.UpgradeCode == upgradeCode {
+        if itemProductCode == cleanedProductCode && itemUpgradeCode == cleanedUpgradeCode {
             // Check if the hashes match
             if item.Installer != nil && item.Installer.Hash == currentFileHash {
                 fmt.Println("Exact match found based on product code, upgrade code, and hash.")
@@ -467,6 +490,13 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Println("Fallback to manual input.")
     }
 
+    // Clean the productCode and upgradeCode
+    productCode = strings.Trim(productCode, "{}\r\n ")
+    upgradeCode = strings.Trim(upgradeCode, "{}\r\n ")
+
+    fmt.Printf("Cleaned productCode: '%s'\n", productCode)
+    fmt.Printf("Cleaned upgradeCode: '%s'\n", upgradeCode)
+
     // Calculate hash of the current package
     currentFileHash, err := calculateSHA256(packagePath)
     if err != nil {
@@ -474,39 +504,46 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     }
     fmt.Printf("Calculated hash for %s: %s\n", packagePath, currentFileHash)
 
-    // Check for an existing package with the same product code and upgrade code in All.yaml
-    matchingItem, hashMatches, err := findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
-    if err != nil {
-        return false, fmt.Errorf("error checking All.yaml: %v", err)
-    }
-    
-    if matchingItem != nil {
-        if hashMatches {
-            // Exact match found
-            fmt.Printf("This item already exists in All.yaml with the same product code, upgrade code, and hash:\n")
-            fmt.Printf("            Product Code: %s\n", matchingItem.ProductCode)
-            fmt.Printf("            Upgrade Code: %s\n", matchingItem.UpgradeCode)
-            fmt.Printf("            Hash: %s\n", matchingItem.Installer.Hash)
-            return false, nil // Prevent further import as it is identical
-        } else {
-            // Hash differs
-            fmt.Printf("Item with the same product code and upgrade code exists but with a different hash:\n")
-            fmt.Printf("            Existing hash: %s\n", matchingItem.Installer.Hash)
-            fmt.Printf("            New hash: %s\n", currentFileHash)
-    
-            // Prompt the user
-            userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-            if strings.ToLower(userDecision) != "y" {
-                return false, fmt.Errorf("import canceled due to hash mismatch")
+    var matchingItem *PkgsInfo
+    var hashMatches bool
+
+    // Check if productCode and upgradeCode are not empty
+    if productCode != "" && upgradeCode != "" {
+        // Proceed with matching
+        matchingItem, hashMatches, err = findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
+        if err != nil {
+            return false, fmt.Errorf("error checking All.yaml: %v", err)
+        }
+
+        if matchingItem != nil {
+            if hashMatches {
+                // Exact match found
+                fmt.Printf("This item already exists in All.yaml with the same product code, upgrade code, and hash:\n")
+                fmt.Printf("            Product Code: %s\n", matchingItem.ProductCode)
+                fmt.Printf("            Upgrade Code: %s\n", matchingItem.UpgradeCode)
+                fmt.Printf("            Hash: %s\n", matchingItem.Installer.Hash)
+                return false, nil // Prevent further import as it is identical
+            } else {
+                // Hash differs
+                fmt.Printf("Item with the same product code and upgrade code exists but with a different hash:\n")
+                fmt.Printf("            Existing hash: %s\n", matchingItem.Installer.Hash)
+                fmt.Printf("            New hash: %s\n", currentFileHash)
+
+                // Prompt the user
+                userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
+                if strings.ToLower(userDecision) != "y" {
+                    return false, fmt.Errorf("import canceled due to hash mismatch")
+                }
             }
+        } else {
+            fmt.Println("No identical package found. Proceeding with import...")
         }
     } else {
+        fmt.Println("ProductCode or UpgradeCode is empty. Proceeding without matching based on these codes.")
         fmt.Println("No identical package found. Proceeding with import...")
     }
 
-    // Proceed with the import since no exact match was found
-    fmt.Println("No identical package found. Proceeding with import...")
-
+    // Proceed with the import since no exact match was found or user chose to proceed
     // Check for an item with the same name but different version
     matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
     if err != nil {
