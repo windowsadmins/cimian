@@ -486,16 +486,20 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         return false, fmt.Errorf("error checking All.yaml: %v", err)
     }
 
-    // If the item exists with the same name, version, and hash, return immediately
-    if matchingItem != nil && matchingItem.Installer.Hash == currentFileHash {
+    // Aggressively stop the import if an identical package already exists
+    if matchingItem != nil {
         fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
         fmt.Printf("              Version: %s\n", matchingItem.Version)
         fmt.Printf("              Hash: %s\n", matchingItem.Installer.Hash)
-        return false, nil  // Exact match found, stop import
+        return false, fmt.Errorf("duplicate package detected. No need to import")
     }
 
-    // If the item exists with the same name and version but a different hash
+    // Check for an item with the same name and version but a different hash
+    matchingItem, err = findMatchingItemInAllCatalog(config.RepoPath, productName, version, "")
+    if err != nil {
+        return false, fmt.Errorf("error checking All.yaml: %v", err)
+    }
     if matchingItem != nil {
         fmt.Printf("Item with the same name and version exists but with a different hash:\n")
         fmt.Printf("            Item name: %s\n", matchingItem.Name)
@@ -503,84 +507,59 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         fmt.Printf("              Existing hash: %s\n", matchingItem.Installer.Hash)
         fmt.Printf("              New hash: %s\n", currentFileHash)
 
-        // Prompt the user if they still want to proceed with the import
+        // Aggressively prompt to stop if hashes mismatch
         importItem := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
         if strings.ToLower(importItem) != "y" {
-            fmt.Println("Import canceled due to hash mismatch.")
-            return false, nil // Return false if the import is canceled
+            return false, fmt.Errorf("import canceled due to hash mismatch")
         }
     }
 
-    // Continue with the import process if no exact match is found
+    // Proceed with the import process since no identical package was found
     fmt.Println("No identical package found. Proceeding with import...")
 
-    // Check for an item with the same name but different version
-    matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
-    if err != nil {
-        return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
-    }
-
-    // Prepopulate fields if an item with the same name but a different version exists
+    // Continue with the rest of the import process
     category := "Apps" // Set default category
     supportedArch := config.DefaultArch
     catalogs := config.DefaultCatalog
     var installerSubPath string
 
-    if matchingItemWithDiffVersion != nil {
-        fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
-        productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
-        developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
-        category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
-        installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
-    }
-
-    // Prompt user for fields
     promptSurvey(&productName, "Item name", productName)
     promptSurvey(&version, "Version", version)
     promptSurvey(&category, "Category", category)
     promptSurvey(&developer, "Developer", developer)
     promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
 
-    // Prompt for subfolder if no match found or user doesn't want to use the existing path
     if installerSubPath == "" {
         promptSurvey(&installerSubPath, "Choose the item path", "apps")
     }
     promptSurvey(&catalogs, "Catalogs", catalogs)
 
-    // Convert catalogs to a list
     catalogList := strings.Split(catalogs, ",")
     for i := range catalogList {
         catalogList[i] = strings.TrimSpace(catalogList[i])
     }
 
-    // Show all gathered info for confirmation
     fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
-    // Ask for final confirmation to import
-    importItem := getInputWithDefault("Import this item? [y/N]", "N")
+    importItem = getInputWithDefault("Import this item? [y/N]", "N")
     if strings.ToLower(importItem) != "y" {
-        fmt.Println("Import canceled.")
-        return false, nil // Return false if the import is canceled
+        return false, fmt.Errorf("import canceled by user")
     }
 
-    // Ensure that the package path exists and create it if not
     pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
     if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
-        // Create the directories if they don't exist
         err = os.MkdirAll(pkgsFolderPath, 0755)
         if err != nil {
-            return false, fmt.Errorf("failed to create directory structure for package: %v", err)
+            return false, fmt.Errorf("failed to create directory structure: %v", err)
         }
     }
 
-    // Copy the package to the determined path
     destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
     _, err = copyFile(packagePath, destinationPath)
     if err != nil {
         return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
 
-    // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
     err = createPkgsInfo(
         packagePath,
         filepath.Join(config.RepoPath, "pkgsinfo"),
@@ -594,9 +573,9 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
         installerSubPath,
         productCode,
         upgradeCode,
-        currentFileHash,  // Passing the file hash here
-        true,             // Unattended install default
-        true,             // Unattended uninstall default
+        currentFileHash,
+        true,
+        true,
     )
 
     if err != nil {
@@ -604,8 +583,7 @@ func gorillaImport(packagePath string, config Config) (bool, error) {
     }
 
     fmt.Printf("Imported %s version %s successfully.\n", productName, version)
-
-    return true, nil // Return true if the import is successful
+    return true, nil
 }
 
 // Custom prompt template to remove `?`
