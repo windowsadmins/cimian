@@ -383,25 +383,25 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     } else {
         m["preinstall_script"] = pkgsInfo.PreinstallScript
     }
-
+    
     if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
         m["postinstall_script"] = "|-\n" + indentScript(pkgsInfo.PostinstallScript)
     } else {
         m["postinstall_script"] = pkgsInfo.PostinstallScript
     }
-
+    
     if strings.Contains(pkgsInfo.UninstallScript, "\n") {
         m["uninstall_script"] = "|-\n" + indentScript(pkgsInfo.UninstallScript)
     } else {
         m["uninstall_script"] = pkgsInfo.UninstallScript
     }
-
+    
     if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
         m["installcheck_script"] = "|-\n" + indentScript(pkgsInfo.InstallCheckScript)
     } else {
         m["installcheck_script"] = pkgsInfo.InstallCheckScript
     }
-
+    
     if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
         m["uninstallcheck_script"] = "|-\n" + indentScript(pkgsInfo.UninstallCheckScript)
     } else {
@@ -419,14 +419,16 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
 // Helper function to indent script content properly for YAML block scalars
 func indentScript(script string) string {
-    // Split the script into lines and trim unnecessary whitespace
+    // Split the script into lines and trim any unnecessary whitespace
     lines := strings.Split(strings.TrimSpace(script), "\n")
-    
-    // Indent each line with two spaces
+
+    // Indent each line with two spaces for YAML block scalar formatting
     for i, line := range lines {
-        lines[i] = "  " + strings.ReplaceAll(line, "\\\\", "\\")
+        // Ensure that double backslashes \\ are preserved but avoid adding extra escapes
+        lines[i] = "  " + line
     }
-    
+
+    // Join the lines back together with the correct indentation and line breaks
     return strings.Join(lines, "\n")
 }
 
