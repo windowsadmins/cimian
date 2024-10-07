@@ -370,10 +370,9 @@ func createPkgsInfo(
     postinstallScript string,
     uninstallScript string,
     uninstaller *Installer,
+    installerFilename string,
+    installerLocation string,
 ) error {
-
-    installerFilename := fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(installerPath))
-    installerLocation := filepath.Join("/", installerSubPath, installerFilename)
 
     // Ensure that productCode and upgradeCode don't contain artifacts
     cleanProductCode := strings.Trim(productCode, "{}\r\n ")
@@ -623,9 +622,12 @@ func gorillaImport(
 
     // Use 'apps' as default installerSubPath
     installerSubPath := "apps"
-
-    // Copy installer to repo
+    
+    // Calculate installerFilename and installerLocation
     installerFilename := fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(installerPath))
+    installerLocation := filepath.Join("/", installerSubPath, installerFilename)
+    
+    // Copy installer to repo
     pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
     if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
         err = os.MkdirAll(pkgsFolderPath, 0755)
@@ -638,10 +640,7 @@ func gorillaImport(
     if err != nil {
         return false, fmt.Errorf("failed to copy installer to destination: %v", err)
     }
-
-    // Installer location in pkgs
-    installerLocation := filepath.Join("/", installerSubPath, installerFilename)
-
+    
     // Process scripts
     var preinstallScriptContent string
     var postinstallScriptContent string
@@ -758,6 +757,8 @@ func gorillaImport(
         postinstallScriptContent,
         uninstallScriptContent,
         uninstaller,
+        installerFilename,   // Pass installerFilename
+        installerLocation,   // Pass installerLocation
     )
 
     if err != nil {
