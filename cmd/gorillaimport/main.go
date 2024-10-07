@@ -452,139 +452,136 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
 	return nil, nil
 }
 
+// gorillaImport handles the import process and metadata extraction
 func gorillaImport(packagePath string, config Config) (bool, error) {
-	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-		return false, fmt.Errorf("package '%s' does not exist", packagePath)
-	}
+    if _, err := os.Stat(packagePath); os.IsNotExist(err) {
+        return false, fmt.Errorf("package '%s' does not exist", packagePath)
+    }
 
-	// Extract metadata
-	productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
-	if err != nil {
-		fmt.Printf("Error extracting metadata: %v\n", err)
-		fmt.Println("Fallback to manual input.")
-	}
+    // Extract metadata
+    productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
+    if err != nil {
+        fmt.Printf("Error extracting metadata: %v\n", err)
+        fmt.Println("Fallback to manual input.")
+    }
 
-	// Check for an existing package in All.yaml with the same name and version
-	matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version)
-	if err != nil {
-		return false, fmt.Errorf("error checking All.yaml: %v", err)
-	}
-	if matchingItem != nil {
-	    // Calculate hash of the current package
-	    currentFileHash, err := calculateSHA256(packagePath)
-	    if err != nil {
-	        return false, fmt.Errorf("error calculating file hash: %v", err)
-	    }
-	
-	    // Compare the existing item's hash with the current package's hash
-	    if matchingItem.Installer.Hash == currentFileHash {
-	        fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
-	        fmt.Printf("            Item name: %s\n", matchingItem.Name)
-	        fmt.Printf("              Version: %s\n", matchingItem.Version)
-	        fmt.Printf("              Hash: %s\n", matchingItem.Installer.Hash)
-	        return false, nil // Stop the import if hash matches
-	    }
-	}
+    // Ensure productName and version are sanitized
+    productName = strings.TrimSpace(productName)
+    version = strings.TrimSpace(version)
 
-	// Check for an item with the same name but different version
-	matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
-	if err != nil {
-		return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
-	}
+    // Calculate hash of the package
+    currentFileHash, err := calculateSHA256(packagePath)
+    if err != nil {
+        return false, fmt.Errorf("error calculating file hash: %v", err)
+    }
 
-	// Prepopulate fields if an item with the same name but different version exists
-	category := "Apps" // Set default category
-	supportedArch := config.DefaultArch
-	catalogs := config.DefaultCatalog
-	var installerSubPath string
+    // Check for an exact match (name, version, and hash) in All.yaml
+    matchingItem, err := findMatchingItemInAllCatalog(config.RepoPath, productName, version)
+    if err != nil {
+        return false, fmt.Errorf("error checking All.yaml: %v", err)
+    }
+    if matchingItem != nil {
+        // Compare hash to ensure identical packages are not imported
+        if matchingItem.Installer.Hash == currentFileHash {
+            fmt.Printf("This item already exists in All.yaml with the same name, version, and hash:\n")
+            fmt.Printf("            Item name: %s\n", matchingItem.Name)
+            fmt.Printf("              Version: %s\n", matchingItem.Version)
+            return false, nil // Prevent further import
+        }
+    }
 
-	if matchingItemWithDiffVersion != nil {
-	    fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
-	    productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
-	    developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
-	    category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
-	    installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
-	}
+    // Check for items with the same name but different version
+    matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
+    if err != nil {
+        return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
+    }
 
-	// Prompt user for fields if prepopulation is not enough
-	promptSurvey(&productName, "Item name", productName)
-	promptSurvey(&version, "Version", version)
-	promptSurvey(&category, "Category", category)
-	promptSurvey(&developer, "Developer", developer)
-	promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
+    // Prepopulate fields if an item with the same name but a different version exists
+    category := "Apps" // Set default category
+    supportedArch := config.DefaultArch
+    catalogs := config.DefaultCatalog
+    var installerSubPath string
 
-	// Prompt for subfolder if no match found or user doesn't want to use existing item
-	if installerSubPath == "" {
-		promptSurvey(&installerSubPath, "Choose the item path", "apps")
-	}
-	promptSurvey(&catalogs, "Catalogs", catalogs)
+    if matchingItemWithDiffVersion != nil {
+        fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
+        productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
+        developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
+        category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
+        installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
+    }
 
-	// Convert catalogs to a list
-	catalogList := strings.Split(catalogs, ",")
-	for i := range catalogList {
-		catalogList[i] = strings.TrimSpace(catalogList[i])
-	}
+    // Prompt user for fields
+    promptSurvey(&productName, "Item name", productName)
+    promptSurvey(&version, "Version", version)
+    promptSurvey(&category, "Category", category)
+    promptSurvey(&developer, "Developer", developer)
+    promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
 
-	// Show all gathered info for confirmation
-	fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
+    // Prompt for subfolder if no match found or user doesn't want to use existing item path
+    if installerSubPath == "" {
+        promptSurvey(&installerSubPath, "Choose the item path", "apps")
+    }
+    promptSurvey(&catalogs, "Catalogs", catalogs)
 
-	// Ask for final confirmation to import
-	importItem := getInputWithDefault("Import this item? [y/N]", "N")
-	if strings.ToLower(importItem) != "y" {
-		fmt.Println("Import canceled.")
-		return false, nil // Return false if the import is canceled
-	}
+    // Convert catalogs to a list
+    catalogList := strings.Split(catalogs, ",")
+    for i := range catalogList {
+        catalogList[i] = strings.TrimSpace(catalogList[i])
+    }
 
-	// Calculate hash of the package
-	fileHash, err := calculateSHA256(packagePath)
-	if err != nil {
-		return false, fmt.Errorf("error calculating file hash: %v", err)
-	}
+    // Show all gathered info for confirmation
+    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
-	// Define pkgsFolderPath based on the repository path and installer sub-path
-	pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
+    // Ask for final confirmation to import
+    importItem := getInputWithDefault("Import this item? [y/N]", "N")
+    if strings.ToLower(importItem) != "y" {
+        fmt.Println("Import canceled.")
+        return false, nil // Return false if the import is canceled
+    }
 
-	// Create the directories if they don't exist
-	if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
-		err = os.MkdirAll(pkgsFolderPath, 0755)
-		if err != nil {
-			return false, fmt.Errorf("failed to create directory structure for package: %v", err)
-		}
-	}
+    // Ensure that the package path exists and create it if not
+    pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
+    if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
+        // Create the directories if they don't exist
+        err = os.MkdirAll(pkgsFolderPath, 0755)
+        if err != nil {
+            return false, fmt.Errorf("failed to create directory structure for package: %v", err)
+        }
+    }
 
-	// Copy the package to the determined path
-	destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
-	_, err = copyFile(packagePath, destinationPath) // Use = instead of :=
-	if err != nil {
-		return false, fmt.Errorf("failed to copy package to destination: %v", err)
-	}
+    // Copy the package to the determined path
+    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
+    _, err = copyFile(packagePath, destinationPath)
+    if err != nil {
+        return false, fmt.Errorf("failed to copy package to destination: %v", err)
+    }
 
-	// Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
-	err = createPkgsInfo(
-		packagePath,
-		filepath.Join(config.RepoPath, "pkgsinfo"),
-		productName,
-		version,
-		catalogList,
-		category,
-		developer,
-		[]string{supportedArch},
-		config.RepoPath,
-		installerSubPath,
-		productCode,
-		upgradeCode,
-		fileHash,
-		true,  // Unattended install default
-		true,  // Unattended uninstall default
-	)
+    // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
+    err = createPkgsInfo(
+        packagePath,
+        filepath.Join(config.RepoPath, "pkgsinfo"),
+        productName,
+        version,
+        catalogList,
+        category,
+        developer,
+        []string{supportedArch},
+        config.RepoPath,
+        installerSubPath,
+        productCode,
+        upgradeCode,
+        currentFileHash,  // Passing the file hash here
+        true,             // Unattended install default
+        true,             // Unattended uninstall default
+    )
 
-	if err != nil {
-		return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
-	}
+    if err != nil {
+        return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
+    }
 
-	fmt.Printf("Imported %s version %s successfully.\n", productName, version)
+    fmt.Printf("Imported %s version %s successfully.\n", productName, version)
 
-	return true, nil // Return true if the import is successful
+    return true, nil // Return true if the import is successful
 }
 
 // Custom prompt template to remove `?`
