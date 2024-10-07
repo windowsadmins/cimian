@@ -68,7 +68,7 @@ type Catalog struct {
 }
 
 // CatalogsMap is a map where the key is the catalog name and the value is the list of packages
-type CatalogsMap map[string]*Catalog
+type CatalogsMap map[string][]PkgsInfo
 
 // Config structure holds the configuration settings
 type Config struct {
@@ -138,16 +138,13 @@ func buildCatalogs(pkgsInfos []PkgsInfo) CatalogsMap {
 
 	for _, pkg := range pkgsInfos {
 		for _, catalogName := range pkg.Catalogs {
-			if _, ok := catalogs[catalogName]; !ok {
-				catalogs[catalogName] = &Catalog{}
-			}
-			catalogs[catalogName].Packages = append(catalogs[catalogName].Packages, pkg)
+			catalogs[catalogName] = append(catalogs[catalogName], pkg)
 		}
 		allPackages = append(allPackages, pkg)
 	}
 
 	// Add all packages to 'All.yaml'
-	catalogs["All"] = &Catalog{Packages: allPackages}
+	catalogs["All"] = allPackages
 
 	return catalogs
 }
@@ -161,7 +158,7 @@ func writeCatalogs(repoPath string, catalogs CatalogsMap) error {
 		}
 	}
 
-	for catalogName, catalog := range catalogs {
+	for catalogName, packages := range catalogs {
 		outputFile := filepath.Join(catalogsDir, fmt.Sprintf("%s.yaml", catalogName))
 		file, err := os.Create(outputFile)
 		if err != nil {
@@ -170,7 +167,7 @@ func writeCatalogs(repoPath string, catalogs CatalogsMap) error {
 		defer file.Close()
 
 		encoder := yaml.NewEncoder(file)
-		if err := encoder.Encode(catalog); err != nil {
+		if err := encoder.Encode(packages); err != nil {
 			return fmt.Errorf("failed to encode catalog to YAML: %v", err)
 		}
 	}
