@@ -350,7 +350,6 @@ func copyFile(src, dst string) (int64, error) {
 }
 
 // createPkgsInfo generates a pkgsinfo YAML file for the provided package
-// createPkgsInfo generates a pkgsinfo YAML file for the provided package
 func createPkgsInfo(
     filePath string,
     outputDir string,
@@ -372,6 +371,7 @@ func createPkgsInfo(
     uninstallScript string,
     uninstaller *Installer,
 ) error {
+
     installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
     // Ensure that productCode and upgradeCode don't contain artifacts
@@ -384,7 +384,7 @@ func createPkgsInfo(
         Installer: &Installer{
             Location: installerLocation,
             Hash:     fileHash,
-            Type:     filepath.Ext(filePath)[1:],
+            Type:     strings.TrimPrefix(filepath.Ext(filePath), "."),
         },
         Uninstaller:         uninstaller,
         Catalogs:            catalogs,
@@ -420,6 +420,17 @@ func createPkgsInfo(
     defer file.Close()
 
     encoder := yaml.NewEncoder(file)
+    defer encoder.Close()
+
+    // Customize YAML encoding to use block scalars for scripts
+    encoder.SetIndent(2)
+    if pkgsInfo.PreinstallScript != "" {
+        pkgsInfo.PreinstallScript = strings.TrimSpace(pkgsInfo.PreinstallScript)
+    }
+    if pkgsInfo.UninstallScript != "" {
+        pkgsInfo.UninstallScript = strings.TrimSpace(pkgsInfo.UninstallScript)
+    }
+
     if err := encoder.Encode(pkgsInfo); err != nil {
         return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
     }
