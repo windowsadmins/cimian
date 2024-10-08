@@ -478,7 +478,8 @@ func createPkgsInfo(
 	unattendedUninstall bool,
 	preinstallScript string,
 	postinstallScript string,
-	uninstallScript string,
+	preuninstallScript string,
+	postuninstallScript string,
 	installCheckScript string,
 	uninstallCheckScript string,
 	uninstaller *Installer,
@@ -487,27 +488,28 @@ func createPkgsInfo(
 	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
 	pkgsInfo := PkgsInfo{
-		Name:                name,
-		Version:             version,
+		Name:                 name,
+		Version:              version,
 		Installer: &Installer{
 			Location: installerLocation,
 			Hash:     fileHash,
 			Type:     strings.TrimPrefix(filepath.Ext(filePath), "."),
 		},
-		Uninstaller:         uninstaller,
-		Catalogs:            catalogs,
-		Category:            category,
-		Developer:           developer,
-		Description:         "",
-		SupportedArch:       supportedArch,
-		ProductCode:         strings.Trim(productCode, "{}\r"),
-		UpgradeCode:         strings.Trim(upgradeCode, "{}\r"),
-		UnattendedInstall:   unattendedInstall,
-		UnattendedUninstall: unattendedUninstall,
-		PreinstallScript:    preinstallScript,
-		PostinstallScript:   postinstallScript,
-		UninstallScript:     uninstallScript,
-		InstallCheckScript:  installCheckScript,
+		Uninstaller:          uninstaller,
+		Catalogs:             catalogs,
+		Category:             category,
+		Developer:            developer,
+		Description:          "",
+		SupportedArch:        supportedArch,
+		ProductCode:          strings.Trim(productCode, "{}\r"),
+		UpgradeCode:          strings.Trim(upgradeCode, "{}\r"),
+		UnattendedInstall:    unattendedInstall,
+		UnattendedUninstall:  unattendedUninstall,
+		PreinstallScript:     preinstallScript,
+		PostinstallScript:    postinstallScript,
+		PreuninstallScript:   preuninstallScript,
+		PostuninstallScript:  preuninstallScript,
+		InstallCheckScript:   installCheckScript,
 		UninstallCheckScript: uninstallCheckScript,
 	}
 
@@ -1043,7 +1045,8 @@ func main() {
     installerFlag := flag.String("installer", "", "Path to the installer .exe or .msi file.")
     uninstallerFlag := flag.String("uninstaller", "", "Path to the uninstaller .exe or .msi file.")
     installScriptFlag := flag.String("installscript", "", "Path to the install script (.bat or .ps1).")
-    uninstallScriptFlag := flag.String("uninstallscript", "", "Path to the uninstall script (.bat or .ps1).")
+    preuninstallScriptFlag := flag.String("preuninstallscript", "", "Path to the preuninstall script (.bat or .ps1).")
+    postuninstallScriptFlag := flag.String("postuninstallscript", "", "Path to the postuninstall script (.bat or .ps1).")
     postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script (.ps1).")
     installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
     uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")    
