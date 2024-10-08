@@ -387,25 +387,28 @@ func getEmptyIfEmptyString(s string) interface{} {
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-    // Define a slice of key-value pairs to represent the YAML fields in order
-    type kv struct {
+    var buf bytes.Buffer
+    encoder := yaml.NewEncoder(&buf)
+    encoder.SetIndent(2)
+
+    // Create an ordered slice of keys and associated values
+    fields := []struct {
         key   string
         value interface{}
-    }
-    var orderedFields = []kv{
-        {"name", getEmptyIfEmptyString(pkgsInfo.Name)},
-        {"display_name", getEmptyIfEmptyString(pkgsInfo.DisplayName)},
-        {"version", getEmptyIfEmptyString(pkgsInfo.Version)},
+    }{
+        {"name", pkgsInfo.Name},
+        {"display_name", pkgsInfo.DisplayName},
+        {"version", pkgsInfo.Version},
+        {"description", pkgsInfo.Description},
         {"catalogs", pkgsInfo.Catalogs},
-        {"category", getEmptyIfEmptyString(pkgsInfo.Category)},
-        {"description", getEmptyIfEmptyString(pkgsInfo.Description)},
-        {"developer", getEmptyIfEmptyString(pkgsInfo.Developer)},
-        {"installer", pkgsInfo.Installer},
-        {"product_code", getEmptyIfEmptyString(pkgsInfo.ProductCode)},
-        {"upgrade_code", getEmptyIfEmptyString(pkgsInfo.UpgradeCode)},
+        {"category", pkgsInfo.Category},
+        {"developer", pkgsInfo.Developer},
         {"supported_architectures", pkgsInfo.SupportedArch},
         {"unattended_install", pkgsInfo.UnattendedInstall},
         {"unattended_uninstall", pkgsInfo.UnattendedUninstall},
+        {"installer", pkgsInfo.Installer},
+        {"product_code", pkgsInfo.ProductCode},
+        {"upgrade_code", pkgsInfo.UpgradeCode},
         {"preinstall_script", pkgsInfo.PreinstallScript},
         {"postinstall_script", pkgsInfo.PostinstallScript},
         {"preuninstall_script", pkgsInfo.PreuninstallScript},
@@ -414,29 +417,21 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
         {"uninstallcheck_script", pkgsInfo.UninstallCheckScript},
     }
 
-    // Create a new YAML node with the ordered fields
-    var rootNode yaml.Node
-    rootNode.Kind = yaml.MappingNode
-    for _, field := range orderedFields {
-        keyNode := &yaml.Node{
-            Kind:  yaml.ScalarNode,
-            Tag:   "!!str",
-            Value: field.key,
+    // Manually create the map in the desired order and omit empty fields
+    m := make(map[string]interface{})
+    for _, field := range fields {
+        if value := field.value; value != nil && value != "" {
+            // Only add non-empty fields
+            m[field.key] = value
         }
-        valueNode := &yaml.Node{}
-        if err := valueNode.Encode(field.value); err != nil {
-            return nil, err
-        }
-        rootNode.Content = append(rootNode.Content, keyNode, valueNode)
     }
 
-    // Encode the YAML node to bytes
-    var buf bytes.Buffer
-    encoder := yaml.NewEncoder(&buf)
-    encoder.SetIndent(2)
-    if err := encoder.Encode(&rootNode); err != nil {
+    // Encode the map to YAML
+    err := encoder.Encode(m)
+    if err != nil {
         return nil, err
     }
+
     return buf.Bytes(), nil
 }
 
