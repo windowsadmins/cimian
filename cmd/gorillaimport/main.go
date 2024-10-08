@@ -405,7 +405,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     // Use literal block scalar for multiline scripts (without extra newline or indentation)
     if pkgsInfo.PreinstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.PreinstallScript)
-        m["preinstall_script"] = "|-" + cleanedScript
+        m["preinstall_script"] = "|-" + cleanedScript 
     }
     if pkgsInfo.PostinstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.PostinstallScript)
@@ -707,54 +707,65 @@ func gorillaImport(
         return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
 
+    // ... inside gorillaImport function ...
+    
     // Process scripts
     var preinstallScriptContent string
     var postinstallScriptContent string
     var uninstallScriptContent string
     var installCheckScriptContent string
     var uninstallCheckScriptContent string
-
+    
     // Process install script
     if installScriptPath != "" {
         content, err := os.ReadFile(installScriptPath)
         if err != nil {
             return false, fmt.Errorf("error reading install script file: %v", err)
         }
+        // Convert CRLF to LF
+        preinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
+    
         extension := strings.ToLower(filepath.Ext(installScriptPath))
         if extension == ".bat" {
-            preinstallScriptContent = generateWrapperScript(string(content), "bat")
+            preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "bat")
         } else if extension == ".ps1" {
-            preinstallScriptContent = generateWrapperScript(string(content), "ps1")
+            preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "ps1")
         } else {
             return false, fmt.Errorf("unsupported install script file type: %s", extension)
         }
     }
-
+    
     // Process uninstall script
     if uninstallScriptPath != "" {
         content, err := os.ReadFile(uninstallScriptPath)
         if err != nil {
             return false, fmt.Errorf("error reading uninstall script file: %v", err)
         }
+        // Convert CRLF to LF
+        uninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
+    
         extension := strings.ToLower(filepath.Ext(uninstallScriptPath))
         if extension == ".bat" {
-            uninstallScriptContent = generateWrapperScript(string(content), "bat")
+            uninstallScriptContent = generateWrapperScript(uninstallScriptContent, "bat")
         } else if extension == ".ps1" {
-            uninstallScriptContent = generateWrapperScript(string(content), "ps1")
+            uninstallScriptContent = generateWrapperScript(uninstallScriptContent, "ps1")
         } else {
             return false, fmt.Errorf("unsupported uninstall script file type: %s", extension)
         }
     }
-
+    
     // Process post-install script
     if postinstallScriptPath != "" {
         content, err := os.ReadFile(postinstallScriptPath)
         if err != nil {
             return false, fmt.Errorf("error reading post-install script file: %v", err)
         }
+        // Convert CRLF to LF
+        postinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n") 
+    
         extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
         if extension == ".ps1" {
-            postinstallScriptContent = string(content)
+            postinstallScriptContent = string(content) // No wrapping needed for .ps1
         } else {
             return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
         }
@@ -766,7 +777,8 @@ func gorillaImport(
         if err != nil {
             return false, fmt.Errorf("error reading install check script file: %v", err)
         }
-        installCheckScriptContent = string(content)
+        // Convert CRLF to LF
+        installCheckScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
     }
     
     // Process uninstall check script
@@ -775,9 +787,10 @@ func gorillaImport(
         if err != nil {
             return false, fmt.Errorf("error reading uninstall check script file: %v", err)
         }
-        uninstallCheckScriptContent = string(content)
+        // Convert CRLF to LF
+        uninstallCheckScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
     }
-
+    
     // Process uninstaller
     var uninstaller *Installer
     if uninstallerPath != "" {
