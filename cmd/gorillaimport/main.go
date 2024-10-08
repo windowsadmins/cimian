@@ -354,13 +354,16 @@ func copyFile(src, dst string) (int64, error) {
 
 // Read the plain text script from the .bat file and ensure it is placed in the YAML properly
 func cleanScriptInput(script string) string {
-    // Ensure that double backslashes (\\) are reduced to single backslashes
+    // Ensure that backslashes are preserved as needed but without unnecessary escapes
     cleanedScript := strings.ReplaceAll(script, "\\\\", "\\")
 
-    // Ensure clean line breaks (we expect \r\n for .bat files)
+    // Ensure clean line breaks (we expect \r\n for .bat files, convert them to single \n)
     cleanedScript = strings.ReplaceAll(cleanedScript, "\r\n", "\n")
 
-    // Return as-is without escape sequences
+    // Strip any excess trailing newlines to avoid unnecessary empty lines
+    cleanedScript = strings.TrimRight(cleanedScript, "\n")
+
+    // Return the cleaned script
     return cleanedScript
 }
 
