@@ -724,9 +724,9 @@ func gorillaImport(
         }
         extension := strings.ToLower(filepath.Ext(installScriptPath))
         if extension == ".bat" {
-            preinstallScriptContent = generateWrapperScript(string(content))
+            preinstallScriptContent = generateWrapperScript(string(content), "bat")
         } else if extension == ".ps1" {
-            preinstallScriptContent = string(content)
+            preinstallScriptContent = generateWrapperScript(string(content), "ps1")
         } else {
             return false, fmt.Errorf("unsupported install script file type: %s", extension)
         }
