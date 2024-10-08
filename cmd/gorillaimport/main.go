@@ -357,16 +357,22 @@ func cleanScriptInput(script string) string {
     return strings.TrimSpace(script)
 }
 
-// Helper function to clean and indent script content for YAML block scalars
+// Helper function to format script content for YAML block scalar with real line breaks
 func formatScriptAsYamlBlockScalar(script string) string {
     if strings.TrimSpace(script) == "" {
         return "" // Return empty for blank scripts
     }
-    lines := strings.Split(script, "\n")
+
+    // Trim the input script and split it into lines
+    lines := strings.Split(strings.TrimRight(script, "\r\n "), "\n")
+
+    // Prepend each line with two spaces for YAML block scalar
     for i, line := range lines {
-        lines[i] = "  " + strings.TrimRight(line, " ") // Indent each line with two spaces
+        lines[i] = "  " + line
     }
-    return "|-\n" + strings.Join(lines, "\n") // Add block scalar and newlines
+
+    // Join the lines and use '|-' to indicate block scalar with line breaks
+    return "|-\n" + strings.Join(lines, "\n")
 }
 
 // Function to encode the YAML with correct block scalars for scripts
