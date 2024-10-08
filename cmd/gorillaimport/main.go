@@ -378,15 +378,6 @@ func indentScriptForYaml(script string) string {
     return strings.Join(indentedLines, "\n")
 }
 
-// getEmptyIfEmptyString returns an empty string if the input is an empty string, 
-// otherwise returns the input as is.
-func getEmptyIfEmptyString(s string) interface{} {
-    if s == "" {
-        return "" // Or you can return nil if you prefer to omit the field entirely
-    }
-    return s
-}
-
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     // Define a slice of key-value pairs to represent the YAML fields in order
     type kv struct {
