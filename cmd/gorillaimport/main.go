@@ -427,7 +427,7 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
     if scriptContent != "" {
         cleanedScript := indentScriptForYaml(scriptContent)
-        m[fieldName] = "| " + cleanedScript
+        m[fieldName] = cleanedScript
     }
 }
 
