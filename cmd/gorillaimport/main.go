@@ -17,50 +17,49 @@ import (
 
 // PkgsInfo structure holds package metadata
 type Installer struct {
-	Location  string   `yaml:"location"`
-	Hash      string   `yaml:"hash"`
+	Location  string   `yaml:"location"`
+	Hash      string   `yaml:"hash"`
 	Arguments []string `yaml:"arguments,omitempty"`
-	Type      string   `yaml:"type"`
+	Type      string   `yaml:"type"`
 }
 
-// PkgsInfo structure holds package metadata
 type PkgsInfo struct {
-    Name                string     `yaml:"name"`
-    DisplayName         string     `yaml:"display_name"`
-    Version             string     `yaml:"version"`
-    Description         string     `yaml:"description"`
-    Catalogs            []string   `yaml:"catalogs"`
-    Category            string     `yaml:"category"`
-    Developer           string     `yaml:"developer"`
-    UnattendedInstall   bool       `yaml:"unattended_install"`
-    UnattendedUninstall bool       `yaml:"unattended_uninstall"`
-    Installer           *Installer `yaml:"installer"`
-    Uninstaller         *Installer `yaml:"uninstaller,omitempty"`
-    SupportedArch       []string   `yaml:"supported_architectures"`
-    ProductCode         string     `yaml:"product_code,omitempty"`
-    UpgradeCode         string     `yaml:"upgrade_code,omitempty"`
-    PreinstallScript    string     `yaml:"preinstall_script,omitempty"`
-    PostinstallScript   string     `yaml:"postinstall_script,omitempty"`
-    UninstallScript     string     `yaml:"uninstall_script,omitempty"`
-    InstallCheckScript  string     `yaml:"installcheck_script,omitempty"`
-    UninstallCheckScript string    `yaml:"uninstallcheck_script,omitempty"`
+    Name                string     `yaml:"name"`
+    DisplayName         string     `yaml:"display_name"`
+    Version             string     `yaml:"version"`
+    Description         string     `yaml:"description"`
+    Catalogs            []string   `yaml:"catalogs"`
+    Category            string     `yaml:"category"`
+    Developer           string     `yaml:"developer"`
+    UnattendedInstall   bool       `yaml:"unattended_install"`
+    UnattendedUninstall bool       `yaml:"unattended_uninstall"`
+    Installer           *Installer `yaml:"installer"`
+    Uninstaller         *Installer `yaml:"uninstaller,omitempty"`
+    SupportedArch       []string   `yaml:"supported_architectures"`
+    ProductCode         string     `yaml:"product_code,omitempty"`
+    UpgradeCode         string     `yaml:"upgrade_code,omitempty"`
+    PreinstallScript    string     `yaml:"preinstall_script,omitempty"`
+    PostinstallScript   string     `yaml:"postinstall_script,omitempty"`
+    UninstallScript     string     `yaml:"uninstall_script,omitempty"`
+    InstallCheckScript  string     `yaml:"installcheck_script,omitempty"`
+    UninstallCheckScript string    `yaml:"uninstallcheck_script,omitempty"`
 }
 
 // Config structure holds the configuration settings
 type Config struct {
-	RepoPath       string `yaml:"repo_path"`
-	CloudProvider  string `yaml:"cloud_provider"`
-	CloudBucket    string `yaml:"cloud_bucket"`
+	RepoPath       string `yaml:"repo_path"`
+	CloudProvider  string `yaml:"cloud_provider"`
+	CloudBucket    string `yaml:"cloud_bucket"`
 	DefaultCatalog string `yaml:"default_catalog"`
-	DefaultArch    string `yaml:"default_arch"`
+	DefaultArch    string `yaml:"default_arch"`
 }
 
 // Default configuration values
 var defaultConfig = Config{
-	RepoPath:       "./repo",
-	CloudBucket:    "",
+	RepoPath:       "./repo",
+	CloudBucket:    "",
 	DefaultCatalog: "testing",
-	DefaultArch:    "x86_64",
+	DefaultArch:    "x86_64",
 }
 
 // checkTools verifies the required tools are installed based on the OS
@@ -162,149 +161,149 @@ func saveConfig(configPath string, config Config) error {
 
 // configureGorillaImport interactively configures gorillaimport settings with sanity checks
 func configureGorillaImport() Config {
-    config := defaultConfig
-    fmt.Println("Configuring gorillaimport...")
+    config := defaultConfig
+    fmt.Println("Configuring gorillaimport...")
 
-    // Sanity check for repo path
-    for {
-        fmt.Printf("Repo URL (must be an absolute path, e.g., ~/DevOps/Gorilla/deployment): ")
-        fmt.Scanln(&config.RepoPath)
+    // Sanity check for repo path
+    for {
+        fmt.Printf("Repo URL (must be an absolute path, e.g., ~/DevOps/Gorilla/deployment): ")
+        fmt.Scanln(&config.RepoPath)
 
-        // Check if the path starts with "/"
-        if filepath.IsAbs(config.RepoPath) {
-            break
-        }
-        fmt.Println("Invalid repo path. Please ensure it's an absolute path starting with '/'.")
-    }
+        // Check if the path starts with "/"
+        if filepath.IsAbs(config.RepoPath) {
+            break
+        }
+        fmt.Println("Invalid repo path. Please ensure it's an absolute path starting with '/'.")
+    }
 
-    // Validate the cloud provider
-    for {
-        fmt.Printf("Cloud Provider (aws/azure or leave blank for none): ")
-        fmt.Scanln(&config.CloudProvider)
+    // Validate the cloud provider
+    for {
+        fmt.Printf("Cloud Provider (aws/azure or leave blank for none): ")
+        fmt.Scanln(&config.CloudProvider)
 
-        config.CloudProvider = strings.ToLower(config.CloudProvider) // Normalize case
-        if config.CloudProvider == "" || config.CloudProvider == "aws" || config.CloudProvider == "azure" {
-            break
-        }
-        fmt.Println("Invalid cloud provider. Please enter 'aws', 'azure', or leave blank for none.")
-    }
+        config.CloudProvider = strings.ToLower(config.CloudProvider) // Normalize case
+        if config.CloudProvider == "" || config.CloudProvider == "aws" || config.CloudProvider == "azure" {
+            break
+        }
+        fmt.Println("Invalid cloud provider. Please enter 'aws', 'azure', or leave blank for none.")
+    }
 
-    // Validate the cloud bucket if cloud provider is set
-    if config.CloudProvider != "" {
-        for {
-            fmt.Printf("Cloud Bucket (e.g., your-bucket-name/path/to/repo, no s3:// or https://): ")
-            fmt.Scanln(&config.CloudBucket)
+    // Validate the cloud bucket if cloud provider is set
+    if config.CloudProvider != "" {
+        for {
+            fmt.Printf("Cloud Bucket (e.g., your-bucket-name/path/to/repo, no s3:// or https://): ")
+            fmt.Scanln(&config.CloudBucket)
 
-            // Check if the cloud bucket doesn't start with a protocol
-            if !strings.HasPrefix(config.CloudBucket, "s3://") && !strings.HasPrefix(config.CloudBucket, "https://") {
-                break
-            }
-            fmt.Println("Invalid cloud bucket. Please remove any 's3://' or 'https://' prefix and enter only the bucket path.")
-        }
-    }
+            // Check if the cloud bucket doesn't start with a protocol
+            if !strings.HasPrefix(config.CloudBucket, "s3://") && !strings.HasPrefix(config.CloudBucket, "https://") {
+                break
+            }
+            fmt.Println("Invalid cloud bucket. Please remove any 's3://' or 'https://' prefix and enter only the bucket path.")
+        }
+    }
 
-    // Default catalog and architecture prompts
-    fmt.Printf("Default catalog (default: %s): ", config.DefaultCatalog)
-    fmt.Scanln(&config.DefaultCatalog)
-    if config.DefaultCatalog == "" {
-        config.DefaultCatalog = defaultConfig.DefaultCatalog
-    }
+    // Default catalog and architecture prompts
+    fmt.Printf("Default catalog (default: %s): ", config.DefaultCatalog)
+    fmt.Scanln(&config.DefaultCatalog)
+    if config.DefaultCatalog == "" {
+        config.DefaultCatalog = defaultConfig.DefaultCatalog
+    }
 
-    fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
-    fmt.Scanln(&config.DefaultArch)
-    if config.DefaultArch == "" {
-        config.DefaultArch = defaultConfig.DefaultArch
-    }
+    fmt.Printf("Default architecture (default: %s): ", config.DefaultArch)
+    fmt.Scanln(&config.DefaultArch)
+    if config.DefaultArch == "" {
+        config.DefaultArch = defaultConfig.DefaultArch
+    }
 
-    // Save the configuration
-    err := saveConfig(getConfigPath(), config)
-    if err != nil {
-        fmt.Printf("Error saving config: %s\n", err)
-    }
+    // Save the configuration
+    err := saveConfig(getConfigPath(), config)
+    if err != nil {
+        fmt.Printf("Error saving config: %s\n", err)
+    }
 
-    return config
+    return config
 }
 
 // extractMSIMetadata extracts MSI metadata depending on the platform (macOS or Windows)
 func extractMSIMetadata(msiFilePath string) (string, string, string, string, string, error) {
-    var productName, developer, version, productCode, upgradeCode string
-    tempDir, err := os.MkdirTemp("", "msi-extract-")
-    if err != nil {
-        return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
-    }
-    defer os.RemoveAll(tempDir)
+    var productName, developer, version, productCode, upgradeCode string
+    tempDir, err := os.MkdirTemp("", "msi-extract-")
+    if err != nil {
+        return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
+    }
+    defer os.RemoveAll(tempDir)
 
-    switch runtime.GOOS {
-    case "windows":
-        // Run msiexec with the correct working directory
-        msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
-        msiexecCmd.Dir = tempDir // Set the working directory
-        err = msiexecCmd.Run()
-        if err != nil {
-            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
-        }
+    switch runtime.GOOS {
+    case "windows":
+        // Run msiexec with the correct working directory
+        msiexecCmd := exec.Command("msiexec", "/a", msiFilePath, "/qn", "TARGETDIR="+tempDir)
+        msiexecCmd.Dir = tempDir // Set the working directory
+        err = msiexecCmd.Run()
+        if err != nil {
+            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
+        }
 
-    case "darwin":
-        // On macOS, we use msidump
-        msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
-        msidumpCmd.Dir = tempDir // Set the working directory
-        err = msidumpCmd.Run()
-        if err != nil {
-            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
-        }
+    case "darwin":
+        // On macOS, we use msidump
+        msidumpCmd := exec.Command("msidump", msiFilePath, "-d", tempDir)
+        msidumpCmd.Dir = tempDir // Set the working directory
+        err = msidumpCmd.Run()
+        if err != nil {
+            return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
+        }
 
-    default:
-        return "", "", "", "", "", fmt.Errorf("unsupported platform")
-    }
+    default:
+        return "", "", "", "", "", fmt.Errorf("unsupported platform")
+    }
 
-    // Validate that the expected files were extracted
-    summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
-    if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
-        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
-    }
+    // Validate that the expected files were extracted
+    summaryInfoFile := filepath.Join(tempDir, "_SummaryInformation.idt")
+    if _, err := os.Stat(summaryInfoFile); os.IsNotExist(err) {
+        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: file does not exist in %s", tempDir)
+    }
 
-    // Parse _SummaryInformation.idt for productName, developer, version
-    summaryData, err := os.ReadFile(summaryInfoFile)
-    if err != nil {
-        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
-    }
-    lines := strings.Split(string(summaryData), "\n")
-    for _, line := range lines {
-        cols := strings.Split(line, "\t")
-        if len(cols) < 2 {
-            continue
-        }
-        switch cols[0] {
-        case "3":
-            productName = cols[1]
-        case "4":
-            developer = cols[1]
-        case "6":
-            version = strings.Fields(cols[1])[0]
-        }
-    }
+    // Parse _SummaryInformation.idt for productName, developer, version
+    summaryData, err := os.ReadFile(summaryInfoFile)
+    if err != nil {
+        return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
+    }
+    lines := strings.Split(string(summaryData), "\n")
+    for _, line := range lines {
+        cols := strings.Split(line, "\t")
+        if len(cols) < 2 {
+            continue
+        }
+        switch cols[0] {
+        case "3":
+            productName = cols[1]
+        case "4":
+            developer = cols[1]
+        case "6":
+            version = strings.Fields(cols[1])[0]
+        }
+    }
 
-    // Parse Property.idt for productCode and upgradeCode
-    propertyFile := filepath.Join(tempDir, "Property.idt")
-    propertyData, err := os.ReadFile(propertyFile)
-    if err != nil {
-        return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
-    }
-    lines = strings.Split(string(propertyData), "\n")
-    for _, line := range lines {
-        cols := strings.Split(line, "\t")
-        if len(cols) < 2 {
-            continue
-        }
-        switch cols[0] {
-        case "ProductCode":
-            productCode = cols[1]
-        case "UpgradeCode":
-            upgradeCode = cols[1]
-        }
-    }
+    // Parse Property.idt for productCode and upgradeCode
+    propertyFile := filepath.Join(tempDir, "Property.idt")
+    propertyData, err := os.ReadFile(propertyFile)
+    if err != nil {
+        return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
+    }
+    lines = strings.Split(string(propertyData), "\n")
+    for _, line := range lines {
+        cols := strings.Split(line, "\t")
+        if len(cols) < 2 {
+            continue
+        }
+        switch cols[0] {
+        case "ProductCode":
+            productCode = cols[1]
+        case "UpgradeCode":
+            upgradeCode = cols[1]
+        }
+    }
 
-    return productName, developer, version, productCode, upgradeCode, nil
+    return productName, developer, version, productCode, upgradeCode, nil
 }
 
 // calculateSHA256 calculates the SHA-256 hash of the given file.
@@ -355,95 +354,85 @@ func copyFile(src, dst string) (int64, error) {
 
 // Ensure that the script is clean and returned as-is
 func cleanScriptInput(script string) string {
-    return strings.TrimSpace(script)
+    // Trim only leading/trailing spaces, preserve internal whitespace and newlines
+    cleanedScript := strings.Trim(script, " ") 
+    return cleanedScript
 }
 
-// Helper function to create a block scalar YAML node
-func createBlockScalarNode(key string, content string) []*yaml.Node {
-    keyNode := &yaml.Node{
-        Kind:  yaml.ScalarNode,
-        Value: key,
+// This function formats the script for YAML block scalar (|-)
+func indentScriptForYaml(script string) string {
+    lines := strings.Split(script, "\n")
+
+    for i, line := range lines {
+        lines[i] = "  " + strings.Trim(line, " ") // Trim and then indent
     }
-    valueNode := &yaml.Node{
-        Kind:  yaml.ScalarNode,
-        Style: yaml.LiteralStyle, // Block scalar style
-        Value: content,
-    }
-    return []*yaml.Node{keyNode, valueNode}
+
+    return strings.Join(lines, "\n")
 }
 
-// Function to encode the YAML with block scalars for script fields
-func encodeWithBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
+// Function to encode the YAML with correct block scalars for scripts
+func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
     enc.SetIndent(2)
 
-    // Create the root node for the PkgsInfo struct
-    root := yaml.Node{
-        Kind: yaml.MappingNode,
+    // Manually construct the map while applying block scalars to script fields
+    m := make(map[string]interface{})
+
+    // Standard fields for the YAML
+    m["name"] = pkgsInfo.Name
+    m["display_name"] = pkgsInfo.DisplayName
+    m["version"] = pkgsInfo.Version
+    m["description"] = pkgsInfo.Description
+    m["catalogs"] = pkgsInfo.Catalogs
+    m["category"] = pkgsInfo.Category
+    m["developer"] = pkgsInfo.Developer
+    m["unattended_install"] = pkgsInfo.UnattendedInstall
+    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
+    m["installer"] = pkgsInfo.Installer
+    if pkgsInfo.Uninstaller != nil {
+        m["uninstaller"] = pkgsInfo.Uninstaller
     }
+    m["supported_architectures"] = pkgsInfo.SupportedArch
+    m["product_code"] = pkgsInfo.ProductCode
+    m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Manually create nodes to control the block scalar behavior
-    root.Content = append(root.Content, createScalarNode("name", pkgsInfo.Name)...)
-    root.Content = append(root.Content, createScalarNode("display_name", pkgsInfo.DisplayName)...)
-    root.Content = append(root.Content, createScalarNode("version", pkgsInfo.Version)...)
-    root.Content = append(root.Content, createScalarNode("description", pkgsInfo.Description)...)
-    root.Content = append(root.Content, createSliceNode("catalogs", pkgsInfo.Catalogs)...)
-    root.Content = append(root.Content, createScalarNode("category", pkgsInfo.Category)...)
-    root.Content = append(root.Content, createScalarNode("developer", pkgsInfo.Developer)...)
-    root.Content = append(root.Content, createBoolNode("unattended_install", pkgsInfo.UnattendedInstall)...)
-    root.Content = append(root.Content, createBoolNode("unattended_uninstall", pkgsInfo.UnattendedUninstall)...)
-
-    // Block scalars for script fields
+    // Use literal block scalar for multiline scripts
     if pkgsInfo.PreinstallScript != "" {
-        root.Content = append(root.Content, createBlockScalarNode("preinstall_script", pkgsInfo.PreinstallScript)...)
+        cleanedScript := cleanScriptInput(pkgsInfo.PreinstallScript) // Clean the script first
+        indentedScript := indentScriptForYaml(cleanedScript)         // Then indent
+
+        // Add the |-, newline, and indented script
+        m["preinstall_script"] = "|-\n" + indentedScript 
     }
     if pkgsInfo.PostinstallScript != "" {
-        root.Content = append(root.Content, createBlockScalarNode("postinstall_script", pkgsInfo.PostinstallScript)...)
+        cleanedScript := cleanScriptInput(pkgsInfo.PostinstallScript) 
+        indentedScript := indentScriptForYaml(cleanedScript)        
+        m["postinstall_script"] = "|-\n" + indentedScript
     }
     if pkgsInfo.UninstallScript != "" {
-        root.Content = append(root.Content, createBlockScalarNode("uninstall_script", pkgsInfo.UninstallScript)...)
+        cleanedScript := cleanScriptInput(pkgsInfo.UninstallScript)
+        indentedScript := indentScriptForYaml(cleanedScript)       
+        m["uninstall_script"] = "|-\n" + indentedScript 
     }
     if pkgsInfo.InstallCheckScript != "" {
-        root.Content = append(root.Content, createBlockScalarNode("installcheck_script", pkgsInfo.InstallCheckScript)...)
+        cleanedScript := cleanScriptInput(pkgsInfo.InstallCheckScript)
+        indentedScript := indentScriptForYaml(cleanedScript)       
+        m["installcheck_script"] = "|-\n" + indentedScript 
     }
     if pkgsInfo.UninstallCheckScript != "" {
-        root.Content = append(root.Content, createBlockScalarNode("uninstallcheck_script", pkgsInfo.UninstallCheckScript)...)
+        cleanedScript := cleanScriptInput(pkgsInfo.UninstallCheckScript)
+        indentedScript := indentScriptForYaml(cleanedScript)       
+        m["uninstallcheck_script"] = "|-\n" + indentedScript
     }
 
-    err := enc.Encode(&root)
+    // Encode the final map to YAML
+    err := enc.Encode(m)
     if err != nil {
         return nil, err
     }
 
     return buf.Bytes(), nil
-}
-
-// Helper functions to create scalar and slice YAML nodes
-func createScalarNode(key, value string) []*yaml.Node {
-    return []*yaml.Node{
-        {Kind: yaml.ScalarNode, Value: key},
-        {Kind: yaml.ScalarNode, Value: value},
-    }
-}
-
-func createBoolNode(key string, value bool) []*yaml.Node {
-    return []*yaml.Node{
-        {Kind: yaml.ScalarNode, Value: key},
-        {Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", value)},
-    }
-}
-
-func createSliceNode(key string, values []string) []*yaml.Node {
-    nodes := []*yaml.Node{
-        {Kind: yaml.ScalarNode, Value: key},
-    }
-    seqNode := yaml.Node{Kind: yaml.SequenceNode}
-    for _, val := range values {
-        seqNode.Content = append(seqNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: val})
-    }
-    nodes = append(nodes, &seqNode)
-    return nodes
 }
 
 // Example usage for creating the pkgsinfo YAML
@@ -474,27 +463,27 @@ func createPkgsInfo(
 	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
 	pkgsInfo := PkgsInfo{
-		Name:                name,
-		Version:             version,
+		Name:                name,
+		Version:             version,
 		Installer: &Installer{
 			Location: installerLocation,
-			Hash:     fileHash,
-			Type:     strings.TrimPrefix(filepath.Ext(filePath), "."),
+			Hash:     fileHash,
+			Type:     strings.TrimPrefix(filepath.Ext(filePath), "."),
 		},
-		Uninstaller:         uninstaller,
-		Catalogs:            catalogs,
-		Category:            category,
-		Developer:           developer,
-		Description:         "",
-		SupportedArch:       supportedArch,
-		ProductCode:         strings.Trim(productCode, "{}\r"),
-		UpgradeCode:         strings.Trim(upgradeCode, "{}\r"),
-		UnattendedInstall:   unattendedInstall,
+		Uninstaller:         uninstaller,
+		Catalogs:            catalogs,
+		Category:            category,
+		Developer:           developer,
+		Description:         "",
+		SupportedArch:       supportedArch,
+		ProductCode:         strings.Trim(productCode, "{}\r"),
+		UpgradeCode:         strings.Trim(upgradeCode, "{}\r"),
+		UnattendedInstall:   unattendedInstall,
 		UnattendedUninstall: unattendedUninstall,
-		PreinstallScript:    preinstallScript,
-		PostinstallScript:   postinstallScript,
-		UninstallScript:     uninstallScript,
-		InstallCheckScript:  installCheckScript,
+		PreinstallScript:    preinstallScript,
+		PostinstallScript:   postinstallScript,
+		UninstallScript:     uninstallScript,
+		InstallCheckScript:  installCheckScript,
 		UninstallCheckScript: uninstallCheckScript,
 	}
 
@@ -510,7 +499,7 @@ func createPkgsInfo(
 	outputFile := filepath.Join(outputFilePath, fmt.Sprintf("%s-%s.yaml", name, version))
 
 	// Use the block scalar encoder
-	pkgsInfoContent, err := encodeWithBlockScalars(pkgsInfo)
+	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
 		return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
 	}
@@ -524,394 +513,399 @@ func createPkgsInfo(
 }
 
 func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
-    allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-    fileContent, err := os.ReadFile(allCatalogPath)
-    if err != nil {
-        return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
-    }
+    allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+    fileContent, err := os.ReadFile(allCatalogPath)
+    if err != nil {
+        return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
+    }
 
-    var allPackages []PkgsInfo
-    if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-        return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-    }
+    var allPackages []PkgsInfo
+    if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
+        return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+    }
 
-    // Clean the input productCode and upgradeCode
-    cleanedProductCode := strings.Trim(strings.ToLower(productCode), "{}\r\n ")
-    cleanedUpgradeCode := strings.Trim(strings.ToLower(upgradeCode), "{}\r\n ")
+    // Clean the input productCode and upgradeCode
+    cleanedProductCode := strings.Trim(strings.ToLower(productCode), "{}\r\n ")
+    cleanedUpgradeCode := strings.Trim(strings.ToLower(upgradeCode), "{}\r\n ")
 
-    for _, item := range allPackages {
-        // Skip items where product codes are empty
-        if item.ProductCode == "" || item.UpgradeCode == "" {
-            continue
-        }
+    for _, item := range allPackages {
+        // Skip items where product codes are empty
+        if item.ProductCode == "" || item.UpgradeCode == "" {
+            continue
+        }
 
-        // Clean the item product codes
-        itemProductCode := strings.Trim(strings.ToLower(item.ProductCode), "{}\r\n ")
-        itemUpgradeCode := strings.Trim(strings.ToLower(item.UpgradeCode), "{}\r\n ")
+        // Clean the item product codes
+        itemProductCode := strings.Trim(strings.ToLower(item.ProductCode), "{}\r\n ")
+        itemUpgradeCode := strings.Trim(strings.ToLower(item.UpgradeCode), "{}\r\n ")
 
-        // Compare product codes and upgrade codes
-        if itemProductCode == cleanedProductCode && itemUpgradeCode == cleanedUpgradeCode {
-            // Check if the hashes match
-            if item.Installer != nil && item.Installer.Hash == currentFileHash {
-                return &item, true, nil
-            } else {
-                return &item, false, nil
-            }
-        }
-    }
-    return nil, false, nil
+        // Compare product codes and upgrade codes
+        if itemProductCode == cleanedProductCode && itemUpgradeCode == cleanedUpgradeCode {
+            // Check if the hashes match
+            if item.Installer != nil && item.Installer.Hash == currentFileHash {
+                return &item, true, nil
+            } else {
+                return &item, false, nil
+            }
+        }
+    }
+    return nil, false, nil
 }
 
 func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version string) (*PkgsInfo, error) {
-    allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-    fileContent, err := os.ReadFile(allCatalogPath)
-    if err != nil {
-        return nil, fmt.Errorf("failed to read All.yaml: %v", err)
-    }
+    allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+    fileContent, err := os.ReadFile(allCatalogPath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read All.yaml: %v", err)
+    }
 
-    var allPackages []PkgsInfo
-    if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-        return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-    }
+    var allPackages []PkgsInfo
+    if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+    }
 
-    // Normalize input name and version
-    cleanName := strings.TrimSpace(strings.ToLower(name))
-    cleanVersion := strings.TrimSpace(strings.ToLower(version))
+    // Normalize input name and version
+    cleanName := strings.TrimSpace(strings.ToLower(name))
+    cleanVersion := strings.TrimSpace(strings.ToLower(version))
 
-    for _, item := range allPackages {
-        // Skip items with empty name or version
-        if item.Name == "" || item.Version == "" {
-            continue
-        }
+    for _, item := range allPackages {
+        // Skip items with empty name or version
+        if item.Name == "" || item.Version == "" {
+            continue
+        }
 
-        // Normalize item name and version
-        itemName := strings.TrimSpace(strings.ToLower(item.Name))
-        itemVersion := strings.TrimSpace(strings.ToLower(item.Version))
+        // Normalize item name and version
+        itemName := strings.TrimSpace(strings.ToLower(item.Name))
+        itemVersion := strings.TrimSpace(strings.ToLower(item.Version))
 
-        // Compare names and versions
-        if itemName == cleanName && itemVersion != cleanVersion {
-            return &item, nil // Return if the name matches but the version is different
-        }
-    }
+        // Compare names and versions
+        if itemName == cleanName && itemVersion != cleanVersion {
+            return &item, nil // Return if the name matches but the version is different
+        }
+    }
 
-    return nil, nil
+    return nil, nil
 }
 
 // gorillaImport handles the import process and metadata extraction
 func gorillaImport(
-    packagePath string,
-    installScriptPath string,
-    uninstallScriptPath string,
-    postinstallScriptPath string,
-    uninstallerPath string,
-    installCheckScriptPath string,
-    uninstallCheckScriptPath string,
-    config Config,
+    packagePath string,
+    installScriptPath string,
+    uninstallScriptPath string,
+    postinstallScriptPath string,
+    uninstallerPath string,
+    installCheckScriptPath string,
+    uninstallCheckScriptPath string,
+    config Config,
 ) (bool, error) {
-    if _, err := os.Stat(packagePath); os.IsNotExist(err) {
-        return false, fmt.Errorf("package '%s' does not exist", packagePath)
-    }
+    if _, err := os.Stat(packagePath); os.IsNotExist(err) {
+        return false, fmt.Errorf("package '%s' does not exist", packagePath)
+    }
 
-    // Extract metadata
-    productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
-    if err != nil {
-        fmt.Printf("Error extracting metadata: %v\n", err)
-        fmt.Println("Fallback to manual input.")
-    }
+    // Extract metadata
+    productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
+    if err != nil {
+        fmt.Printf("Error extracting metadata: %v\n", err)
+        fmt.Println("Fallback to manual input.")
+    }
 
-    // Clean the productCode and upgradeCode
-    productCode = strings.Trim(productCode, "{}\r\n ")
-    upgradeCode = strings.Trim(upgradeCode, "{}\r\n ")
+    // Clean the productCode and upgradeCode
+    productCode = strings.Trim(productCode, "{}\r\n ")
+    upgradeCode = strings.Trim(upgradeCode, "{}\r\n ")
 
-    // Calculate hash of the current package
-    currentFileHash, err := calculateSHA256(packagePath)
-    if err != nil {
-        return false, fmt.Errorf("error calculating file hash: %v", err)
-    }
+    // Calculate hash of the current package
+    currentFileHash, err := calculateSHA256(packagePath)
+    if err != nil {
+        return false, fmt.Errorf("error calculating file hash: %v", err)
+    }
 
-    var matchingItem *PkgsInfo
-    var hashMatches bool
+    var matchingItem *PkgsInfo
+    var hashMatches bool
 
-    // Check if productCode and upgradeCode are not empty
-    if productCode != "" && upgradeCode != "" {
-        // Proceed with matching
-        matchingItem, hashMatches, err = findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
-        if err != nil {
-            return false, fmt.Errorf("error checking All.yaml: %v", err)
-        }
+    // Check if productCode and upgradeCode are not empty
+    if productCode != "" && upgradeCode != "" {
+        // Proceed with matching
+        matchingItem, hashMatches, err = findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
+        if err != nil {
+            return false, fmt.Errorf("error checking All.yaml: %v", err)
+        }
 
-        if matchingItem != nil {
-            if hashMatches {
-                // Exact match found
-                fmt.Println("This item already exists in the repo with the same product code, upgrade code, and hash.")
-                return false, nil // Prevent further import as it is identical
-            } else {
-                // Hash differs
-                fmt.Println("An item with the same product code and upgrade code exists but with a different hash.")
-                // Prompt the user
-                userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-                if strings.ToLower(userDecision) != "y" {
-                    return false, fmt.Errorf("import canceled due to hash mismatch")
-                }
-            }
-        }
-    }
+        if matchingItem != nil {
+            if hashMatches {
+                // Exact match found
+                fmt.Println("This item already exists in the repo with the same product code, upgrade code, and hash.")
+                return false, nil // Prevent further import as it is identical
+            } else {
+                // Hash differs
+                fmt.Println("An item with the same product code and upgrade code exists but with a different hash.")
+                // Prompt the user
+                userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
+                if strings.ToLower(userDecision) != "y" {
+                    return false, fmt.Errorf("import canceled due to hash mismatch")
+                }
+            }
+        }
+    }
 
-    // Proceed with the import since no exact match was found or user chose to proceed
-    // Check for an item with the same name but different version
-    matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
-    if err != nil {
-        return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
-    }
+    // Proceed with the import since no exact match was found or user chose to proceed
+    // Check for an item with the same name but different version
+    matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
+    if err != nil {
+        return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
+    }
 
-    // Prepopulate fields if an item with the same name but a different version exists
-    category := "Apps" // Set default category
-    supportedArch := config.DefaultArch
-    catalogs := config.DefaultCatalog
-    var installerSubPath string
+    // Prepopulate fields if an item with the same name but a different version exists
+    category := "Apps" // Set default category
+    supportedArch := config.DefaultArch
+    catalogs := config.DefaultCatalog
+    var installerSubPath string
 
-    if matchingItemWithDiffVersion != nil {
-        fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
-        productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
-        developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
-        category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
-        installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
-    }
+    if matchingItemWithDiffVersion != nil {
+        fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
+        productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
+        developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
+        category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
+        installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
+    }
 
-    // Prompt user for fields
-    promptSurvey(&productName, "Item name", productName)
-    promptSurvey(&version, "Version", version)
-    promptSurvey(&category, "Category", category)
-    promptSurvey(&developer, "Developer", developer)
-    promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
-    if installerSubPath == "" {
-        promptSurvey(&installerSubPath, "What is the installer item path?", "apps")
-    } else {
-        promptSurvey(&installerSubPath, "What is the installer item path?", installerSubPath)
-    }
-    promptSurvey(&catalogs, "Catalogs", catalogs)
+    // Prompt user for fields
+    promptSurvey(&productName, "Item name", productName)
+    promptSurvey(&version, "Version", version)
+    promptSurvey(&category, "Category", category)
+    promptSurvey(&developer, "Developer", developer)
+    promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
+    if installerSubPath == "" {
+        promptSurvey(&installerSubPath, "What is the installer item path?", "apps")
+    } else {
+        promptSurvey(&installerSubPath, "What is the installer item path?", installerSubPath)
+    }
+    promptSurvey(&catalogs, "Catalogs", catalogs)
 
-    catalogList := strings.Split(catalogs, ",")
-    for i := range catalogList {
-        catalogList[i] = strings.TrimSpace(catalogList[i])
-    }
+    catalogList := strings.Split(catalogs, ",")
+    for i := range catalogList {
+        catalogList[i] = strings.TrimSpace(catalogList[i])
+    }
 
-    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
+    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
 
-    // Final confirmation for import
-    userDecision := getInputWithDefault("Import this item? [y/N]", "N")
-    if strings.ToLower(userDecision) != "y" {
-        return false, fmt.Errorf("import canceled by user")
-    }
+    // Final confirmation for import
+    userDecision := getInputWithDefault("Import this item? [y/N]", "N")
+    if strings.ToLower(userDecision) != "y" {
+        return false, fmt.Errorf("import canceled by user")
+    }
 
-    // Ensure that the package path exists and create it if not
-    pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
-    if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
-        err = os.MkdirAll(pkgsFolderPath, 0755)
-        if err != nil {
-            return false, fmt.Errorf("failed to create directory structure: %v", err)
-        }
-    }
+    // Ensure that the package path exists and create it if not
+    pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
+    if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
+        err = os.MkdirAll(pkgsFolderPath, 0755)
+        if err != nil {
+            return false, fmt.Errorf("failed to create directory structure: %v", err)
+        }
+    }
 
-    // Copy the package to the determined path
-    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
-    _, err = copyFile(packagePath, destinationPath)
-    if err != nil {
-        return false, fmt.Errorf("failed to copy package to destination: %v", err)
-    }
+    // Copy the package to the determined path
+    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
+    _, err = copyFile(packagePath, destinationPath)
+    if err != nil {
+        return false, fmt.Errorf("failed to copy package to destination: %v", err)
+    }
 
-    // Process scripts
-    var preinstallScriptContent string
-    var postinstallScriptContent string
-    var uninstallScriptContent string
-    var installCheckScriptContent string
-    var uninstallCheckScriptContent string
+    // Process scripts
+    var preinstallScriptContent string
+    var postinstallScriptContent string
+    var uninstallScriptContent string
+    var installCheckScriptContent string
+    var uninstallCheckScriptContent string
 
-    // Process install script
-    if installScriptPath != "" {
-        content, err := os.ReadFile(installScriptPath)
-        if err != nil {
-            return false, fmt.Errorf("error reading install script file: %v", err)
-        }
-        extension := strings.ToLower(filepath.Ext(installScriptPath))
-        if extension == ".bat" {
-            preinstallScriptContent = generateWrapperScript(string(content))
-        } else if extension == ".ps1" {
-            preinstallScriptContent = string(content)
-        } else {
-            return false, fmt.Errorf("unsupported install script file type: %s", extension)
-        }
-    }
+    // Process install script
+    if installScriptPath != "" {
+        content, err := os.ReadFile(installScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading install script file: %v", err)
+        }
+        extension := strings.ToLower(filepath.Ext(installScriptPath))
+        if extension == ".bat" {
+            preinstallScriptContent = generateWrapperScript(string(content))
+        } else if extension == ".ps1" {
+            preinstallScriptContent = string(content)
+        } else {
+            return false, fmt.Errorf("unsupported install script file type: %s", extension)
+        }
+    }
 
-    // Process uninstall script
-    if uninstallScriptPath != "" {
-        content, err := os.ReadFile(uninstallScriptPath)
-        if err != nil {
-            return false, fmt.Errorf("error reading uninstall script file: %v", err)
-        }
-        extension := strings.ToLower(filepath.Ext(uninstallScriptPath))
-        if extension == ".bat" {
-            uninstallScriptContent = generateWrapperScript(string(content))
-        } else if extension == ".ps1" {
-            uninstallScriptContent = string(content)
-        } else {
-            return false, fmt.Errorf("unsupported uninstall script file type: %s", extension)
-        }
-    }
+    // Process uninstall script
+    if uninstallScriptPath != "" {
+        content, err := os.ReadFile(uninstallScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading uninstall script file: %v", err)
+        }
+        extension := strings.ToLower(filepath.Ext(uninstallScriptPath))
+        if extension == ".bat" {
+            uninstallScriptContent = generateWrapperScript(string(content))
+        } else if extension == ".ps1" {
+            uninstallScriptContent = string(content)
+        } else {
+            return false, fmt.Errorf("unsupported uninstall script file type: %s", extension)
+        }
+    }
 
-    // Process post-install script
-    if postinstallScriptPath != "" {
-        content, err := os.ReadFile(postinstallScriptPath)
-        if err != nil {
-            return false, fmt.Errorf("error reading post-install script file: %v", err)
-        }
-        extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
-        if extension == ".ps1" {
-            postinstallScriptContent = string(content)
-        } else {
-            return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
-        }
-    }
-    
-    // Process install check script
-    if installCheckScriptPath != "" {
-        content, err := os.ReadFile(installCheckScriptPath)
-        if err != nil {
-            return false, fmt.Errorf("error reading install check script file: %v", err)
-        }
-        installCheckScriptContent = string(content)
-    }
-    
-    // Process uninstall check script
-    if uninstallCheckScriptPath != "" {
-        content, err := os.ReadFile(uninstallCheckScriptPath)
-        if err != nil {
-            return false, fmt.Errorf("error reading uninstall check script file: %v", err)
-        }
-        uninstallCheckScriptContent = string(content)
-    }
+    // Process post-install script
+    if postinstallScriptPath != "" {
+        content, err := os.ReadFile(postinstallScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading post-install script file: %v", err)
+        }
+        extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
+        if extension == ".ps1" {
+            postinstallScriptContent = string(content)
+        } else {
+            return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
+        }
+    }
+    
+    // Process install check script
+    if installCheckScriptPath != "" {
+        content, err := os.ReadFile(installCheckScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading install check script file: %v", err)
+        }
+        installCheckScriptContent = string(content)
+    }
+    
+    // Process uninstall check script
+    if uninstallCheckScriptPath != "" {
+        content, err := os.ReadFile(uninstallCheckScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading uninstall check script file: %v", err)
+        }
+        uninstallCheckScriptContent = string(content)
+    }
 
-    // Process uninstaller
-    var uninstaller *Installer
-    if uninstallerPath != "" {
-        if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
-            return false, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
-        }
-        uninstallerHash, err := calculateSHA256(uninstallerPath)
-        if err != nil {
-            return false, fmt.Errorf("error calculating uninstaller file hash: %v", err)
-        }
-        uninstallerExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(uninstallerPath)), ".")
+    // Process uninstaller
+    var uninstaller *Installer
+    if uninstallerPath != "" {
+        if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
+            return false, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
+        }
+        uninstallerHash, err := calculateSHA256(uninstallerPath)
+        if err != nil {
+            return false, fmt.Errorf("error calculating uninstaller file hash: %v", err)
+        }
+        uninstallerExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(uninstallerPath)), ".")
 
-        // Copy uninstaller to repo
-        uninstallerFilename := filepath.Base(uninstallerPath)
-        uninstallerDestinationPath := filepath.Join(pkgsFolderPath, uninstallerFilename)
-        _, err = copyFile(uninstallerPath, uninstallerDestinationPath)
-        if err != nil {
-            return false, fmt.Errorf("failed to copy uninstaller to destination: %v", err)
-        }
+        // Copy uninstaller to repo
+        uninstallerFilename := filepath.Base(uninstallerPath)
+        uninstallerDestinationPath := filepath.Join(pkgsFolderPath, uninstallerFilename)
+        _, err = copyFile(uninstallerPath, uninstallerDestinationPath)
+        if err != nil {
+            return false, fmt.Errorf("failed to copy uninstaller to destination: %v", err)
+        }
 
-        uninstallerLocation := filepath.Join("/", installerSubPath, uninstallerFilename)
+        uninstallerLocation := filepath.Join("/", installerSubPath, uninstallerFilename)
 
-        uninstaller = &Installer{
-            Location:  uninstallerLocation,
-            Hash:      uninstallerHash,
-            Arguments: []string{}, // You can add logic to handle uninstaller arguments if needed
-            Type:      uninstallerExtension,
-        }
-    }
+        uninstaller = &Installer{
+            Location:  uninstallerLocation,
+            Hash:      uninstallerHash,
+            Arguments: []string{}, // You can add logic to handle uninstaller arguments if needed
+            Type:      uninstallerExtension,
+        }
+    }
 
-    // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
-    err = createPkgsInfo(
-        packagePath,
-        filepath.Join(config.RepoPath, "pkgsinfo"),
-        productName,
-        version,
-        catalogList,
-        category,
-        developer,
-        []string{supportedArch},
-        config.RepoPath,
-        installerSubPath,
-        productCode,
-        upgradeCode,
-        currentFileHash,
-        true,  // Unattended install default
-        true,  // Unattended uninstall default
-        preinstallScriptContent,
-        postinstallScriptContent,
-        uninstallScriptContent, 
-        installCheckScriptContent,
-        uninstallCheckScriptContent,
-        uninstaller,
-    )
+    // Proceed with the creation of pkgsinfo YAML file using the confirmed/extracted metadata
+    err = createPkgsInfo(
+        packagePath,
+        filepath.Join(config.RepoPath, "pkgsinfo"),
+        productName,
+        version,
+        catalogList,
+        category,
+        developer,
+        []string{supportedArch},
+        config.RepoPath,
+        installerSubPath,
+        productCode,
+        upgradeCode,
+        currentFileHash,
+        true,  // Unattended install default
+        true,  // Unattended uninstall default
+        preinstallScriptContent,
+        postinstallScriptContent,
+        uninstallScriptContent, 
+        installCheckScriptContent,
+        uninstallCheckScriptContent,
+        uninstaller,
+    )
 
-    if err != nil {
-        return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
-    }
+    if err != nil {
+        return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
+    }
 
-    fmt.Printf("Pkgsinfo created at: %s\n", filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", productName, version)))
-    return true, nil
+    fmt.Printf("Pkgsinfo created at: %s\n", filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", productName, version)))
+    return true, nil
 }
 
-// generateWrapperScript wraps a batch script inside a PowerShell script
-func generateWrapperScript(batchContent string) string {
-    // Escape single quotes in batchContent
-    batchContentEscaped := strings.ReplaceAll(batchContent, "'", "''")
-    psScript := fmt.Sprintf(`
-$batchScriptContent = @'
-%s
-'@
+func generateWrapperScript(batchContent, scriptType string) string {
+    if scriptType == "bat" {
+        // For .bat scripts
+        return fmt.Sprintf(`
+            $batchScriptContent = @'
+            %s
+            '@
 
-$batchFile = "$env:TEMP\\temp_script.bat"
-Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
-& cmd.exe /c $batchFile
-Remove-Item $batchFile
-`, batchContentEscaped)
-    return psScript
+            $batchFile = "$env:TEMP\temp_script.bat"
+            Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
+            & cmd.exe /c $batchFile
+            Remove-Item $batchFile
+        `, batchContent) 
+    } else if scriptType == "ps1" {
+        // For .ps1 scripts, no wrapping needed
+        return batchContent
+    } else {
+        // Handle unsupported script types
+        return "" 
+    }
 }
 
 // Custom prompt template to remove `?`
 var customPromptTemplate = survey.IconSet{
-    Question: survey.Icon{
-        Text: "",
-    },
+    Question: survey.Icon{
+        Text: "",
+    },
 }
 
 // promptSurvey prompts the user with a prepopulated value using survey and allows them to modify it
 func promptSurvey(value *string, prompt string, defaultValue string) {
-    // Clean default value
-    cleanDefault := cleanTextForPrompt(defaultValue)
+    // Clean default value
+    cleanDefault := cleanTextForPrompt(defaultValue)
 
-    survey.AskOne(&survey.Input{
-        Message: prompt,
-        Default: cleanDefault,
-    }, value, survey.WithIcons(func(icons *survey.IconSet) {
-        *icons = customPromptTemplate
-    }))
+    survey.AskOne(&survey.Input{
+        Message: prompt,
+        Default: cleanDefault,
+    }, value, survey.WithIcons(func(icons *survey.IconSet) {
+        *icons = customPromptTemplate
+    }))
 }
 
 // getInputWithDefault prompts the user with a prepopulated value and allows them to confirm or modify it
 func getInputWithDefault(prompt, defaultValue string) string {
-    cleanDefault := cleanTextForPrompt(defaultValue)
+    cleanDefault := cleanTextForPrompt(defaultValue)
 
-    if cleanDefault != "" {
-        fmt.Printf("%s [%s]: ", prompt, cleanDefault)
-    } else {
-        fmt.Printf("%s: ", prompt)
-    }
-    var input string
-    fmt.Scanln(&input)
+    if cleanDefault != "" {
+        fmt.Printf("%s [%s]: ", prompt, cleanDefault)
+    } else {
+        fmt.Printf("%s: ", prompt)
+    }
+    var input string
+    fmt.Scanln(&input)
 
-    if input == "" {
-        return cleanDefault
-    }
-    return input
+    if input == "" {
+        return cleanDefault
+    }
+    return input
 }
 
 // cleanTextForPrompt ensures text is clean and doesn't cause issues in terminal input
 func cleanTextForPrompt(input string) string {
-    return strings.TrimSpace(input)
+    return strings.TrimSpace(input)
 }
 
 // confirmAction prompts the user to confirm an action.
@@ -1007,112 +1001,111 @@ func rebuildCatalogs() {
 
 // main handles the configuration and running gorillaImport
 func main() {
-    configFlag := flag.Bool("config", false, "Run interactive configuration setup.")
-    archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
-    installerFlag := flag.String("installer", "", "Path to the installer .exe or .msi file.")
-    uninstallerFlag := flag.String("uninstaller", "", "Path to the uninstaller .exe or .msi file.")
-    installScriptFlag := flag.String("installscript", "", "Path to the install script (.bat or .ps1).")
-    uninstallScriptFlag := flag.String("uninstallscript", "", "Path to the uninstall script (.bat or .ps1).")
-    postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script (.ps1).")
-    installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
-    uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")    
-    flag.Parse()
+    configFlag := flag.Bool("config", false, "Run interactive configuration setup.")
+    archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
+    installerFlag := flag.String("installer", "", "Path to the installer .exe or .msi file.")
+    uninstallerFlag := flag.String("uninstaller", "", "Path to the uninstaller .exe or .msi file.")
+    installScriptFlag := flag.String("installscript", "", "Path to the install script (.bat or .ps1).")
+    uninstallScriptFlag := flag.String("uninstallscript", "", "Path to the uninstall script (.bat or .ps1).")
+    postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script (.ps1).")
+    installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
+    uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")    
+    flag.Parse()
 
-    if *configFlag {
-        configureGorillaImport()
-        return
-    }
+    if *configFlag {
+        configureGorillaImport()
+        return
+    }
 
-    // Check for necessary tools
-    if err := checkTools(); err != nil {
-        fmt.Printf("Error: %s\n", err)
-        os.Exit(1)
-    }
+    // Check for necessary tools
+    if err := checkTools(); err != nil {
+        fmt.Printf("Error: %s\n", err)
+        os.Exit(1)
+    }
 
-    configData := defaultConfig
-    configPath := getConfigPath()
+    configData := defaultConfig
+    configPath := getConfigPath()
 
-    // Load config if available
-    if _, err := os.Stat(configPath); err == nil {
-        loadedConfig, err := loadConfig(configPath)
-        if err == nil {
-            if loadedConfig.RepoPath != "" {
-                configData.RepoPath = loadedConfig.RepoPath
-            }
-            if loadedConfig.DefaultCatalog != "" {
-                configData.DefaultCatalog = loadedConfig.DefaultCatalog
-            }
-            if loadedConfig.DefaultArch != "" {
-                configData.DefaultArch = loadedConfig.DefaultArch
-            }
-            if loadedConfig.CloudBucket != "" {
-                configData.CloudBucket = loadedConfig.CloudBucket
-            }
-            if loadedConfig.CloudProvider != "" {
-                configData.CloudProvider = loadedConfig.CloudProvider
-            }
-        }
-    }
+    // Load config if available
+    if _, err := os.Stat(configPath); err == nil {
+        loadedConfig, err := loadConfig(configPath)
+        if err == nil {
+            if loadedConfig.RepoPath != "" {
+                configData.RepoPath = loadedConfig.RepoPath
+            }
+            if loadedConfig.DefaultCatalog != "" {
+                configData.DefaultCatalog = loadedConfig.DefaultCatalog
+            }
+            if loadedConfig.DefaultArch != "" {
+                configData.DefaultArch = loadedConfig.DefaultArch
+            }
+            if loadedConfig.CloudBucket != "" {
+                configData.CloudBucket = loadedConfig.CloudBucket
+            }
+            if loadedConfig.CloudProvider != "" {
+                configData.CloudProvider = loadedConfig.CloudProvider
+            }
+        }
+    }
 
-    var packagePath string
-    if *installerFlag != "" {
-        packagePath = *installerFlag
-    } else if flag.NArg() > 0 {
-        packagePath = flag.Arg(0)
-    } else {
-        fmt.Printf("Enter the path to the package file to import: ")
-        fmt.Scanln(&packagePath)
-    }
+    var packagePath string
+    if *installerFlag != "" {
+        packagePath = *installerFlag
+    } else if flag.NArg() > 0 {
+        packagePath = flag.Arg(0)
+    } else {
+        fmt.Printf("Enter the path to the package file to import: ")
+        fmt.Scanln(&packagePath)
+    }
 
-    // If --arch flag is provided, override the default architecture
-    if *archFlag != "" {
-        configData.DefaultArch = *archFlag
-    }
+    // If --arch flag is provided, override the default architecture
+    if *archFlag != "" {
+        configData.DefaultArch = *archFlag
+    }
 
-    // Perform the import and check if it was successful
-    importSuccess, err := gorillaImport(
-        packagePath,
-        *installScriptFlag,
-        *uninstallScriptFlag,
-        *postinstallScriptFlag,
-        *uninstallerFlag,
-        *installCheckScriptFlag,
-        *uninstallCheckScriptFlag,
-        configData,
-    )
-    if err != nil {
-        fmt.Printf("Error: %s\n", err)
-        os.Exit(1)
-    }
+    // Perform the import and check if it was successful
+    importSuccess, err := gorillaImport(
+        packagePath,
+        *installScriptFlag,
+        *uninstallScriptFlag,
+        *postinstallScriptFlag,
+        *uninstallerFlag,
+        *installCheckScriptFlag,
+        *uninstallCheckScriptFlag,
+        configData,
+    )
+    if err != nil {
+        fmt.Printf("Error: %s\n", err)
+        os.Exit(1)
+    }
 
-    // Only upload if the import was successful
-    if importSuccess && configData.CloudProvider != "none" {
-        if err := uploadToCloud(configData); err != nil {
-            fmt.Printf("Error uploading to cloud: %s\n", err)
-        }
-    }
+    // Only upload if the import was successful
+    if importSuccess && configData.CloudProvider != "none" {
+        if err := uploadToCloud(configData); err != nil {
+            fmt.Printf("Error uploading to cloud: %s\n", err)
+        }
+    }
 
-    // After successful import, ask the user if they want to run makecatalogs
-    if importSuccess {
-        confirm := getInputWithDefault("Would you like to run makecatalogs? [y/n]", "n")
-        if strings.ToLower(confirm) == "y" {
-            fmt.Println("Running makecatalogs to update catalogs...")
+    // After successful import, ask the user if they want to run makecatalogs
+    if importSuccess {
+        confirm := getInputWithDefault("Would you like to run makecatalogs? [y/n]", "n")
+        if strings.ToLower(confirm) == "y" {
+            fmt.Println("Running makecatalogs to update catalogs...")
 
-            makeCatalogsBinary := filepath.Join(filepath.Dir(os.Args[0]), "makecatalogs")
-            cmd := exec.Command(makeCatalogsBinary)
-            cmd.Stdout = os.Stdout
-            cmd.Stderr = os.Stderr
+            makeCatalogsBinary := filepath.Join(filepath.Dir(os.Args[0]), "makecatalogs")
+            cmd := exec.Command(makeCatalogsBinary)
+            cmd.Stdout = os.Stdout
+            cmd.Stderr = os.Stderr
 
-            err := cmd.Run()
-            if err != nil {
-                fmt.Printf("Error running makecatalogs: %v\n", err)
-                os.Exit(1)
-            }
+            err := cmd.Run()
+            if err != nil {
+                fmt.Printf("Error running makecatalogs: %v\n", err)
+                os.Exit(1)
+            }
 
-            fmt.Println("makecatalogs completed successfully.")
-        } else {
-            fmt.Println("Skipped running makecatalogs.")
-        }
-    }
+            fmt.Println("makecatalogs completed successfully.")
+        } else {
+            fmt.Println("Skipped running makecatalogs.")
+        }
+    }
 }
-
