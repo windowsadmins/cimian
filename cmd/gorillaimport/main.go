@@ -354,20 +354,22 @@ func copyFile(src, dst string) (int64, error) {
 
 // Ensure that the script is clean and returned as-is
 func cleanScriptInput(script string) string {
-    // Trim only leading/trailing spaces, preserve internal whitespace and newlines
-    cleanedScript := strings.Trim(script, " ") 
+    // Trim only leading/trailing spaces from the entire string
+    cleanedScript := strings.Trim(script, " ")
     return cleanedScript
 }
 
 // This function formats the script for YAML block scalar (|-)
 func indentScriptForYaml(script string) string {
-    lines := strings.Split(script, "\n")
+    // Split into lines using \n
+    lines := strings.Split(script, "\n") 
 
     for i, line := range lines {
-        lines[i] = "  " + strings.Trim(line, " ") // Trim and then indent
+        // Trim spaces from each individual line, then indent
+        lines[i] = "  " + strings.Trim(line, " ") 
     }
-
-    return strings.Join(lines, "\n")
+    // Join back with \n to preserve original line breaks
+    return strings.Join(lines, "\n") 
 }
 
 // Function to encode the YAML with correct block scalars for scripts
