@@ -426,8 +426,12 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
 // Use literal block scalar for multiline scripts
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
     if scriptContent != "" {
-        // Explicitly use literal block scalar with `|` and trim leading/trailing spaces from the entire string
-        m[fieldName] = "|-\n" + strings.Trim(scriptContent, " ") 
+        // Ensure the script content starts with a newline for proper block scalar formatting
+        cleanedScript := strings.Trim(scriptContent, " ") // Trim only leading/trailing spaces
+        if !strings.HasPrefix(cleanedScript, "\n") {
+            cleanedScript = "\n" + cleanedScript 
+        }
+        m[fieldName] = "|-\n" + cleanedScript
     }
 }
 
