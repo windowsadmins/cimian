@@ -23,27 +23,27 @@ type Installer struct {
 	Type      string   `yaml:"type"`
 }
 
-// PkgsInfo structure holds package metadata with script fields marked as `yaml:"|"`
+// PkgsInfo structure holds package metadata
 type PkgsInfo struct {
-    Name                 string     `yaml:"name"`
-    DisplayName          string     `yaml:"display_name"`
-    Version              string     `yaml:"version"`
-    Description          string     `yaml:"description"`
-    Catalogs             []string   `yaml:"catalogs"`
-    Category             string     `yaml:"category"`
-    Developer            string     `yaml:"developer"`
-    UnattendedInstall    bool       `yaml:"unattended_install"`
-    UnattendedUninstall  bool       `yaml:"unattended_uninstall"`
-    Installer            *Installer `yaml:"installer"`
-    Uninstaller          *Installer `yaml:"uninstaller,omitempty"`
-    SupportedArch        []string   `yaml:"supported_architectures"`
-    ProductCode          string     `yaml:"product_code,omitempty"`
-    UpgradeCode          string     `yaml:"upgrade_code,omitempty"`
-    PreinstallScript     string     `yaml:"preinstall_script,omitempty" yaml:"|-"`  // block scalar
-    PostinstallScript    string     `yaml:"postinstall_script,omitempty" yaml:"|-"` // block scalar
-    UninstallScript      string     `yaml:"uninstall_script,omitempty" yaml:"|-"`   // block scalar
-    InstallCheckScript   string     `yaml:"installcheck_script,omitempty" yaml:"|-"`// block scalar
-    UninstallCheckScript string     `yaml:"uninstallcheck_script,omitempty" yaml:"|-"`// block scalar
+    Name                string     `yaml:"name"`
+    DisplayName         string     `yaml:"display_name"`
+    Version             string     `yaml:"version"`
+    Description         string     `yaml:"description"`
+    Catalogs            []string   `yaml:"catalogs"`
+    Category            string     `yaml:"category"`
+    Developer           string     `yaml:"developer"`
+    UnattendedInstall   bool       `yaml:"unattended_install"`
+    UnattendedUninstall bool       `yaml:"unattended_uninstall"`
+    Installer           *Installer `yaml:"installer"`
+    Uninstaller         *Installer `yaml:"uninstaller,omitempty"`
+    SupportedArch       []string   `yaml:"supported_architectures"`
+    ProductCode         string     `yaml:"product_code,omitempty"`
+    UpgradeCode         string     `yaml:"upgrade_code,omitempty"`
+    PreinstallScript    string     `yaml:"preinstall_script,omitempty"`
+    PostinstallScript   string     `yaml:"postinstall_script,omitempty"`
+    UninstallScript     string     `yaml:"uninstall_script,omitempty"`
+    InstallCheckScript  string     `yaml:"installcheck_script,omitempty"`
+    UninstallCheckScript string    `yaml:"uninstallcheck_script,omitempty"`
 }
 
 // Config structure holds the configuration settings
@@ -358,26 +358,86 @@ func cleanScriptInput(script string) string {
     return strings.TrimSpace(script)
 }
 
-// Function to encode the YAML with correct block scalars for scripts
+// Helper function to create a block scalar YAML node
+func createBlockScalarNode(content string) yaml.Node {
+    var node yaml.Node
+    node.Style = yaml.LiteralStyle
+    node.SetString(content)
+    return node
+}
+
+// Function to encode the YAML with block scalars for script fields
 func encodeWithBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
     enc.SetIndent(2)
 
-    // Modify PkgsInfo to ensure scripts are properly formatted as block scalars
-    pkgsInfo.PreinstallScript = strings.TrimSpace(pkgsInfo.PreinstallScript)
-    pkgsInfo.PostinstallScript = strings.TrimSpace(pkgsInfo.PostinstallScript)
-    pkgsInfo.UninstallScript = strings.TrimSpace(pkgsInfo.UninstallScript)
-    pkgsInfo.InstallCheckScript = strings.TrimSpace(pkgsInfo.InstallCheckScript)
-    pkgsInfo.UninstallCheckScript = strings.TrimSpace(pkgsInfo.UninstallCheckScript)
+    // Create the root node for the PkgsInfo struct
+    root := yaml.Node{
+        Kind: yaml.MappingNode,
+    }
 
-    // Encode the final struct to YAML
-    err := enc.Encode(&pkgsInfo)
+    // Manually create nodes to control the block scalar behavior
+    root.Content = append(root.Content, createScalarNode("name", pkgsInfo.Name)...)
+    root.Content = append(root.Content, createScalarNode("display_name", pkgsInfo.DisplayName)...)
+    root.Content = append(root.Content, createScalarNode("version", pkgsInfo.Version)...)
+    root.Content = append(root.Content, createScalarNode("description", pkgsInfo.Description)...)
+    root.Content = append(root.Content, createSliceNode("catalogs", pkgsInfo.Catalogs)...)
+    root.Content = append(root.Content, createScalarNode("category", pkgsInfo.Category)...)
+    root.Content = append(root.Content, createScalarNode("developer", pkgsInfo.Developer)...)
+    root.Content = append(root.Content, createBoolNode("unattended_install", pkgsInfo.UnattendedInstall)...)
+    root.Content = append(root.Content, createBoolNode("unattended_uninstall", pkgsInfo.UnattendedUninstall)...)
+
+    // Block scalars for script fields
+    if pkgsInfo.PreinstallScript != "" {
+        root.Content = append(root.Content, createBlockScalarNode("preinstall_script", pkgsInfo.PreinstallScript)...)
+    }
+    if pkgsInfo.PostinstallScript != "" {
+        root.Content = append(root.Content, createBlockScalarNode("postinstall_script", pkgsInfo.PostinstallScript)...)
+    }
+    if pkgsInfo.UninstallScript != "" {
+        root.Content = append(root.Content, createBlockScalarNode("uninstall_script", pkgsInfo.UninstallScript)...)
+    }
+    if pkgsInfo.InstallCheckScript != "" {
+        root.Content = append(root.Content, createBlockScalarNode("installcheck_script", pkgsInfo.InstallCheckScript)...)
+    }
+    if pkgsInfo.UninstallCheckScript != "" {
+        root.Content = append(root.Content, createBlockScalarNode("uninstallcheck_script", pkgsInfo.UninstallCheckScript)...)
+    }
+
+    err := enc.Encode(&root)
     if err != nil {
         return nil, err
     }
 
     return buf.Bytes(), nil
+}
+
+// Helper functions to create scalar and slice YAML nodes
+func createScalarNode(key, value string) []*yaml.Node {
+    return []*yaml.Node{
+        {Kind: yaml.ScalarNode, Value: key},
+        {Kind: yaml.ScalarNode, Value: value},
+    }
+}
+
+func createBoolNode(key string, value bool) []*yaml.Node {
+    return []*yaml.Node{
+        {Kind: yaml.ScalarNode, Value: key},
+        {Kind: yaml.ScalarNode, Value: fmt.Sprintf("%v", value)},
+    }
+}
+
+func createSliceNode(key string, values []string) []*yaml.Node {
+    nodes := []*yaml.Node{
+        {Kind: yaml.ScalarNode, Value: key},
+    }
+    seqNode := yaml.Node{Kind: yaml.SequenceNode}
+    for _, val := range values {
+        seqNode.Content = append(seqNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: val})
+    }
+    nodes = append(nodes, &seqNode)
+    return nodes
 }
 
 // Example usage for creating the pkgsinfo YAML
