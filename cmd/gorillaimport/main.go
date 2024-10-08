@@ -354,16 +354,14 @@ func copyFile(src, dst string) (int64, error) {
 
 // Read the plain text script from the .bat file and ensure it is placed in the YAML properly
 func cleanScriptInput(script string) string {
-    // Ensure that backslashes are preserved as needed but without unnecessary escapes
+    // Reduce double backslashes to single backslashes
     cleanedScript := strings.ReplaceAll(script, "\\\\", "\\")
 
-    // Ensure clean line breaks (we expect \r\n for .bat files, convert them to single \n)
+    // Remove unnecessary escape characters
     cleanedScript = strings.ReplaceAll(cleanedScript, "\r\n", "\n")
+    cleanedScript = strings.ReplaceAll(cleanedScript, "\n", "\n") // Keep line breaks intact
 
-    // Strip any excess trailing newlines to avoid unnecessary empty lines
-    cleanedScript = strings.TrimRight(cleanedScript, "\n")
-
-    // Return the cleaned script
+    // Return as-is without escape sequences
     return cleanedScript
 }
 
@@ -432,7 +430,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     return buf.Bytes(), nil
 }
 
-// Updating createPkgsInfo to ensure scripts use block scalars and fix the uninstaller and output issue
+// Updated createPkgsInfo function to ensure scripts use block scalars and fix the uninstaller and output issue
 func createPkgsInfo(
 	filePath string,
 	outputDir string,
