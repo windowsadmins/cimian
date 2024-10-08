@@ -378,44 +378,79 @@ func indentScriptForYaml(script string) string {
     return strings.Join(indentedLines, "\n")
 }
 
+// getEmptyIfEmptyString returns an empty string if the input is an empty string, 
+// otherwise returns the input as is.
+func getEmptyIfEmptyString(s string) interface{} {
+    if s == "" {
+        return "" // Or you can return nil if you prefer to omit the field entirely
+    }
+    return s
+}
+
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
+    // Define a slice of key-value pairs to represent the YAML fields in order
+    type kv struct {
+        key   string
+        value interface{}
+    }
+    var orderedFields = []kv{
+        {"name", getEmptyIfEmptyString(pkgsInfo.Name)},
+        {"display_name", getEmptyIfEmptyString(pkgsInfo.DisplayName)},
+        {"version", getEmptyIfEmptyString(pkgsInfo.Version)},
+        {"catalogs", pkgsInfo.Catalogs},
+        {"category", getEmptyIfEmptyString(pkgsInfo.Category)},
+        {"description", getEmptyIfEmptyString(pkgsInfo.Description)},
+        {"developer", getEmptyIfEmptyString(pkgsInfo.Developer)},
+        {"installer", pkgsInfo.Installer},
+        {"product_code", getEmptyIfEmptyString(pkgsInfo.ProductCode)},
+        {"upgrade_code", getEmptyIfEmptyString(pkgsInfo.UpgradeCode)},
+        {"supported_architectures", pkgsInfo.SupportedArch},
+        {"unattended_install", pkgsInfo.UnattendedInstall},
+        {"unattended_uninstall", pkgsInfo.UnattendedUninstall},
+        {"preinstall_script", pkgsInfo.PreinstallScript},
+        {"postinstall_script", pkgsInfo.PostinstallScript},
+        {"preuninstall_script", pkgsInfo.PreuninstallScript},
+        {"postuninstall_script", pkgsInfo.PostuninstallScript},
+        {"installcheck_script", pkgsInfo.InstallCheckScript},
+        {"uninstallcheck_script", pkgsInfo.UninstallCheckScript},
+    }
+
+    // Create a new YAML node with the ordered fields
+    var rootNode yaml.Node
+    rootNode.Kind = yaml.MappingNode
+    for _, field := range orderedFields {
+        keyNode := &yaml.Node{
+            Kind:  yaml.ScalarNode,
+            Tag:   "!!str",
+            Value: field.key,
+        }
+        valueNode := &yaml.Node{}
+
+        // Special handling for script fields to use literal style
+        if isScriptField(field.key) {
+            valueNode.Kind = yaml.ScalarNode
+            valueNode.Style = yaml.LiteralStyle
+            valueNode.Value = field.value.(string)
+        } else {
+            if err := valueNode.Encode(field.value); err != nil {
+                return nil, err
+            }
+        }
+
+        rootNode.Content = append(rootNode.Content, keyNode, valueNode)
+    }
+
+    // Encode the YAML node to bytes
     var buf bytes.Buffer
     encoder := yaml.NewEncoder(&buf)
     encoder.SetIndent(2)
-
-    // Manually create the YAML structure to precisely control the output
-    root := &yaml.Node{
-        Kind: yaml.MappingNode,
-    }
-
-    // Add all fields, even if empty, using the improved addField function
-    addField(root, "name", pkgsInfo.Name)
-    addField(root, "display_name", pkgsInfo.DisplayName)
-    addField(root, "version", pkgsInfo.Version)
-    addField(root, "description", pkgsInfo.Description)
-    addField(root, "catalogs", pkgsInfo.Catalogs)
-    addField(root, "category", pkgsInfo.Category)
-    addField(root, "developer", pkgsInfo.Developer)
-    addField(root, "supported_architectures", pkgsInfo.SupportedArch)
-    addField(root, "unattended_install", pkgsInfo.UnattendedInstall)
-    addField(root, "unattended_uninstall", pkgsInfo.UnattendedUninstall)
-    addField(root, "installer", pkgsInfo.Installer)
-    addField(root, "product_code", pkgsInfo.ProductCode)
-    addField(root, "upgrade_code", pkgsInfo.UpgradeCode)
-    addScriptField(root, "preinstall_script", pkgsInfo.PreinstallScript)
-    addScriptField(root, "postinstall_script", pkgsInfo.PostinstallScript)
-    addScriptField(root, "preuninstall_script", pkgsInfo.PreuninstallScript)
-    addScriptField(root, "postuninstall_script", pkgsInfo.PostuninstallScript)
-    addScriptField(root, "installcheck_script", pkgsInfo.InstallCheckScript)
-    addScriptField(root, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
-
-    // Encode the root node
-    if err := encoder.Encode(root); err != nil {
+    if err := encoder.Encode(&rootNode); err != nil {
         return nil, err
     }
     return buf.Bytes(), nil
 }
 
+// addField handles adding normal fields to the YAML
 func addField(node *yaml.Node, key string, value interface{}) {
     keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
     valueNode := &yaml.Node{Kind: yaml.ScalarNode}
@@ -423,7 +458,6 @@ func addField(node *yaml.Node, key string, value interface{}) {
     // Handle the installation struct separately
     if inst, ok := value.(*Installer); ok && inst != nil {
         valueNode.Kind = yaml.MappingNode
-        // Fill in the details of the Installer
         addField(valueNode, "location", inst.Location)
         addField(valueNode, "hash", inst.Hash)
         addField(valueNode, "type", inst.Type)
@@ -445,13 +479,14 @@ func addField(node *yaml.Node, key string, value interface{}) {
     node.Content = append(node.Content, keyNode, valueNode)
 }
 
+// addScriptField adds script fields with block scalar formatting
 func addScriptField(node *yaml.Node, key string, value string) {
     keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
     valueNode := &yaml.Node{Kind: yaml.ScalarNode}
 
     if value != "" {
         valueNode.Kind = yaml.ScalarNode
-        valueNode.Style = yaml.LiteralStyle
+        valueNode.Style = yaml.LiteralStyle // Block scalar style (|)
         valueNode.Value = value
     } else {
         valueNode.Kind = yaml.ScalarNode
@@ -461,11 +496,13 @@ func addScriptField(node *yaml.Node, key string, value string) {
     node.Content = append(node.Content, keyNode, valueNode)
 }
 
-
 // isScriptField checks if the field name corresponds to a script field
 func isScriptField(fieldName string) bool {
-    // List of fields that should be formatted as literal block scalars
-    scriptFields := []string{"preinstall_script", "postinstall_script", "preuninstall_script", "postuninstall_script", "installcheck_script", "uninstallcheck_script"}
+    scriptFields := []string{
+        "preinstall_script", "postinstall_script", 
+        "preuninstall_script", "postuninstall_script",
+        "installcheck_script", "uninstallcheck_script",
+    }
     for _, field := range scriptFields {
         if fieldName == field {
             return true
