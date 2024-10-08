@@ -740,9 +740,9 @@ func gorillaImport(
         }
         extension := strings.ToLower(filepath.Ext(uninstallScriptPath))
         if extension == ".bat" {
-            uninstallScriptContent = generateWrapperScript(string(content))
+            uninstallScriptContent = generateWrapperScript(string(content), "bat")
         } else if extension == ".ps1" {
-            uninstallScriptContent = string(content)
+            uninstallScriptContent = generateWrapperScript(string(content), "ps1")
         } else {
             return false, fmt.Errorf("unsupported uninstall script file type: %s", extension)
         }
