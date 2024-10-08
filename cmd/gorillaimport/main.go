@@ -361,7 +361,20 @@ func cleanScriptInput(script string) string {
 
 // This function formats the script for YAML block scalar (|-)
 func indentScriptForYaml(script string) string {
-    return script
+    lines := strings.Split(script, "\n")
+    var indentedLines []string
+
+    for _, line := range lines {
+        trimmedLine := strings.TrimSpace(line)
+        if trimmedLine != "" {
+            indentedLines = append(indentedLines, "    " + trimmedLine)
+        } else {
+            // Append empty lines without indentation
+            indentedLines = append(indentedLines, "") 
+        }
+    }
+
+    return strings.Join(indentedLines, "\n")
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
@@ -413,8 +426,8 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
 // Use literal block scalar for multiline scripts
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
     if scriptContent != "" {
-        cleanedScript := indentScriptForYaml(scriptContent)
-        m[fieldName] = cleanedScript
+        // Explicitly use literal block scalar with `|` and trim any leading/trailing spaces
+        m[fieldName] = "|-\n" + strings.TrimSpace(scriptContent)  
     }
 }
 
