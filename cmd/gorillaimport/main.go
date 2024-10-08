@@ -404,15 +404,16 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
     // Use literal block scalar for multiline scripts
     if pkgsInfo.PreinstallScript != "" {
-        // 1. Normalize newlines to LF
-        cleanedScript := strings.ReplaceAll(pkgsInfo.PreinstallScript, "\r\n", "\n") 
+        // 1. Normalize newlines
+        cleanedScript := strings.ReplaceAll(pkgsInfo.PreinstallScript, "\r\n", "\n")
 
-        // 2. Remove any leading/trailing empty lines
-        cleanedScript = strings.Trim(cleanedScript, "\n")  
+        // 2. Remove leading/trailing empty lines, but NOT leading spaces
+        cleanedScript = strings.TrimRight(cleanedScript, "\n") 
 
         // 3. Add to the map with the |- scalar (no extra newline)
         m["preinstall_script"] = "|-" + cleanedScript 
     }
+
     if pkgsInfo.PostinstallScript != "" {
         cleanedScript := strings.ReplaceAll(pkgsInfo.PostinstallScript, "\r\n", "\n")
         cleanedScript = strings.Trim(cleanedScript, "\n")
