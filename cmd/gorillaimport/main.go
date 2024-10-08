@@ -449,18 +449,14 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
 
 // Use literal block scalar for multiline scripts
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
-    if scriptContent != "" {
-        // Trim leading/trailing spaces from the entire string
-        cleanedScript := strings.Trim(scriptContent, " ")
-
-        // Use yaml.Node to explicitly set the style to literal
-        node := &yaml.Node{
-            Kind:  yaml.ScalarNode,
-            Tag:   "!!str",
-            Value: cleanedScript,
-            Style: yaml.LiteralStyle,
-        }
-        m[fieldName] = node
+    // Use yaml.Node to set the style to literal, even for empty scripts
+    node := &yaml.Node{
+        Kind:  yaml.ScalarNode,
+        Tag:   "!!str",
+        Value: scriptContent, // The script content can be empty
+        Style: yaml.LiteralStyle,
+    }
+    m[fieldName] = node
 }
 
 // Example usage for creating the pkgsinfo YAML
