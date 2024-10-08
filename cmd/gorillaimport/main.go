@@ -380,7 +380,7 @@ func indentScriptForYaml(script string) string {
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
-    enc.SetIndent(1)
+    enc.SetIndent(2)
 
     // Manually construct the map while applying block scalars to script fields
     m := make(map[string]interface{})
@@ -389,11 +389,11 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     populateStandardFields(m, pkgsInfo)
 
     // Use literal block scalar for multiline scripts (without extra newline or indentation)
-    handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
-    handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
-    handleScriptField(m, "uninstall_script", pkgsInfo.UninstallScript)
-    handleScriptField(m, "installcheck_script", pkgsInfo.InstallCheckScript)
-    handleScriptField(m, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
+    handleScriptField(m, "preinstall_script", strings.ReplaceAll(pkgsInfo.PreinstallScript, "      ", "  ")) 
+    handleScriptField(m, "postinstall_script", strings.ReplaceAll(pkgsInfo.PostinstallScript, "      ", "  "))
+    handleScriptField(m, "uninstall_script", strings.ReplaceAll(pkgsInfo.UninstallScript, "      ", "  "))
+    handleScriptField(m, "installcheck_script", strings.ReplaceAll(pkgsInfo.InstallCheckScript, "      ", "  "))
+    handleScriptField(m, "uninstallcheck_script", strings.ReplaceAll(pkgsInfo.UninstallCheckScript, "      ", "  "))
 
     // Encode the final map to YAML
     err := enc.Encode(m)
