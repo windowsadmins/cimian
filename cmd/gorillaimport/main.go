@@ -382,13 +382,51 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     enc := yaml.NewEncoder(&buf)
     enc.SetIndent(2)
 
-    // Manually construct the map while applying block scalars to script fields
+    // Manually construct the map in the desired order, omitting empty values
     m := make(map[string]interface{})
 
-    // Standard fields for the YAML
-    populateStandardFields(m, pkgsInfo)
+    // Basic Information
+    if pkgsInfo.Name != "" {
+        m["name"] = pkgsInfo.Name
+    }
+    if pkgsInfo.DisplayName != "" {
+        m["display_name"] = pkgsInfo.DisplayName
+    }
+    if pkgsInfo.Version != "" {
+        m["version"] = pkgsInfo.Version
+    }
+    if len(pkgsInfo.Catalogs) > 0 {
+        m["catalogs"] = pkgsInfo.Catalogs
+    }
+    if pkgsInfo.Category != "" {
+        m["category"] = pkgsInfo.Category
+    }
+    if pkgsInfo.Description != "" {
+        m["description"] = pkgsInfo.Description
+    }
+    if pkgsInfo.Developer != "" {
+        m["developer"] = pkgsInfo.Developer
+    }
 
-    // Use literal block scalar for multiline scripts (without extra newline or indentation)
+    // Installer Information
+    if pkgsInfo.Installer != nil {
+        m["installer"] = pkgsInfo.Installer
+    }
+    if pkgsInfo.ProductCode != "" {
+        m["product_code"] = pkgsInfo.ProductCode
+    }
+    if pkgsInfo.UpgradeCode != "" {
+        m["upgrade_code"] = pkgsInfo.UpgradeCode
+    }
+
+    // Architecture and Installation Behavior
+    if len(pkgsInfo.SupportedArch) > 0 {
+        m["supported_architectures"] = pkgsInfo.SupportedArch
+    }
+    m["unattended_install"] = pkgsInfo.UnattendedInstall
+    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
+
+    // Scripts (using handleScriptField to handle empty values and formatting)
     handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
     handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
     handleScriptField(m, "uninstall_script", pkgsInfo.UninstallScript)
@@ -426,7 +464,7 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
 // Use literal block scalar for multiline scripts
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
     if scriptContent != "" {
-        // Trim only leading/trailing spaces from the entire string
+        // Trim leading/trailing spaces from the entire string
         cleanedScript := strings.Trim(scriptContent, " ")
 
         // Use yaml.Node to explicitly set the style to literal
