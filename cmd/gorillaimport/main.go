@@ -357,21 +357,17 @@ func cleanScriptInput(script string) string {
     return strings.TrimSpace(script)
 }
 
-// Helper function to format script content for YAML block scalar with real line breaks
-func formatScriptAsYamlBlockScalar(script string) string {
-    if strings.TrimSpace(script) == "" {
+// Helper function to format script content as YAML block scalars
+func formatScriptAsBlockScalar(script string) string {
+    if script == "" {
         return "" // Return empty for blank scripts
     }
 
-    // Trim the input script and split it into lines
-    lines := strings.Split(strings.TrimRight(script, "\r\n "), "\n")
-
-    // Prepend each line with two spaces for YAML block scalar
+    // Escape the script, preserving line breaks
+    lines := strings.Split(script, "\n")
     for i, line := range lines {
-        lines[i] = "  " + line
+        lines[i] = "  " + strings.TrimRight(line, " ") // Indent each line with two spaces
     }
-
-    // Join the lines and use '|-' to indicate block scalar with line breaks
     return "|-\n" + strings.Join(lines, "\n")
 }
 
@@ -402,21 +398,21 @@ func encodeWithBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Format multiline script fields with proper line breaks and block scalars
+    // Use formatted block scalar for script fields
     if pkgsInfo.PreinstallScript != "" {
-        m["preinstall_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.PreinstallScript)
+        m["preinstall_script"] = formatScriptAsBlockScalar(pkgsInfo.PreinstallScript)
     }
     if pkgsInfo.PostinstallScript != "" {
-        m["postinstall_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.PostinstallScript)
+        m["postinstall_script"] = formatScriptAsBlockScalar(pkgsInfo.PostinstallScript)
     }
     if pkgsInfo.UninstallScript != "" {
-        m["uninstall_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.UninstallScript)
+        m["uninstall_script"] = formatScriptAsBlockScalar(pkgsInfo.UninstallScript)
     }
     if pkgsInfo.InstallCheckScript != "" {
-        m["installcheck_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.InstallCheckScript)
+        m["installcheck_script"] = formatScriptAsBlockScalar(pkgsInfo.InstallCheckScript)
     }
     if pkgsInfo.UninstallCheckScript != "" {
-        m["uninstallcheck_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.UninstallCheckScript)
+        m["uninstallcheck_script"] = formatScriptAsBlockScalar(pkgsInfo.UninstallCheckScript)
     }
 
     // Encode the final map to YAML
@@ -427,6 +423,7 @@ func encodeWithBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
     return buf.Bytes(), nil
 }
+
 
 // Example usage for creating the pkgsinfo YAML
 func createPkgsInfo(
