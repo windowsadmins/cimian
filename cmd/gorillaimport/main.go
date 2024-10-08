@@ -441,9 +441,13 @@ func handleScriptField(node *yaml.Node, value interface{}) error {
     switch v := value.(type) {
     case string:
         node.Kind = yaml.ScalarNode
-        node.Style = yaml.LiteralStyle
-        node.Value = strings.Trim(v, " ")
-    case []string:
+        if isScriptField(node.Value) {
+            node.Style = yaml.LiteralStyle
+            node.Value = strings.Trim(v, " ")
+        } else {
+            node.Value = v
+        }
+     case []string:
         node.Kind = yaml.SequenceNode
         for _, item := range v {
             itemNode := &yaml.Node{
