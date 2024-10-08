@@ -868,7 +868,8 @@ func gorillaImport(
         true,  // Unattended uninstall default
         preinstallScriptContent,
         postinstallScriptContent,
-        uninstallScriptContent, 
+        preuninstallScriptContent, 
+        postuninstallScriptContent, 
         installCheckScriptContent,
         uninstallCheckScriptContent,
         uninstaller,
@@ -1107,7 +1108,8 @@ func main() {
     importSuccess, err := gorillaImport(
         packagePath,
         *installScriptFlag,
-        *uninstallScriptFlag,
+        *preuninstallScriptFlag,
+        *postuninstallScriptFlag,
         *postinstallScriptFlag,
         *uninstallerFlag,
         *installCheckScriptFlag,
