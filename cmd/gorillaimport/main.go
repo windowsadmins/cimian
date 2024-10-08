@@ -357,13 +357,25 @@ func cleanScriptInput(script string) string {
     return strings.TrimSpace(script)
 }
 
+// Helper function to clean and indent script content for YAML block scalars
+func formatScriptAsYamlBlockScalar(script string) string {
+    if strings.TrimSpace(script) == "" {
+        return "" // Return empty for blank scripts
+    }
+    lines := strings.Split(script, "\n")
+    for i, line := range lines {
+        lines[i] = "  " + strings.TrimRight(line, " ") // Indent each line with two spaces
+    }
+    return "|-\n" + strings.Join(lines, "\n") // Add block scalar and newlines
+}
+
 // Function to encode the YAML with correct block scalars for scripts
-func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
+func encodeWithBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
     enc.SetIndent(2)
 
-    // Manually construct the map while applying block scalars to script fields
+    // Create a map for the YAML fields
     m := make(map[string]interface{})
 
     // Standard fields for the YAML
@@ -384,12 +396,22 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Apply block scalar for script fields
-    m["preinstall_script"] = yaml.Literal(cleanScriptInput(pkgsInfo.PreinstallScript))
-    m["postinstall_script"] = yaml.Literal(cleanScriptInput(pkgsInfo.PostinstallScript))
-    m["uninstall_script"] = yaml.Literal(cleanScriptInput(pkgsInfo.UninstallScript))
-    m["installcheck_script"] = yaml.Literal(cleanScriptInput(pkgsInfo.InstallCheckScript))
-    m["uninstallcheck_script"] = yaml.Literal(cleanScriptInput(pkgsInfo.UninstallCheckScript))
+    // Format multiline script fields with proper line breaks and block scalars
+    if pkgsInfo.PreinstallScript != "" {
+        m["preinstall_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.PreinstallScript)
+    }
+    if pkgsInfo.PostinstallScript != "" {
+        m["postinstall_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.PostinstallScript)
+    }
+    if pkgsInfo.UninstallScript != "" {
+        m["uninstall_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.UninstallScript)
+    }
+    if pkgsInfo.InstallCheckScript != "" {
+        m["installcheck_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.InstallCheckScript)
+    }
+    if pkgsInfo.UninstallCheckScript != "" {
+        m["uninstallcheck_script"] = formatScriptAsYamlBlockScalar(pkgsInfo.UninstallCheckScript)
+    }
 
     // Encode the final map to YAML
     err := enc.Encode(m)
