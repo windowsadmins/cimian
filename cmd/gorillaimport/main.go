@@ -380,7 +380,7 @@ func indentScriptForYaml(script string) string {
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
-    enc.SetIndent(0)
+    enc.SetIndent(2)
 
     // Manually construct the map while applying block scalars to script fields
     m := make(map[string]interface{})
@@ -389,11 +389,11 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     populateStandardFields(m, pkgsInfo)
 
     // Use literal block scalar for multiline scripts (without extra newline or indentation)
-    handleScriptField(m, "preinstall_script", strings.ReplaceAll(pkgsInfo.PreinstallScript, "      ", ""))
-    handleScriptField(m, "postinstall_script", strings.ReplaceAll(pkgsInfo.PostinstallScript, "      ", ""))
-    handleScriptField(m, "uninstall_script", strings.ReplaceAll(pkgsInfo.UninstallScript, "      ", ""))
-    handleScriptField(m, "installcheck_script", strings.ReplaceAll(pkgsInfo.InstallCheckScript, "      ", ""))
-    handleScriptField(m, "uninstallcheck_script", strings.ReplaceAll(pkgsInfo.UninstallCheckScript, "      ", ""))
+    handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
+    handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
+    handleScriptField(m, "uninstall_script", pkgsInfo.UninstallScript)
+    handleScriptField(m, "installcheck_script", pkgsInfo.InstallCheckScript)
+    handleScriptField(m, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
 
     // Encode the final map to YAML
     err := enc.Encode(m)
@@ -863,17 +863,17 @@ func gorillaImport(
 
 func generateWrapperScript(batchContent, scriptType string) string {
     if scriptType == "bat" {
-        // For .bat scripts
+        // For .bat scripts, remove extra indentation
         return fmt.Sprintf(`
-            $batchScriptContent = @'
-            %s
-            '@
+$batchScriptContent = @'
+%s
+'@
 
-            $batchFile = "$env:TEMP\temp_script.bat"
-            Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
-            & cmd.exe /c $batchFile
-            Remove-Item $batchFile
-        `, batchContent) 
+$batchFile = "$env:TEMP\temp_script.bat"
+Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
+& cmd.exe /c $batchFile
+Remove-Item $batchFile
+        `, strings.TrimLeft(batchContent, " ")) // Trim leading spaces from batchContent
     } else if scriptType == "ps1" {
         // For .ps1 scripts, no wrapping needed
         return batchContent
