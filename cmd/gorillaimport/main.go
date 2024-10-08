@@ -416,18 +416,23 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
             Value: field.key,
         }
         valueNode := &yaml.Node{}
-
+    
         // Special handling for script fields to use literal style
         if isScriptField(field.key) {
             valueNode.Kind = yaml.ScalarNode
             valueNode.Style = yaml.LiteralStyle
+            valueNode.Value = field.value.(string)
+        } else if _, ok := field.value.(string); ok { 
+            // Handle string fields (including empty ones)
+            valueNode.Kind = yaml.ScalarNode
+            valueNode.Tag = "!!str" // Explicitly set the tag for string
             valueNode.Value = field.value.(string)
         } else {
             if err := valueNode.Encode(field.value); err != nil {
                 return nil, err
             }
         }
-
+    
         rootNode.Content = append(rootNode.Content, keyNode, valueNode)
     }
 
@@ -485,6 +490,15 @@ func addScriptField(node *yaml.Node, key string, value string) {
     }
 
     node.Content = append(node.Content, keyNode, valueNode)
+}
+
+// getEmptyIfEmptyString returns an empty string if the input is an empty string, 
+// otherwise returns the input as is.
+func getEmptyIfEmptyString(s string) interface{} {
+    if s == "" {
+        return "" // Or you can return nil if you prefer to omit the field entirely
+    }
+    return s
 }
 
 // isScriptField checks if the field name corresponds to a script field
