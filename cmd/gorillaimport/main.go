@@ -616,7 +616,8 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
 func gorillaImport(
     packagePath string,
     installScriptPath string,
-    uninstallScriptPath string,
+    preuninstallScriptPath string,
+    postuninstallScriptPath string,
     postinstallScriptPath string,
     uninstallerPath string,
     installCheckScriptPath string,
@@ -763,22 +764,41 @@ func gorillaImport(
         }
     }
     
-    // Process uninstall script
-    if uninstallScriptPath != "" {
-        content, err := os.ReadFile(uninstallScriptPath)
+    // Process pre-uninstall script
+    if preuninstallScriptPath != "" {
+        content, err := os.ReadFile(preuninstallScriptPath)
         if err != nil {
-            return false, fmt.Errorf("error reading uninstall script file: %v", err)
+            return false, fmt.Errorf("error reading pre-uninstall script file: %v", err)
         }
         // Convert CRLF to LF
-        uninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
+        preuninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
     
-        extension := strings.ToLower(filepath.Ext(uninstallScriptPath))
+        extension := strings.ToLower(filepath.Ext(preuninstallScriptPath))
         if extension == ".bat" {
-            uninstallScriptContent = generateWrapperScript(uninstallScriptContent, "bat")
+            preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "bat")
         } else if extension == ".ps1" {
-            uninstallScriptContent = generateWrapperScript(uninstallScriptContent, "ps1")
+            preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "ps1")
         } else {
-            return false, fmt.Errorf("unsupported uninstall script file type: %s", extension)
+            return false, fmt.Errorf("unsupported pre-uninstall script file type: %s", extension)
+        }
+    }
+    
+    // Process post-uninstall script
+    if postuninstallScriptPath != "" {
+        content, err := os.ReadFile(postuninstallScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading post-uninstall script file: %v", err)
+        }
+        // Convert CRLF to LF
+        postuninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
+    
+        extension := strings.ToLower(filepath.Ext(postuninstallScriptPath))
+        if extension == ".bat" {
+            postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "bat")
+        } else if extension == ".ps1" {
+            postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "ps1")
+        } else {
+            return false, fmt.Errorf("unsupported post-uninstall script file type: %s", extension)
         }
     }
     
@@ -869,7 +889,7 @@ func gorillaImport(
         preinstallScriptContent,
         postinstallScriptContent,
         preuninstallScriptContent, 
-        postuninstallScriptContent, 
+        postuninstallScriptContent,
         installCheckScriptContent,
         uninstallCheckScriptContent,
         uninstaller,
