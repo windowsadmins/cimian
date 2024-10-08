@@ -388,7 +388,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
         Kind: yaml.MappingNode,
     }
 
-    // Add all fields, even if empty
+    // Add all fields, even if empty, using the improved addField function
     addField(root, "name", pkgsInfo.Name)
     addField(root, "display_name", pkgsInfo.DisplayName)
     addField(root, "version", pkgsInfo.Version)
@@ -402,12 +402,12 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     addField(root, "installer", pkgsInfo.Installer)
     addField(root, "product_code", pkgsInfo.ProductCode)
     addField(root, "upgrade_code", pkgsInfo.UpgradeCode)
-    addField(root, "preinstall_script", pkgsInfo.PreinstallScript)
-    addField(root, "postinstall_script", pkgsInfo.PostinstallScript)
-    addField(root, "preuninstall_script", pkgsInfo.PreuninstallScript)
-    addField(root, "postuninstall_script", pkgsInfo.PostuninstallScript)
-    addField(root, "installcheck_script", pkgsInfo.InstallCheckScript)
-    addField(root, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
+    addField(root, "preinstall_script", pkgsInfo.PreinstallScript, true)
+    addField(root, "postinstall_script", pkgsInfo.PostinstallScript, true)
+    addField(root, "preuninstall_script", pkgsInfo.PreuninstallScript, true)
+    addField(root, "postuninstall_script", pkgsInfo.PostuninstallScript, true)
+    addField(root, "installcheck_script", pkgsInfo.InstallCheckScript, true)
+    addField(root, "uninstallcheck_script", pkgsInfo.UninstallCheckScript, true)
 
     // Encode the root node
     if err := encoder.Encode(root); err != nil {
@@ -417,7 +417,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 }
 
 // addField adds a field to the YAML mapping node, handling empty values as completely empty
-func addField(node *yaml.Node, key string, value interface{}) {
+func addField(node *yaml.Node, key string, value interface{}, isScript ...bool) {
     keyNode := &yaml.Node{
         Kind:  yaml.ScalarNode,
         Value: key,
@@ -426,13 +426,23 @@ func addField(node *yaml.Node, key string, value interface{}) {
         Kind:  yaml.ScalarNode,
     }
 
+    // Handle scripts specifically to use block scalar style
+    scriptField := len(isScript) > 0 && isScript[0]
+
     switch v := value.(type) {
     case string:
         if v == "" {
-            valueNode.Value = ""  // Keep empty if the string is empty
+            if scriptField {
+                // Set script fields as literal block scalar even if empty
+                valueNode.Kind = yaml.ScalarNode
+                valueNode.Style = yaml.LiteralStyle
+            } else {
+                // Set to null explicitly to represent null values
+                valueNode.Tag = "!!null"
+            }
         } else {
-            if isScriptField(key) {
-                // Use block scalar style for scripts
+            if scriptField {
+                // Format as a literal block scalar
                 valueNode.Value = v
                 valueNode.Style = yaml.LiteralStyle
             } else {
@@ -443,24 +453,23 @@ func addField(node *yaml.Node, key string, value interface{}) {
         valueNode.Value = fmt.Sprintf("%v", v)  // Convert boolean to string
         valueNode.Tag = "!!bool"
     case []string:
-        if len(v) == 0 {
-            valueNode.Kind = yaml.SequenceNode  // Use sequence node for empty slice
-        } else {
-            valueNode.Kind = yaml.SequenceNode
-            for _, item := range v {
-                itemNode := &yaml.Node{
-                    Kind:  yaml.ScalarNode,
-                    Value: item,
-                }
-                valueNode.Content = append(valueNode.Content, itemNode)
+        valueNode.Kind = yaml.SequenceNode
+        for _, item := range v {
+            itemNode := &yaml.Node{
+                Kind:  yaml.ScalarNode,
+                Value: item,
             }
+            valueNode.Content = append(valueNode.Content, itemNode)
         }
     case *Installer:
+        valueNode.Kind = yaml.MappingNode
         if v != nil {
-            valueNode.Kind = yaml.MappingNode
-            // Add more detailed fields for Installer struct here if needed
-        } else {
-            valueNode.Kind = yaml.MappingNode  // Empty mapping for nil pointers
+            // Populate fields if Installer is not nil
+            valueNode.Content = append(valueNode.Content,
+                &yaml.Node{Kind: yaml.ScalarNode, Value: "location"}, &yaml.Node{Kind: yaml.ScalarNode, Value: v.Location},
+                &yaml.Node{Kind: yaml.ScalarNode, Value: "hash"}, &yaml.Node{Kind: yaml.ScalarNode, Value: v.Hash},
+                &yaml.Node{Kind: yaml.ScalarNode, Value: "type"}, &yaml.Node{Kind: yaml.ScalarNode, Value: v.Type},
+            )
         }
     default:
         valueNode.Value = fmt.Sprintf("%v", v)
