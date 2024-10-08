@@ -383,7 +383,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
     // Manually construct the map while applying block scalars to script fields
     m := make(map[string]interface{})
-    
+
     // Standard fields for the YAML
     m["name"] = pkgsInfo.Name
     m["display_name"] = pkgsInfo.DisplayName
@@ -402,36 +402,25 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Use literal block scalar for multiline scripts
+    // Use literal block scalar for multiline scripts (without extra newline or indentation)
     if pkgsInfo.PreinstallScript != "" {
-        // 1. Normalize newlines
-        cleanedScript := strings.ReplaceAll(pkgsInfo.PreinstallScript, "\r\n", "\n")
-
-        // 2. Remove leading/trailing empty lines, but NOT leading spaces
-        cleanedScript = strings.TrimRight(cleanedScript, "\n") 
-
-        // 3. Add to the map with the |- scalar (no extra newline)
+        cleanedScript := cleanScriptInput(pkgsInfo.PreinstallScript)
         m["preinstall_script"] = "|-" + cleanedScript 
     }
-
     if pkgsInfo.PostinstallScript != "" {
-        cleanedScript := strings.ReplaceAll(pkgsInfo.PostinstallScript, "\r\n", "\n")
-        cleanedScript = strings.Trim(cleanedScript, "\n")
+        cleanedScript := cleanScriptInput(pkgsInfo.PostinstallScript)
         m["postinstall_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.UninstallScript != "" {
-        cleanedScript := strings.ReplaceAll(pkgsInfo.UninstallScript, "\r\n", "\n")
-        cleanedScript = strings.Trim(cleanedScript, "\n")
+        cleanedScript := cleanScriptInput(pkgsInfo.UninstallScript)
         m["uninstall_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.InstallCheckScript != "" {
-        cleanedScript := strings.ReplaceAll(pkgsInfo.InstallCheckScript, "\r\n", "\n")
-        cleanedScript = strings.Trim(cleanedScript, "\n")
+        cleanedScript := cleanScriptInput(pkgsInfo.InstallCheckScript)
         m["installcheck_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.UninstallCheckScript != "" {
-        cleanedScript := strings.ReplaceAll(pkgsInfo.UninstallCheckScript, "\r\n", "\n")
-        cleanedScript = strings.Trim(cleanedScript, "\n")
+        cleanedScript := cleanScriptInput(pkgsInfo.UninstallCheckScript)
         m["uninstallcheck_script"] = "|-" + cleanedScript
     }
 
