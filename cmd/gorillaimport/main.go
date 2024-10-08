@@ -352,29 +352,28 @@ func copyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
-// Read the plain text script from the .bat file and ensure it is placed in the YAML properly
+// Ensure that the script is clean and returned as-is
 func cleanScriptInput(script string) string {
-    // Reduce double backslashes to single backslashes
-    cleanedScript := strings.ReplaceAll(script, "\\\\", "\\")
-
-    // Remove unnecessary escape characters
-    cleanedScript = strings.ReplaceAll(cleanedScript, "\r\n", "\n")
-    cleanedScript = strings.ReplaceAll(cleanedScript, "\n", "\n") // Keep line breaks intact
-
-    // Return as-is without escape sequences
+    // Strip unnecessary spaces and ensure it retains its original line breaks
+    cleanedScript := strings.TrimSpace(script)
     return cleanedScript
 }
 
-// Indent the script to fit into a YAML block scalar (|-)
+// This function formats the script for YAML block scalar (|-)
 func indentScriptForYaml(script string) string {
-    lines := strings.Split(strings.TrimSpace(script), "\n")
+    // Split the script into lines
+    lines := strings.Split(script, "\n")
+
+    // Indent every line to ensure proper YAML format
     for i, line := range lines {
-        lines[i] = "  " + line // Indent each line with two spaces
+        lines[i] = "  " + line
     }
+
+    // Join lines back into a single string with proper indentation
     return strings.Join(lines, "\n")
 }
 
-// Updated encodeWithSelectiveBlockScalars function
+// Function to encode the YAML with correct block scalars for scripts
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
@@ -383,6 +382,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     // Manually construct the map while applying block scalars to script fields
     m := make(map[string]interface{})
 
+    // Standard fields for the YAML
     m["name"] = pkgsInfo.Name
     m["display_name"] = pkgsInfo.DisplayName
     m["version"] = pkgsInfo.Version
@@ -400,28 +400,24 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Apply block scalar for multi-line scripts with exact content
+    // Use literal block scalar for multiline scripts
     if pkgsInfo.PreinstallScript != "" {
         m["preinstall_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.PreinstallScript))
     }
-
     if pkgsInfo.PostinstallScript != "" {
         m["postinstall_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.PostinstallScript))
     }
-
     if pkgsInfo.UninstallScript != "" {
         m["uninstall_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.UninstallScript))
     }
-
     if pkgsInfo.InstallCheckScript != "" {
         m["installcheck_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.InstallCheckScript))
     }
-
     if pkgsInfo.UninstallCheckScript != "" {
         m["uninstallcheck_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.UninstallCheckScript))
     }
 
-    // Encode the final map
+    // Encode the final map to YAML
     err := enc.Encode(m)
     if err != nil {
         return nil, err
@@ -430,7 +426,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     return buf.Bytes(), nil
 }
 
-// Updated createPkgsInfo function to ensure scripts use block scalars and fix the uninstaller and output issue
+// Example usage for creating the pkgsinfo YAML
 func createPkgsInfo(
 	filePath string,
 	outputDir string,
@@ -457,10 +453,6 @@ func createPkgsInfo(
 
 	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
 
-	// Ensure that productCode and upgradeCode don't contain artifacts
-	cleanProductCode := strings.Trim(productCode, "{}\r")
-	cleanUpgradeCode := strings.Trim(upgradeCode, "{}\r")
-
 	pkgsInfo := PkgsInfo{
 		Name:                name,
 		Version:             version,
@@ -475,8 +467,8 @@ func createPkgsInfo(
 		Developer:           developer,
 		Description:         "",
 		SupportedArch:       supportedArch,
-		ProductCode:         cleanProductCode,
-		UpgradeCode:         cleanUpgradeCode,
+		ProductCode:         strings.Trim(productCode, "{}\r"),
+		UpgradeCode:         strings.Trim(upgradeCode, "{}\r"),
 		UnattendedInstall:   unattendedInstall,
 		UnattendedUninstall: unattendedUninstall,
 		PreinstallScript:    preinstallScript,
@@ -489,7 +481,6 @@ func createPkgsInfo(
 	// Ensure that the subfolder path in pkgsinfo exists
 	outputFilePath := filepath.Join(outputDir, installerSubPath)
 	if _, err := os.Stat(outputFilePath); os.IsNotExist(err) {
-		// Create the directories if they don't exist
 		err = os.MkdirAll(outputFilePath, 0755)
 		if err != nil {
 			return fmt.Errorf("failed to create directory structure: %v", err)
