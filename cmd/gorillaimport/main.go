@@ -359,11 +359,17 @@ func cleanScriptInput(script string) string {
 }
 
 // Helper function to create a block scalar YAML node
-func createBlockScalarNode(content string) yaml.Node {
-    var node yaml.Node
-    node.Style = yaml.LiteralStyle
-    node.SetString(content)
-    return node
+func createBlockScalarNode(key string, content string) []*yaml.Node {
+    keyNode := &yaml.Node{
+        Kind:  yaml.ScalarNode,
+        Value: key,
+    }
+    valueNode := &yaml.Node{
+        Kind:  yaml.ScalarNode,
+        Style: yaml.LiteralStyle, // Block scalar style
+        Value: content,
+    }
+    return []*yaml.Node{keyNode, valueNode}
 }
 
 // Function to encode the YAML with block scalars for script fields
