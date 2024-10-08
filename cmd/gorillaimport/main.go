@@ -379,53 +379,64 @@ func indentScriptForYaml(script string) string {
 }
 
 func getEmptyIfEmptyString(s string) interface{} {
+    // Return an empty string "" to represent empty fields in the YAML output
     if s == "" {
-        return nil // Or you can return an empty string "" if you prefer
+        return "" 
     }
     return s
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-    var buf bytes.Buffer
-    enc := yaml.NewEncoder(&buf)
-    enc.SetIndent(2)
-
-    // Manually construct the map in the desired order, including all fields
-    m := make(map[string]interface{})
-
-    // Basic information
-    m["name"] = getEmptyIfEmptyString(pkgsInfo.Name)
-    m["display_name"] = getEmptyIfEmptyString(pkgsInfo.DisplayName)
-    m["version"] = getEmptyIfEmptyString(pkgsInfo.Version)
-    m["catalogs"] = pkgsInfo.Catalogs
-    m["category"] = getEmptyIfEmptyString(pkgsInfo.Category)
-    m["description"] = getEmptyIfEmptyString(pkgsInfo.Description)
-    m["developer"] = getEmptyIfEmptyString(pkgsInfo.Developer)
-
-    // Installer information
-    m["installer"] = pkgsInfo.Installer
-    m["product_code"] = getEmptyIfEmptyString(pkgsInfo.ProductCode)
-    m["upgrade_code"] = getEmptyIfEmptyString(pkgsInfo.UpgradeCode)
-
-    // Architecture and installation behavior
-    m["supported_architectures"] = pkgsInfo.SupportedArch
-    m["unattended_install"] = pkgsInfo.UnattendedInstall
-    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
-    
-    // Scripts (using handleScriptField to handle formatting)
-	handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
-	handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
-	handleScriptField(m, "preuninstall_script", pkgsInfo.PreuninstallScript) 
-	handleScriptField(m, "postuninstall_script", pkgsInfo.PostuninstallScript) 
-	handleScriptField(m, "installcheck_script", pkgsInfo.InstallCheckScript)
-	handleScriptField(m, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
-
-    // Encode the final map to YAML
-    err := enc.Encode(m)
-    if err != nil {
-        return nil, err
+    // Define a slice of key-value pairs to represent the YAML fields in order
+    type kv struct {
+        key   string
+        value interface{}
+    }
+    var orderedFields = []kv{
+        {"name", getEmptyIfEmptyString(pkgsInfo.Name)},
+        {"display_name", getEmptyIfEmptyString(pkgsInfo.DisplayName)},
+        {"version", getEmptyIfEmptyString(pkgsInfo.Version)},
+        {"catalogs", pkgsInfo.Catalogs},
+        {"category", getEmptyIfEmptyString(pkgsInfo.Category)},
+        {"description", getEmptyIfEmptyString(pkgsInfo.Description)},
+        {"developer", getEmptyIfEmptyString(pkgsInfo.Developer)},
+        {"installer", pkgsInfo.Installer},
+        {"product_code", getEmptyIfEmptyString(pkgsInfo.ProductCode)},
+        {"upgrade_code", getEmptyIfEmptyString(pkgsInfo.UpgradeCode)},
+        {"supported_architectures", pkgsInfo.SupportedArch},
+        {"unattended_install", pkgsInfo.UnattendedInstall},
+        {"unattended_uninstall", pkgsInfo.UnattendedUninstall},
+        {"preinstall_script", pkgsInfo.PreinstallScript},
+        {"postinstall_script", pkgsInfo.PostinstallScript},
+        {"preuninstall_script", pkgsInfo.PreuninstallScript},
+        {"postuninstall_script", pkgsInfo.PostuninstallScript},
+        {"installcheck_script", pkgsInfo.InstallCheckScript},
+        {"uninstallcheck_script", pkgsInfo.UninstallCheckScript},
     }
 
+    // Create a new YAML node with the ordered fields
+    var rootNode yaml.Node
+    rootNode.Kind = yaml.MappingNode
+    for _, field := range orderedFields {
+        keyNode := &yaml.Node{
+            Kind:  yaml.ScalarNode,
+            Tag:   "!!str",
+            Value: field.key,
+        }
+        valueNode := &yaml.Node{}
+        if err := valueNode.Encode(field.value); err != nil {
+            return nil, err
+        }
+        rootNode.Content = append(rootNode.Content, keyNode, valueNode)
+    }
+
+    // Encode the YAML node to bytes
+    var buf bytes.Buffer
+    encoder := yaml.NewEncoder(&buf)
+    encoder.SetIndent(2)
+    if err := encoder.Encode(&rootNode); err != nil {
+        return nil, err
+    }
     return buf.Bytes(), nil
 }
 
