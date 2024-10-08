@@ -442,24 +442,26 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 }
 
 // handleScriptField encodes the value to a YAML node with appropriate formatting
-func handleScriptField(node *yaml.Node, value interface{}) error { 
-    // Handle different types and apply literal style for script fields
+func handleScriptField(node *yaml.Node, value interface{}) error {
     switch v := value.(type) {
     case string:
         node.Kind = yaml.ScalarNode
-        if isScriptField(node.Value) {
+        if isScriptField(node.Value) { // Check if it's a script field
             node.Style = yaml.LiteralStyle
             node.Value = strings.Trim(v, " ")
         } else {
-            node.Value = v
+            if v == "" {
+                node.Value = ""
+            } else {
+                node.Value = v
+            }
         }
-     case []string:
+    case []string:
         node.Kind = yaml.SequenceNode
         for _, item := range v {
             itemNode := &yaml.Node{
                 Kind:  yaml.ScalarNode,
-                Tag:   "!!str",
-                Value: item,
+                Value: item, // No need to set Tag here
             }
             node.Content = append(node.Content, itemNode)
         }
