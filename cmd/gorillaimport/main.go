@@ -379,70 +379,46 @@ func indentScriptForYaml(script string) string {
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-    // Define a slice of key-value pairs to represent the YAML fields in order
-    type kv struct {
-        key   string
-        value interface{}
-    }
-    var orderedFields = []kv{
-        {"name", getEmptyIfEmptyString(pkgsInfo.Name)},
-        {"display_name", getEmptyIfEmptyString(pkgsInfo.DisplayName)},
-        {"version", getEmptyIfEmptyString(pkgsInfo.Version)},
-        {"catalogs", pkgsInfo.Catalogs},
-        {"category", getEmptyIfEmptyString(pkgsInfo.Category)},
-        {"description", getEmptyIfEmptyString(pkgsInfo.Description)},
-        {"developer", getEmptyIfEmptyString(pkgsInfo.Developer)},
-        {"installer", pkgsInfo.Installer},
-        {"product_code", getEmptyIfEmptyString(pkgsInfo.ProductCode)},
-        {"upgrade_code", getEmptyIfEmptyString(pkgsInfo.UpgradeCode)},
-        {"supported_architectures", pkgsInfo.SupportedArch},
-        {"unattended_install", pkgsInfo.UnattendedInstall},
-        {"unattended_uninstall", pkgsInfo.UnattendedUninstall},
-        {"preinstall_script", pkgsInfo.PreinstallScript},
-        {"postinstall_script", pkgsInfo.PostinstallScript},
-        {"preuninstall_script", pkgsInfo.PreuninstallScript},
-        {"postuninstall_script", pkgsInfo.PostuninstallScript},
-        {"installcheck_script", pkgsInfo.InstallCheckScript},
-        {"uninstallcheck_script", pkgsInfo.UninstallCheckScript},
-    }
-
-    // Create a new YAML node with the ordered fields
-    var rootNode yaml.Node
-    rootNode.Kind = yaml.MappingNode
-    for _, field := range orderedFields {
-        keyNode := &yaml.Node{
-            Kind:  yaml.ScalarNode,
-            Tag:   "!!str",
-            Value: field.key,
-        }
-        valueNode := &yaml.Node{}
-    
-        // Special handling for script fields to use literal style
-        if isScriptField(field.key) {
-            valueNode.Kind = yaml.ScalarNode
-            valueNode.Style = yaml.LiteralStyle
-            valueNode.Value = field.value.(string)
-        } else if _, ok := field.value.(string); ok { 
-            // Handle string fields (including empty ones)
-            valueNode.Kind = yaml.ScalarNode
-            valueNode.Tag = "!!str" // Explicitly set the tag for string
-            valueNode.Value = field.value.(string)
-        } else {
-            if err := valueNode.Encode(field.value); err != nil {
-                return nil, err
-            }
-        }
-    
-        rootNode.Content = append(rootNode.Content, keyNode, valueNode)
-    }
-
-    // Encode the YAML node to bytes
     var buf bytes.Buffer
-    encoder := yaml.NewEncoder(&buf)
-    encoder.SetIndent(2)
-    if err := encoder.Encode(&rootNode); err != nil {
+    enc := yaml.NewEncoder(&buf)
+    enc.SetIndent(2)
+
+    // Manually construct the map in the desired order, including all fields
+    m := make(map[string]interface{})
+
+    // Basic information
+    handleScriptField(m, "name", pkgsInfo.Name)
+    handleScriptField(m, "display_name", pkgsInfo.DisplayName)
+    handleScriptField(m, "version", pkgsInfo.Version)
+    m["catalogs"] = pkgsInfo.Catalogs // Lists don't need special handling
+    handleScriptField(m, "category", pkgsInfo.Category)
+    handleScriptField(m, "description", pkgsInfo.Description)
+    handleScriptField(m, "developer", pkgsInfo.Developer)
+
+    // Installer information
+    m["installer"] = pkgsInfo.Installer // Structs don't need special handling
+    handleScriptField(m, "product_code", pkgsInfo.ProductCode)
+    handleScriptField(m, "upgrade_code", pkgsInfo.UpgradeCode)
+
+    // Architecture and installation behavior
+    m["supported_architectures"] = pkgsInfo.SupportedArch // Lists don't need special handling
+    m["unattended_install"] = pkgsInfo.UnattendedInstall  // Bools don't need special handling
+    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
+
+    // Scripts
+    handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
+    handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
+    handleScriptField(m, "preuninstall_script", pkgsInfo.PreuninstallScript)
+    handleScriptField(m, "postuninstall_script", pkgsInfo.PostuninstallScript)
+    handleScriptField(m, "installcheck_script", pkgsInfo.InstallCheckScript)
+    handleScriptField(m, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
+
+    // Encode the final map to YAML
+    err := enc.Encode(m)
+    if err != nil {
         return nil, err
     }
+
     return buf.Bytes(), nil
 }
 
