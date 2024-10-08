@@ -418,8 +418,14 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
         valueNode := &yaml.Node{}
 
         // Encode the value using handleScriptField for correct formatting
-        if err := handleScriptField(valueNode, field.value); err != nil { 
-            return nil, err
+        if isScriptField(field.key) {
+            if err := handleScriptField(valueNode, field.value); err != nil {
+                return nil, err
+            }
+        } else {
+            if err := valueNode.Encode(field.value); err != nil {
+                return nil, err
+            }
         }
 
         rootNode.Content = append(rootNode.Content, keyNode, valueNode)
