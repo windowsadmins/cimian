@@ -431,7 +431,13 @@ func addField(node *yaml.Node, key string, value interface{}) {
         if v == "" {
             valueNode.Value = ""  // Keep empty if the string is empty
         } else {
-            valueNode.Value = v
+            if isScriptField(key) {
+                // Use block scalar style for scripts
+                valueNode.Value = v
+                valueNode.Style = yaml.LiteralStyle
+            } else {
+                valueNode.Value = v
+            }
         }
     case bool:
         valueNode.Value = fmt.Sprintf("%v", v)  // Convert boolean to string
@@ -461,6 +467,18 @@ func addField(node *yaml.Node, key string, value interface{}) {
     }
 
     node.Content = append(node.Content, keyNode, valueNode)
+}
+
+// isScriptField checks if the field name corresponds to a script field
+func isScriptField(fieldName string) bool {
+    // List of fields that should be formatted as literal block scalars
+    scriptFields := []string{"preinstall_script", "postinstall_script", "preuninstall_script", "postuninstall_script", "installcheck_script", "uninstallcheck_script"}
+    for _, field := range scriptFields {
+        if fieldName == field {
+            return true
+        }
+    }
+    return false
 }
 
 func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
