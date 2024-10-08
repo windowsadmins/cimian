@@ -405,23 +405,23 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     // Use literal block scalar for multiline scripts (without extra newline or indentation)
     if pkgsInfo.PreinstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.PreinstallScript)
-        m["preinstall_script"] = "|-" + cleanedScript 
+        m["preinstall_script"] = cleanedScript 
     }
     if pkgsInfo.PostinstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.PostinstallScript)
-        m["postinstall_script"] = "|-" + cleanedScript
+        m["postinstall_script"] = cleanedScript
     }
     if pkgsInfo.UninstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.UninstallScript)
-        m["uninstall_script"] = "|-" + cleanedScript
+        m["uninstall_script"] = cleanedScript
     }
     if pkgsInfo.InstallCheckScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.InstallCheckScript)
-        m["installcheck_script"] = "|-" + cleanedScript
+        m["installcheck_script"] = cleanedScript
     }
     if pkgsInfo.UninstallCheckScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.UninstallCheckScript)
-        m["uninstallcheck_script"] = "|-" + cleanedScript
+        m["uninstallcheck_script"] = cleanedScript
     }
 
     // Encode the final map to YAML
