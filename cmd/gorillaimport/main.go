@@ -23,26 +23,27 @@ type Installer struct {
 	Type      string   `yaml:"type"`
 }
 
+// PkgsInfo structure holds package metadata with script fields marked as `yaml:"|"`
 type PkgsInfo struct {
-    Name                string     `yaml:"name"`
-    DisplayName         string     `yaml:"display_name"`
-    Version             string     `yaml:"version"`
-    Description         string     `yaml:"description"`
-    Catalogs            []string   `yaml:"catalogs"`
-    Category            string     `yaml:"category"`
-    Developer           string     `yaml:"developer"`
-    UnattendedInstall   bool       `yaml:"unattended_install"`
-    UnattendedUninstall bool       `yaml:"unattended_uninstall"`
-    Installer           *Installer `yaml:"installer"`
-    Uninstaller         *Installer `yaml:"uninstaller,omitempty"`
-    SupportedArch       []string   `yaml:"supported_architectures"`
-    ProductCode         string     `yaml:"product_code,omitempty"`
-    UpgradeCode         string     `yaml:"upgrade_code,omitempty"`
-    PreinstallScript    string     `yaml:"preinstall_script,omitempty"`
-    PostinstallScript   string     `yaml:"postinstall_script,omitempty"`
-    UninstallScript     string     `yaml:"uninstall_script,omitempty"`
-    InstallCheckScript  string     `yaml:"installcheck_script,omitempty"`
-    UninstallCheckScript string    `yaml:"uninstallcheck_script,omitempty"`
+    Name                 string     `yaml:"name"`
+    DisplayName          string     `yaml:"display_name"`
+    Version              string     `yaml:"version"`
+    Description          string     `yaml:"description"`
+    Catalogs             []string   `yaml:"catalogs"`
+    Category             string     `yaml:"category"`
+    Developer            string     `yaml:"developer"`
+    UnattendedInstall    bool       `yaml:"unattended_install"`
+    UnattendedUninstall  bool       `yaml:"unattended_uninstall"`
+    Installer            *Installer `yaml:"installer"`
+    Uninstaller          *Installer `yaml:"uninstaller,omitempty"`
+    SupportedArch        []string   `yaml:"supported_architectures"`
+    ProductCode          string     `yaml:"product_code,omitempty"`
+    UpgradeCode          string     `yaml:"upgrade_code,omitempty"`
+    PreinstallScript     string     `yaml:"preinstall_script,omitempty" yaml:"|-"`  // block scalar
+    PostinstallScript    string     `yaml:"postinstall_script,omitempty" yaml:"|-"` // block scalar
+    UninstallScript      string     `yaml:"uninstall_script,omitempty" yaml:"|-"`   // block scalar
+    InstallCheckScript   string     `yaml:"installcheck_script,omitempty" yaml:"|-"`// block scalar
+    UninstallCheckScript string     `yaml:"uninstallcheck_script,omitempty" yaml:"|-"`// block scalar
 }
 
 // Config structure holds the configuration settings
@@ -357,73 +358,27 @@ func cleanScriptInput(script string) string {
     return strings.TrimSpace(script)
 }
 
-// Helper function to format script content as YAML block scalars
-func formatScriptAsBlockScalar(script string) string {
-    if script == "" {
-        return "" // Return empty for blank scripts
-    }
-
-    // Escape the script, preserving line breaks
-    lines := strings.Split(script, "\n")
-    for i, line := range lines {
-        lines[i] = "  " + strings.TrimRight(line, " ") // Indent each line with two spaces
-    }
-    return "|-\n" + strings.Join(lines, "\n")
-}
-
 // Function to encode the YAML with correct block scalars for scripts
 func encodeWithBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
     enc.SetIndent(2)
 
-    // Create a map for the YAML fields
-    m := make(map[string]interface{})
+    // Modify PkgsInfo to ensure scripts are properly formatted as block scalars
+    pkgsInfo.PreinstallScript = strings.TrimSpace(pkgsInfo.PreinstallScript)
+    pkgsInfo.PostinstallScript = strings.TrimSpace(pkgsInfo.PostinstallScript)
+    pkgsInfo.UninstallScript = strings.TrimSpace(pkgsInfo.UninstallScript)
+    pkgsInfo.InstallCheckScript = strings.TrimSpace(pkgsInfo.InstallCheckScript)
+    pkgsInfo.UninstallCheckScript = strings.TrimSpace(pkgsInfo.UninstallCheckScript)
 
-    // Standard fields for the YAML
-    m["name"] = pkgsInfo.Name
-    m["display_name"] = pkgsInfo.DisplayName
-    m["version"] = pkgsInfo.Version
-    m["description"] = pkgsInfo.Description
-    m["catalogs"] = pkgsInfo.Catalogs
-    m["category"] = pkgsInfo.Category
-    m["developer"] = pkgsInfo.Developer
-    m["unattended_install"] = pkgsInfo.UnattendedInstall
-    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
-    m["installer"] = pkgsInfo.Installer
-    if pkgsInfo.Uninstaller != nil {
-        m["uninstaller"] = pkgsInfo.Uninstaller
-    }
-    m["supported_architectures"] = pkgsInfo.SupportedArch
-    m["product_code"] = pkgsInfo.ProductCode
-    m["upgrade_code"] = pkgsInfo.UpgradeCode
-
-    // Use formatted block scalar for script fields
-    if pkgsInfo.PreinstallScript != "" {
-        m["preinstall_script"] = formatScriptAsBlockScalar(pkgsInfo.PreinstallScript)
-    }
-    if pkgsInfo.PostinstallScript != "" {
-        m["postinstall_script"] = formatScriptAsBlockScalar(pkgsInfo.PostinstallScript)
-    }
-    if pkgsInfo.UninstallScript != "" {
-        m["uninstall_script"] = formatScriptAsBlockScalar(pkgsInfo.UninstallScript)
-    }
-    if pkgsInfo.InstallCheckScript != "" {
-        m["installcheck_script"] = formatScriptAsBlockScalar(pkgsInfo.InstallCheckScript)
-    }
-    if pkgsInfo.UninstallCheckScript != "" {
-        m["uninstallcheck_script"] = formatScriptAsBlockScalar(pkgsInfo.UninstallCheckScript)
-    }
-
-    // Encode the final map to YAML
-    err := enc.Encode(m)
+    // Encode the final struct to YAML
+    err := enc.Encode(&pkgsInfo)
     if err != nil {
         return nil, err
     }
 
     return buf.Bytes(), nil
 }
-
 
 // Example usage for creating the pkgsinfo YAML
 func createPkgsInfo(
