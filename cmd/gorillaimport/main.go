@@ -466,7 +466,8 @@ func handleScriptField(node *yaml.Node, value interface{}) error {
         for _, item := range v {
             itemNode := &yaml.Node{
                 Kind:  yaml.ScalarNode,
-                Value: item, // No need to set Tag here
+                Tag:   "!!str",  // Add the tag back here
+                Value: item,
             }
             node.Content = append(node.Content, itemNode)
         }
