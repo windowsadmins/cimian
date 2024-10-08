@@ -380,7 +380,7 @@ func indentScriptForYaml(script string) string {
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
-    enc.SetIndent(2)
+    enc.SetIndent(1)
 
     // Manually construct the map while applying block scalars to script fields
     m := make(map[string]interface{})
@@ -426,14 +426,14 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
 // Use literal block scalar for multiline scripts
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
     if scriptContent != "" {
-        // Trim leading/trailing spaces from the entire string, but preserve internal newlines
-        cleanedScript := strings.Trim(scriptContent, " ")  
+        // Trim only leading/trailing spaces from the entire string
+        cleanedScript := strings.Trim(scriptContent, " ")
 
         // Use yaml.Node to explicitly set the style to literal
         node := &yaml.Node{
             Kind:  yaml.ScalarNode,
             Tag:   "!!str",
-            Value: cleanedScript, 
+            Value: cleanedScript,
             Style: yaml.LiteralStyle,
         }
         m[fieldName] = node
