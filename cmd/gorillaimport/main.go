@@ -1,5 +1,3 @@
-# gorillaimport
-
 package main
 
 import (
