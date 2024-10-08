@@ -386,44 +386,14 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m := make(map[string]interface{})
 
     // Standard fields for the YAML
-    m["name"] = pkgsInfo.Name
-    m["display_name"] = pkgsInfo.DisplayName
-    m["version"] = pkgsInfo.Version
-    m["description"] = pkgsInfo.Description
-    m["catalogs"] = pkgsInfo.Catalogs
-    m["category"] = pkgsInfo.Category
-    m["developer"] = pkgsInfo.Developer
-    m["unattended_install"] = pkgsInfo.UnattendedInstall
-    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
-    m["installer"] = pkgsInfo.Installer
-    if pkgsInfo.Uninstaller != nil {
-        m["uninstaller"] = pkgsInfo.Uninstaller
-    }
-    m["supported_architectures"] = pkgsInfo.SupportedArch
-    m["product_code"] = pkgsInfo.ProductCode
-    m["upgrade_code"] = pkgsInfo.UpgradeCode
+    populateStandardFields(m, pkgsInfo)
 
     // Use literal block scalar for multiline scripts (without extra newline or indentation)
-    if pkgsInfo.PreinstallScript != "" {
-        cleanedScript := cleanScriptInput(pkgsInfo.PreinstallScript)
-        m["preinstall_script"] = "" + cleanedScript 
-    }
-    if pkgsInfo.PostinstallScript != "" {
-        cleanedScript := cleanScriptInput(pkgsInfo.PostinstallScript)
-        m["postinstall_script"] = "" + cleanedScript
-    }
-    if pkgsInfo.UninstallScript != "" {
-        cleanedScript := cleanScriptInput(pkgsInfo.UninstallScript)
-        m["uninstall_script"] = "" + cleanedScript
-    }
-    if pkgsInfo.InstallCheckScript != "" {
-        cleanedScript := cleanScriptInput(pkgsInfo.InstallCheckScript)
-        m["installcheck_script"] = "" + cleanedScript
-    }
-    if pkgsInfo.UninstallCheckScript != "" {
-        cleanedScript := cleanScriptInput(pkgsInfo.UninstallCheckScript)
-        m["uninstallcheck_script"] = "" + cleanedScript
-    }
+    handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
+    handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
+    handleScriptField(m, "uninstall_script", pkgsInfo.UninstallScript)
+    handleScriptField(m, "installcheck_script", pkgsInfo.InstallCheckScript)
+    handleScriptField(m, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
 
     // Encode the final map to YAML
     err := enc.Encode(m)
@@ -432,6 +402,32 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     }
 
     return buf.Bytes(), nil
+}
+
+func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
+    m["name"] = info.Name
+    m["display_name"] = info.DisplayName
+    m["version"] = info.Version
+    m["description"] = info.Description
+    m["catalogs"] = info.Catalogs
+    m["category"] = info.Category
+    m["developer"] = info.Developer
+    m["unattended_install"] = info.UnattendedInstall
+    m["unattended_uninstall"] = info.UnattendedUninstall
+    m["installer"] = info.Installer
+    if info.Uninstaller != nil {
+        m["uninstaller"] = info.Uninstaller
+    }
+    m["supported_architectures"] = info.SupportedArch
+    m["product_code"] = info.ProductCode
+    m["upgrade_code"] = info.UpgradeCode
+}
+
+func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
+    if scriptContent != "" {
+        cleanedScript := indentScriptForYaml(scriptContent)
+        m[fieldName] = cleanedScript
+    }
 }
 
 // Example usage for creating the pkgsinfo YAML
