@@ -378,6 +378,13 @@ func indentScriptForYaml(script string) string {
     return strings.Join(indentedLines, "\n")
 }
 
+func getEmptyIfEmptyString(s string) interface{} {
+    if s == "" {
+        return nil // Or you can return an empty string "" if you prefer
+    }
+    return s
+}
+
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
@@ -387,24 +394,24 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m := make(map[string]interface{})
 
     // Basic information
-    m["name"] = pkgsInfo.Name
-    m["display_name"] = pkgsInfo.DisplayName
-    m["version"] = pkgsInfo.Version
+    m["name"] = getEmptyIfEmptyString(pkgsInfo.Name)
+    m["display_name"] = getEmptyIfEmptyString(pkgsInfo.DisplayName)
+    m["version"] = getEmptyIfEmptyString(pkgsInfo.Version)
     m["catalogs"] = pkgsInfo.Catalogs
-    m["category"] = pkgsInfo.Category
-    m["description"] = pkgsInfo.Description
-    m["developer"] = pkgsInfo.Developer
+    m["category"] = getEmptyIfEmptyString(pkgsInfo.Category)
+    m["description"] = getEmptyIfEmptyString(pkgsInfo.Description)
+    m["developer"] = getEmptyIfEmptyString(pkgsInfo.Developer)
 
     // Installer information
     m["installer"] = pkgsInfo.Installer
-    m["product_code"] = pkgsInfo.ProductCode
-    m["upgrade_code"] = pkgsInfo.UpgradeCode
+    m["product_code"] = getEmptyIfEmptyString(pkgsInfo.ProductCode)
+    m["upgrade_code"] = getEmptyIfEmptyString(pkgsInfo.UpgradeCode)
 
     // Architecture and installation behavior
     m["supported_architectures"] = pkgsInfo.SupportedArch
     m["unattended_install"] = pkgsInfo.UnattendedInstall
     m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
-
+    
     // Scripts (using handleScriptField to handle formatting)
 	handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
 	handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
