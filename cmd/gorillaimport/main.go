@@ -1,3 +1,5 @@
+# gorillaimport
+
 package main
 
 import (
@@ -365,8 +367,9 @@ func indentScriptForYaml(script string) string {
     var indentedLines []string
 
     for _, line := range lines {
-        if strings.TrimSpace(line) != "" {
-            indentedLines = append(indentedLines, "  "+line)
+        trimmedLine := strings.TrimSpace(line)
+        if trimmedLine != "" {
+            indentedLines = append(indentedLines, "    "+trimmedLine)
         } else {
             // Append empty lines without indentation
             indentedLines = append(indentedLines, "") 
