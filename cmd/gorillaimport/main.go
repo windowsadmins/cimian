@@ -741,7 +741,8 @@ func gorillaImport(
     // Process scripts
     var preinstallScriptContent string
     var postinstallScriptContent string
-    var uninstallScriptContent string
+    var preuninstallScriptContent string
+    var postuninstallScriptContent string
     var installCheckScriptContent string
     var uninstallCheckScriptContent string
     
