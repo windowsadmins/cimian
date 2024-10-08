@@ -402,31 +402,26 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Use literal block scalar for multiline scripts (without extra newline)
+    // Use literal block scalar for multiline scripts (without extra newline or indentation)
     if pkgsInfo.PreinstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.PreinstallScript)
-        indentedScript := indentScriptForYaml(cleanedScript)
-        m["preinstall_script"] = "|-" + indentedScript // No \n after |-
+        m["preinstall_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.PostinstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.PostinstallScript)
-        indentedScript := indentScriptForYaml(cleanedScript)
-        m["postinstall_script"] = "|-" + indentedScript
+        m["postinstall_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.UninstallScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.UninstallScript)
-        indentedScript := indentScriptForYaml(cleanedScript)
-        m["uninstall_script"] = "|-" + indentedScript
+        m["uninstall_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.InstallCheckScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.InstallCheckScript)
-        indentedScript := indentScriptForYaml(cleanedScript)
-        m["installcheck_script"] = "|-" + indentedScript
+        m["installcheck_script"] = "|-" + cleanedScript
     }
     if pkgsInfo.UninstallCheckScript != "" {
         cleanedScript := cleanScriptInput(pkgsInfo.UninstallCheckScript)
-        indentedScript := indentScriptForYaml(cleanedScript)
-        m["uninstallcheck_script"] = "|-" + indentedScript
+        m["uninstallcheck_script"] = "|-" + cleanedScript
     }
 
     // Encode the final map to YAML
