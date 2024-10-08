@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"regexp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -353,6 +352,28 @@ func copyFile(src, dst string) (int64, error) {
 	return nBytes, err
 }
 
+// Read the plain text script from the .bat file and ensure it is placed in the YAML properly
+func cleanScriptInput(script string) string {
+    // Ensure that double backslashes (\\) are reduced to single backslashes
+    cleanedScript := strings.ReplaceAll(script, "\\\\", "\\")
+
+    // Ensure clean line breaks (we expect \r\n for .bat files)
+    cleanedScript = strings.ReplaceAll(cleanedScript, "\r\n", "\n")
+
+    // Return as-is without escape sequences
+    return cleanedScript
+}
+
+// Indent the script to fit into a YAML block scalar (|-)
+func indentScriptForYaml(script string) string {
+    lines := strings.Split(strings.TrimSpace(script), "\n")
+    for i, line := range lines {
+        lines[i] = "  " + line // Indent each line with two spaces
+    }
+    return strings.Join(lines, "\n")
+}
+
+// Updated encodeWithSelectiveBlockScalars function
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
     enc := yaml.NewEncoder(&buf)
@@ -378,35 +399,25 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     m["product_code"] = pkgsInfo.ProductCode
     m["upgrade_code"] = pkgsInfo.UpgradeCode
 
-    // Apply block scalar style to script fields if they contain multiple lines
-    if strings.Contains(pkgsInfo.PreinstallScript, "\n") {
-        m["preinstall_script"] = "|-\n" + indentScript(pkgsInfo.PreinstallScript)
-    } else {
-        m["preinstall_script"] = pkgsInfo.PreinstallScript
+    // Apply block scalar for multi-line scripts with exact content
+    if pkgsInfo.PreinstallScript != "" {
+        m["preinstall_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.PreinstallScript))
     }
-    
-    if strings.Contains(pkgsInfo.PostinstallScript, "\n") {
-        m["postinstall_script"] = "|-\n" + indentScript(pkgsInfo.PostinstallScript)
-    } else {
-        m["postinstall_script"] = pkgsInfo.PostinstallScript
+
+    if pkgsInfo.PostinstallScript != "" {
+        m["postinstall_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.PostinstallScript))
     }
-    
-    if strings.Contains(pkgsInfo.UninstallScript, "\n") {
-        m["uninstall_script"] = "|-\n" + indentScript(pkgsInfo.UninstallScript)
-    } else {
-        m["uninstall_script"] = pkgsInfo.UninstallScript
+
+    if pkgsInfo.UninstallScript != "" {
+        m["uninstall_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.UninstallScript))
     }
-    
-    if strings.Contains(pkgsInfo.InstallCheckScript, "\n") {
-        m["installcheck_script"] = "|-\n" + indentScript(pkgsInfo.InstallCheckScript)
-    } else {
-        m["installcheck_script"] = pkgsInfo.InstallCheckScript
+
+    if pkgsInfo.InstallCheckScript != "" {
+        m["installcheck_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.InstallCheckScript))
     }
-    
-    if strings.Contains(pkgsInfo.UninstallCheckScript, "\n") {
-        m["uninstallcheck_script"] = "|-\n" + indentScript(pkgsInfo.UninstallCheckScript)
-    } else {
-        m["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript
+
+    if pkgsInfo.UninstallCheckScript != "" {
+        m["uninstallcheck_script"] = "|-\n" + indentScriptForYaml(cleanScriptInput(pkgsInfo.UninstallCheckScript))
     }
 
     // Encode the final map
@@ -416,26 +427,6 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     }
 
     return buf.Bytes(), nil
-}
-
-// Helper function to clean up and indent script content properly for YAML block scalars
-func indentScript(script string) string {
-    // Step 1: Remove double backslashes (\\ -> \)
-    reDoubleBackslash := regexp.MustCompile(`\\\\`)
-    cleanedScript := reDoubleBackslash.ReplaceAllString(script, `\`)
-
-    // Step 2: Ensure clean line breaks
-    reCarriageReturn := regexp.MustCompile(`\r\n`)
-    cleanedScript = reCarriageReturn.ReplaceAllString(cleanedScript, "\n")
-
-    // Step 3: Indent each line for YAML formatting
-    lines := strings.Split(strings.TrimSpace(cleanedScript), "\n")
-    for i, line := range lines {
-        lines[i] = "  " + line // Indent each line with two spaces
-    }
-
-    // Join lines back into a single string with proper newlines
-    return strings.Join(lines, "\n")
 }
 
 // Updating createPkgsInfo to ensure scripts use block scalars and fix the uninstaller and output issue
