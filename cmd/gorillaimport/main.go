@@ -446,9 +446,14 @@ func handleScriptField(node *yaml.Node, value interface{}) error {
     switch v := value.(type) {
     case string:
         node.Kind = yaml.ScalarNode
-        if isScriptField(node.Value) { // Check if it's a script field
+        if isScriptField(node.Value) {
             node.Style = yaml.LiteralStyle
-            node.Value = strings.Trim(v, " ")
+            // Ensure the script content starts with a newline for proper block scalar formatting
+            cleanedScript := strings.Trim(v, " ")
+            if !strings.HasPrefix(cleanedScript, "\n") {
+                cleanedScript = "\n" + cleanedScript
+            }
+            node.Value = cleanedScript
         } else {
             if v == "" {
                 node.Value = ""
