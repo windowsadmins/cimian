@@ -486,7 +486,7 @@ func createPkgsInfo(
 	outputFile := filepath.Join(outputFilePath, fmt.Sprintf("%s-%s.yaml", name, version))
 
 	// Use the block scalar encoder
-	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
+	pkgsInfoContent, err := encodeWithBlockScalars(pkgsInfo)
 	if err != nil {
 		return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
 	}
