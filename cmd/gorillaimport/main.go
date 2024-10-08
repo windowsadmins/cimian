@@ -362,13 +362,18 @@ func cleanScriptInput(script string) string {
 // This function formats the script for YAML block scalar (|-)
 func indentScriptForYaml(script string) string {
     lines := strings.Split(script, "\n")
+    var indentedLines []string
 
-    for i, line := range lines {
-        // Indent every line with 2 spaces, without any trimming
-        lines[i] = "  " + line  
+    for _, line := range lines {
+        if strings.TrimSpace(line) != "" {
+            indentedLines = append(indentedLines, "  "+line)
+        } else {
+            // Append empty lines without indentation
+            indentedLines = append(indentedLines, "") 
+        }
     }
 
-    return strings.Join(lines, "\n")
+    return strings.Join(indentedLines, "\n")
 }
 
 // Function to encode the YAML with correct block scalars for scripts
