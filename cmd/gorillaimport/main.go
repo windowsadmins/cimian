@@ -367,7 +367,7 @@ func indentScriptForYaml(script string) string {
     for _, line := range lines {
         trimmedLine := strings.TrimSpace(line)
         if trimmedLine != "" {
-            indentedLines = append(indentedLines, "    "+trimmedLine)
+            indentedLines = append(indentedLines, "    " + trimmedLine)
         } else {
             // Append empty lines without indentation
             indentedLines = append(indentedLines, "") 
@@ -423,10 +423,11 @@ func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
     m["upgrade_code"] = info.UpgradeCode
 }
 
+// Use literal block scalar for multiline scripts
 func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
     if scriptContent != "" {
         cleanedScript := indentScriptForYaml(scriptContent)
-        m[fieldName] = cleanedScript
+        m[fieldName] = "| " + cleanedScript
     }
 }
 
