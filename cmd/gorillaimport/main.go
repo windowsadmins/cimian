@@ -380,46 +380,87 @@ func indentScriptForYaml(script string) string {
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
     var buf bytes.Buffer
-    enc := yaml.NewEncoder(&buf)
-    enc.SetIndent(2)
+    encoder := yaml.NewEncoder(&buf)
+    encoder.SetIndent(2)
 
-    // Manually construct the map in the desired order, including all fields
-    m := make(map[string]interface{})
-
-    // Basic information
-    m["name"] = pkgsInfo.Name
-    m["display_name"] = pkgsInfo.DisplayName
-    m["version"] = pkgsInfo.Version
-    m["catalogs"] = pkgsInfo.Catalogs
-    m["category"] = pkgsInfo.Category
-    m["description"] = pkgsInfo.Description
-    m["developer"] = pkgsInfo.Developer
-
-    // Installer information
-    m["installer"] = pkgsInfo.Installer
-    m["product_code"] = pkgsInfo.ProductCode
-    m["upgrade_code"] = pkgsInfo.UpgradeCode
-
-    // Architecture and installation behavior
-    m["supported_architectures"] = pkgsInfo.SupportedArch
-    m["unattended_install"] = pkgsInfo.UnattendedInstall
-    m["unattended_uninstall"] = pkgsInfo.UnattendedUninstall
-
-    // Scripts (using handleScriptField to handle formatting)
-	handleScriptField(m, "preinstall_script", pkgsInfo.PreinstallScript)
-	handleScriptField(m, "postinstall_script", pkgsInfo.PostinstallScript)
-	handleScriptField(m, "preuninstall_script", pkgsInfo.PreuninstallScript) 
-	handleScriptField(m, "postuninstall_script", pkgsInfo.PostuninstallScript) 
-	handleScriptField(m, "installcheck_script", pkgsInfo.InstallCheckScript)
-	handleScriptField(m, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
-
-    // Encode the final map to YAML
-    err := enc.Encode(m)
-    if err != nil {
-        return nil, err
+    // Manually create the YAML structure to precisely control the output
+    root := &yaml.Node{
+        Kind: yaml.MappingNode,
     }
 
+    // Add all fields, even if empty
+    addField(root, "name", pkgsInfo.Name)
+    addField(root, "display_name", pkgsInfo.DisplayName)
+    addField(root, "version", pkgsInfo.Version)
+    addField(root, "description", pkgsInfo.Description)
+    addField(root, "catalogs", pkgsInfo.Catalogs)
+    addField(root, "category", pkgsInfo.Category)
+    addField(root, "developer", pkgsInfo.Developer)
+    addField(root, "supported_architectures", pkgsInfo.SupportedArch)
+    addField(root, "unattended_install", pkgsInfo.UnattendedInstall)
+    addField(root, "unattended_uninstall", pkgsInfo.UnattendedUninstall)
+    addField(root, "installer", pkgsInfo.Installer)
+    addField(root, "product_code", pkgsInfo.ProductCode)
+    addField(root, "upgrade_code", pkgsInfo.UpgradeCode)
+    addField(root, "preinstall_script", pkgsInfo.PreinstallScript)
+    addField(root, "postinstall_script", pkgsInfo.PostinstallScript)
+    addField(root, "preuninstall_script", pkgsInfo.PreuninstallScript)
+    addField(root, "postuninstall_script", pkgsInfo.PostuninstallScript)
+    addField(root, "installcheck_script", pkgsInfo.InstallCheckScript)
+    addField(root, "uninstallcheck_script", pkgsInfo.UninstallCheckScript)
+
+    // Encode the root node
+    if err := encoder.Encode(root); err != nil {
+        return nil, err
+    }
     return buf.Bytes(), nil
+}
+
+// addField adds a field to the YAML mapping node, handling empty values as completely empty
+func addField(node *yaml.Node, key string, value interface{}) {
+    keyNode := &yaml.Node{
+        Kind:  yaml.ScalarNode,
+        Value: key,
+    }
+    valueNode := &yaml.Node{
+        Kind:  yaml.ScalarNode,
+    }
+
+    switch v := value.(type) {
+    case string:
+        if v == "" {
+            valueNode.Value = ""  // Keep empty if the string is empty
+        } else {
+            valueNode.Value = v
+        }
+    case bool:
+        valueNode.Value = fmt.Sprintf("%v", v)  // Convert boolean to string
+        valueNode.Tag = "!!bool"
+    case []string:
+        if len(v) == 0 {
+            valueNode.Kind = yaml.SequenceNode  // Use sequence node for empty slice
+        } else {
+            valueNode.Kind = yaml.SequenceNode
+            for _, item := range v {
+                itemNode := &yaml.Node{
+                    Kind:  yaml.ScalarNode,
+                    Value: item,
+                }
+                valueNode.Content = append(valueNode.Content, itemNode)
+            }
+        }
+    case *Installer:
+        if v != nil {
+            valueNode.Kind = yaml.MappingNode
+            // Add more detailed fields for Installer struct here if needed
+        } else {
+            valueNode.Kind = yaml.MappingNode  // Empty mapping for nil pointers
+        }
+    default:
+        valueNode.Value = fmt.Sprintf("%v", v)
+    }
+
+    node.Content = append(node.Content, keyNode, valueNode)
 }
 
 func populateStandardFields(m map[string]interface{}, info PkgsInfo) {
