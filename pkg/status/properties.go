@@ -6,7 +6,7 @@ package status
 import (
 	"fmt"
 
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
 	"github.com/gonutz/w32"
 )
 

@@ -4,7 +4,7 @@
 package status
 
 import (
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
 	registry "golang.org/x/sys/windows/registry"
 )
 
