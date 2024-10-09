@@ -417,14 +417,21 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
         }
         valueNode := &yaml.Node{}
 
-        // Encode the value using handleScriptField for correct formatting
+        // Encode the value using handleScriptField for correct formatting if it's a script field
         if isScriptField(field.key) {
             if err := handleScriptField(valueNode, field.value); err != nil {
                 return nil, err
             }
         } else {
-            if err := valueNode.Encode(field.value); err != nil {
-                return nil, err
+            // Handle empty string values explicitly to avoid generating `""`
+            if strValue, ok := field.value.(string); ok && strValue == "" {
+                valueNode.Kind = yaml.ScalarNode
+                valueNode.Tag = "!!null" // This will make the field appear as empty in the output
+                valueNode.Value = ""
+            } else {
+                if err := valueNode.Encode(field.value); err != nil {
+                    return nil, err
+                }
             }
         }
 
