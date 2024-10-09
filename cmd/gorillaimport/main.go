@@ -452,16 +452,21 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 func handleScriptField(node *yaml.Node, value interface{}) error {
     switch v := value.(type) {
     case string:
-        node.Kind = yaml.ScalarNode
-        node.Style = yaml.LiteralStyle // Use LiteralStyle for multiline scripts
-
-        // Ensure the script content starts with a newline for proper block scalar formatting
         cleanedScript := strings.TrimSpace(v)
-        if !strings.HasPrefix(cleanedScript, "\n") {
-            cleanedScript = "\n" + cleanedScript
+        if cleanedScript == "" {
+            // If the script content is empty, use null to indicate an empty field
+            node.Kind = yaml.ScalarNode
+            node.Tag = "!!null"
+            node.Value = ""
+        } else {
+            node.Kind = yaml.ScalarNode
+            node.Style = yaml.LiteralStyle // Use LiteralStyle for multiline scripts
+            // Ensure the script content starts with a newline for proper block scalar formatting
+            if !strings.HasPrefix(cleanedScript, "\n") {
+                cleanedScript = "\n" + cleanedScript
+            }
+            node.Value = cleanedScript
         }
-
-        node.Value = cleanedScript
     case []string:
         node.Kind = yaml.SequenceNode
         for _, item := range v {
@@ -478,23 +483,6 @@ func handleScriptField(node *yaml.Node, value interface{}) error {
     }
     return nil
 }
-
-// Use literal block scalar for multiline scripts
-// func handleScriptField(m map[string]interface{}, fieldName, scriptContent string) {
-//     if scriptContent != "" {
-//         // Trim leading/trailing spaces from the entire string
-//         cleanedScript := strings.Trim(scriptContent, " ")
-// 
-//         // Use yaml.Node to explicitly set the style to literal
-//         node := &yaml.Node{
-//             Kind:  yaml.ScalarNode,
-//             Tag:   "!!str",
-//             Value: cleanedScript,
-//             Style: yaml.LiteralStyle,
-//         }
-//         m[fieldName] = node
-//     }
-// }
 
 // addField handles adding normal fields to the YAML
 func addField(node *yaml.Node, key string, value interface{}) {
