@@ -446,34 +446,28 @@ func handleScriptField(node *yaml.Node, value interface{}) error {
     switch v := value.(type) {
     case string:
         node.Kind = yaml.ScalarNode
-        if isScriptField(node.Value) {
-            node.Style = yaml.LiteralStyle
-            // Ensure the script content starts with a newline for proper block scalar formatting
-            cleanedScript := strings.Trim(v, " ")
-            if !strings.HasPrefix(cleanedScript, "\n") {
-                cleanedScript = "\n" + cleanedScript
-            }
-            node.Value = cleanedScript
-        } else {
-            if v == "" {
-                node.Value = ""
-            } else {
-                node.Value = v
-            }
+        node.Style = yaml.LiteralStyle // Use LiteralStyle for multiline scripts
+
+        // Ensure the script content starts with a newline for proper block scalar formatting
+        cleanedScript := strings.TrimSpace(v)
+        if !strings.HasPrefix(cleanedScript, "\n") {
+            cleanedScript = "\n" + cleanedScript
         }
+
+        node.Value = cleanedScript
     case []string:
         node.Kind = yaml.SequenceNode
         for _, item := range v {
             itemNode := &yaml.Node{
                 Kind:  yaml.ScalarNode,
-                Tag:   "!!str",  // Add the tag back here
+                Tag:   "!!str",
                 Value: item,
             }
             node.Content = append(node.Content, itemNode)
         }
-    // ... add cases for other types as needed ...
     default:
-        return node.Encode(value) // Use default encoding for other types
+        // Use default encoding for other types
+        return node.Encode(value)
     }
     return nil
 }
@@ -494,7 +488,6 @@ func handleScriptField(node *yaml.Node, value interface{}) error {
 //         m[fieldName] = node
 //     }
 // }
-
 
 // addField handles adding normal fields to the YAML
 func addField(node *yaml.Node, key string, value interface{}) {
@@ -554,7 +547,7 @@ func getEmptyIfEmptyString(s string) interface{} {
 // isScriptField checks if the field name corresponds to a script field
 func isScriptField(fieldName string) bool {
     scriptFields := []string{
-        "preinstall_script", "postinstall_script", 
+        "preinstall_script", "postinstall_script",
         "preuninstall_script", "postuninstall_script",
         "installcheck_script", "uninstallcheck_script",
     }
@@ -659,12 +652,12 @@ func createPkgsInfo(
 	// Use the block scalar encoder
 	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
-		return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
+	    return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
 	}
-
+	
 	// Write the output to the file
 	if err := os.WriteFile(outputFile, pkgsInfoContent, 0644); err != nil {
-		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
+	    return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
 	}
 
 	return nil
@@ -867,8 +860,6 @@ func gorillaImport(
     if err != nil {
         return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
-
-    // ... inside gorillaImport function ...
     
     // Process scripts
     var preinstallScriptContent string
@@ -878,7 +869,7 @@ func gorillaImport(
     var installCheckScriptContent string
     var uninstallCheckScriptContent string
     
-    // Process install script
+    // Process preinstall script
     if installScriptPath != "" {
         content, err := os.ReadFile(installScriptPath)
         if err != nil {
@@ -886,7 +877,6 @@ func gorillaImport(
         }
         // Convert CRLF to LF
         preinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-    
         extension := strings.ToLower(filepath.Ext(installScriptPath))
         if extension == ".bat" {
             preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "bat")
@@ -897,7 +887,23 @@ func gorillaImport(
         }
     }
     
-    // Process pre-uninstall script
+    // Process postinstall script
+    if postinstallScriptPath != "" {
+        content, err := os.ReadFile(postinstallScriptPath)
+        if err != nil {
+            return false, fmt.Errorf("error reading post-install script file: %v", err)
+        }
+        // Convert CRLF to LF
+        postinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
+        extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
+        if extension == ".ps1" {
+            postinstallScriptContent = string(content) // No wrapping needed for .ps1
+        } else {
+            return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
+        }
+    }
+    
+    // Process preuninstall script
     if preuninstallScriptPath != "" {
         content, err := os.ReadFile(preuninstallScriptPath)
         if err != nil {
@@ -905,7 +911,6 @@ func gorillaImport(
         }
         // Convert CRLF to LF
         preuninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-    
         extension := strings.ToLower(filepath.Ext(preuninstallScriptPath))
         if extension == ".bat" {
             preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "bat")
@@ -916,7 +921,7 @@ func gorillaImport(
         }
     }
     
-    // Process post-uninstall script
+    // Process postuninstall script
     if postuninstallScriptPath != "" {
         content, err := os.ReadFile(postuninstallScriptPath)
         if err != nil {
@@ -924,7 +929,6 @@ func gorillaImport(
         }
         // Convert CRLF to LF
         postuninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-    
         extension := strings.ToLower(filepath.Ext(postuninstallScriptPath))
         if extension == ".bat" {
             postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "bat")
@@ -932,23 +936,6 @@ func gorillaImport(
             postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "ps1")
         } else {
             return false, fmt.Errorf("unsupported post-uninstall script file type: %s", extension)
-        }
-    }
-    
-    // Process post-install script
-    if postinstallScriptPath != "" {
-        content, err := os.ReadFile(postinstallScriptPath)
-        if err != nil {
-            return false, fmt.Errorf("error reading post-install script file: %v", err)
-        }
-        // Convert CRLF to LF
-        postinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n") 
-    
-        extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
-        if extension == ".ps1" {
-            postinstallScriptContent = string(content) // No wrapping needed for .ps1
-        } else {
-            return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
         }
     }
     
@@ -1038,23 +1025,20 @@ func gorillaImport(
 
 func generateWrapperScript(batchContent, scriptType string) string {
     if scriptType == "bat" {
-        // For .bat scripts, remove extra indentation
         return fmt.Sprintf(`
 $batchScriptContent = @'
 %s
 '@
 
-$batchFile = "$env:TEMP\temp_script.bat"
+$batchFile = "$env:TEMP\\temp_script.bat"
 Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
 & cmd.exe /c $batchFile
 Remove-Item $batchFile
         `, strings.TrimLeft(batchContent, " ")) // Trim leading spaces from batchContent
     } else if scriptType == "ps1" {
-        // For .ps1 scripts, no wrapping needed
-        return batchContent
+        return batchContent // No wrapping needed for .ps1
     } else {
-        // Handle unsupported script types
-        return "" 
+        return ""
     }
 }
 
