@@ -6,7 +6,7 @@
 package status
 
 import (
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
 )
 
 // GetFileMetadata is just a placeholder on darwin

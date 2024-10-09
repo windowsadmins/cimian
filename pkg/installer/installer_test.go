@@ -9,11 +9,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/1dustindavis/gorilla/pkg/catalog"
-	"github.com/1dustindavis/gorilla/pkg/config"
-	"github.com/1dustindavis/gorilla/pkg/download"
-	"github.com/1dustindavis/gorilla/pkg/gorillalog"
-	"github.com/1dustindavis/gorilla/pkg/report"
+	"github.com/rodchristiansen/gorilla/pkg/catalog"
+	"github.com/rodchristiansen/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/download"
+	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/report"
 )
 
 // A lot of ideas taken from https://npf.io/2015/06/testing-exec-command/

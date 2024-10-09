@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/1dustindavis/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/config"
 	"gopkg.in/yaml.v3"
 )
 

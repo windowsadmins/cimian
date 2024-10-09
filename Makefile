@@ -36,12 +36,12 @@ else
 endif
 
 BUILD_VERSION = "\
-	-X github.com/1dustindavis/gorilla/pkg/version.appName=${APP_NAME} \
-	-X github.com/1dustindavis/gorilla/pkg/version.version=${VERSION} \
-	-X github.com/1dustindavis/gorilla/pkg/version.branch=${BRANCH} \
-	-X github.com/1dustindavis/gorilla/pkg/version.buildDate=${NOW} \
-	-X github.com/1dustindavis/gorilla/pkg/version.revision=${REVISION} \
-	-X github.com/1dustindavis/gorilla/pkg/version.goVersion=${GOVERSION}"
+	-X github.com/rodchristiansen/gorilla/pkg/version.appName=${APP_NAME} \
+	-X github.com/rodchristiansen/gorilla/pkg/version.version=${VERSION} \
+	-X github.com/rodchristiansen/gorilla/pkg/version.branch=${BRANCH} \
+	-X github.com/rodchristiansen/gorilla/pkg/version.buildDate=${NOW} \
+	-X github.com/rodchristiansen/gorilla/pkg/version.revision=${REVISION} \
+	-X github.com/rodchristiansen/gorilla/pkg/version.goVersion=${GOVERSION}"
 
 define HELP_TEXT
 

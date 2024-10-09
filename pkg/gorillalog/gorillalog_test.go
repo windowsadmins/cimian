@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/1dustindavis/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/config"
 )
 
 // TestNewLog tests the creation of the log and its directory
