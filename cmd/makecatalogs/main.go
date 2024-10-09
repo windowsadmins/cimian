@@ -133,66 +133,74 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 
 // buildCatalogs builds catalogs based on the packages and their specified catalogs
 func buildCatalogs(pkgsInfos []PkgsInfo) CatalogsMap {
-	catalogs := make(CatalogsMap)
-	allPackages := []PkgsInfo{}
+    catalogs := make(CatalogsMap)
+    allPackages := []PkgsInfo{}
 
-	for _, pkg := range pkgsInfos {
-		for _, catalogName := range pkg.Catalogs {
-			catalogs[catalogName] = append(catalogs[catalogName], pkg)
-		}
-		allPackages = append(allPackages, pkg)
-	}
+    fmt.Println("Building catalogs from pkgsinfo...")
 
-	// Add all packages to 'All.yaml'
-	catalogs["All"] = allPackages
+    for _, pkg := range pkgsInfos {
+        for _, catalogName := range pkg.Catalogs {
+            catalogs[catalogName] = append(catalogs[catalogName], pkg)
+            fmt.Printf("Adding %s to %s...\n", pkg.Name, catalogName)
+        }
+        allPackages = append(allPackages, pkg)
+    }
 
-	return catalogs
+    // Add all packages to 'All.yaml'
+    catalogs["All"] = allPackages
+    fmt.Println("Added all packages to 'All' catalog.")
+
+    return catalogs
 }
 
 // writeCatalogs writes the catalogs to YAML files
 func writeCatalogs(repoPath string, catalogs CatalogsMap) error {
-	catalogsDir := filepath.Join(repoPath, "catalogs")
-	if _, err := os.Stat(catalogsDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(catalogsDir, 0755); err != nil {
-			return fmt.Errorf("failed to create catalogs directory: %v", err)
-		}
-	}
+    catalogsDir := filepath.Join(repoPath, "catalogs")
+    if _, err := os.Stat(catalogsDir); os.IsNotExist(err) {
+        if err := os.MkdirAll(catalogsDir, 0755); err != nil {
+            return fmt.Errorf("failed to create catalogs directory: %v", err)
+        }
+    }
 
-	for catalogName, packages := range catalogs {
-		outputFile := filepath.Join(catalogsDir, fmt.Sprintf("%s.yaml", catalogName))
-		file, err := os.Create(outputFile)
-		if err != nil {
-			return fmt.Errorf("failed to create catalog file: %v", err)
-		}
-		defer file.Close()
+    fmt.Println("Writing catalogs to disk...")
 
-		encoder := yaml.NewEncoder(file)
-		if err := encoder.Encode(packages); err != nil {
-			return fmt.Errorf("failed to encode catalog to YAML: %v", err)
-		}
-	}
+    for catalogName, packages := range catalogs {
+        outputFile := filepath.Join(catalogsDir, fmt.Sprintf("%s.yaml", catalogName))
+        file, err := os.Create(outputFile)
+        if err != nil {
+            return fmt.Errorf("failed to create catalog file: %v", err)
+        }
+        defer file.Close()
 
-	return nil
+        encoder := yaml.NewEncoder(file)
+        if err := encoder.Encode(packages); err != nil {
+            return fmt.Errorf("failed to encode catalog to YAML: %v", err)
+        }
+        fmt.Printf("Catalog %s written successfully.\n", catalogName)
+    }
+
+    fmt.Println("All catalogs updated successfully.")
+    return nil
 }
 
 // makeCatalogs is the main function that scans the repo, builds, and writes catalogs
 func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
-	// Scan the pkgsinfo directory for package info files
-	pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
-	if err != nil {
-		return fmt.Errorf("error scanning repo: %v", err)
-	}
+    // Scan the pkgsinfo directory for package info files
+    fmt.Println("Getting list of pkgsinfo...")
+    pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
+    if err != nil {
+        return fmt.Errorf("error scanning repo: %v", err)
+    }
 
-	// Build the catalogs based on the package info files
-	catalogs := buildCatalogs(pkgsInfos)
+    // Build the catalogs based on the package info files
+    catalogs := buildCatalogs(pkgsInfos)
 
-	// Write the catalogs to the repo/catalogs directory
-	if err := writeCatalogs(repoPath, catalogs); err != nil {
-		return fmt.Errorf("error writing catalogs: %v", err)
-	}
+    // Write the catalogs to the repo/catalogs directory
+    if err := writeCatalogs(repoPath, catalogs); err != nil {
+        return fmt.Errorf("error writing catalogs: %v", err)
+    }
 
-	fmt.Println("Catalogs updated successfully.")
-	return nil
+    return nil
 }
 
 // main handles the command-line arguments and runs the makecatalogs function
