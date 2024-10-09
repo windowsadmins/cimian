@@ -32,6 +32,7 @@ type PkgsInfo struct {
 	Uninstaller        *Installer   `yaml:"uninstaller,omitempty"`
 	PreInstallScript   string       `yaml:"preinstall_script,omitempty"`
 	PostInstallScript  string       `yaml:"postinstall_script,omitempty"`
+    FilePath           string
 }
 
 // Check structure for file, script, and registry checks
@@ -108,27 +109,28 @@ func loadConfig(configPath string) (Config, error) {
 
 // scanRepo scans the pkgsinfo directory and reads all pkginfo YAML files
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
-	var pkgsInfos []PkgsInfo
+    var pkgsInfos []PkgsInfo
 
-	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if filepath.Ext(path) == ".yaml" {
-			fileContent, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			var pkgsInfo PkgsInfo
-			if err := yaml.Unmarshal(fileContent, &pkgsInfo); err != nil {
-				return err
-			}
-			pkgsInfos = append(pkgsInfos, pkgsInfo)
-		}
-		return nil
-	})
+    err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        if filepath.Ext(path) == ".yaml" {
+            fileContent, err := os.ReadFile(path)
+            if err != nil {
+                return err
+            }
+            var pkgsInfo PkgsInfo
+            if err := yaml.Unmarshal(fileContent, &pkgsInfo); err != nil {
+                return err
+            }
+            pkgsInfo.FilePath = path // Set the file path
+            pkgsInfos = append(pkgsInfos, pkgsInfo)
+        }
+        return nil
+    })
 
-	return pkgsInfos, err
+    return pkgsInfos, err
 }
 
 // buildCatalogs builds catalogs based on the packages and their specified catalogs
@@ -141,7 +143,7 @@ func buildCatalogs(pkgsInfos []PkgsInfo) CatalogsMap {
     for _, pkg := range pkgsInfos {
         for _, catalogName := range pkg.Catalogs {
             catalogs[catalogName] = append(catalogs[catalogName], pkg)
-            fmt.Printf("Adding %s to %s...\n", pkg.Name, catalogName)
+            fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catalogName)
         }
         allPackages = append(allPackages, pkg)
     }
