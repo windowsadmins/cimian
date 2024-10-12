@@ -6,13 +6,13 @@
 package status
 
 import (
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // GetFileMetadata is just a placeholder on darwin
 func GetFileMetadata(path string) WindowsMetadata {
 	// Log a warning since we are not running on windows
-	gorillalog.Warn("GetFileMetadata only supported on Windows:", path)
+	logging.Warn("GetFileMetadata only supported on Windows:", path)
 
 	// Set a fake `productName` and `versionString`
 	var fakeMetadata WindowsMetadata

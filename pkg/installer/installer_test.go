@@ -12,7 +12,7 @@ import (
 	"github.com/rodchristiansen/gorilla/pkg/catalog"
 	"github.com/rodchristiansen/gorilla/pkg/config"
 	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/rodchristiansen/gorilla/pkg/report"
 )
 
@@ -140,20 +140,20 @@ func TestHelperProcess(t *testing.T) {
 func fakeCheckStatus(catalogItem catalog.Item, installType string, cachePath string) (install bool, checkErr error) {
 	// Catch special names used in tests
 	if catalogItem.DisplayName == statusActionNoError {
-		gorillalog.Warn("Running Development Tests!")
-		gorillalog.Warn(catalogItem.DisplayName)
+		logging.Warn("Running Development Tests!")
+		logging.Warn(catalogItem.DisplayName)
 		return true, nil
 	} else if catalogItem.DisplayName == statusNoActionNoError {
-		gorillalog.Warn("Running Development Tests!")
-		gorillalog.Warn(catalogItem.DisplayName)
+		logging.Warn("Running Development Tests!")
+		logging.Warn(catalogItem.DisplayName)
 		return false, nil
 	} else if catalogItem.DisplayName == statusActionError {
-		gorillalog.Warn("Running Development Tests!")
-		gorillalog.Warn(catalogItem.DisplayName)
+		logging.Warn("Running Development Tests!")
+		logging.Warn(catalogItem.DisplayName)
 		return true, fmt.Errorf("testing %v", catalogItem.DisplayName)
 	} else if catalogItem.DisplayName == statusNoActionError {
-		gorillalog.Warn("Running Development Tests!")
-		gorillalog.Warn(catalogItem.DisplayName)
+		logging.Warn("Running Development Tests!")
+		logging.Warn(catalogItem.DisplayName)
 		return false, fmt.Errorf("testing %v", catalogItem.DisplayName)
 	}
 
@@ -575,8 +575,8 @@ func Example_runCommand() {
 		AppDataPath: logTmp,
 	}
 
-	// Start gorillalog in debug mode
-	gorillalog.NewLog(cfgVerbose)
+	// Start logging in debug mode
+	logging.NewLog(cfgVerbose)
 
 	// Override execCommand with our fake version
 	execCommand = fakeExecCommand

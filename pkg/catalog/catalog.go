@@ -6,7 +6,7 @@ import (
 
 	"github.com/rodchristiansen/gorilla/pkg/config"
 	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/rodchristiansen/gorilla/pkg/report"
 	"gopkg.in/yaml.v3"
 )
@@ -77,7 +77,7 @@ func Get(cfg config.Configuration) map[int]map[string]Item {
 
 	// Error if dont have at least one catalog
 	if len(cfg.Catalogs) < 1 {
-		gorillalog.Error("Unable to continue, no catalogs assigned: ", cfg.Catalogs)
+		logging.Error("Unable to continue, no catalogs assigned: ", cfg.Catalogs)
 	}
 
 	// Loop through the catalogs and get each one in order
@@ -87,17 +87,17 @@ func Get(cfg config.Configuration) map[int]map[string]Item {
 
 		// Download the catalog
 		catalogURL := cfg.URL + "catalogs/" + catalog + ".yaml"
-		gorillalog.Info("Catalog Url:", catalogURL)
+		logging.Info("Catalog Url:", catalogURL)
 		yamlFile, err := downloadGet(catalogURL)
 		if err != nil {
-			gorillalog.Error("Unable to retrieve catalog: ", err)
+			logging.Error("Unable to retrieve catalog: ", err)
 		}
 
 		// Parse the catalog
 		var catalogItems map[string]Item
 		err = yaml.Unmarshal(yamlFile, &catalogItems)
 		if err != nil {
-			gorillalog.Error("Unable to parse yaml catalog: ", err)
+			logging.Error("Unable to parse yaml catalog: ", err)
 		}
 
 		// Add the new parsed catalog items to the catalogMap

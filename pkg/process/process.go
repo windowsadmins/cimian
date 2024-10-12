@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 	"github.com/rodchristiansen/gorilla/pkg/catalog"
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/rodchristiansen/gorilla/pkg/installer"
 	"github.com/rodchristiansen/gorilla/pkg/manifest"
 	"github.com/rodchristiansen/gorilla/pkg/rollback"
@@ -55,7 +55,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 			_, err := firstItem(item, catalogsMap)
 			if err != nil {
 		logging.LogError(err, "Processing Error")
-				gorillalog.Warn(err)
+				logging.Warn(err)
 				continue
 			}
 
@@ -69,7 +69,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 			_, err := firstItem(item, catalogsMap)
 			if err != nil {
 		logging.LogError(err, "Processing Error")
-				gorillalog.Warn(err)
+				logging.Warn(err)
 				continue
 			}
 
@@ -83,7 +83,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 			_, err := firstItem(item, catalogsMap)
 			if err != nil {
 		logging.LogError(err, "Processing Error")
-				gorillalog.Warn(err)
+				logging.Warn(err)
 				continue
 			}
 
@@ -106,7 +106,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
 		logging.LogError(err, "Processing Error")
-			gorillalog.Warn(err)
+			logging.Warn(err)
 			continue
 		}
 		// Check for dependencies and install if found
@@ -115,7 +115,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 				validDependency, err := firstItem(dependency, catalogsMap)
 				if err != nil {
 		logging.LogError(err, "Processing Error")
-					gorillalog.Warn(err)
+					logging.Warn(err)
 					continue
 				}
 				installerInstall(validDependency, "install", urlPackages, cachePath, CheckOnly)
@@ -135,7 +135,7 @@ func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
 		logging.LogError(err, "Processing Error")
-			gorillalog.Warn(err)
+			logging.Warn(err)
 			continue
 		}
 		// Uninstall the item
@@ -152,7 +152,7 @@ func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, urlP
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
 		logging.LogError(err, "Processing Error")
-			gorillalog.Warn(err)
+			logging.Warn(err)
 			continue
 		}
 		// Update the item
@@ -203,12 +203,12 @@ func CleanUp(cachePath string) {
 	err := filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 		logging.LogError(err, "Processing Error")
-			gorillalog.Warn("Failed to access path:", path, err)
+			logging.Warn("Failed to access path:", path, err)
 			return err
 		}
 		// If not a directory and older that our limit, delete
 		if !info.IsDir() && fileOld(info) {
-			gorillalog.Info("Cleaning old cached file:", info.Name())
+			logging.Info("Cleaning old cached file:", info.Name())
 			osRemove(path)
 			return nil
 		}
@@ -216,7 +216,7 @@ func CleanUp(cachePath string) {
 	})
 	if err != nil {
 		logging.LogError(err, "Processing Error")
-		gorillalog.Warn("error walking path:", cachePath, err)
+		logging.Warn("error walking path:", cachePath, err)
 		return
 	}
 
@@ -224,13 +224,13 @@ func CleanUp(cachePath string) {
 	err = filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 		logging.LogError(err, "Processing Error")
-			gorillalog.Warn("Failed to access path:", path, err)
+			logging.Warn("Failed to access path:", path, err)
 			return err
 		}
 
 		// If a dir and empty, delete
 		if info.IsDir() && dirEmpty(path) {
-			gorillalog.Info("Cleaning empty directory:", info.Name())
+			logging.Info("Cleaning empty directory:", info.Name())
 			osRemove(path)
 			return nil
 
@@ -239,7 +239,7 @@ func CleanUp(cachePath string) {
 	})
 	if err != nil {
 		logging.LogError(err, "Processing Error")
-		gorillalog.Warn("error walking path:", cachePath, err)
+		logging.Warn("error walking path:", cachePath, err)
 		return
 	}
 }

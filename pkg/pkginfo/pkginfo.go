@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // PkgInfo represents the structure of a pkginfo file
@@ -40,7 +40,7 @@ func Load(pkgInfoPath string) map[string]PkgInfo {
 		if filepath.Ext(path) == ".json" {
 			pkgInfo, err := loadPkgInfo(path)
 			if err != nil {
-				gorillalog.Warn("Error loading pkginfo file:", path, err)
+				logging.Warn("Error loading pkginfo file:", path, err)
 				return nil
 			}
 			pkgInfos[pkgInfo.Name] = pkgInfo
@@ -49,7 +49,7 @@ func Load(pkgInfoPath string) map[string]PkgInfo {
 	})
 
 	if err != nil {
-		gorillalog.Warn("Error walking pkginfo directory:", err)
+		logging.Warn("Error walking pkginfo directory:", err)
 	}
 
 	return pkgInfos

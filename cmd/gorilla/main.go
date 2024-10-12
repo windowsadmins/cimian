@@ -8,7 +8,7 @@ import (
 	"github.com/rodchristiansen/gorilla/pkg/catalog"
 	"github.com/rodchristiansen/gorilla/pkg/config"
 	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/rodchristiansen/gorilla/pkg/manifest"
 	"github.com/rodchristiansen/gorilla/pkg/process"
 	"github.com/rodchristiansen/gorilla/pkg/report"
@@ -40,7 +40,7 @@ func main() {
 	}
 
 	// Create a new logger object
-	gorillalog.NewLog(cfg)
+	logging.NewLog(cfg)
 
 	// Start creating GorillaReport
 	if !cfg.CheckOnly {
@@ -51,7 +51,7 @@ func main() {
 	download.SetConfig(cfg)
 
 	// Get the manifests
-	gorillalog.Info("Retrieving manifest:", cfg.Manifest)
+	logging.Info("Retrieving manifest:", cfg.Manifest)
 	manifests, newCatalogs := manifest.Get(cfg)
 
 	// If we have newCatalogs, add them to the configuration
@@ -60,27 +60,27 @@ func main() {
 	}
 
 	// Get the catalogs
-	gorillalog.Info("Retrieving catalog:", cfg.Catalogs)
+	logging.Info("Retrieving catalog:", cfg.Catalogs)
 	catalogs := catalog.Get(cfg)
 
 	// Process the manifests into install type groups
-	gorillalog.Info("Processing manifest...")
+	logging.Info("Processing manifest...")
 	installs, uninstalls, updates := process.Manifests(manifests, catalogs)
 
 	// Prepare and install
-	gorillalog.Info("Processing managed installs...")
+	logging.Info("Processing managed installs...")
 	process.Installs(installs, catalogs, cfg.URLPackages, cfg.CachePath, cfg.CheckOnly)
 
 	// Prepare and uninstall
-	gorillalog.Info("Processing managed uninstalls...")
+	logging.Info("Processing managed uninstalls...")
 	process.Uninstalls(uninstalls, catalogs, cfg.URLPackages, cfg.CachePath, cfg.CheckOnly)
 
 	// Prepare and update
-	gorillalog.Info("Processing managed updates...")
+	logging.Info("Processing managed updates...")
 	process.Updates(updates, catalogs, cfg.URLPackages, cfg.CachePath, cfg.CheckOnly)
 
 	// Save GorillaReport to disk
-	gorillalog.Info("Saving GorillaReport.json...")
+	logging.Info("Saving GorillaReport.json...")
 	if !cfg.CheckOnly {
 		report.End()
 	} else {
@@ -88,8 +88,8 @@ func main() {
 	}
 
 	// Run CleanUp to delete old cached items and empty directories
-	gorillalog.Info("Cleaning up the cache...")
+	logging.Info("Cleaning up the cache...")
 	process.CleanUp(cfg.CachePath)
 
-	gorillalog.Info("Done!")
+	logging.Info("Done!")
 }

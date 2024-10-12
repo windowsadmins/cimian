@@ -6,7 +6,7 @@ package status
 import (
 	"fmt"
 
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/gonutz/w32"
 )
 
@@ -39,7 +39,7 @@ func GetFileMetadata(path string) WindowsMetadata {
 	// zero means there is no metadata
 	bufferSize := w32.GetFileVersionInfoSize(path)
 	if bufferSize <= 0 {
-		gorillalog.Info("No metadata found:", path)
+		logging.Info("No metadata found:", path)
 		return finalMetadata
 	}
 
@@ -47,14 +47,14 @@ func GetFileMetadata(path string) WindowsMetadata {
 	rawMetadata := make([]byte, bufferSize)
 	ok := w32.GetFileVersionInfo(path, rawMetadata)
 	if !ok {
-		gorillalog.Warn("Unable to get metadata:", path)
+		logging.Warn("Unable to get metadata:", path)
 		return finalMetadata
 	}
 
 	// fixed contains the "fixed" portion at the root of our raw metadata
 	fixed, ok := w32.VerQueryValueRoot(rawMetadata)
 	if !ok {
-		gorillalog.Warn("Unable to get file version:", path)
+		logging.Warn("Unable to get file version:", path)
 		return finalMetadata
 	}
 
@@ -79,11 +79,11 @@ func GetFileMetadata(path string) WindowsMetadata {
 	// translation is the non-fixed part after translation/processing(?)
 	translation, ok := w32.VerQueryValueTranslations(rawMetadata)
 	if !ok {
-		gorillalog.Warn("Unable to get 'translate' metadata:", path)
+		logging.Warn("Unable to get 'translate' metadata:", path)
 		return finalMetadata
 	}
 	if len(translation) == 0 {
-		gorillalog.Warn("Unable to get additional metadata:", path)
+		logging.Warn("Unable to get additional metadata:", path)
 		return finalMetadata
 	}
 	translatedData := translation[0]
@@ -91,7 +91,7 @@ func GetFileMetadata(path string) WindowsMetadata {
 	// productName is the value of "ProductName" in the metadata
 	finalMetadata.productName, ok = w32.VerQueryValueString(rawMetadata, translatedData, "ProductName")
 	if !ok {
-		gorillalog.Info("Unable to get product name from metadata:", path)
+		logging.Info("Unable to get product name from metadata:", path)
 	}
 
 	return finalMetadata
