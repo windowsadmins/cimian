@@ -1,213 +1,144 @@
+
 package download
 
 import (
-	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/hex"
-	"fmt"
-	"io"
-	"io/ioutil"
-	"net"
-	"net/http"
-	"os"
-	"path"
-	"path/filepath"
-	"strings"
-	"time"
-
-	"github.com/rodchristiansen/gorilla/pkg/config"
+	"github.com/rodchristiansen/gorilla/pkg/retry"
 	"github.com/rodchristiansen/gorilla/pkg/logging"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+    "io"
+    "net/http"
+    "os"
+    "path/filepath"
+    "time"
+    "log"
 )
 
-var (
-	// A package level copy of our config for the `download` package to reference
-	downloadCfg config.Configuration
+const (
+    CachePath = `C:\ProgramData\ManagedInstalls\Cache`
+    CacheExpirationDays = 30
 )
 
-// SetConfig accepts a configuration struct that all functions in the `download` package will use
-func SetConfig(cfg config.Configuration) {
-	downloadCfg = cfg
+// DownloadFile handles downloading files with resumable capability and caching verification
+func DownloadFile(url, dest string) error {
+	config := retry.RetryConfig{MaxRetries: 3, InitialInterval: time.Second, Multiplier: 2.0}
+	return retry.Retry(config, func() error {
+	logging.LogDownloadStart(url)
+    os.MkdirAll(CachePath, 0755)
+    cachedFilePath := filepath.Join(CachePath, filepath.Base(dest))
+
+    // Check if the cached file exists and is valid
+    if fileExists(cachedFilePath) {
+        if isValidCache(cachedFilePath) {
+		logging.LogVerification(cachedFilePath, "Valid") {
+            log.Printf("Using cached file: %s", cachedFilePath)
+            return copyFile(cachedFilePath, dest)
+        }
+        logging.LogVerification(cachedFilePath, "Expired or Invalid")
+    }
+
+    // Open the destination file with append mode for resumable download
+    out, err := os.OpenFile(dest, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return fmt.Errorf("failed to open destination file: %v", err)
+    }
+    defer out.Close()
+
+    // Get file size for resuming
+    existingFileSize, err := out.Seek(0, io.SeekEnd)
+    if err != nil {
+        return fmt.Errorf("failed to get existing file size: %v", err)
+    }
+
+    // Create request with Range header
+    req, err := http.NewRequest("GET", url, nil)
+    if err != nil {
+        return fmt.Errorf("failed to create HTTP request: %v", err)
+    }
+    if existingFileSize > 0 {
+        req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingFileSize))
+    }
+
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return fmt.Errorf("failed to download file: %v", err)
+    }
+    defer resp.Body.Close()
+	logging.LogDownloadComplete(dest)
+
+    if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+        return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
+    }
+
+    // Write the response body to the destination file
+    _, err = io.Copy(out, resp.Body)
+    if err != nil {
+        return fmt.Errorf("failed to write downloaded data to file: %v", err)
+    }
+
+    // Cache the downloaded file
+    if err := copyFile(dest, cachedFilePath); err != nil {
+        return fmt.Errorf("failed to cache the downloaded file: %v", err)
+    }
+
+    return nil })
 }
 
-// File downloads a provided url to the file path specified.
-func File(file string, url string) error {
-	// Get the absolute file path
-	_, fileName := path.Split(url)
-	absPath := filepath.Join(file, fileName)
-
-	// Create the directory
-	err := os.MkdirAll(filepath.Clean(file), 0755)
-	if err != nil {
-		logging.Warn("Unable to make filepath:", file, err)
-	}
-
-	// Create the file
-	f, err := os.Create(filepath.Clean(absPath))
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// get the content at the provided url
-	responseBody, err := Get(url)
-	if err != nil {
-		return err
-	}
-
-	// Write the responseBody to the file we opened
-	_, err = f.Write(responseBody)
-	if err != nil {
-		return err
-	}
-
-	return nil
+// fileExists checks if a file exists at the given path
+func fileExists(path string) bool {
+    _, err := os.Stat(path)
+    return err == nil
 }
 
-// Get downloads a url and returns the body
-// Timeout is 10 seconds
-// Will only write to disk if http status code is 2XX
-func Get(url string) ([]byte, error) {
+// isValidCache checks if the cached file is still valid based on expiration and hash verification
+func isValidCache(path string) bool {
+    fileInfo, err := os.Stat(path)
+    if err != nil {
+        return false
+    }
 
-	// Declare the http client
-	var client *http.Client
+    // Check if the file is expired
+    if time.Since(fileInfo.ModTime()).Hours() > 24*CacheExpirationDays {
+        return false
+    }
 
-	// If TLSAuth is true, configure server and client certs
-	if downloadCfg.TLSAuth {
-		// Load	the client certificate and private key
-		clientCert, err := tls.LoadX509KeyPair(downloadCfg.TLSClientCert, downloadCfg.TLSClientKey)
-		if err != nil {
-			return nil, err
-		}
-
-		// Load server certificates
-		serverCert, err := ioutil.ReadFile(downloadCfg.TLSServerCert)
-		if err != nil {
-			return nil, err
-		}
-		caCertPool := x509.NewCertPool()
-		caCertPool.AppendCertsFromPEM(serverCert)
-
-		// Setup the tls configuration
-		tlsConfig := &tls.Config{
-			Certificates: []tls.Certificate{clientCert},
-			RootCAs:      caCertPool,
-			// Insecure, but might need to be an option for odd configurations in the future
-			// Renegotiation: tls.RenegotiateFreelyAsClient,
-		}
-
-		// Setup the http client
-		client = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tlsConfig,
-				Dial: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 10 * time.Second,
-				}).Dial,
-				TLSHandshakeTimeout:   10 * time.Second,
-				ResponseHeaderTimeout: 10 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-			},
-		}
-	} else {
-		// Setup our http client without tls auth
-		// Defining the transport separately so we can add a `file://` protocol
-		transport := &http.Transport{
-			Dial: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 10 * time.Second,
-			}).Dial,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
-
-		// Register a file handler so `file://` works
-		transport.RegisterProtocol("file", http.NewFileTransport(http.Dir("/")))
-
-		// Create the client using our custom transport
-		client = &http.Client{Transport: transport}
-	}
-
-	// Build the request
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		logging.Warn("Unable to request url:", url, err)
-	}
-
-	// If we have a user and pass, configure basic auth
-	if downloadCfg.AuthUser != "" && downloadCfg.AuthPass != "" {
-		req.SetBasicAuth(downloadCfg.AuthUser, downloadCfg.AuthPass)
-	}
-
-	// Actually send the request, using the client we setup
-	// Storing the response in resp
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// Check that the request was successful
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("%s : Download status code: %d", url, resp.StatusCode)
-	}
-
-	// Copy the download to a a buffer
-	responseBody, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return responseBody, nil
+    // Verify file hash (assuming SHA-256 hash is stored in metadata for comparison)
+    expectedHash := calculateHash(path)
+    actualHash := getStoredHash(path) // This function would retrieve the hash stored during the original download
+    return expectedHash == actualHash
 }
 
-// Verify compares a provided hash to the actual hash of a file
-func Verify(file string, sha string) bool {
-	f, err := os.Open(file)
-	if err != nil {
-		logging.Warn("Unable to open file:", err)
-		return false
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		logging.Warn("Unable to verify hash due to IO error:", err)
-		return false
-	}
-	shaHash := hex.EncodeToString(h.Sum(nil))
-	if shaHash != strings.ToLower(sha) {
-		logging.Debug("File hash does not match expected value:", file)
-		return false
-	}
-	return true
+// calculateHash computes the SHA-256 hash of a file
+func calculateHash(path string) string {
+    file, err := os.Open(path)
+    if err != nil {
+        return ""
+    }
+    defer file.Close()
+
+    hasher := sha256.New()
+    if _, err := io.Copy(hasher, file); err != nil {
+        return ""
+    }
+
+    return hex.EncodeToString(hasher.Sum(nil))
 }
 
-// IfNeeded takes the same values as Download plus a hash as a string
-// It will check if the file already exists, by comparing the hash
-// If the hash does not match, it will attempt to download the file
-// Once downloaded it will attempt to verify the hash again
-func IfNeeded(absFile string, url string, hash string) bool {
-	// If the file exists, check the hash
-	var verified = false
-	if _, err := os.Stat(absFile); err == nil {
-		verified = Verify(absFile, hash)
-	}
+// copyFile copies a file from src to dest
+func copyFile(src, dest string) error {
+    input, err := os.Open(src)
+    if err != nil {
+        return err
+    }
+    defer input.Close()
 
-	// If hash failed, download the installer
-	if !verified {
-		absPath, _ := filepath.Split(absFile)
-		logging.Info("Downloading", url, "to", absPath)
-		// Download the installer
-		err := File(absPath, url)
-		if err != nil {
-			logging.Warn("Unable to retrieve package:", url, err)
-			return verified
-		}
-		verified = Verify(absFile, hash)
-	}
+    output, err := os.Create(dest)
+    if err != nil {
+        return err
+    }
+    defer output.Close()
 
-	// return the status of verified
-	return verified
+    _, err = io.Copy(output, input)
+    return err
 }
