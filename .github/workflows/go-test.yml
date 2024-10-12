@@ -1,4 +1,5 @@
-name: go-test
+name: Go Test
+
 on:
   push:
     branches:
@@ -7,25 +8,26 @@ on:
   release:
     types:
       - published
-jobs:
 
+jobs:
   build:
-    name: Build
+    name: Build and Test
     runs-on: windows-latest
     timeout-minutes: 25
+
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
 
     - name: Set up Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@v4
 
-    - name: Set Git config
-      run: git config --global core.autocrlf false
+    - name: Build all binaries
+      run: |
+        for /D %%D in (cmd/*) do (
+          cd %%D
+          go build -v
+        )
 
-    - name: Check out code
-      uses: actions/checkout@v2
-
-    - name: Build
-      run: go build -v ./cmd/gorilla
-
-    - name: Test
+    - name: Run Tests
       run: go test -race -cover ./...

@@ -1,10 +1,10 @@
 name: Build Release
 
-# Trigger on every main branch push
 on:
   push:
     branches:
       - main
+
 jobs:
   build:
     strategy:
@@ -13,55 +13,42 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
+    - name: Checkout code
+      uses: actions/checkout@v3
 
-    - name: Setup go
-      uses: actions/setup-go@v2
+    - name: Set up Go
+      uses: actions/setup-go@v4
 
-    - name: Get branch & rev
+    - name: Set Release Version (YYYY.MM.DD)
+      id: set_version
+      shell: pwsh
       run: |
-        echo "Working Path: ${Env:GITHUB_WORKSPACE}"
-        $branchName = $Env:GITHUB_REF -replace 'refs/heads/', ''
-        echo "Branch: ${branchName}"
-        echo "CURRENT_BRANCH=${branchName}" >> $Env:GITHUB_ENV
-        $revision = (git rev-parse HEAD)
-        echo "REVISION=${revision}" >> $Env:GITHUB_ENV
-    - name: Get go version
+        $version = Get-Date -Format "yyyy.MM.dd"
+        echo "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+
+    - name: Build all binaries
       run: |
-        $vers=((go version) -replace "go version go", "" -replace " windows/amd64" )
-        echo "GO_VERSION=${vers}" >> $Env:GITHUB_ENV
-
-    - name: Create version tag
-      id: create_tag
-      uses: paulhatch/semantic-version@v4.0.1
-      with: 
-        tag_prefix: "v"
-        major_pattern: "(MAJOR)"
-        minor_pattern: "/[\\s]*/"
-        format: "${major}.${minor}"
-        namespace: ''
-        short_tags: false
-        bump_each_commit: false
-
-    - name: Build
-      working-directory: ./cmd/gorilla
+        for /D %%D in (cmd/*) do (
+          cd %%D
+          go build -v -ldflags="`
+            -X github.com/rodchristiansen/gorilla/pkg/version.appName=%%~nxD`
+            -X github.com/rodchristiansen/gorilla/pkg/version.version=${{ env.RELEASE_VERSION }}`
+            -X github.com/rodchristiansen/gorilla/pkg/version.branch=${{ github.ref_name }}`
+            -X github.com/rodchristiansen/gorilla/pkg/version.buildDate=$(Get-Date -Format s)`
+            -X github.com/rodchristiansen/gorilla/pkg/version.revision=$(git rev-parse HEAD)"
+        )
+        
+    - name: Package Binaries
       run: |
-        go build -v -ldflags="`
-          -X github.com/1dustindavis/gorilla/pkg/version.appName=gorilla`
-          -X github.com/1dustindavis/gorilla/pkg/version.version=${{ steps.create_tag.outputs.version_tag }}`
-          -X github.com/1dustindavis/gorilla/pkg/version.branch=${{ env.CURRENT_BRANCH }}`
-          -X github.com/1dustindavis/gorilla/pkg/version.buildDate=$(Get-Date -format s)`
-          -X github.com/1dustindavis/gorilla/pkg/version.revision=${{ env.REVISION }}`
-          -X github.com/1dustindavis/gorilla/pkg/version.goVersion=${{ env.GO_VERSION }}"`
+        mkdir -p release
+        move cmd/*/bin/*.exe release/
+        tar -czvf release.tar.gz release/
 
-    - name: Cut release
-      uses: ncipollo/release-action@v1
-      with:
-        allowUpdates: false
-        prerelease: true
-        artifacts: "./cmd/gorilla/gorilla.exe"
-        tag: ${{ steps.create_tag.outputs.version_tag }}
-        token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create Release
+      shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create $env:RELEASE_VERSION cmd/*/*.exe `
+          --title "Gorilla v$env:RELEASE_VERSION" `
+          --notes "Automated release for $env:RELEASE_VERSION."

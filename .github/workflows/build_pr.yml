@@ -1,25 +1,32 @@
-name: Ensure PR builds
+name: Build PR
 
-# Trigger on every pull request to main
 on:
   pull_request:
     branches:
       - main
+
 jobs:
   build:
+    runs-on: windows-latest
+
     strategy:
       matrix:
         targetplatform: [x64]
-    runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
+    - name: Checkout Code
+      uses: actions/checkout@v3
 
-    - name: Setup go
-      uses: actions/setup-go@v2
+    - name: Set up Go Environment
+      uses: actions/setup-go@v4
 
-    - name: Build
-      run: go build -v ./cmd/gorilla
+    - name: Build Binaries
+      run: |
+        for /D %%D in (cmd/*) do (
+          cd %%D
+          go build -o bin/
+        )
+      
+    - name: Verify Output
+      run: |
+        dir /s /b cmd/*/bin/*.exe
