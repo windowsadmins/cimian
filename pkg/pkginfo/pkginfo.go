@@ -1,72 +1,88 @@
+
 package pkginfo
 
 import (
-	"encoding/json"
-	"io/ioutil"
-	"os"
-	"path/filepath"
-
-	"github.com/rodchristiansen/gorilla/pkg/logging"
+	"github.com/rodchristiansen/gorilla/pkg/rollback"
+    "encoding/json"
+    "os"
+    "log"
+    "fmt"
 )
 
-// PkgInfo represents the structure of a pkginfo file
+const (
+    InstallInfoPath = `C:\ProgramData\ManagedInstalls\InstallInfo.yaml`
+)
+
+// PkgInfo represents the metadata for a package, including dependencies
 type PkgInfo struct {
-	Name                  string   `json:"name"`
-	Version               string   `json:"version"`
-	Catalogs              []string `json:"catalogs"`
-	InstallerItemLocation string   `json:"installer_item_location"`
-	InstallerType         string   `json:"installer_type"`
-	MinimumOSVersion      string   `json:"minimum_os_version"`
-	UninstallMethod       string   `json:"uninstall_method,omitempty"`
-	UninstallScript       string   `json:"uninstall_script,omitempty"`
-	InstallCheckScript    string   `json:"install_check_script,omitempty"`
-	PostInstallScript     string   `json:"postinstall_script,omitempty"`
-	PreInstallScript      string   `json:"preinstall_script,omitempty"`
-	RestartAction         string   `json:"restart_action,omitempty"`
-	SuppressBundle        bool     `json:"suppress_bundle_relocation,omitempty"`
-	UnattendedInstall     bool     `json:"unattended_install,omitempty"`
-	UnattendedUninstall   bool     `json:"unattended_uninstall,omitempty"`
-	AdditionalPackages    []string `json:"additional_packages,omitempty"`
+    Name         string   `json:"name"`
+    Version      string   `json:"version"`
+    Dependencies []string `json:"dependencies"`
 }
 
-// Load reads all pkginfo files from the specified directory
-func Load(pkgInfoPath string) map[string]PkgInfo {
-	pkgInfos := make(map[string]PkgInfo)
+// InstallDependencies installs all dependencies for the given package
+func InstallDependencies(pkg *PkgInfo) error {
+    if len(pkg.Dependencies) == 0 {
+        log.Printf("No dependencies for package: %s", pkg.Name)
+        return nil
+    }
 
-	err := filepath.Walk(pkgInfoPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if filepath.Ext(path) == ".json" {
-			pkgInfo, err := loadPkgInfo(path)
-			if err != nil {
-				logging.Warn("Error loading pkginfo file:", path, err)
-				return nil
-			}
-			pkgInfos[pkgInfo.Name] = pkgInfo
-		}
+    for _, dependency := range pkg.Dependencies {
+        log.Printf("Installing dependency: %s for package: %s", dependency, pkg.Name)
+        depPkg, err := LoadPackageInfo(dependency)
+        if err != nil {
+            return fmt.Errorf("failed to load dependency %s: %v", dependency, err)
+        }
+
+        err = InstallPackage(depPkg)
+        if err != nil {
+            return fmt.Errorf("failed to install dependency %s: %v", dependency, err)
+        }
+    }
+    return nil
+}
+
+// LoadPackageInfo loads the package metadata from InstallInfo.yaml
+func LoadPackageInfo(packageName string) (*PkgInfo, error) {
+    file, err := os.Open(InstallInfoPath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open install info file: %v", err)
+    }
+    defer file.Close()
+
+    var installedPackages []PkgInfo
+    if err := json.NewDecoder(file).Decode(&installedPackages); err != nil {
+        return nil, fmt.Errorf("failed to decode install info: %v", err)
+    }
+
+    for _, pkg := range installedPackages {
+        if pkg.Name == packageName {
+            return &pkg, nil
+        }
+    }
+    return nil, fmt.Errorf("package %s not found", packageName)
+}
+
+// InstallPackage installs the given package, including handling dependencies
+func InstallPackage(pkg *PkgInfo) error {
+	rollbackManager := &rollback.RollbackManager{}
+    log.Printf("Starting installation for package: %s Version: %s", pkg.Name, pkg.Version)
+
+    // Install dependencies first
+    if err := InstallDependencies(pkg); err != nil {
+        rollbackManager.ExecuteRollback()
+		return fmt.Errorf("failed to install dependencies for package %s: %v", pkg.Name, err)
+    }
+
+    // Simulate the installation process
+    log.Printf("Installing package: %s Version: %s", pkg.Name, pkg.Version)
+	rollbackManager.AddRollbackAction(rollback.RollbackAction{Description: "Uninstalling package", Execute: func() error {
+		// Placeholder for uninstall logic
+		log.Printf("Rolling back installation for package: %s", pkg.Name)
 		return nil
-	})
+	}})
 
-	if err != nil {
-		logging.Warn("Error walking pkginfo directory:", err)
-	}
-
-	return pkgInfos
-}
-
-func loadPkgInfo(path string) (PkgInfo, error) {
-	var pkgInfo PkgInfo
-
-	data, err := ioutil.ReadFile(path)
-	if err != nil {
-		return pkgInfo, err
-	}
-
-	err = json.Unmarshal(data, &pkgInfo)
-	if err != nil {
-		return pkgInfo, err
-	}
-
-	return pkgInfo, nil
+    // Log the completion of the installation
+    log.Printf("Successfully installed package: %s Version: %s", pkg.Name, pkg.Version)
+    return nil
 }
