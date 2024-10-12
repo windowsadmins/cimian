@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/rodchristiansen/gorilla/pkg/config"
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 var (
@@ -39,7 +39,7 @@ func File(file string, url string) error {
 	// Create the directory
 	err := os.MkdirAll(filepath.Clean(file), 0755)
 	if err != nil {
-		gorillalog.Warn("Unable to make filepath:", file, err)
+		logging.Warn("Unable to make filepath:", file, err)
 	}
 
 	// Create the file
@@ -132,7 +132,7 @@ func Get(url string) ([]byte, error) {
 	// Build the request
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		gorillalog.Warn("Unable to request url:", url, err)
+		logging.Warn("Unable to request url:", url, err)
 	}
 
 	// If we have a user and pass, configure basic auth
@@ -167,18 +167,18 @@ func Get(url string) ([]byte, error) {
 func Verify(file string, sha string) bool {
 	f, err := os.Open(file)
 	if err != nil {
-		gorillalog.Warn("Unable to open file:", err)
+		logging.Warn("Unable to open file:", err)
 		return false
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		gorillalog.Warn("Unable to verify hash due to IO error:", err)
+		logging.Warn("Unable to verify hash due to IO error:", err)
 		return false
 	}
 	shaHash := hex.EncodeToString(h.Sum(nil))
 	if shaHash != strings.ToLower(sha) {
-		gorillalog.Debug("File hash does not match expected value:", file)
+		logging.Debug("File hash does not match expected value:", file)
 		return false
 	}
 	return true
@@ -198,11 +198,11 @@ func IfNeeded(absFile string, url string, hash string) bool {
 	// If hash failed, download the installer
 	if !verified {
 		absPath, _ := filepath.Split(absFile)
-		gorillalog.Info("Downloading", url, "to", absPath)
+		logging.Info("Downloading", url, "to", absPath)
 		// Download the installer
 		err := File(absPath, url)
 		if err != nil {
-			gorillalog.Warn("Unable to retrieve package:", url, err)
+			logging.Warn("Unable to retrieve package:", url, err)
 			return verified
 		}
 		verified = Verify(absFile, hash)

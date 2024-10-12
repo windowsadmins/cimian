@@ -7,7 +7,7 @@ import (
 
 	"github.com/rodchristiansen/gorilla/pkg/config"
 	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/rodchristiansen/gorilla/pkg/report"
 	"gopkg.in/yaml.v3"
 )
@@ -58,10 +58,10 @@ func Get(cfg config.Configuration) (manifests []Item, newCatalogs []string) {
 
 		// Download the manifest
 		manifestURL := cfg.URL + "manifests/" + currentManifest + ".yaml"
-		gorillalog.Info("Manifest Url:", manifestURL)
+		logging.Info("Manifest Url:", manifestURL)
 		yamlFile, err := downloadGet(manifestURL)
 		if err != nil {
-			gorillalog.Error("Unable to retrieve manifest: ", err)
+			logging.Error("Unable to retrieve manifest: ", err)
 		}
 
 		newManifest := parseManifest(manifestURL, yamlFile)
@@ -123,10 +123,10 @@ func Get(cfg config.Configuration) (manifests []Item, newCatalogs []string) {
 	if len(cfg.LocalManifests) > 0 {
 		for _, manifest := range cfg.LocalManifests {
 			var localManifest Item
-			gorillalog.Info("Manifest File:", manifest)
+			logging.Info("Manifest File:", manifest)
 			localManifestsYaml, err := ioutil.ReadFile(manifest)
 			if err != nil {
-				gorillalog.Warn("Unable to parse yaml manifest: ", manifest, err)
+				logging.Warn("Unable to parse yaml manifest: ", manifest, err)
 			}
 			localManifest = parseManifest(manifest, localManifestsYaml)
 			manifests = append(manifests, localManifest)
@@ -141,7 +141,7 @@ func parseManifest(manifestURL string, yamlFile []byte) Item {
 	var newManifest Item
 	err := yaml.Unmarshal(yamlFile, &newManifest)
 	if err != nil {
-		gorillalog.Error("Unable to parse yaml manifest: ", manifestURL, err)
+		logging.Error("Unable to parse yaml manifest: ", manifestURL, err)
 	}
 	return newManifest
 }

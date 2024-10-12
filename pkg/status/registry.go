@@ -4,7 +4,7 @@
 package status
 
 import (
-	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 	registry "golang.org/x/sys/windows/registry"
 )
 
@@ -42,7 +42,7 @@ func getUninstallKeys() (installedItems map[string]RegistryApplication, checkErr
 		// Get the Uninstall key from HKLM
 		key, checkErr := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.READ)
 		if checkErr != nil {
-			gorillalog.Warn("Unable to read registry key:", checkErr)
+			logging.Warn("Unable to read registry key:", checkErr)
 			return installedItems, checkErr
 		}
 		defer key.Close()
@@ -50,7 +50,7 @@ func getUninstallKeys() (installedItems map[string]RegistryApplication, checkErr
 		// Get all the subkeys under Uninstall
 		subKeys, checkErr := key.ReadSubKeyNames(0)
 		if checkErr != nil {
-			gorillalog.Warn("Unable to read registry sub keys:", checkErr)
+			logging.Warn("Unable to read registry sub keys:", checkErr)
 			return installedItems, checkErr
 		}
 
@@ -62,7 +62,7 @@ func getUninstallKeys() (installedItems map[string]RegistryApplication, checkErr
 			itemKeyName := regPath + `\` + item
 			itemKey, checkErr := registry.OpenKey(registry.LOCAL_MACHINE, itemKeyName, registry.READ)
 			if checkErr != nil {
-				gorillalog.Warn("Unable to read registry key:", checkErr)
+				logging.Warn("Unable to read registry key:", checkErr)
 				return installedItems, checkErr
 			}
 			defer itemKey.Close()
@@ -70,7 +70,7 @@ func getUninstallKeys() (installedItems map[string]RegistryApplication, checkErr
 			// Put the names of all the values in a slice
 			itemValues, checkErr := itemKey.ReadValueNames(0)
 			if checkErr != nil {
-				gorillalog.Warn("Unable to read registry value names:", checkErr)
+				logging.Warn("Unable to read registry value names:", checkErr)
 				return installedItems, checkErr
 			}
 
@@ -79,19 +79,19 @@ func getUninstallKeys() (installedItems map[string]RegistryApplication, checkErr
 				installedItem.Key = itemKeyName
 				installedItem.Name, _, checkErr = itemKey.GetStringValue("DisplayName")
 				if checkErr != nil {
-					gorillalog.Warn("Unable to read DisplayName", checkErr)
+					logging.Warn("Unable to read DisplayName", checkErr)
 					return installedItems, checkErr
 				}
 
 				installedItem.Version, _, checkErr = itemKey.GetStringValue("DisplayVersion")
 				if checkErr != nil {
-					gorillalog.Warn("Unable to read DisplayVersion", checkErr)
+					logging.Warn("Unable to read DisplayVersion", checkErr)
 					return installedItems, checkErr
 				}
 
 				installedItem.Uninstall, _, checkErr = itemKey.GetStringValue("UninstallString")
 				if checkErr != nil {
-					gorillalog.Warn("Unable to read UninstallString", checkErr)
+					logging.Warn("Unable to read UninstallString", checkErr)
 					return installedItems, checkErr
 				}
 				installedItems[installedItem.Name] = installedItem

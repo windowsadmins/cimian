@@ -1,4 +1,4 @@
-package gorillalog
+package logging
 
 import (
 	"fmt"

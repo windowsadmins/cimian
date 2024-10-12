@@ -10,6 +10,7 @@ import (
     "time"
     "github.com/rodchristiansen/gorilla/pkg/catalog"
     "github.com/rodchristiansen/gorilla/pkg/config"
+    "github.com/rodchristiansen/gorilla/pkg/download"
     "github.com/rodchristiansen/gorilla/pkg/pkginfo"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"

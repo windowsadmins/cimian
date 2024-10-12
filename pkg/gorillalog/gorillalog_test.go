@@ -1,4 +1,4 @@
-package gorillalog
+package logging
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 // TestNewLog tests the creation of the log and its directory
 func TestNewLog(t *testing.T) {
 	// Set up a place for test data
-	tmpDir := filepath.Join(os.Getenv("TMPDIR"), "gorillalog")
+	tmpDir := filepath.Join(os.Getenv("TMPDIR"), "logging")
 
 	cfg := config.Configuration{
 		AppDataPath: tmpDir,
