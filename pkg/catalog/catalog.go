@@ -86,7 +86,7 @@ func Get(cfg config.Configuration) map[int]map[string]Item {
 		catalogCount++
 
 		// Download the catalog
-		catalogURL := cfg.URL + "catalogs/" + catalog + ".yaml"
+		catalogURL := filepath.Join(cfg.URLPkgsInfo, catalog + ".yaml")
 		logging.Info("Catalog Url:", catalogURL)
 		yamlFile, err := downloadGet(catalogURL)
 		if err != nil {
