@@ -1,191 +1,79 @@
+
 package config
 
 import (
-	"flag"
-	"fmt"
-	"io/ioutil"
-	"os"
-	"path/filepath"
+    "os"
+    "io/ioutil"
+    "log"
+    "path/filepath"
 
-	"gopkg.in/yaml.v3"
-
-	"github.com/rodchristiansen/gorilla/pkg/report"
-	"github.com/rodchristiansen/gorilla/pkg/version"
+    "gopkg.in/yaml.v3"
 )
 
-var (
-	// CachePath is a directory we will use for temporary storage
-	cachePath string
-
-	// Define flag defaults
-	aboutArg         bool
-	aboutDefault     = false
-	configArg        string
-	configDefault    = filepath.Join(os.Getenv("ProgramData"), "gorilla/config.yaml")
-	debugArg         bool
-	debugDefault     = false
-	helpArg          bool
-	helpDefault      = false
-	verboseArg       bool
-	verboseDefault   = false
-	checkOnlyArg     bool
-	checkOnlyDefault = false
-	versionArg       bool
-	versionDefault   = false
-
-	// Use a fake function so we can override when testing
-	osExit = os.Exit
+const (
+    ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 )
 
-const usage = `
-Gorilla - Munki-like Application Management for Windows
-https://github.com/rodchristiansen/gorilla
-
-Usage: gorilla.exe [options]
-
-Options:
--c, -config         path to configuration file in yaml format
--C, -checkonly	    enable check only mode
--v, -verbose        enable verbose output
--d, -debug          enable debug output
--a, -about          displays the version number and other build info
--V, -version        display the version number
--h, -help           display this help message
-
-`
-
-// Configuration stores all of the possible parameters a config file could contain
+// Configuration holds the configurable options for Gorilla in YAML format
 type Configuration struct {
-	URL            string   `yaml:"url"`
-	URLPackages    string   `yaml:"url_packages"`
-	Manifest       string   `yaml:"manifest"`
-	LocalManifests []string `yaml:"local_manifests,omitempty"`
-	Catalogs       []string `yaml:"catalogs"`
-	AppDataPath    string   `yaml:"app_data_path"`
-	Verbose        bool     `yaml:"verbose,omitempty"`
-	Debug          bool     `yaml:"debug,omitempty"`
-	CheckOnly      bool     `yaml:"checkonly,omitempty"`
-	AuthUser       string   `yaml:"auth_user,omitempty"`
-	AuthPass       string   `yaml:"auth_pass,omitempty"`
-	TLSAuth        bool     `yaml:"tls_auth,omitempty"`
-	TLSClientCert  string   `yaml:"tls_client_cert,omitempty"`
-	TLSClientKey   string   `yaml:"tls_client_key,omitempty"`
-	TLSServerCert  string   `yaml:"tls_server_cert,omitempty"`
-	CachePath      string
+    InstallPath  string `yaml:"install_path"`
+    LogLevel     string `yaml:"log_level"`
+    RepoURL      string `yaml:"repo_url"`
+    CatalogsPath string `yaml:"catalogs_path"`
 }
 
-func init() {
-	// Define flag names and defaults here
+// LoadConfig loads the configuration from a YAML file
+func LoadConfig() (*Configuration, error) {
+    if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
+        log.Printf("Configuration file does not exist: %s", ConfigPath)
+        return nil, err
+    }
 
-	// About
-	flag.BoolVar(&aboutArg, "about", aboutDefault, "")
-	flag.BoolVar(&aboutArg, "a", aboutDefault, "")
-	// Config
-	flag.StringVar(&configArg, "config", configDefault, "")
-	flag.StringVar(&configArg, "c", configDefault, "")
-	// Debug
-	flag.BoolVar(&debugArg, "debug", debugDefault, "")
-	flag.BoolVar(&debugArg, "d", debugDefault, "")
-	// Checkonly
-	flag.BoolVar(&checkOnlyArg, "checkonly", checkOnlyDefault, "")
-	flag.BoolVar(&checkOnlyArg, "C", checkOnlyDefault, "")
-	// Help
-	flag.BoolVar(&helpArg, "help", helpDefault, "")
-	flag.BoolVar(&helpArg, "h", helpDefault, "")
-	// Verbose
-	flag.BoolVar(&verboseArg, "verbose", verboseDefault, "")
-	flag.BoolVar(&verboseArg, "v", verboseDefault, "")
-	// Version
-	flag.BoolVar(&versionArg, "version", versionDefault, "")
-	flag.BoolVar(&versionArg, "V", versionDefault, "")
+    data, err := ioutil.ReadFile(ConfigPath)
+    if err != nil {
+        log.Printf("Failed to read configuration file: %v", err)
+        return nil, err
+    }
+
+    var config Configuration
+    err = yaml.Unmarshal(data, &config)
+    if err != nil {
+        log.Printf("Failed to parse configuration file: %v", err)
+        return nil, err
+    }
+
+    return &config, nil
 }
 
-func parseArguments() (string, bool, bool, bool) {
-	// Get the command line args
-	flag.Parse()
-	if helpArg {
-		version.Print()
-		fmt.Print(usage)
-		osExit(0)
-	}
-	if versionArg {
-		version.Print()
-		osExit(0)
-	}
-	if aboutArg {
-		version.PrintFull()
-		osExit(0)
-	}
+// SaveConfig saves the current configuration to a YAML file
+func SaveConfig(config *Configuration) error {
+    data, err := yaml.Marshal(config)
+    if err != nil {
+        log.Printf("Failed to serialize configuration: %v", err)
+        return err
+    }
 
-	return configArg, verboseArg, debugArg, checkOnlyArg
+    err = os.MkdirAll(filepath.Dir(ConfigPath), 0755)
+    if err != nil {
+        log.Printf("Failed to create configuration directory: %v", err)
+        return err
+    }
+
+    err = ioutil.WriteFile(ConfigPath, data, 0644)
+    if err != nil {
+        log.Printf("Failed to write configuration file: %v", err)
+        return err
+    }
+
+    return nil
 }
 
-// Get retrieves and parses the config file and returns a Configuration struct and any errors
-func Get() Configuration {
-	var cfg Configuration
-
-	// Parse any arguments that may have been passed
-	configPath, verbose, debug, checkonly := parseArguments()
-
-	// Read the config file
-	configFile, err := ioutil.ReadFile(configPath)
-	if err != nil {
-		fmt.Println("Unable to read configuration file: ", err)
-		os.Exit(1)
-	}
-
-	// Parse the config into a struct
-	err = yaml.Unmarshal(configFile, &cfg)
-	if err != nil {
-		fmt.Println("Unable to parse yaml configuration: ", err)
-		os.Exit(1)
-	}
-
-	// If Manifest wasnt provided, exit
-	if cfg.Manifest == "" {
-		fmt.Println("Invalid configuration - Manifest: ", err)
-		os.Exit(1)
-	}
-
-	// If URL wasnt provided, exit
-	if cfg.URL == "" {
-		fmt.Println("Invalid configuration - URL: ", err)
-		os.Exit(1)
-	}
-
-	// If URLPackages wasn't provided, use the repo URL
-	if cfg.URLPackages == "" {
-		cfg.URLPackages = cfg.URL
-	}
-
-	// If AppDataPath wasn't provided, configure a default
-	if cfg.AppDataPath == "" {
-		cfg.AppDataPath = filepath.Join(os.Getenv("ProgramData"), "gorilla/")
-	} else {
-		cfg.AppDataPath = filepath.Clean(cfg.AppDataPath)
-	}
-
-	// Set the verbosity
-	if verbose && !cfg.Verbose {
-		cfg.Verbose = true
-	}
-
-	// Set the debug and verbose
-	if debug && !cfg.Debug {
-		cfg.Debug = true
-		cfg.Verbose = true
-	}
-
-	if checkonly && !cfg.CheckOnly {
-		cfg.CheckOnly = true
-	}
-
-	// Set the cache path
-	cfg.CachePath = filepath.Join(cfg.AppDataPath, "cache")
-
-	// Add to GorillaReport
-	report.Items["Manifest"] = cfg.Manifest
-	report.Items["Catalog"] = cfg.Catalogs
-
-	return cfg
+// GetDefaultConfig provides default configuration values in YAML format
+func GetDefaultConfig() *Configuration {
+    return &Configuration{
+        InstallPath:  `C:\ProgramData\Gorilla\bin`,
+        LogLevel:     "INFO",
+        RepoURL:      "https://example.com/repo",
+        CatalogsPath: `C:\ProgramData\ManagedInstalls\catalogs`,
+    }
 }
