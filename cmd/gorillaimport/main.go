@@ -13,6 +13,8 @@ import (
 	"strings"
 	"gopkg.in/yaml.v3"
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // Installer struct holds the metadata for the installation package, 
@@ -74,11 +76,13 @@ func checkTools() error {
 	case "windows":
 		_, err := exec.LookPath("msiexec")
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			return fmt.Errorf("msiexec is missing. It is needed to extract MSI metadata on Windows.")
 		}
 	case "darwin":
 		_, err := exec.LookPath("msiextract")
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			return fmt.Errorf("msiextract is missing. You can install it using Homebrew.")
 		}
 	default:
@@ -105,11 +109,13 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 
 	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			return err
 		}
 		if filepath.Ext(path) == ".yaml" {
 			fileContent, err := os.ReadFile(path)
 			if err != nil {
+		logging.LogError(err, "Processing Error")
 				return err
 			}
 			var pkgsInfo PkgsInfo
@@ -140,6 +146,7 @@ func loadConfig(configPath string) (Config, error) {
 	var config Config
 	file, err := os.Open(configPath)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return config, err
 	}
 	defer file.Close()
@@ -156,6 +163,7 @@ func loadConfig(configPath string) (Config, error) {
 func saveConfig(configPath string, config Config) error {
 	file, err := os.Create(configPath)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return err
 	}
 	defer file.Close()
@@ -228,6 +236,7 @@ func configureGorillaImport() Config {
     // Save the configuration
     err := saveConfig(getConfigPath(), config)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         fmt.Printf("Error saving config: %s\n", err)
     }
 
@@ -240,6 +249,7 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
     var productName, developer, version, productCode, upgradeCode string
     tempDir, err := os.MkdirTemp("", "msi-extract-")
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return "", "", "", "", "", fmt.Errorf("failed to create temporary directory: %v", err)
     }
     defer os.RemoveAll(tempDir)
@@ -251,6 +261,7 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
         msiexecCmd.Dir = tempDir // Set the working directory
         err = msiexecCmd.Run()
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return "", "", "", "", "", fmt.Errorf("failed to extract MSI on Windows: %v", err)
         }
 
@@ -260,6 +271,7 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
         msidumpCmd.Dir = tempDir // Set the working directory
         err = msidumpCmd.Run()
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return "", "", "", "", "", fmt.Errorf("failed to extract MSI on macOS: %v", err)
         }
 
@@ -276,6 +288,7 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
     // Parse the extracted files for product metadata
     summaryData, err := os.ReadFile(summaryInfoFile)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return "", "", "", "", "", fmt.Errorf("failed to read _SummaryInformation.idt: %v", err)
     }
     lines := strings.Split(string(summaryData), "\n")
@@ -298,6 +311,7 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
     propertyFile := filepath.Join(tempDir, "Property.idt")
     propertyData, err := os.ReadFile(propertyFile)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return "", "", "", "", "", fmt.Errorf("failed to read Property.idt: %v", err)
     }
     lines = strings.Split(string(propertyData), "\n")
@@ -321,6 +335,7 @@ func extractMSIMetadata(msiFilePath string) (string, string, string, string, str
 func calculateSHA256(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return "", err
 	}
 	defer file.Close()
@@ -345,18 +360,21 @@ func copyFile(src, dst string) (int64, error) {
 
 	sourceFile, err := os.Open(src)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return 0, err
 	}
 	defer sourceFile.Close()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return 0, err
 	}
 	defer destFile.Close()
 
 	nBytes, err := io.Copy(destFile, sourceFile)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return 0, err
 	}
 
@@ -665,6 +683,7 @@ func createPkgsInfo(
 	if _, err := os.Stat(outputFilePath); os.IsNotExist(err) {
 		err = os.MkdirAll(outputFilePath, 0755)
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			return fmt.Errorf("failed to create directory structure: %v", err)
 		}
 	}
@@ -675,6 +694,7 @@ func createPkgsInfo(
 	// Encode the PkgsInfo struct using the custom YAML encoding function
 	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 	    return fmt.Errorf("failed to encode pkgsinfo YAML: %v", err)
 	}
 	
@@ -692,6 +712,7 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
     allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
     fileContent, err := os.ReadFile(allCatalogPath)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
     }
 
@@ -733,6 +754,7 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
     allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
     fileContent, err := os.ReadFile(allCatalogPath)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return nil, fmt.Errorf("failed to read All.yaml: %v", err)
     }
 
@@ -785,6 +807,7 @@ func gorillaImport(
     // Extract metadata such as product name, developer, version, product code, and upgrade code from the package
     productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         fmt.Printf("Error extracting metadata: %v\n", err)
         fmt.Println("Fallback to manual input.")
     }
@@ -796,6 +819,7 @@ func gorillaImport(
     // Calculate the SHA256 hash of the package for comparison
     currentFileHash, err := calculateSHA256(packagePath)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return false, fmt.Errorf("error calculating file hash: %v", err)
     }
 
@@ -806,6 +830,7 @@ func gorillaImport(
     if productCode != "" && upgradeCode != "" {
         matchingItem, hashMatches, err = findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error checking All.yaml: %v", err)
         }
 
@@ -828,6 +853,7 @@ func gorillaImport(
     // Check for an existing package with the same name but a different version in the catalog
     matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
     }
 
@@ -876,6 +902,7 @@ func gorillaImport(
     if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
         err = os.MkdirAll(pkgsFolderPath, 0755)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("failed to create directory structure: %v", err)
         }
     }
@@ -884,6 +911,7 @@ func gorillaImport(
     destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
     _, err = copyFile(packagePath, destinationPath)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return false, fmt.Errorf("failed to copy package to destination: %v", err)
     }
 
@@ -899,6 +927,7 @@ func gorillaImport(
     if installScriptPath != "" {
         content, err := os.ReadFile(installScriptPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error reading install script file: %v", err)
         }
         // Convert CRLF to LF
@@ -917,6 +946,7 @@ func gorillaImport(
     if postinstallScriptPath != "" {
         content, err := os.ReadFile(postinstallScriptPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error reading post-install script file: %v", err)
         }
         // Convert CRLF to LF
@@ -933,6 +963,7 @@ func gorillaImport(
     if preuninstallScriptPath != "" {
         content, err := os.ReadFile(preuninstallScriptPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error reading pre-uninstall script file: %v", err)
         }
         // Convert CRLF to LF
@@ -951,6 +982,7 @@ func gorillaImport(
     if postuninstallScriptPath != "" {
         content, err := os.ReadFile(postuninstallScriptPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error reading post-uninstall script file: %v", err)
         }
         // Convert CRLF to LF
@@ -969,6 +1001,7 @@ func gorillaImport(
     if installCheckScriptPath != "" {
         content, err := os.ReadFile(installCheckScriptPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error reading install check script file: %v", err)
         }
         // Convert CRLF to LF
@@ -979,6 +1012,7 @@ func gorillaImport(
     if uninstallCheckScriptPath != "" {
         content, err := os.ReadFile(uninstallCheckScriptPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error reading uninstall check script file: %v", err)
         }
         // Convert CRLF to LF
@@ -993,6 +1027,7 @@ func gorillaImport(
         }
         uninstallerHash, err := calculateSHA256(uninstallerPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("error calculating uninstaller file hash: %v", err)
         }
         uninstallerExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(uninstallerPath)), ".")
@@ -1002,6 +1037,7 @@ func gorillaImport(
         uninstallerDestinationPath := filepath.Join(pkgsFolderPath, uninstallerFilename)
         _, err = copyFile(uninstallerPath, uninstallerDestinationPath)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return false, fmt.Errorf("failed to copy uninstaller to destination: %v", err)
         }
 
@@ -1042,6 +1078,7 @@ func gorillaImport(
     )
 
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
     }
 
@@ -1131,6 +1168,7 @@ func confirmAction(prompt string) bool {
     var response string
     _, err := fmt.Scanln(&response)
     if err != nil {
+		logging.LogError(err, "Processing Error")
         fmt.Println("Error reading input, assuming 'no'")
         return false
     }
@@ -1228,6 +1266,8 @@ func rebuildCatalogs() {
 
 // main is the entry point of the program, handling configuration and running gorillaImport.
 func main() {
+	logging.InitLogger()
+	defer logging.CloseLogger()
     // Define command-line flags for various options.
     configFlag := flag.Bool("config", false, "Run interactive configuration setup.")
     archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
@@ -1309,6 +1349,7 @@ func main() {
         configData,
     )
     if err != nil {
+		logging.LogError(err, "Processing Error")
         fmt.Printf("Error: %s\n", err)
         os.Exit(1)
     }
@@ -1335,6 +1376,7 @@ func main() {
             // Check for errors during catalog rebuild.
             err := cmd.Run()
             if err != nil {
+		logging.LogError(err, "Processing Error")
                 fmt.Printf("Error running makecatalogs: %v\n", err)
                 os.Exit(1)
             }

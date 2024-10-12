@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"gopkg.in/yaml.v3"
+	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // PkgsInfo structure holds package metadata
@@ -95,6 +97,7 @@ func loadConfig(configPath string) (Config, error) {
 	var config Config
 	file, err := os.Open(configPath)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return config, err
 	}
 	defer file.Close()
@@ -113,11 +116,13 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 
     err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return err
         }
         if filepath.Ext(path) == ".yaml" {
             fileContent, err := os.ReadFile(path)
             if err != nil {
+		logging.LogError(err, "Processing Error")
                 return err
             }
             var pkgsInfo PkgsInfo
@@ -170,6 +175,7 @@ func writeCatalogs(repoPath string, catalogs CatalogsMap) error {
         outputFile := filepath.Join(catalogsDir, fmt.Sprintf("%s.yaml", catalogName))
         file, err := os.Create(outputFile)
         if err != nil {
+		logging.LogError(err, "Processing Error")
             return fmt.Errorf("failed to create catalog file: %v", err)
         }
         defer file.Close()
@@ -191,6 +197,7 @@ func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
     fmt.Println("Getting list of pkgsinfo...")
     pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
     if err != nil {
+		logging.LogError(err, "Processing Error")
         return fmt.Errorf("error scanning repo: %v", err)
     }
 
@@ -207,6 +214,8 @@ func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
 
 // main handles the command-line arguments and runs the makecatalogs function
 func main() {
+	logging.InitLogger()
+	defer logging.CloseLogger()
 	// Define the flags
 	repoPath := flag.String("repo_url", "", "Path to the Gorilla repo.")
 	force := flag.Bool("force", false, "Disable sanity checks.")
@@ -226,6 +235,7 @@ func main() {
 	// Load the config
 	config, err := loadConfig(configPath)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
