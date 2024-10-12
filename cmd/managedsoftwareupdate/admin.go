@@ -6,8 +6,9 @@ package main
 import (
 	"flag"
 	"fmt"
-
 	"golang.org/x/sys/windows"
+	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // adminCheck is borrowed from https://github.com/golang/go/issues/28804#issuecomment-438838144
@@ -31,6 +32,7 @@ func adminCheck() (bool, error) {
 		0, 0, 0, 0, 0, 0,
 		&adminSid)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return false, fmt.Errorf("SID Error: %v", err)
 	}
 	defer windows.FreeSid(adminSid)
@@ -41,6 +43,7 @@ func adminCheck() (bool, error) {
 
 	admin, err := token.IsMember(adminSid)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return false, fmt.Errorf("Token Membership Error: %v", err)
 	}
 	return admin, nil

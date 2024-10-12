@@ -8,6 +8,8 @@ package main
 import (
 	"flag"
 	"os"
+	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 func adminCheck() (bool, error) {
