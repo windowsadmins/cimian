@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
-
 	"github.com/rodchristiansen/gorilla/pkg/catalog"
 	"github.com/rodchristiansen/gorilla/pkg/gorillalog"
 	"github.com/rodchristiansen/gorilla/pkg/installer"
 	"github.com/rodchristiansen/gorilla/pkg/manifest"
+	"github.com/rodchristiansen/gorilla/pkg/rollback"
+	"github.com/rodchristiansen/gorilla/pkg/retry"
+	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // firstItem returns the first occurrence of an item in a map of catalogs
@@ -52,6 +54,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 			// Continue to the next item in the loop if we get an error
 			_, err := firstItem(item, catalogsMap)
 			if err != nil {
+		logging.LogError(err, "Processing Error")
 				gorillalog.Warn(err)
 				continue
 			}
@@ -65,6 +68,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 			// Continue to the next item in the loop if we get an error
 			_, err := firstItem(item, catalogsMap)
 			if err != nil {
+		logging.LogError(err, "Processing Error")
 				gorillalog.Warn(err)
 				continue
 			}
@@ -78,6 +82,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 			// Continue to the next item in the loop if we get an error
 			_, err := firstItem(item, catalogsMap)
 			if err != nil {
+		logging.LogError(err, "Processing Error")
 				gorillalog.Warn(err)
 				continue
 			}
@@ -100,6 +105,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 		// Continue to the next item in the loop if we get an error
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			gorillalog.Warn(err)
 			continue
 		}
@@ -108,6 +114,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 			for _, dependency := range validItem.Dependencies {
 				validDependency, err := firstItem(dependency, catalogsMap)
 				if err != nil {
+		logging.LogError(err, "Processing Error")
 					gorillalog.Warn(err)
 					continue
 				}
@@ -127,6 +134,7 @@ func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item
 		// Continue to the next item in the loop if we get an error
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			gorillalog.Warn(err)
 			continue
 		}
@@ -143,6 +151,7 @@ func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, urlP
 		// Continue to the next item in the loop if we get an error
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			gorillalog.Warn(err)
 			continue
 		}
@@ -155,6 +164,7 @@ func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, urlP
 func dirEmpty(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		return false
 	}
 	defer f.Close()
@@ -192,6 +202,7 @@ func CleanUp(cachePath string) {
 	// Clean up old files
 	err := filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			gorillalog.Warn("Failed to access path:", path, err)
 			return err
 		}
@@ -204,6 +215,7 @@ func CleanUp(cachePath string) {
 		return nil
 	})
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		gorillalog.Warn("error walking path:", cachePath, err)
 		return
 	}
@@ -211,6 +223,7 @@ func CleanUp(cachePath string) {
 	// Clean up empty directories
 	err = filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+		logging.LogError(err, "Processing Error")
 			gorillalog.Warn("Failed to access path:", path, err)
 			return err
 		}
@@ -225,6 +238,7 @@ func CleanUp(cachePath string) {
 		return nil
 	})
 	if err != nil {
+		logging.LogError(err, "Processing Error")
 		gorillalog.Warn("error walking path:", cachePath, err)
 		return
 	}
