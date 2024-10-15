@@ -818,10 +818,95 @@ func findMatchingItemInAllCatalogWithDifferentVersion(repoPath, name, version st
     return nil, nil
 }
 
-// gorillaImport handles the import process, including metadata extraction and script processing.
-// It verifies if the package already exists and prompts the user for confirmation when necessary.
+// processScript reads and processes a script file, converting line endings and wrapping if needed.
+func processScript(scriptPath, wrapperType string) (string, error) {
+    if scriptPath == "" {
+        return "", nil
+    }
+
+    content, err := os.ReadFile(scriptPath)
+    if err != nil {
+        return "", fmt.Errorf("error reading script file: %v", err)
+    }
+
+    scriptContent := strings.ReplaceAll(string(content), "\r\n", "\n")
+
+    // Wrap the script if it's a batch or PowerShell script.
+    switch wrapperType {
+    case "bat", "ps1":
+        return generateWrapperScript(scriptContent, wrapperType), nil
+    default:
+        return scriptContent, nil
+    }
+}
+
+// processUninstaller copies the uninstaller to the destination path and generates metadata for it.
+func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string) (*Installer, error) {
+    if uninstallerPath == "" {
+        return nil, nil
+    }
+
+    if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
+        return nil, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
+    }
+
+    // Calculate SHA256 hash for the uninstaller.
+    uninstallerHash, err := calculateSHA256(uninstallerPath)
+    if err != nil {
+        return nil, fmt.Errorf("error calculating uninstaller hash: %v", err)
+    }
+
+    uninstallerFilename := filepath.Base(uninstallerPath)
+    uninstallerDest := filepath.Join(pkgsFolderPath, uninstallerFilename)
+
+    // Copy the uninstaller to the repository.
+    _, err = copyFile(uninstallerPath, uninstallerDest)
+    if err != nil {
+        return nil, fmt.Errorf("failed to copy uninstaller: %v", err)
+    }
+
+    // Return uninstaller metadata.
+    return &Installer{
+        Location:  filepath.Join("/", installerSubPath, uninstallerFilename),
+        Hash:      uninstallerHash,
+        Type:      strings.TrimPrefix(filepath.Ext(uninstallerPath), "."),
+    }, nil
+}
+
+// extractInstallerMetadata determines the type of installer and extracts appropriate metadata.
+func extractInstallerMetadata(packagePath string) (string, string, string, error) {
+    ext := strings.ToLower(filepath.Ext(packagePath))
+
+    switch ext {
+    case ".msi":
+        return extractMSIMetadata(packagePath)
+    case ".nupkg":
+        return extractNuGetMetadata(packagePath)
+    default:
+        return "", "", "", fmt.Errorf("unsupported installer type: %s", ext)
+    }
+}
+
+// generatePkgsInfo creates the .pkgsinfo YAML file based on the provided metadata.
+func generatePkgsInfo(config Config, installerSubPath string, info PkgsInfo) error {
+    outputDir := filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath)
+    if err := os.MkdirAll(outputDir, 0755); err != nil {
+        return fmt.Errorf("failed to create output directory: %v", err)
+    }
+
+    outputFile := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", info.Name, info.Version))
+    pkgsInfoContent, err := encodeWithSelectiveBlockScalars(info)
+    if err != nil {
+        return fmt.Errorf("failed to encode pkgsinfo: %v", err)
+    }
+
+    return os.WriteFile(outputFile, pkgsInfoContent, 0644)
+}
+
+// gorillaImport processes an installer, extracts metadata, and generates a pkgsinfo file.
 func gorillaImport(
     packagePath string,
+    config Config,
     installScriptPath string,
     preuninstallScriptPath string,
     postuninstallScriptPath string,
@@ -829,291 +914,58 @@ func gorillaImport(
     uninstallerPath string,
     installCheckScriptPath string,
     uninstallCheckScriptPath string,
-    config Config,
 ) (bool, error) {
     if _, err := os.Stat(packagePath); os.IsNotExist(err) {
         return false, fmt.Errorf("package '%s' does not exist", packagePath)
     }
 
-    // Extract metadata such as product name, developer, version, product code, and upgrade code from the package
-    productName, developer, version, productCode, upgradeCode, err := extractMSIMetadata(packagePath)
+    // Extract metadata from the installer.
+    name, version, developer, description, err := extractInstallerMetadata(packagePath)
     if err != nil {
-		logging.LogError(err, "Processing Error")
-        fmt.Printf("Error extracting metadata: %v\n", err)
-        fmt.Println("Fallback to manual input.")
+        return false, fmt.Errorf("metadata extraction failed: %v", err)
     }
 
-    // Clean the product and upgrade codes for consistency
-    productCode = strings.Trim(productCode, "{}\r\n ")
-    upgradeCode = strings.Trim(upgradeCode, "{}\r\n ")
+    // Pre-process scripts.
+    preinstallScript, _ := processScript(installScriptPath, filepath.Ext(installScriptPath))
+    postinstallScript, _ := processScript(postinstallScriptPath, filepath.Ext(postinstallScriptPath))
+    preuninstallScript, _ := processScript(preuninstallScriptPath, filepath.Ext(preuninstallScriptPath))
+    postuninstallScript, _ := processScript(postuninstallScriptPath, filepath.Ext(postuninstallScriptPath))
+    installCheckScript, _ := processScript(installCheckScriptPath, "")
+    uninstallCheckScript, _ := processScript(uninstallCheckScriptPath, "")
 
-    // Calculate the SHA256 hash of the package for comparison
-    currentFileHash, err := calculateSHA256(packagePath)
+    // Process uninstaller metadata.
+    pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", "apps")
+    uninstaller, err := processUninstaller(uninstallerPath, pkgsFolderPath, "apps")
     if err != nil {
-		logging.LogError(err, "Processing Error")
-        return false, fmt.Errorf("error calculating file hash: %v", err)
+        return false, fmt.Errorf("uninstaller processing failed: %v", err)
     }
 
-    var matchingItem *PkgsInfo
-    var hashMatches bool
-
-    // Attempt to find an existing package in the catalog with the same product and upgrade codes
-    if productCode != "" && upgradeCode != "" {
-        matchingItem, hashMatches, err = findMatchingItemInAllCatalog(config.RepoPath, productCode, upgradeCode, currentFileHash)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error checking All.yaml: %v", err)
-        }
-
-        if matchingItem != nil {
-            if hashMatches {
-                // If an identical match is found, prevent duplicate import
-                fmt.Println("This item already exists in the repo with the same product code, upgrade code, and hash.")
-                return false, nil
-            } else {
-                // If a different hash is found, prompt the user for confirmation to proceed
-                fmt.Println("An item with the same product code and upgrade code exists but with a different hash.")
-                userDecision := getInputWithDefault("Do you want to proceed with the import despite the hash mismatch? [y/N]", "N")
-                if strings.ToLower(userDecision) != "y" {
-                    return false, fmt.Errorf("import canceled due to hash mismatch")
-                }
-            }
-        }
+    // Create the PkgsInfo struct.
+    pkgsInfo := PkgsInfo{
+        Name:                name,
+        Version:             version,
+        Developer:           developer,
+        Description:         description,
+        Installer: &Installer{
+            Location: filepath.Join("/apps", filepath.Base(packagePath)),
+            Hash:     calculateSHA256(packagePath),
+            Type:     strings.TrimPrefix(filepath.Ext(packagePath), "."),
+        },
+        PreinstallScript:     preinstallScript,
+        PostinstallScript:    postinstallScript,
+        PreuninstallScript:   preuninstallScript,
+        PostuninstallScript:  postuninstallScript,
+        InstallCheckScript:   installCheckScript,
+        UninstallCheckScript: uninstallCheckScript,
+        Uninstaller:          uninstaller,
     }
 
-    // Check for an existing package with the same name but a different version in the catalog
-    matchingItemWithDiffVersion, err := findMatchingItemInAllCatalogWithDifferentVersion(config.RepoPath, productName, version)
-    if err != nil {
-		logging.LogError(err, "Processing Error")
-        return false, fmt.Errorf("error checking All.yaml for different version: %v", err)
+    // Generate the pkgsinfo YAML file.
+    if err := generatePkgsInfo(config, "apps", pkgsInfo); err != nil {
+        return false, fmt.Errorf("failed to generate pkgsinfo: %v", err)
     }
 
-    // Prepopulate fields if an item with the same name but a different version exists
-    category := "Apps" // Default category
-    supportedArch := config.DefaultArch
-    catalogs := config.DefaultCatalog
-    var installerSubPath string
-
-    if matchingItemWithDiffVersion != nil {
-        fmt.Printf("A previous version of this item exists in All.yaml. Pre-populating fields...\n")
-        productName = cleanTextForPrompt(matchingItemWithDiffVersion.Name)
-        developer = cleanTextForPrompt(matchingItemWithDiffVersion.Developer)
-        category = cleanTextForPrompt(matchingItemWithDiffVersion.Category)
-        installerSubPath = cleanTextForPrompt(filepath.Dir(matchingItemWithDiffVersion.Installer.Location))
-    }
-
-    // Prompt the user for any missing fields
-    promptSurvey(&productName, "Item name", productName)
-    promptSurvey(&version, "Version", version)
-    promptSurvey(&category, "Category", category)
-    promptSurvey(&developer, "Developer", developer)
-    promptSurvey(&supportedArch, "Architecture(s)", supportedArch)
-    if installerSubPath == "" {
-        promptSurvey(&installerSubPath, "What is the installer item path?", "apps")
-    } else {
-        promptSurvey(&installerSubPath, "What is the installer item path?", installerSubPath)
-    }
-    promptSurvey(&catalogs, "Catalogs", catalogs)
-
-    catalogList := strings.Split(catalogs, ",")
-    for i := range catalogList {
-        catalogList[i] = strings.TrimSpace(catalogList[i])
-    }
-
-    fmt.Printf("Installer item path: /%s/%s-%s%s\n", installerSubPath, productName, version, filepath.Ext(packagePath))
-
-    // Prompt the user for final confirmation to proceed with the import
-    userDecision := getInputWithDefault("Import this item? [y/N]", "N")
-    if strings.ToLower(userDecision) != "y" {
-        return false, fmt.Errorf("import canceled by user")
-    }
-
-    // Ensure the package destination path exists, creating it if necessary
-    pkgsFolderPath := filepath.Join(config.RepoPath, "pkgs", installerSubPath)
-    if _, err := os.Stat(pkgsFolderPath); os.IsNotExist(err) {
-        err = os.MkdirAll(pkgsFolderPath, 0755)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("failed to create directory structure: %v", err)
-        }
-    }
-
-    // Copy the package to the destination folder
-    destinationPath := filepath.Join(pkgsFolderPath, fmt.Sprintf("%s-%s%s", productName, version, filepath.Ext(packagePath)))
-    _, err = copyFile(packagePath, destinationPath)
-    if err != nil {
-		logging.LogError(err, "Processing Error")
-        return false, fmt.Errorf("failed to copy package to destination: %v", err)
-    }
-
-    // Process the provided script paths for installation, uninstallation, and checks
-    var preinstallScriptContent string
-    var postinstallScriptContent string
-    var preuninstallScriptContent string
-    var postuninstallScriptContent string
-    var installCheckScriptContent string
-    var uninstallCheckScriptContent string
-    
-    // Process preinstall script
-    if installScriptPath != "" {
-        content, err := os.ReadFile(installScriptPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error reading install script file: %v", err)
-        }
-        // Convert CRLF to LF
-        preinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-        extension := strings.ToLower(filepath.Ext(installScriptPath))
-        if extension == ".bat" {
-            preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "bat")
-        } else if extension == ".ps1" {
-            preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "ps1")
-        } else {
-            return false, fmt.Errorf("unsupported install script file type: %s", extension)
-        }
-    }
-    
-    // Process postinstall script
-    if postinstallScriptPath != "" {
-        content, err := os.ReadFile(postinstallScriptPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error reading post-install script file: %v", err)
-        }
-        // Convert CRLF to LF
-        postinstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-        extension := strings.ToLower(filepath.Ext(postinstallScriptPath))
-        if extension == ".ps1" {
-            postinstallScriptContent = string(content) // No wrapping needed for .ps1
-        } else {
-            return false, fmt.Errorf("unsupported post-install script file type: %s", extension)
-        }
-    }
-    
-    // Process preuninstall script
-    if preuninstallScriptPath != "" {
-        content, err := os.ReadFile(preuninstallScriptPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error reading pre-uninstall script file: %v", err)
-        }
-        // Convert CRLF to LF
-        preuninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-        extension := strings.ToLower(filepath.Ext(preuninstallScriptPath))
-        if extension == ".bat" {
-            preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "bat")
-        } else if extension == ".ps1" {
-            preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "ps1")
-        } else {
-            return false, fmt.Errorf("unsupported pre-uninstall script file type: %s", extension)
-        }
-    }
-    
-    // Process postuninstall script
-    if postuninstallScriptPath != "" {
-        content, err := os.ReadFile(postuninstallScriptPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error reading post-uninstall script file: %v", err)
-        }
-        // Convert CRLF to LF
-        postuninstallScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-        extension := strings.ToLower(filepath.Ext(postuninstallScriptPath))
-        if extension == ".bat" {
-            postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "bat")
-        } else if extension == ".ps1" {
-            postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "ps1")
-        } else {
-            return false, fmt.Errorf("unsupported post-uninstall script file type: %s", extension)
-        }
-    }
-    
-    // Process install check script
-    if installCheckScriptPath != "" {
-        content, err := os.ReadFile(installCheckScriptPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error reading install check script file: %v", err)
-        }
-        // Convert CRLF to LF
-        installCheckScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-    }
-    
-    // Process uninstall check script
-    if uninstallCheckScriptPath != "" {
-        content, err := os.ReadFile(uninstallCheckScriptPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error reading uninstall check script file: %v", err)
-        }
-        // Convert CRLF to LF
-        uninstallCheckScriptContent = strings.ReplaceAll(string(content), "\r\n", "\n")
-    }
-    
-    // Process uninstaller
-    var uninstaller *Installer
-    if uninstallerPath != "" {
-        if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
-            return false, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
-        }
-        uninstallerHash, err := calculateSHA256(uninstallerPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("error calculating uninstaller file hash: %v", err)
-        }
-        uninstallerExtension := strings.TrimPrefix(strings.ToLower(filepath.Ext(uninstallerPath)), ".")
-
-        // Copy uninstaller to repo
-        uninstallerFilename := filepath.Base(uninstallerPath)
-        uninstallerDestinationPath := filepath.Join(pkgsFolderPath, uninstallerFilename)
-        _, err = copyFile(uninstallerPath, uninstallerDestinationPath)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return false, fmt.Errorf("failed to copy uninstaller to destination: %v", err)
-        }
-
-        uninstallerLocation := filepath.Join("/", installerSubPath, uninstallerFilename)
-
-        uninstaller = &Installer{
-            Location:  uninstallerLocation,
-            Hash:      uninstallerHash,
-            Arguments: []string{}, // You can add logic to handle uninstaller arguments if needed
-            Type:      uninstallerExtension,
-        }
-    }
-
-    // Complete the process by generating the pkgsinfo YAML file using the metadata
-    err = createPkgsInfo(
-        packagePath,
-        filepath.Join(config.RepoPath, "pkgsinfo"),
-        productName,
-        version,
-        catalogList,
-        category,
-        developer,
-        []string{supportedArch},
-        config.RepoPath,
-        installerSubPath,
-        productCode,
-        upgradeCode,
-        currentFileHash,
-        true,  // Default unattended install
-        true,  // Default unattended uninstall
-        preinstallScriptContent,
-        postinstallScriptContent,
-        preuninstallScriptContent,
-        postuninstallScriptContent,
-        installCheckScriptContent,
-        uninstallCheckScriptContent,
-        uninstaller,
-    )
-
-    if err != nil {
-		logging.LogError(err, "Processing Error")
-        return false, fmt.Errorf("failed to create pkgsinfo: %v", err)
-    }
-
-    fmt.Printf("Pkgsinfo created at: %s\n", filepath.Join(config.RepoPath, "pkgsinfo", installerSubPath, fmt.Sprintf("%s-%s.yaml", productName, version)))
+    fmt.Printf("Pkgsinfo created at: /apps/%s-%s.yaml\n", name, version)
     return true, nil
 }
 
