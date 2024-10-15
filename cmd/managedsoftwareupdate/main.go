@@ -15,7 +15,6 @@ import (
     "github.com/rodchristiansen/gorilla/pkg/manifest"
     "github.com/rodchristiansen/gorilla/pkg/process"
     "github.com/rodchristiansen/gorilla/pkg/report"
-    "github.com/rodchristiansen/gorilla/pkg/utils"
     "golang.org/x/sys/windows"
 )
 
