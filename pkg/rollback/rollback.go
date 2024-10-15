@@ -1,8 +1,6 @@
-
 package rollback
 
 import (
-    "os"
     "log"
     "fmt"
 )
