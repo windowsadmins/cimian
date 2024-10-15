@@ -1,4 +1,3 @@
-
 package config
 
 import (
@@ -6,7 +5,6 @@ import (
     "io/ioutil"
     "log"
     "path/filepath"
-
     "gopkg.in/yaml.v3"
 )
 
@@ -20,6 +18,9 @@ type Configuration struct {
     LogLevel     string `yaml:"log_level"`
     RepoURL      string `yaml:"repo_url"`
     CatalogsPath string `yaml:"catalogs_path"`
+    Debug        bool   `yaml:"debug"`
+    Verbose      bool   `yaml:"verbose"`
+    CheckOnly    bool   `yaml:"check_only"`
 }
 
 // LoadConfig loads the configuration from a YAML file
@@ -75,5 +76,8 @@ func GetDefaultConfig() *Configuration {
         LogLevel:     "INFO",
         RepoURL:      "https://example.com/repo",
         CatalogsPath: `C:\ProgramData\ManagedInstalls\catalogs`,
+        Debug:        false,
+        Verbose:      false,
+        CheckOnly:    false,
     }
 }
