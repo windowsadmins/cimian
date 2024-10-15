@@ -14,16 +14,19 @@ const (
 
 // Configuration holds the configurable options for Gorilla in YAML format
 type Configuration struct {
-    InstallPath  string `yaml:"install_path"`
-    LogLevel     string `yaml:"log_level"`
-    RepoURL      string `yaml:"repo_url"`
-    CatalogsPath string `yaml:"catalogs_path"`
-    Debug        bool   `yaml:"debug"`
-    Verbose      bool   `yaml:"verbose"`
-    CheckOnly    bool   `yaml:"check_only"`
+    InstallPath   string `yaml:"install_path"`
+    LogLevel      string `yaml:"log_level"`
+    RepoPath      string `yaml:"repo_path"`
+    CatalogsPath  string `yaml:"catalogs_path"`
+    Debug         bool   `yaml:"debug"`
+    Verbose       bool   `yaml:"verbose"`
+    CheckOnly     bool   `yaml:"check_only"`
+    DefaultArch   string `yaml:"default_arch"`
+    CloudProvider string `yaml:"cloud_provider"`
+    CloudBucket   string `yaml:"cloud_bucket"`
 }
 
-// LoadConfig loads the configuration from a YAML file
+// LoadConfig loads the configuration from a YAML file.
 func LoadConfig() (*Configuration, error) {
     if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
         log.Printf("Configuration file does not exist: %s", ConfigPath)
@@ -46,7 +49,7 @@ func LoadConfig() (*Configuration, error) {
     return &config, nil
 }
 
-// SaveConfig saves the current configuration to a YAML file
+// SaveConfig saves the current configuration to a YAML file.
 func SaveConfig(config *Configuration) error {
     data, err := yaml.Marshal(config)
     if err != nil {
@@ -69,15 +72,18 @@ func SaveConfig(config *Configuration) error {
     return nil
 }
 
-// GetDefaultConfig provides default configuration values in YAML format
+// GetDefaultConfig provides default configuration values in YAML format.
 func GetDefaultConfig() *Configuration {
     return &Configuration{
-        InstallPath:  `C:\ProgramData\Gorilla\bin`,
         LogLevel:     "INFO",
-        RepoURL:      "https://example.com/repo",
+        InstallPath:  `C:\Program Files\Gorilla`,
+        RepoPath:     `C:\ProgramData\Gorilla\repo`,
         CatalogsPath: `C:\ProgramData\ManagedInstalls\catalogs`,
         Debug:        false,
         Verbose:      false,
         CheckOnly:    false,
+        DefaultArch:  "x86_64",
+        CloudProvider: "none",
+        CloudBucket: "",
     }
 }
