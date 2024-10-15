@@ -70,8 +70,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          "%WIX_BIN%\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
-          "%WIX_BIN%\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
+          & "$env:WIX_BIN\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
+          & "$env:WIX_BIN\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
           Remove-Item release/gorilla.wixobj
 
       - name: Prepare Chocolatey Install Script
