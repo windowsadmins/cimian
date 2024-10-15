@@ -14,16 +14,17 @@ const (
 
 // Configuration holds the configurable options for Gorilla in YAML format
 type Configuration struct {
-    InstallPath   string `yaml:"install_path"`
-    LogLevel      string `yaml:"log_level"`
-    RepoPath      string `yaml:"repo_path"`
-    CatalogsPath  string `yaml:"catalogs_path"`
-    Debug         bool   `yaml:"debug"`
-    Verbose       bool   `yaml:"verbose"`
-    CheckOnly     bool   `yaml:"check_only"`
-    DefaultArch   string `yaml:"default_arch"`
-    CloudProvider string `yaml:"cloud_provider"`
-    CloudBucket   string `yaml:"cloud_bucket"`
+    InstallPath    string `yaml:"install_path"`
+    LogLevel       string `yaml:"log_level"`
+    RepoPath       string `yaml:"repo_path"`
+    CatalogsPath   string `yaml:"catalogs_path"`
+    Debug          bool   `yaml:"debug"`
+    Verbose        bool   `yaml:"verbose"`
+    CheckOnly      bool   `yaml:"check_only"`
+    DefaultArch    string `yaml:"default_arch"`
+    DefaultCatalog string `yaml:"default_catalog"`
+    CloudProvider  string `yaml:"cloud_provider"`
+    CloudBucket    string `yaml:"cloud_bucket"`
 }
 
 // LoadConfig loads the configuration from a YAML file.
@@ -75,15 +76,16 @@ func SaveConfig(config *Configuration) error {
 // GetDefaultConfig provides default configuration values in YAML format.
 func GetDefaultConfig() *Configuration {
     return &Configuration{
-        LogLevel:     "INFO",
-        InstallPath:  `C:\Program Files\Gorilla`,
-        RepoPath:     `C:\ProgramData\Gorilla\repo`,
-        CatalogsPath: `C:\ProgramData\ManagedInstalls\catalogs`,
-        Debug:        false,
-        Verbose:      false,
-        CheckOnly:    false,
-        DefaultArch:  "x86_64",
-        CloudProvider: "none",
-        CloudBucket: "",
+        LogLevel:       "INFO",
+        InstallPath:    `C:\Program Files\Gorilla`,
+        RepoPath:       `C:\ProgramData\Gorilla\repo`,
+        CatalogsPath:   `C:\ProgramData\ManagedInstalls\catalogs`,
+        Debug:          false,
+        Verbose:        false,
+        CheckOnly:      false,
+        DefaultArch:    "x86_64",
+        DefaultCatalog: "testing", // Added default value
+        CloudProvider:  "none",
+        CloudBucket:    "",
     }
 }
