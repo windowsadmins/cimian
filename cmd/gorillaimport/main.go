@@ -243,6 +243,37 @@ func configureGorillaImport() Config {
     return config
 }
 
+// extractNuGetMetadata extracts metadata (ID, version, authors, description) from a .nupkg file.
+func extractNuGetMetadata(nupkgPath string) (string, string, string, string, error) {
+    tempDir, err := os.MkdirTemp("", "nuget-extract-")
+    if err != nil {
+        return "", "", "", "", fmt.Errorf("failed to create temp directory: %v", err)
+    }
+    defer os.RemoveAll(tempDir)
+
+    cmd := exec.Command("nuget", "install", nupkgPath, "-OutputDirectory", tempDir, "-NoCache")
+    if err := cmd.Run(); err != nil {
+        return "", "", "", "", fmt.Errorf("failed to extract .nupkg: %v", err)
+    }
+
+    nuspecFiles, err := filepath.Glob(filepath.Join(tempDir, "*", "*.nuspec"))
+    if err != nil || len(nuspecFiles) == 0 {
+        return "", "", "", "", fmt.Errorf(".nuspec file not found")
+    }
+
+    content, err := os.ReadFile(nuspecFiles[0])
+    if err != nil {
+        return "", "", "", "", fmt.Errorf("failed to read .nuspec: %v", err)
+    }
+
+    var metadata Metadata
+    if err := xml.Unmarshal(content, &metadata); err != nil {
+        return "", "", "", "", fmt.Errorf("failed to parse .nuspec: %v", err)
+    }
+
+    return metadata.ID, metadata.Version, metadata.Authors, metadata.Description, nil
+}
+
 // extractMSIMetadata extracts metadata from an MSI file based on the platform
 // (Windows or macOS) using msiexec or msidump utilities.
 func extractMSIMetadata(msiFilePath string) (string, string, string, string, string, error) {
