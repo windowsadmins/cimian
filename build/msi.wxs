@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Product Id="*" 
+           UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be" 
+           Name="Gorilla" 
+           Version="1.0.0" 
+           Manufacturer="Gorilla" 
+           Language="1033">
+    
+    <Package InstallerVersion="500" Compressed="yes" Comments="Gorilla Installer Package" />
+    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" />
+
+    <!-- Directory Structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLDIR" Name="Gorilla">
+          <Directory Id="BIN" Name="bin">
+            <Component Id="GorillaBinary" Guid="47855ccd-7eab-464c-a795-26091de8b83a">
+              <File Id="GorillaImport" Source="cmd/gorillaimport/main.go" />
+              <File Id="MakeCatalogs" Source="cmd/makecatalogs/main.go" />
+              <File Id="MakePkgInfo" Source="cmd/makepkginfo/main.go" />
+              <File Id="ManagedSoftwareUpdate" Source="cmd/managedsoftwareupdate/main.go" />
+              <Environment Id="GORILLA_PATH" Name="PATH" Value="[BIN]" Permanent="no" Part="last" Action="set" System="yes" />
+            </Component>
+          </Directory>
+
+          <Directory Id="CONFIG" Name="config">
+            <Component Id="ConfigYaml" Guid="4882d10a-47bf-48ae-8d00-50ea2c9897ec">
+              <File Id="ConfigFile" Source="wix/config_template.yaml" />
+            </Component>
+          </Directory>
+
+          <Directory Id="REPO" Name="repo">
+            <Directory Id="PKGS" Name="pkgs">
+              <Component Id="RepoPkgs" Guid="c13aa2a4-e943-4c8a-8b89-17f6c55a2d38">
+                <File Id="TestPkg" Source="pkg/process/testdata/cache/new.msi" />
+              </Component>
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <!-- Install Sequence -->
+    <InstallExecuteSequence>
+      <Custom Action="CreateScheduledTask_Cmd" Before="CreateScheduledTask">NOT Installed OR REINSTALL</Custom>
+      <Custom Action="CreateScheduledTask" After="InstallFiles">NOT Installed OR REINSTALL</Custom>
+      <Custom Action="DeleteScheduledTask_Cmd" Before="DeleteScheduledTask">Installed</Custom>
+      <Custom Action="DeleteScheduledTask" After="RemoveFiles">Installed</Custom>
+    </InstallExecuteSequence>
+
+    <!-- Custom Actions -->
+    <CustomAction Id="CreateScheduledTask_Cmd" 
+                  Property="CreateScheduledTask" 
+                  Value="&quot;[SystemFolder]SCHTASKS.EXE&quot; /CREATE /SC MINUTE /MO 60 /TN &quot;Gorilla&quot; /TR &quot;[BIN]Gorilla.exe&quot; /RU &quot;NT AUTHORITY\SYSTEM&quot; /RP /RL HIGHEST" />
+    <CustomAction Id="CreateScheduledTask" 
+                  BinaryKey="WixCA" 
+                  DllEntry="WixQuietExec" 
+                  Execute="deferred" 
+                  Return="check" 
+                  Impersonate="no" />
+
+    <CustomAction Id="DeleteScheduledTask_Cmd" 
+                  Property="DeleteScheduledTask" 
+                  Value="&quot;[SystemFolder]SCHTASKS.EXE&quot; /DELETE /F /TN &quot;Gorilla&quot;" />
+    <CustomAction Id="DeleteScheduledTask" 
+                  BinaryKey="WixCA" 
+                  DllEntry="WixQuietExec" 
+                  Execute="deferred" 
+                  Return="ignore" 
+                  Impersonate="no" />
+
+    <!-- Feature Definition -->
+    <Feature Id="GorillaFeature" Level="1">
+      <ComponentRef Id="GorillaBinary" />
+      <ComponentRef Id="ConfigYaml" />
+      <ComponentRef Id="RepoPkgs" />
+    </Feature>
+  </Product>
+</Wix>
