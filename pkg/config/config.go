@@ -2,15 +2,12 @@ package config
 
 import (
     "os"
-    "io/ioutil"
     "log"
     "path/filepath"
     "gopkg.in/yaml.v3"
 )
 
-const (
-    ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
-)
+const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 
 // Configuration holds the configurable options for Gorilla in YAML format
 type Configuration struct {
@@ -34,15 +31,14 @@ func LoadConfig() (*Configuration, error) {
         return nil, err
     }
 
-    data, err := ioutil.ReadFile(ConfigPath)
+    data, err := os.ReadFile(ConfigPath)
     if err != nil {
         log.Printf("Failed to read configuration file: %v", err)
         return nil, err
     }
 
     var config Configuration
-    err = yaml.Unmarshal(data, &config)
-    if err != nil {
+    if err := yaml.Unmarshal(data, &config); err != nil {
         log.Printf("Failed to parse configuration file: %v", err)
         return nil, err
     }
@@ -64,7 +60,7 @@ func SaveConfig(config *Configuration) error {
         return err
     }
 
-    err = ioutil.WriteFile(ConfigPath, data, 0644)
+    err = os.WriteFile(ConfigPath, data, 0644)
     if err != nil {
         log.Printf("Failed to write configuration file: %v", err)
         return err
@@ -84,7 +80,7 @@ func GetDefaultConfig() *Configuration {
         Verbose:        false,
         CheckOnly:      false,
         DefaultArch:    "x86_64",
-        DefaultCatalog: "testing", // Added default value
+        DefaultCatalog: "testing",
         CloudProvider:  "none",
         CloudBucket:    "",
     }
