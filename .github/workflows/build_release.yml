@@ -1,4 +1,4 @@
-name: Build Release
+name: Build and Release
 
 on:
   push:
@@ -20,7 +20,14 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-      
+
+      - name: Install Tools
+        run: |
+          choco install wixtoolset --no-progress --yes
+          choco install nuget.commandline --no-progress --yes
+          choco install intunewinapputil --no-progress --yes
+          $env:WIX_BIN = "C:\Program Files\WiX Toolset v5.0"
+
       - name: Set up Go Environment
         uses: actions/setup-go@v4
         with:
@@ -33,37 +40,61 @@ jobs:
           $version = Get-Date -Format "yyyy.MM.dd"
           echo "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
 
-    - name: Build all binaries
-      shell: pwsh
-      run: |
-        $projects = Get-ChildItem -Directory -Path cmd/* -Recurse
-        foreach ($project in $projects) {
-          cd $project.FullName
-          $binaryName = $project.Name
-          go build -v -o bin\$binaryName.exe -ldflags=@"
-            -X github.com/rodchristiansen/gorilla/pkg/version.appName=$binaryName `
-            -X github.com/rodchristiansen/gorilla/pkg/version.version=${{ env.RELEASE_VERSION }} `
-            -X github.com/rodchristiansen/gorilla/pkg/version.branch=${{ github.ref_name }} `
-            -X github.com/rodchristiansen/gorilla/pkg/version.buildDate=$(Get-Date -Format s) `
-            -X github.com/rodchristiansen/gorilla/pkg/version.revision=$(git rev-parse HEAD)
-          "@
-        }
-    
-    - name: Package Binaries
-      shell: pwsh
-      run: |
-        mkdir -p release
-        Get-ChildItem -Path cmd/*/bin/*.exe | ForEach-Object {
-          Copy-Item $_.FullName release/
-        }
-        tar -czvf release.tar.gz -C release .
+      - name: Build All Binaries
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem -Directory -Path cmd/* -Recurse
+          foreach ($project in $projects) {
+            cd $project.FullName
+            $binaryName = $project.Name
+            go build -v -o bin\$binaryName.exe -ldflags=@"
+              -X github.com/rodchristiansen/gorilla/pkg/version.appName=$binaryName `
+              -X github.com/rodchristiansen/gorilla/pkg/version.version=${{ env.RELEASE_VERSION }} `
+              -X github.com/rodchristiansen/gorilla/pkg/version.branch=${{ github.ref_name }} `
+              -X github.com/rodchristiansen/gorilla/pkg/version.buildDate=$(Get-Date -Format s) `
+              -X github.com/rodchristiansen/gorilla/pkg/version.revision=$(git rev-parse HEAD)
+            "@
+          }
 
-    - name: Create GitHub Release
-      shell: pwsh
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        $releaseFiles = Get-ChildItem -Path release\*.exe | ForEach-Object { $_.FullName -replace '\\', '/' }
-        gh release create $env:RELEASE_VERSION $releaseFiles `
-          --title "GorillaPkg v$env:RELEASE_VERSION" `
-          --notes "Automated release for version $env:RELEASE_VERSION."
+      - name: Package Binaries
+        shell: pwsh
+        run: |
+          mkdir -p release
+          Get-ChildItem -Path cmd/*/bin/*.exe | ForEach-Object {
+            Copy-Item $_.FullName release/
+          }
+          tar -czvf release.tar.gz -C release .
+
+      - name: Build MSI Package
+        run: |
+          "%WIX_BIN%\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
+          "%WIX_BIN%\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
+
+      - name: Prepare Chocolatey Install Script
+        shell: pwsh
+        run: |
+          Copy-Item build/nupkg.ps1 build/chocolateyInstall.ps1 -Force
+
+      - name: Create NuGet Package
+        run: |
+          nuget pack build/nupkg.nuspec -OutputDirectory release
+
+      - name: Prepare IntuneWin Package
+        shell: pwsh
+        run: |
+          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.msi -OutputFolder release
+
+      - name: Verify Generated Files
+        shell: pwsh
+        run: |
+          Get-ChildItem release
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $releaseFiles = Get-ChildItem -Path release/* | ForEach-Object { $_.FullName -replace '\\', '/' }
+          gh release create $env:RELEASE_VERSION $releaseFiles `
+            --title "GorillaPkg v$env:RELEASE_VERSION" `
+            --notes "Automated release for version $env:RELEASE_VERSION."
