@@ -43,7 +43,7 @@ jobs:
       - name: Build All Binaries
         shell: pwsh
         run: |
-          set -e
+          $ErrorActionPreference = 'Stop'
           $projects = Get-ChildItem -Directory -Path cmd/* -Recurse
           foreach ($project in $projects) {
             cd $project.FullName
@@ -69,7 +69,7 @@ jobs:
       - name: Build MSI Package
         shell: pwsh
         run: |
-          set -e
+          $ErrorActionPreference = 'Stop'
           "%WIX_BIN%\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
           "%WIX_BIN%\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
           Remove-Item release/gorilla.wixobj
