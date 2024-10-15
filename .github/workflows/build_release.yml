@@ -4,52 +4,66 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: 
-  
+
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
+    runs-on: windows-latest
+
     strategy:
       matrix:
         targetplatform: [x64]
-    runs-on: windows-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go Environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.23.0
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-
-    - name: Set Release Version (YYYY.MM.DD)
-      id: set_version
-      shell: pwsh
-      run: |
-        $version = Get-Date -Format "yyyy.MM.dd"
-        echo "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+      - name: Prepare Release Version
+        id: set_version
+        shell: pwsh
+        run: |
+          $version = Get-Date -Format "yyyy.MM.dd"
+          echo "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
 
     - name: Build all binaries
+      shell: pwsh
       run: |
-        for /D %%D in (cmd/*) do (
-          cd %%D
-          go build -v -ldflags="`
-            -X github.com/rodchristiansen/gorilla/pkg/version.appName=%%~nxD`
-            -X github.com/rodchristiansen/gorilla/pkg/version.version=${{ env.RELEASE_VERSION }}`
-            -X github.com/rodchristiansen/gorilla/pkg/version.branch=${{ github.ref_name }}`
-            -X github.com/rodchristiansen/gorilla/pkg/version.buildDate=$(Get-Date -Format s)`
-            -X github.com/rodchristiansen/gorilla/pkg/version.revision=$(git rev-parse HEAD)"
-        )
-        
+        $projects = Get-ChildItem -Directory -Path cmd/* -Recurse
+        foreach ($project in $projects) {
+          cd $project.FullName
+          $binaryName = $project.Name
+          go build -v -o bin\$binaryName.exe -ldflags=@"
+            -X github.com/rodchristiansen/gorilla/pkg/version.appName=$binaryName `
+            -X github.com/rodchristiansen/gorilla/pkg/version.version=${{ env.RELEASE_VERSION }} `
+            -X github.com/rodchristiansen/gorilla/pkg/version.branch=${{ github.ref_name }} `
+            -X github.com/rodchristiansen/gorilla/pkg/version.buildDate=$(Get-Date -Format s) `
+            -X github.com/rodchristiansen/gorilla/pkg/version.revision=$(git rev-parse HEAD)
+          "@
+        }
+    
     - name: Package Binaries
+      shell: pwsh
       run: |
         mkdir -p release
-        move cmd/*/bin/*.exe release/
-        tar -czvf release.tar.gz release/
+        Get-ChildItem -Path cmd/*/bin/*.exe | ForEach-Object {
+          Copy-Item $_.FullName release/
+        }
+        tar -czvf release.tar.gz -C release .
 
-    - name: Create Release
+    - name: Create GitHub Release
       shell: pwsh
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release create $env:RELEASE_VERSION cmd/*/*.exe `
-          --title "Gorilla v$env:RELEASE_VERSION" `
-          --notes "Automated release for $env:RELEASE_VERSION."
+        $releaseFiles = Get-ChildItem -Path release\*.exe | ForEach-Object { $_.FullName -replace '\\', '/' }
+        gh release create $env:RELEASE_VERSION $releaseFiles `
+          --title "GorillaPkg v$env:RELEASE_VERSION" `
+          --notes "Automated release for version $env:RELEASE_VERSION."

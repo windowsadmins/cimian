@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -15,18 +19,27 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Go Environment
       uses: actions/setup-go@v4
 
     - name: Build Binaries
+      shell: pwsh
       run: |
-        for /D %%D in (cmd/*) do (
-          cd %%D
+        $projects = Get-ChildItem -Directory -Path cmd/* -Recurse
+        foreach ($project in $projects) {
+          Write-Host "Building project: $($project.FullName)"
+          cd $project.FullName
+          mkdir bin -ErrorAction SilentlyContinue
           go build -o bin/
-        )
-      
+          cd ..
+        }
+    
     - name: Verify Output
+      shell: pwsh
       run: |
-        dir /s /b cmd/*/bin/*.exe
+        Write-Host "Verifying binaries in 'cmd/*/bin/' directories..."
+        Get-ChildItem -Path cmd/*/bin/*.exe -Recurse | ForEach-Object { 
+          Write-Host "Found binary: $($_.FullName)" 
+        }
