@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package>
+  <metadata>
+    <title>Gorilla</title>
+    <id>com.github.windowsadmins.gorilla</id>
+    <version>${{ env.RELEASE_VERSION }}</version>
+    <authors>WindowsAdmins</authors>
+    <description>Gorilla Software Deployment Tools</description>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>admin</tags>
+  </metadata>
+  <files>
+    <file src="release/*.exe" target="tools" />
+    <file src="build/config.yaml" target="tools" />
+    <file src="build/chocolateyInstall.ps1" target="tools" />
+  </files>
+</package>
