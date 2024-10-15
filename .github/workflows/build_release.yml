@@ -43,6 +43,7 @@ jobs:
       - name: Build All Binaries
         shell: pwsh
         run: |
+          set -e
           $projects = Get-ChildItem -Directory -Path cmd/* -Recurse
           foreach ($project in $projects) {
             cd $project.FullName
@@ -66,9 +67,12 @@ jobs:
           tar -czvf release.tar.gz -C release .
 
       - name: Build MSI Package
+        shell: pwsh
         run: |
+          set -e
           "%WIX_BIN%\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
           "%WIX_BIN%\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
+          Remove-Item release/gorilla.wixobj
 
       - name: Prepare Chocolatey Install Script
         shell: pwsh
@@ -78,6 +82,7 @@ jobs:
       - name: Create NuGet Package
         run: |
           nuget pack build/nupkg.nuspec -OutputDirectory release
+          Remove-Item build/chocolateyInstall.ps1
 
       - name: Prepare IntuneWin Package
         shell: pwsh
@@ -87,6 +92,10 @@ jobs:
       - name: Verify Generated Files
         shell: pwsh
         run: |
+          if (-not (Get-ChildItem release)) {
+            Write-Error "No files generated in release folder!"
+            exit 1
+          }
           Get-ChildItem release
 
       - name: Create GitHub Release
