@@ -11,9 +11,6 @@ import (
 	"github.com/rodchristiansen/gorilla/pkg/logging"
 	"github.com/rodchristiansen/gorilla/pkg/installer"
 	"github.com/rodchristiansen/gorilla/pkg/manifest"
-	"github.com/rodchristiansen/gorilla/pkg/rollback"
-	"github.com/rodchristiansen/gorilla/pkg/retry"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
 // firstItem returns the first occurrence of an item in a map of catalogs
