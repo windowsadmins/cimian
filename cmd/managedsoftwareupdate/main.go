@@ -27,7 +27,7 @@ func main() {
     }
 
     // Initialize logger
-    logging.InitLogger(cfg)
+    logging.InitLogger(*cfg)
     defer logging.CloseLogger()
 
     // Handle system signals for cleanup
@@ -47,7 +47,8 @@ func main() {
     }
 
     // Create the cache directory if needed
-    err = os.MkdirAll(filepath.Clean(cfg.CachePath), 0755)
+    cachePath := cfg.GetCachePath()  // Use getter to access CachePath
+    err = os.MkdirAll(filepath.Clean(cachePath), 0755)
     if err != nil {
         logging.LogError(err, "Failed to create cache directory")
         os.Exit(1)
@@ -68,10 +69,11 @@ func main() {
     }
 
     for _, item := range manifestItems {
-        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
-        if item.NeedsUpdate {
+        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.GetVersion())
+
+        if item.ShouldUpdate() {
             fmt.Printf("Installing update for %s...\n", item.Name)
-            installUpdate(item)
+            installUpdate(pkginfo.PkgInfo{Installer: item.Installer})
         }
     }
 
@@ -84,7 +86,6 @@ func adminCheck() (bool, error) {
         return false, nil
     }
 
-    var adminSid *windows.SID
     adminSid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid, nil)
     if err != nil {
         return false, err
@@ -107,8 +108,8 @@ func getIdleSeconds() int {
     if err != nil {
         return 0
     }
-    currentTime := windows.GetTickCount()
-    return int((currentTime - lastInput.Time) / 1000) // Convert milliseconds to seconds
+    currentTime := windows.GetTickCount64()  // Use GetTickCount64 for 64-bit compatibility
+    return int((currentTime - lastInput.Time) / 1000)  // Convert milliseconds to seconds
 }
 
 // runUpdates checks for updates and processes .msi, .exe, .ps1, and .nupkg installations
@@ -145,6 +146,6 @@ func installUpdate(item pkginfo.PkgInfo) {
         fmt.Printf("Installing NuGet package: %s\n", item.Installer)
         process.InstallNuGetPackage(item.Installer)
     default:
-        fmt.Printf("Unsupported installer type for %s\n", item.Name)
+        fmt.Printf("Unsupported installer type for %s\n", item.Installer)
     }
 }
