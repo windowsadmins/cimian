@@ -21,18 +21,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install NuGet
+      - name: Install NuGet, WiX v3, and IntuneWinAppUtil
         run: |
           choco install nuget.commandline --no-progress --yes
-
-      - name: Install IntuneWinAppUtil
-        run: |
           choco install intunewinapputil --no-progress --yes
-          
-      - name: Download and Install WiX Toolset v5.0.2
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix/releases/download/v5.0.2/wix-cli-x64.msi" -OutFile "wix-cli-x64.msi"
-          Start-Process msiexec.exe -ArgumentList '/i wix-cli-x64.msi /quiet /norestart' -Wait
+          choco install wixtoolset --version=3.14 --no-progress --yes
 
       - name: Set up Go Environment
         uses: actions/setup-go@v4
@@ -72,26 +65,22 @@ jobs:
           }
           tar -czvf release.tar.gz -C release .
 
-      - name: Build MSI Package
+      - name: Build MSI Package with WiX
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "C:\Program Files\WiX Toolset v5.0\bin\wix.exe" build build/msi.wxs -o release/gorilla.msi
+          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -o build/ build/msi.wxs
+          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -o release/gorilla.msi build/msi.wixobj
 
-      - name: Prepare Chocolatey Install Script
+      - name: Prepare NuGet Package
         shell: pwsh
         run: |
-          Copy-Item build/nupkg.ps1 build/chocolateyInstall.ps1 -Force
-
-      - name: Create NuGet Package
-        run: |
           nuget pack build/nupkg.nuspec -OutputDirectory release
-          Remove-Item build/chocolateyInstall.ps1
 
       - name: Prepare IntuneWin Package
         shell: pwsh
         run: |
-          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.msi -OutputFolder release
+          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.nupkg -OutputFolder release/intunewin
 
       - name: Verify Generated Files
         shell: pwsh
