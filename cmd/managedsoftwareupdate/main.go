@@ -6,7 +6,6 @@ import (
     "os"
     "os/signal"
     "path/filepath"
-    "time"
     "unsafe"
     "syscall"
     "github.com/rodchristiansen/gorilla/pkg/config"
@@ -61,41 +60,23 @@ func main() {
     }
 
     // Run the update process
-    manifestItems, newCatalogs := manifest.Get(*cfg)
-
-    // Handle newCatalogs if necessary
+    manifestItems, catalogsMap := manifest.Get(*cfg)
     for _, item := range manifestItems {
         fmt.Printf("Checking for updates: %s\n", item.Name)
-
         if needsUpdate(item) {
             fmt.Printf("Installing update for %s...\n", item.Name)
             installUpdate(item)
         }
     }
+
+    fmt.Println("Cleaning up old cache...")
+    process.CleanUp(cachePath)
 
     fmt.Println("Software updates completed.")
 }
 
-func runUpdates(cfg *config.Configuration) {
-    manifestItems, newCatalogs := manifest.Get(*cfg)
-    // Handle newCatalogs if necessary
-
-    for _, item := range manifestItems {
-        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
-
-        if needsUpdate(item) {
-            fmt.Printf("Installing update for %s...\n", item.Name)
-            installUpdate(item)
-        }
-    }
-}
-
 // adminCheck checks if the program is running with admin privileges.
 func adminCheck() (bool, error) {
-    if flag.Lookup("test.v") != nil {
-        return false, nil
-    }
-
     adminSid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid, nil)
     if err != nil {
         return false, err
