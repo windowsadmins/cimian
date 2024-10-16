@@ -2,22 +2,78 @@
 package pkginfo
 
 import (
-	"github.com/rodchristiansen/gorilla/pkg/rollback"
     "encoding/json"
     "os"
     "log"
     "fmt"
+    "golang.org/x/sys/windows/registry"
+	"github.com/rodchristiansen/gorilla/pkg/rollback"
 )
 
 const (
     InstallInfoPath = `C:\ProgramData\ManagedInstalls\InstallInfo.yaml`
 )
 
+// GetInstalledVersion retrieves the installed version of the specified software.
+func GetInstalledVersion(softwareName string) (string, error) {
+    // Define the registry keys to search
+    uninstallPaths := []string{
+        `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`,
+        `SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall`,
+    }
+
+    // Search both HKEY_LOCAL_MACHINE and HKEY_CURRENT_USER
+    hives := []registry.Key{registry.LOCAL_MACHINE, registry.CURRENT_USER}
+
+    for _, hive := range hives {
+        for _, path := range uninstallPaths {
+            key, err := registry.OpenKey(hive, path, registry.READ)
+            if err != nil {
+                continue
+            }
+            defer key.Close()
+
+            subkeyNames, err := key.ReadSubKeyNames(-1)
+            if err != nil {
+                continue
+            }
+
+            for _, subkeyName := range subkeyNames {
+                subkey, err := registry.OpenKey(key, subkeyName, registry.READ)
+                if err != nil {
+                    continue
+                }
+
+                displayName, _, err := subkey.GetStringValue("DisplayName")
+                if err != nil {
+                    subkey.Close()
+                    continue
+                }
+
+                if displayName == softwareName {
+                    displayVersion, _, err := subkey.GetStringValue("DisplayVersion")
+                    subkey.Close()
+                    if err != nil {
+                        return "", fmt.Errorf("failed to get version for %s: %v", softwareName, err)
+                    }
+                    log.Printf("Found installed version for %s: %s", softwareName, displayVersion)
+                    return displayVersion, nil
+                }
+                subkey.Close()
+            }
+        }
+    }
+
+    // Software not found
+    return "", fmt.Errorf("software %s not found", softwareName)
+}
+
 // PkgInfo represents the metadata for a package, including dependencies
 type PkgInfo struct {
-    Name         string   `json:"name"`
-    Version      string   `json:"version"`
-    Dependencies []string `json:"dependencies"`
+    Name              string   `json:"name"`
+    Version           string   `json:"version"`
+    Dependencies      []string `json:"dependencies"`
+    InstallerLocation string   `json:"installer_location"`
 }
 
 // ReadPkgInfo reads and parses the pkgsinfo metadata from the given path.
