@@ -47,7 +47,7 @@ func main() {
     }
 
     // Create the cache directory if needed
-    cachePath := cfg.GetCachePath()  // Use getter to access CachePath
+    cachePath := cfg.CachePath
     err = os.MkdirAll(filepath.Clean(cachePath), 0755)
     if err != nil {
         logging.LogError(err, "Failed to create cache directory")
@@ -69,11 +69,11 @@ func main() {
     }
 
     for _, item := range manifestItems {
-        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.GetVersion())
+        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
 
-        if item.ShouldUpdate() {
+        if item.NeedsUpdate {
             fmt.Printf("Installing update for %s...\n", item.Name)
-            installUpdate(pkginfo.PkgInfo{Installer: item.Installer})
+            installUpdate(pkginfo.PkgInfo{InstallerPath: item.InstallerPath})
         }
     }
 
@@ -108,8 +108,8 @@ func getIdleSeconds() int {
     if err != nil {
         return 0
     }
-    currentTime := windows.GetTickCount64()  // Use GetTickCount64 for 64-bit compatibility
-    return int((currentTime - lastInput.Time) / 1000)  // Convert milliseconds to seconds
+    currentTime := windows.GetTickCount64()
+    return int((currentTime - lastInput.Time) / 1000)
 }
 
 // runUpdates checks for updates and processes .msi, .exe, .ps1, and .nupkg installations
@@ -132,20 +132,20 @@ func runUpdates(cfg *config.Configuration) {
 
 // installUpdate installs a package based on its type.
 func installUpdate(item pkginfo.PkgInfo) {
-    switch filepath.Ext(item.Installer) {
+    switch filepath.Ext(item.InstallerPath) {
     case ".msi":
-        fmt.Printf("Installing MSI: %s\n", item.Installer)
-        process.InstallMSI(item.Installer)
+        fmt.Printf("Installing MSI: %s\n", item.InstallerPath)
+        process.InstallMSI(item.InstallerPath)
     case ".exe":
-        fmt.Printf("Running EXE: %s\n", item.Installer)
-        process.RunEXE(item.Installer)
+        fmt.Printf("Running EXE: %s\n", item.InstallerPath)
+        process.RunEXE(item.InstallerPath)
     case ".ps1":
-        fmt.Printf("Executing PowerShell script: %s\n", item.Installer)
-        process.RunPowerShellScript(item.Installer)
+        fmt.Printf("Executing PowerShell script: %s\n", item.InstallerPath)
+        process.RunPowerShellScript(item.InstallerPath)
     case ".nupkg":
-        fmt.Printf("Installing NuGet package: %s\n", item.Installer)
-        process.InstallNuGetPackage(item.Installer)
+        fmt.Printf("Installing NuGet package: %s\n", item.InstallerPath)
+        process.InstallNuGetPackage(item.InstallerPath)
     default:
-        fmt.Printf("Unsupported installer type for %s\n", item.Installer)
+        fmt.Printf("Unsupported installer type for %s\n", item.InstallerPath)
     }
 }
