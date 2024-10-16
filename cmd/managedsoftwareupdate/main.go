@@ -7,7 +7,6 @@ import (
     "syscall"
     "path/filepath"
     "time"
-
     "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
@@ -35,7 +34,7 @@ func main() {
     }()
 
     // Check for admin privileges
-    admin, err := adminCheck()  // Call the function directly from admin.go
+    admin, err := adminCheck()
     if err != nil || !admin {
         fmt.Println("Administrative access is required to run updates. Please run as an administrator.")
         os.Exit(1)
