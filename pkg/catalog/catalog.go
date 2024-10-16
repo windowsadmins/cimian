@@ -3,7 +3,7 @@ package catalog
 import (
 	"fmt"
 	"os"
-
+	"path/filepath"
 	"github.com/rodchristiansen/gorilla/pkg/config"
 	"github.com/rodchristiansen/gorilla/pkg/download"
 	"github.com/rodchristiansen/gorilla/pkg/logging"
