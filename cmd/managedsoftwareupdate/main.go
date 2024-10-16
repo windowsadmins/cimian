@@ -80,12 +80,10 @@ func runUpdates(cfg *config.Config) {
     manifest := manifest.Get() // Fetch the manifest
 
     for _, item := range manifest.Items {
-        fmt.Printf("Checking for updates: %s (%s)
-", item.Name, item.Version)
+        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
 
         if item.NeedsUpdate {
-            fmt.Printf("Installing update for %s...
-", item.Name)
+            fmt.Printf("Installing update for %s...\n", item.Name)
             installUpdate(item)
         }
     }
@@ -95,23 +93,18 @@ func runUpdates(cfg *config.Config) {
 func installUpdate(item pkginfo.PkgInfo) {
     switch filepath.Ext(item.Installer) {
     case ".msi":
-        fmt.Printf("Installing MSI: %s
-", item.Installer)
+        fmt.Printf("Installing MSI: %s\n", item.Installer)
         process.InstallMSI(item.Installer)
     case ".exe":
-        fmt.Printf("Running EXE: %s
-", item.Installer)
+        fmt.Printf("Running EXE: %s\n", item.Installer)
         process.RunEXE(item.Installer)
     case ".ps1":
-        fmt.Printf("Executing PowerShell script: %s
-", item.Installer)
+        fmt.Printf("Executing PowerShell script: %s\n", item.Installer)
         process.RunPowerShellScript(item.Installer)
     case ".nupkg":
-        fmt.Printf("Installing NuGet package: %s
-", item.Installer)
+        fmt.Printf("Installing NuGet package: %s\n", item.Installer)
         process.InstallNuGetPackage(item.Installer)
     default:
-        fmt.Printf("Unsupported installer type for %s
-", item.Name)
+        fmt.Printf("Unsupported installer type for %s\n", item.Name)
     }
 }
