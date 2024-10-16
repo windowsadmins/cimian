@@ -34,10 +34,6 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix/releases/download/v5.0.2/wix-cli-x64.msi" -OutFile "wix-cli-x64.msi"
           Start-Process msiexec.exe -ArgumentList '/i wix-cli-x64.msi /quiet /norestart' -Wait
 
-      - name: Set up WiX Bin Path
-        run: |
-          $env:WIX_BIN = "C:\Program Files\WiX Toolset v5.0"
-
       - name: Set up Go Environment
         uses: actions/setup-go@v4
         with:
@@ -80,8 +76,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:WIX_BIN\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
-          & "$env:WIX_BIN\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
+          & "C:\Program Files\WiX Toolset v5.0\bin\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
+          & "C:\Program Files\WiX Toolset v5.0\bin\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
           Remove-Item release/gorilla.wixobj
 
       - name: Prepare Chocolatey Install Script
