@@ -13,15 +13,16 @@ import (
 
 // Item contains an individual entry from the catalog
 type Item struct {
-	Dependencies []string      `yaml:"dependencies"`
-	DisplayName  string        `yaml:"display_name"`
-	Check        InstallCheck  `yaml:"check"`
-	Installer    InstallerItem `yaml:"installer"`
-	Uninstaller  InstallerItem `yaml:"uninstaller"`
-	Version      string        `yaml:"version"`
-	BlockingApps []string      `yaml:"blocking_apps"`
-	PreScript    string        `yaml:"preinstall_script"`
-	PostScript   string        `yaml:"postinstall_script"`
+	Name          string        `yaml:"name"`
+	Dependencies  []string      `yaml:"dependencies"`
+	DisplayName   string        `yaml:"display_name"`
+	Check         InstallCheck  `yaml:"check"`
+	Installer     InstallerItem `yaml:"installer"`
+	Uninstaller   InstallerItem `yaml:"uninstaller"`
+	Version       string        `yaml:"version"`
+	BlockingApps  []string      `yaml:"blocking_apps"`
+	PreScript     string        `yaml:"preinstall_script"`
+	PostScript    string        `yaml:"postinstall_script"`
 }
 
 // InstallerItem holds information about how to install a catalog item

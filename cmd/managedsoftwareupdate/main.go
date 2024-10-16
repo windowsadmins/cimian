@@ -6,13 +6,16 @@ import (
     "os"
     "os/signal"
     "path/filepath"
-    "unsafe"
     "syscall"
-    "github.com/rodchristiansen/gorilla/pkg/config"
+    "unsafe"
+
     "github.com/rodchristiansen/gorilla/pkg/catalog"
+    "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/installer"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
+    "github.com/rodchristiansen/gorilla/pkg/process"
+    "github.com/rodchristiansen/gorilla/pkg/status"
     "golang.org/x/sys/windows"
 )
 
@@ -134,32 +137,32 @@ func getIdleSeconds() int {
     return int(idleTime)
 }
 
-// needsUpdate determines if the item needs to be updated.
-func needsUpdate(item manifest.Item, cfg *config.Config) bool {
+func needsUpdate(item manifest.Item, cfg *config.Configuration) bool {
     catalogItem := catalog.Item{
         Name:    item.Name,
         Version: item.Version,
     }
     cachePath := cfg.CachePath
     actionNeeded, err := status.CheckStatus(catalogItem, "install", cachePath)
-    if err != nil {
-        // Assume update is needed if there's an error
-        return true
-    }
-    return actionNeeded
+    return err != nil || actionNeeded
 }
 
-func manifestItemToCatalogItem(mItem manifest.Item) catalog.Item {
-    return catalog.Item{
-        Name:        mItem.Name,
-        DisplayName: mItem.Name,
-        Version:     mItem.Version,
-        Installer: catalog.Installer{
-            Type:      getInstallerType(mItem.InstallerLocation),
-            Location:  mItem.InstallerLocation,
-            Arguments: mItem.InstallerArguments,
+func installUpdate(item manifest.Item, cfg *config.Configuration) {
+    catalogItem := catalog.Item{
+        DisplayName: item.Name,
+        Version:     item.Version,
+        Installer: catalog.InstallerItem{
+            Type:     getInstallerType(item.InstallerLocation),
+            Location: item.InstallerLocation,
         },
-        // Include other fields as necessary
+    }
+
+    result := installer.Install(catalogItem, "install", cfg.URLPkgsInfo, cfg.CachePath, false)
+
+    if result != "" && result != "Item not needed" {
+        fmt.Printf("Failed to install %s: %s\n", item.Name, result)
+    } else {
+        fmt.Printf("Successfully installed %s\n", item.Name)
     }
 }
 
@@ -175,35 +178,5 @@ func getInstallerType(installerLocation string) string {
         return "nupkg"
     default:
         return ""
-    }
-}
-
-// installUpdate installs a package using the installer package.
-func installUpdate(item manifest.Item, cfg *config.Config) {
-    // Convert manifest.Item to catalog.Item
-    catalogItem := catalog.Item{
-        Name:        item.Name,
-        DisplayName: item.Name,
-        Version:     item.Version,
-        Installer: catalog.Installer{
-            Type:     getInstallerType(item.InstallerLocation),
-            Location: item.InstallerLocation,
-        },
-        // Include other necessary fields if required
-    }
-
-    // Variables for the installer
-    urlPackages := cfg.URLPackages
-    cachePath := cfg.CachePath
-    checkOnly := false // Set to true if you want to enable check-only mode
-
-    // Call the installer
-    result := installer.Install(catalogItem, "install", urlPackages, cachePath, checkOnly)
-
-    // Handle the result
-    if result != "" && result != "Item not needed" {
-        fmt.Printf("Failed to install %s: %s\n", item.Name, result)
-    } else {
-        fmt.Printf("Successfully installed %s\n", item.Name)
     }
 }
