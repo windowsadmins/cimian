@@ -21,11 +21,21 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Tools
+      - name: Install NuGet
         run: |
-          choco install wixtoolset --no-progress --yes
           choco install nuget.commandline --no-progress --yes
+
+      - name: Install IntuneWinAppUtil
+        run: |
           choco install intunewinapputil --no-progress --yes
+          
+      - name: Download and Install WiX Toolset v5.0.2
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix/releases/download/v5.0.2/wix-cli-x64.msi" -OutFile "wix-cli-x64.msi"
+          Start-Process msiexec.exe -ArgumentList '/i wix-cli-x64.msi /quiet /norestart' -Wait
+
+      - name: Set up WiX Bin Path
+        run: |
           $env:WIX_BIN = "C:\Program Files\WiX Toolset v5.0"
 
       - name: Set up Go Environment
