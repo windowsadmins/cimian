@@ -20,6 +20,22 @@ type PkgInfo struct {
     Dependencies []string `json:"dependencies"`
 }
 
+// ReadPkgInfo reads and parses the pkgsinfo metadata from the given path.
+func ReadPkgInfo(filePath string) (map[string]interface{}, error) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open pkgsinfo file: %v", err)
+    }
+    defer file.Close()
+
+    var pkgInfo map[string]interface{}
+    if err := json.NewDecoder(file).Decode(&pkgInfo); err != nil {
+        return nil, fmt.Errorf("failed to decode pkgsinfo: %v", err)
+    }
+
+    return pkgInfo, nil
+}
+
 // InstallDependencies installs all dependencies for the given package
 func InstallDependencies(pkg *PkgInfo) error {
     if len(pkg.Dependencies) == 0 {

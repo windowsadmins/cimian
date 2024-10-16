@@ -15,6 +15,7 @@ import (
 	"github.com/rodchristiansen/gorilla/pkg/catalog"
 	"github.com/rodchristiansen/gorilla/pkg/download"
 	"github.com/rodchristiansen/gorilla/pkg/logging"
+	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
 	"github.com/rodchristiansen/gorilla/pkg/report"
 	"github.com/rodchristiansen/gorilla/pkg/status"
 )
@@ -395,7 +396,7 @@ func Install(item catalog.Item, installerType, urlPackages, cachePath string, ch
 // InstallPackage installs a package using its pkgsinfo metadata.
 func InstallPackage(pkgInfoPath string, pkgsDir string) error {
     // Read the pkgsinfo metadata
-    pkgInfo, err := ReadPkgInfo(pkgInfoPath)
+    pkgInfo, err := pkginfo.ReadPkgInfo(pkgInfoPath)
     if err != nil {
         return fmt.Errorf("failed to read pkgsinfo: %v", err)
     }
