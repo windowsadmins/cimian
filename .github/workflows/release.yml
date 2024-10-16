@@ -21,11 +21,29 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install NuGet, WiX v3, and IntuneWinAppUtil
+      - name: Install NuGet
         run: |
-          choco install nuget.commandline --no-progress --yes
-          choco install intunewinapputil --no-progress --yes
-          choco install wixtoolset --version=3.14 --no-progress --yes
+          if (-not (Get-Command nuget.exe -ErrorAction SilentlyContinue)) {
+            choco install nuget.commandline --no-progress --yes
+          } else {
+            Write-Host "NuGet is already installed."
+          }
+
+      - name: Install IntuneWinAppUtil
+        run: |
+          if (-not (Get-Command IntuneWinAppUtil.exe -ErrorAction SilentlyContinue)) {
+            choco install intunewinapputil --no-progress --yes
+          } else {
+            Write-Host "IntuneWinAppUtil is already installed."
+          }
+
+      - name: Check for WiX Installation
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe")) {
+            choco install wixtoolset --version=3.14 --no-progress --yes --force
+          } else {
+            Write-Host "WiX Toolset v3.14 is already installed."
+          }
 
       - name: Set up Go Environment
         uses: actions/setup-go@v4
