@@ -5,11 +5,10 @@ import (
     "fmt"
     "os"
     "os/signal"
-    "syscall"
     "path/filepath"
     "time"
     "unsafe"
-
+    "syscall"
     "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
@@ -62,22 +61,33 @@ func main() {
     }
 
     // Run the update process
-    manifestItems, err := manifest.Get(*cfg)
-    if err != nil {
-        logging.Error("Failed to retrieve manifest:", err)
-        os.Exit(1)
-    }
+    manifestItems, newCatalogs := manifest.Get(*cfg)
 
+    // Handle newCatalogs if necessary
     for _, item := range manifestItems {
-        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
+        fmt.Printf("Checking for updates: %s\n", item.Name)
 
-        if item.NeedsUpdate {
+        if needsUpdate(item) {
             fmt.Printf("Installing update for %s...\n", item.Name)
-            installUpdate(pkginfo.PkgInfo{InstallerPath: item.InstallerPath})
+            installUpdate(item)
         }
     }
 
     fmt.Println("Software updates completed.")
+}
+
+func runUpdates(cfg *config.Configuration) {
+    manifestItems, newCatalogs := manifest.Get(*cfg)
+    // Handle newCatalogs if necessary
+
+    for _, item := range manifestItems {
+        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
+
+        if needsUpdate(item) {
+            fmt.Printf("Installing update for %s...\n", item.Name)
+            installUpdate(item)
+        }
+    }
 }
 
 // adminCheck checks if the program is running with admin privileges.
@@ -101,51 +111,65 @@ func adminCheck() (bool, error) {
 }
 
 // getIdleSeconds uses the Windows API to get the system's idle time in seconds.
-func getIdleSeconds() int {
-    var lastInput windows.LastInputInfo
-    lastInput.Size = uint32(unsafe.Sizeof(lastInput))
-    err := windows.GetLastInputInfo(&lastInput)
-    if err != nil {
-        return 0
-    }
-    currentTime := windows.GetTickCount64()
-    return int((currentTime - lastInput.Time) / 1000)
+type LASTINPUTINFO struct {
+    CbSize uint32
+    DwTime uint32
 }
 
-// runUpdates checks for updates and processes .msi, .exe, .ps1, and .nupkg installations
-func runUpdates(cfg *config.Configuration) {
-    manifest, err := manifest.Get(cfg)
+func getIdleSeconds() int {
+    lastInput := LASTINPUTINFO{
+        CbSize: uint32(unsafe.Sizeof(LASTINPUTINFO{})),
+    }
+    ret, _, err := syscall.NewLazyDLL("user32.dll").NewProc("GetLastInputInfo").Call(uintptr(unsafe.Pointer(&lastInput)))
+    if ret == 0 {
+        fmt.Printf("Error getting last input info: %v\n", err)
+        return 0
+    }
+
+    tickCount, _, err := syscall.NewLazyDLL("kernel32.dll").NewProc("GetTickCount").Call()
+    if tickCount == 0 {
+        fmt.Printf("Error getting tick count: %v\n", err)
+        return 0
+    }
+
+    idleTime := (uint32(tickCount) - lastInput.DwTime) / 1000
+    return int(idleTime)
+}
+
+// needsUpdate determines if the item needs to be updated.
+func needsUpdate(item manifest.Item) bool {
+    installedVersion, err := pkginfo.GetInstalledVersion(item.Name)
     if err != nil {
-        logging.Error("Failed to retrieve manifest:", err)
-        os.Exit(1)
+        // Not installed or error occurred; assume update is needed
+        return true
     }
-
-    for _, item := range manifest.Items {
-        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
-
-        if item.NeedsUpdate {
-            fmt.Printf("Installing update for %s...\n", item.Name)
-            installUpdate(item)
-        }
-    }
+    return installedVersion != item.Version
 }
 
 // installUpdate installs a package based on its type.
-func installUpdate(item pkginfo.PkgInfo) {
-    switch filepath.Ext(item.InstallerPath) {
+func installUpdate(item manifest.Item) {
+    var err error
+    switch filepath.Ext(item.InstallerLocation) {
     case ".msi":
-        fmt.Printf("Installing MSI: %s\n", item.InstallerPath)
-        process.InstallMSI(item.InstallerPath)
+        fmt.Printf("Installing MSI: %s\n", item.InstallerLocation)
+        err = process.InstallMSI(item.InstallerLocation)
     case ".exe":
-        fmt.Printf("Running EXE: %s\n", item.InstallerPath)
-        process.RunEXE(item.InstallerPath)
+        fmt.Printf("Running EXE: %s\n", item.InstallerLocation)
+        err = process.RunEXE(item.InstallerLocation)
     case ".ps1":
-        fmt.Printf("Executing PowerShell script: %s\n", item.InstallerPath)
-        process.RunPowerShellScript(item.InstallerPath)
+        fmt.Printf("Executing PowerShell script: %s\n", item.InstallerLocation)
+        err = process.RunPowerShellScript(item.InstallerLocation)
     case ".nupkg":
-        fmt.Printf("Installing NuGet package: %s\n", item.InstallerPath)
-        process.InstallNuGetPackage(item.InstallerPath)
+        fmt.Printf("Installing NuGet package: %s\n", item.InstallerLocation)
+        err = process.InstallNuGetPackage(item.InstallerLocation)
     default:
-        fmt.Printf("Unsupported installer type for %s\n", item.InstallerPath)
+        fmt.Printf("Unsupported installer type for %s\n", item.InstallerLocation)
+        return
+    }
+
+    if err != nil {
+        fmt.Printf("Failed to install %s: %v\n", item.Name, err)
+    } else {
+        fmt.Printf("Successfully installed %s\n", item.Name)
     }
 }
