@@ -7,11 +7,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"gopkg.in/yaml.v3"
-	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
+	"github.com/rodchristiansen/gorilla/pkg/config"
 	"github.com/rodchristiansen/gorilla/pkg/logging"
 )
 
-// PkgsInfo structure holds package metadata
+// Initialize logger with configuration.
+func initLogger(conf *config.Configuration) {
+	logging.InitLogger(*conf)
+}
+
+// PkgsInfo represents the structure of a package's metadata.
 type PkgsInfo struct {
 	Name                string   `yaml:"name"`
 	DisplayName         string   `yaml:"display_name"`
@@ -26,15 +31,7 @@ type PkgsInfo struct {
 	SupportedArch       []string `yaml:"supported_architectures"`
 	ProductCode         string   `yaml:"product_code,omitempty"`
 	UpgradeCode         string   `yaml:"upgrade_code,omitempty"`
-
-	// New fields for Gorilla support
-	Dependencies       []string     `yaml:"dependencies,omitempty"`
-	Check              *Check       `yaml:"check,omitempty"`
-	Installer          *Installer   `yaml:"installer,omitempty"`
-	Uninstaller        *Installer   `yaml:"uninstaller,omitempty"`
-	PreInstallScript   string       `yaml:"preinstall_script,omitempty"`
-	PostInstallScript  string       `yaml:"postinstall_script,omitempty"`
-    FilePath           string
+	FilePath            string
 }
 
 // Check structure for file, script, and registry checks
@@ -70,7 +67,7 @@ type Catalog struct {
 	Packages []PkgsInfo `yaml:"packages"`
 }
 
-// CatalogsMap is a map where the key is the catalog name and the value is the list of packages
+// CatalogsMap stores catalogs with their respective package information.
 type CatalogsMap map[string][]PkgsInfo
 
 // Config structure holds the configuration settings
@@ -82,146 +79,122 @@ type Config struct {
 	DefaultArch    string `yaml:"default_arch"`
 }
 
-// getConfigPath returns the appropriate configuration file path based on the OS
+// Get the appropriate configuration path based on the OS.
 func getConfigPath() string {
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		return filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.yaml")
-	} else if runtime.GOOS == "windows" {
+	case "windows":
 		return filepath.Join(os.Getenv("APPDATA"), "Gorilla", "import.yaml")
+	default:
+		return "config.yaml"
 	}
-	return "config.yaml" // Default path for other OSes
 }
 
-// loadConfig loads the configuration from a YAML file
-func loadConfig(configPath string) (Config, error) {
-	var config Config
-	file, err := os.Open(configPath)
-	if err != nil {
-		logging.LogError(err, "Processing Error")
-		return config, err
-	}
-	defer file.Close()
-
-	yamlDecoder := yaml.NewDecoder(file)
-	if err := yamlDecoder.Decode(&config); err != nil {
-		return config, err
-	}
-
-	return config, nil
+// Load the configuration from a YAML file.
+func loadConfig(configPath string) (*config.Configuration, error) {
+	return config.LoadConfig()
 }
 
-// scanRepo scans the pkgsinfo directory and reads all pkginfo YAML files
+// Scan the pkgsinfo directory and read all pkginfo YAML files.
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
-    var pkgsInfos []PkgsInfo
+	var pkgsInfos []PkgsInfo
 
-    err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return err
-        }
-        if filepath.Ext(path) == ".yaml" {
-            fileContent, err := os.ReadFile(path)
-            if err != nil {
-		logging.LogError(err, "Processing Error")
-                return err
-            }
-            var pkgsInfo PkgsInfo
-            if err := yaml.Unmarshal(fileContent, &pkgsInfo); err != nil {
-                return err
-            }
-            pkgsInfo.FilePath = path // Set the file path
-            pkgsInfos = append(pkgsInfos, pkgsInfo)
-        }
-        return nil
-    })
+	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if filepath.Ext(path) == ".yaml" {
+			fileContent, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			var pkgsInfo PkgsInfo
+			if err := yaml.Unmarshal(fileContent, &pkgsInfo); err != nil {
+				return err
+			}
+			pkgsInfo.FilePath = path
+			pkgsInfos = append(pkgsInfos, pkgsInfo)
+		}
+		return nil
+	})
 
-    return pkgsInfos, err
+	return pkgsInfos, err
 }
 
-// buildCatalogs builds catalogs based on the packages and their specified catalogs
-func buildCatalogs(pkgsInfos []PkgsInfo) CatalogsMap {
-    catalogs := make(CatalogsMap)
-    allPackages := []PkgsInfo{}
+// Build catalogs by processing the list of package information.
+func buildCatalogs(pkgsInfos []PkgsInfo) (CatalogsMap, error) {
+	catalogs := make(CatalogsMap)
 
-    fmt.Println("Building catalogs from pkgsinfo...")
+	for _, pkg := range pkgsInfos {
+		for _, catalog := range pkg.Catalogs {
+			catalogs[catalog] = append(catalogs[catalog], pkg)
+		}
+	}
 
-    for _, pkg := range pkgsInfos {
-        for _, catalogName := range pkg.Catalogs {
-            catalogs[catalogName] = append(catalogs[catalogName], pkg)
-            fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catalogName)
-        }
-        allPackages = append(allPackages, pkg)
-    }
-
-    // Add all packages to 'All.yaml'
-    catalogs["All"] = allPackages
-    fmt.Println("Added all packages to 'All' catalog.")
-
-    return catalogs
+	return catalogs, nil
 }
 
-// writeCatalogs writes the catalogs to YAML files
-func writeCatalogs(repoPath string, catalogs CatalogsMap) error {
-    catalogsDir := filepath.Join(repoPath, "catalogs")
-    if _, err := os.Stat(catalogsDir); os.IsNotExist(err) {
-        if err := os.MkdirAll(catalogsDir, 0755); err != nil {
-            return fmt.Errorf("failed to create catalogs directory: %v", err)
-        }
-    }
+// Write the catalogs to YAML files in the output directory.
+func writeCatalogs(catalogs CatalogsMap, outputDir string) error {
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %v", err)
+	}
 
-    fmt.Println("Writing catalogs to disk...")
+	for catalog, pkgs := range catalogs {
+		filePath := filepath.Join(outputDir, catalog+".yaml")
+		file, err := os.Create(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %v", filePath, err)
+		}
+		defer file.Close()
 
-    for catalogName, packages := range catalogs {
-        outputFile := filepath.Join(catalogsDir, fmt.Sprintf("%s.yaml", catalogName))
-        file, err := os.Create(outputFile)
-        if err != nil {
-		logging.LogError(err, "Processing Error")
-            return fmt.Errorf("failed to create catalog file: %v", err)
-        }
-        defer file.Close()
+		encoder := yaml.NewEncoder(file)
+		if err := encoder.Encode(pkgs); err != nil {
+			return fmt.Errorf("failed to write YAML to %s: %v", filePath, err)
+		}
+		encoder.Close()
+		fmt.Printf("Catalog %s written to %s\n", catalog, filePath)
+	}
 
-        encoder := yaml.NewEncoder(file)
-        if err := encoder.Encode(packages); err != nil {
-            return fmt.Errorf("failed to encode catalog to YAML: %v", err)
-        }
-        fmt.Printf("Catalog %s written successfully.\n", catalogName)
-    }
-
-    fmt.Println("All catalogs updated successfully.")
-    return nil
+	return nil
 }
 
-// makeCatalogs is the main function that scans the repo, builds, and writes catalogs
+// Main function for building and writing catalogs.
 func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
-    // Scan the pkgsinfo directory for package info files
-    fmt.Println("Getting list of pkgsinfo...")
-    pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
-    if err != nil {
-		logging.LogError(err, "Processing Error")
-        return fmt.Errorf("error scanning repo: %v", err)
-    }
+	fmt.Println("Getting list of pkgsinfo...")
+	pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
+	if err != nil {
+		return fmt.Errorf("error scanning repo: %v", err)
+	}
 
-    // Build the catalogs based on the package info files
-    catalogs := buildCatalogs(pkgsInfos)
+	catalogs, err := buildCatalogs(pkgsInfos)
+	if err != nil {
+		return fmt.Errorf("error building catalogs: %v", err)
+	}
 
-    // Write the catalogs to the repo/catalogs directory
-    if err := writeCatalogs(repoPath, catalogs); err != nil {
-        return fmt.Errorf("error writing catalogs: %v", err)
-    }
+	if err := writeCatalogs(catalogs, filepath.Join(repoPath, "catalogs")); err != nil {
+		return fmt.Errorf("error writing catalogs: %v", err)
+	}
 
-    return nil
+	return nil
 }
 
-// main handles the command-line arguments and runs the makecatalogs function
+// Main entry point.
 func main() {
-	logging.InitLogger()
-	defer logging.CloseLogger()
-	// Define the flags
+	configPath := getConfigPath()
+	conf, err := loadConfig(configPath)
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	initLogger(conf)
+
 	repoPath := flag.String("repo_url", "", "Path to the Gorilla repo.")
 	force := flag.Bool("force", false, "Disable sanity checks.")
 	skipPkgCheck := flag.Bool("skip-pkg-check", false, "Skip checking of pkg existence.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
-
 	flag.Parse()
 
 	if *showVersion {
@@ -229,23 +202,10 @@ func main() {
 		return
 	}
 
-	// Get the config path based on the OS
-	configPath := getConfigPath()
-
-	// Load the config
-	config, err := loadConfig(configPath)
-	if err != nil {
-		logging.LogError(err, "Processing Error")
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Use the repo path from the config if not provided via the flag
 	if *repoPath == "" {
-		*repoPath = config.RepoPath
+	    *repoPath = conf.RepoPath
 	}
 
-	// Run the makeCatalogs function
 	if err := makeCatalogs(*repoPath, *skipPkgCheck, *force); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
