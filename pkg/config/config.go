@@ -11,17 +11,22 @@ const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 
 // Configuration holds the configurable options for Gorilla in YAML format
 type Configuration struct {
-    InstallPath    string `yaml:"install_path"`
-    LogLevel       string `yaml:"log_level"`
-    RepoPath       string `yaml:"repo_path"`
-    CatalogsPath   string `yaml:"catalogs_path"`
-    Debug          bool   `yaml:"debug"`
-    Verbose        bool   `yaml:"verbose"`
-    CheckOnly      bool   `yaml:"check_only"`
-    DefaultArch    string `yaml:"default_arch"`
-    DefaultCatalog string `yaml:"default_catalog"`
-    CloudProvider  string `yaml:"cloud_provider"`
-    CloudBucket    string `yaml:"cloud_bucket"`
+    Catalogs        []string `yaml:"catalogs"`
+    CatalogsPath    string   `yaml:"catalogs_path"`
+    CheckOnly       bool     `yaml:"check_only"`
+    CloudBucket     string   `yaml:"cloud_bucket"`
+    CloudProvider   string   `yaml:"cloud_provider"`
+    Debug           bool     `yaml:"debug"`
+    DefaultArch     string   `yaml:"default_arch"`
+    DefaultCatalog  string   `yaml:"default_catalog"`
+    InstallPath     string   `yaml:"install_path"`
+    LocalManifests  []string `yaml:"local_manifests"`
+    LogLevel        string   `yaml:"log_level"`
+    Manifest        string   `yaml:"manifest"`
+    RepoPath        string   `yaml:"repo_path"`
+    URL             string   `yaml:"url"`
+    URLPkgsInfo     string   `yaml:"url_pkgsinfo"`
+    Verbose         bool     `yaml:"verbose"`
 }
 
 // LoadConfig loads the configuration from a YAML file.
