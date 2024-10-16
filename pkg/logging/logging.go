@@ -82,6 +82,13 @@ func Info(logStrings ...interface{}) {
     log.Println(logStrings...)
 }
 
+// Warn logs a message with a WARNING prefix and writes to Warnings.log
+func Warn(logStrings ...interface{}) {
+    log.SetPrefix("WARNING: ")
+    log.SetOutput(warningsLog)
+    log.Println(logStrings...)
+}
+
 // Error logs a message with an ERROR prefix and writes to Warnings.log
 func Error(logStrings ...interface{}) {
     log.SetPrefix("ERROR: ")
