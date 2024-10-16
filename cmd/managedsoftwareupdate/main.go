@@ -7,19 +7,22 @@ import (
     "syscall"
     "path/filepath"
     "time"
-    "github.com/rodchristiansen/gorilla/pkg/catalog"
+
     "github.com/rodchristiansen/gorilla/pkg/config"
-    "github.com/rodchristiansen/gorilla/pkg/download"
-    "github.com/rodchristiansen/gorilla/pkg/pkginfo"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
+    "github.com/rodchristiansen/gorilla/pkg/pkginfo"
     "github.com/rodchristiansen/gorilla/pkg/process"
-    "github.com/rodchristiansen/gorilla/pkg/report"
     "golang.org/x/sys/windows"
+    "unsafe"
 )
 
 func main() {
-    logging.InitLogger()
+    // Load configuration
+    cfg := config.LoadConfig()
+
+    // Initialize logger with configuration
+    logging.InitLogger(cfg)
     defer logging.CloseLogger()
 
     // Handle signals for clean up
@@ -31,11 +34,8 @@ func main() {
         os.Exit(1)
     }()
 
-    // Get the configuration
-    cfg := config.Get()
-
     // Check for admin privileges
-    admin, err := adminCheck()
+    admin, err := adminCheck()  // Call the function directly from admin.go
     if err != nil || !admin {
         fmt.Println("Administrative access is required to run updates. Please run as an administrator.")
         os.Exit(1)
@@ -75,9 +75,12 @@ func getIdleSeconds() int {
 }
 
 // runUpdates checks for updates and processes .msi, .exe, .ps1, and .nupkg installations
-func runUpdates(cfg *config.Config) {
-    // Placeholder to retrieve manifest and available updates
-    manifest := manifest.Get() // Fetch the manifest
+func runUpdates(cfg *config.Configuration) {
+    manifest, err := manifest.Get(cfg)
+    if err != nil {
+        logging.Error("Failed to retrieve manifest:", err)
+        os.Exit(1)
+    }
 
     for _, item := range manifest.Items {
         fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
