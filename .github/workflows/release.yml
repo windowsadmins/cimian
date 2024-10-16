@@ -76,9 +76,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "C:\Program Files\WiX Toolset v5.0\bin\wix.exe" build build/msi.wxs -o release/gorilla.wixobj
-          & "C:\Program Files\WiX Toolset v5.0\bin\wix.exe" link release/gorilla.wixobj -o release/gorilla.msi
-          Remove-Item release/gorilla.wixobj
+          & "C:\Program Files\WiX Toolset v5.0\bin\wix.exe" build build/msi.wxs -o release/gorilla.msi
 
       - name: Prepare Chocolatey Install Script
         shell: pwsh
