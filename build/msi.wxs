@@ -1,61 +1,71 @@
 <?xml version="1.0"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+   <Product Id="*" UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be" 
+            Name="Gorilla"
+            Version="1.0.0"
+            Manufacturer="Gorilla"
+            Language="1033">
+      <Package InstallerVersion="200" Compressed="yes" Comments="Windows Installer Package"/>
+      <Media Id="1" Cabinet="product.cab" EmbedCab="yes"/>
 
-  <Package
-    Name="Gorilla"
-    Version="1.0.0"
-    Manufacturer="Gorilla"
-    UpgradeCode="d61005BF-A182-4583-810D-8C33B056B8BE">
+      <Directory Id="TARGETDIR" Name="SourceDir">
+         <Directory Id="CommonAppDataFolder">
+            <!-- Config.yaml now placed in ManagedInstalls -->
+            <Directory Id="INSTALLDIR" Name="ManagedInstalls">
+               <Component Id="Config" Guid="4882d10a-47bf-48ae-8d00-50ea2c9897ec">
+                  <File Id="ConfigFile" Source="build/config.yaml" Name="Config.yaml"/>
+               </Component>
+            </Directory>
+         </Directory>
 
-    <Media Id="1" Cabinet="product.cab" EmbedCab="yes" CompressionLevel="mszip" />
+         <!-- Binaries installed in the bin folder -->
+         <Directory Id="ProgramFilesFolder">
+            <Directory Id="INSTALLBIN" Name="Gorilla">
+               <Directory Id="BINDIR" Name="bin">
+                  <!-- Multiple binary components -->
+                  <Component Id="Binary1" Guid="47855ccd-7eab-464c-a795-26091de8b83a">
+                     <File Id="BinaryFile1" Source="release/gorillaimport.exe" />
+                  </Component>
+                  <Component Id="Binary2" Guid="67855cdd-8eab-564c-b795-26091fe9b83a">
+                     <File Id="BinaryFile2" Source="release/makecatalogs.exe" />
+                  </Component>
+                  <Component Id="Binary3" Guid="77855cde-9fab-664d-c795-26091ge8b83a">
+                     <File Id="BinaryFile3" Source="release/makepkginfo.exe" />
+                  </Component>
+                  <Component Id="Binary4" Guid="87855cde-afab-764d-d795-26091he8b83a">
+                     <File Id="BinaryFile4" Source="release/managedsoftwareupdate.exe" />
+                  </Component>
+                  <Component Id="Binary5" Guid="97855cde-bfab-864d-e795-26091ie8b83a">
+                     <File Id="BinaryFile5" Source="release/manifestutil.exe" />
+                  </Component>
 
-    <!-- Directory Structure -->
-    <StandardDirectory Id="ProgramFilesFolder">
-      <Directory Id="INSTALLFOLDER" Name="Gorilla">
-        <Directory Id="BIN" Name="bin">
-          <Component Id="GorillaBinaries" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
-            <File Id="GorillaImportExe" Source="bin\gorillaimport.exe" />
-            <File Id="MakeCatalogsExe" Source="bin\makecatalogs.exe" />
-            <File Id="MakePkgInfoExe" Source="bin\makepkginfo.exe" />
-            <File Id="ManagedSoftwareUpdateExe" Source="bin\managedsoftwareupdate.exe" />
-            <File Id="ManifestUtilExe" Source="bin\manifestutil.exe" />
-            <Environment Id="PATH_VAR" Name="PATH" Value="[BIN]" Permanent="no" Part="last" Action="set" System="yes" />
-          </Component>
-        </Directory>
-        <Directory Id="CONFIGDIR" Name="config">
-          <Component Id="ConfigComponent" Guid="4882D10A-47BF-48AE-8D00-50EA2C9897EC">
-            <File Id="ConfigYamlFile" Source="build\config.yaml" />
-          </Component>
-        </Directory>
+                  <!-- Add binaries to PATH -->
+                  <Environment Id="PATH" Name="PATH" Value="[BINDIR]" Permanent="no" Part="last" Action="set" System="yes" />
+               </Directory>
+            </Directory>
+         </Directory>
       </Directory>
-    </StandardDirectory>
 
-    <!-- Install Execute Sequence -->
-    <InstallExecuteSequence>
-      <Custom Action="CreateScheduledTask" After="InstallFiles" Condition="NOT Installed OR REINSTALL" />
-      <Custom Action="DeleteScheduledTask" Before="RemoveFiles" Condition="Installed" />
-    </InstallExecuteSequence>
+      <InstallExecuteSequence>
+         <Custom Action="CreateScheduledTask_Cmd" Before="CreateScheduledTask">NOT Installed or REINSTALL</Custom>
+         <Custom Action="CreateScheduledTask" After="InstallFiles">NOT Installed or REINSTALL</Custom>
+         <Custom Action="DeleteScheduledTask_Cmd" Before="DeleteScheduledTask">Installed</Custom>
+         <Custom Action="DeleteScheduledTask" After="RemoveFiles">Installed</Custom>
+      </InstallExecuteSequence>
 
-    <!-- Custom Actions -->
-    <CustomAction Id="CreateScheduledTask"
-                  Directory="SystemFolder"
-                  ExeCommand="SCHTASKS.EXE /CREATE /SC MINUTE /MO 60 /TN &quot;Gorilla&quot; /TR &quot;&quot;[BIN]managedsoftwareupdate.exe&quot;&quot; /RU &quot;NT AUTHORITY\SYSTEM&quot; /RL HIGHEST"
-                  Execute="deferred"
-                  Return="check"
-                  Impersonate="no" />
+      <CustomAction Id="CreateScheduledTask_Cmd" Property="CreateScheduledTask" Value="&quot;[SystemFolder]SCHTASKS.EXE&quot; /CREATE /SC MINUTE /MO 60 /TN &quot;Gorilla&quot; /TR &quot;&quot;[BINDIR]gorillaimport.exe&quot;&quot; /RU &quot;NT Authority\System&quot; /RP /RL HIGHEST"/>
+      <CustomAction Id="CreateScheduledTask" BinaryKey="WixCA" DllEntry="WixQuietExec" Execute="deferred" Return="check" Impersonate="no"/>
 
-    <CustomAction Id="DeleteScheduledTask"
-                  Directory="SystemFolder"
-                  ExeCommand="SCHTASKS.EXE /DELETE /F /TN &quot;Gorilla&quot;"
-                  Execute="deferred"
-                  Return="ignore"
-                  Impersonate="no" />
+      <CustomAction Id="DeleteScheduledTask_Cmd" Property="DeleteScheduledTask" Value="&quot;[SystemFolder]SCHTASKS.EXE&quot; /DELETE /f /TN &quot;Gorilla&quot;"/>
+      <CustomAction Id="DeleteScheduledTask" BinaryKey="WixCA" DllEntry="WixQuietExec" Execute="deferred" Return="ignore" Impersonate="no"/>
 
-    <!-- Feature Definition -->
-    <Feature Id="DefaultFeature" Level="1">
-      <ComponentRef Id="GorillaBinaries" />
-      <ComponentRef Id="ConfigComponent" />
-    </Feature>
-
-  </Package>
+      <Feature Id="DefaultFeature" Level="1">
+         <ComponentRef Id="Binary1"/>
+         <ComponentRef Id="Binary2"/>
+         <ComponentRef Id="Binary3"/>
+         <ComponentRef Id="Binary4"/>
+         <ComponentRef Id="Binary5"/>
+         <ComponentRef Id="Config"/>
+      </Feature>
+   </Product>
 </Wix>
