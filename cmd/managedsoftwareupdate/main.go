@@ -1,7 +1,6 @@
 package main
 
 import (
-    "flag"
     "fmt"
     "os"
     "os/signal"
@@ -11,7 +10,6 @@ import (
     "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
-    "github.com/rodchristiansen/gorilla/pkg/pkginfo"
     "github.com/rodchristiansen/gorilla/pkg/process"
     "golang.org/x/sys/windows"
 )
@@ -60,7 +58,8 @@ func main() {
     }
 
     // Run the update process
-    manifestItems, catalogsMap := manifest.Get(*cfg)
+    manifestItems, _ := manifest.Get(*cfg)
+
     for _, item := range manifestItems {
         fmt.Printf("Checking for updates: %s\n", item.Name)
         if needsUpdate(item) {
@@ -119,7 +118,7 @@ func getIdleSeconds() int {
 
 // needsUpdate determines if the item needs to be updated.
 func needsUpdate(item manifest.Item) bool {
-    installedVersion, err := pkginfo.GetInstalledVersion(item.Name)
+    installedVersion, err := process.GetInstalledVersion(item.Name)
     if err != nil {
         // Not installed or error occurred; assume update is needed
         return true
