@@ -1,30 +1,36 @@
 package main
 
 import (
+    "flag"
     "fmt"
     "os"
     "os/signal"
     "syscall"
     "path/filepath"
     "time"
+    "unsafe"
+
     "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
     "github.com/rodchristiansen/gorilla/pkg/pkginfo"
     "github.com/rodchristiansen/gorilla/pkg/process"
     "golang.org/x/sys/windows"
-    "unsafe"
 )
 
 func main() {
     // Load configuration
-    cfg := config.LoadConfig()
+    cfg, err := config.LoadConfig()
+    if err != nil {
+        fmt.Println("Failed to load configuration:", err)
+        os.Exit(1)
+    }
 
-    // Initialize logger with configuration
+    // Initialize logger
     logging.InitLogger(cfg)
     defer logging.CloseLogger()
 
-    // Handle signals for clean up
+    // Handle system signals for cleanup
     signalChan := make(chan os.Signal, 1)
     signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
     go func() {
@@ -36,7 +42,7 @@ func main() {
     // Check for admin privileges
     admin, err := adminCheck()
     if err != nil || !admin {
-        fmt.Println("Administrative access is required to run updates. Please run as an administrator.")
+        fmt.Println("Administrative access is required. Please run as an administrator.")
         os.Exit(1)
     }
 
@@ -47,21 +53,53 @@ func main() {
         os.Exit(1)
     }
 
-    // Detect idle time to decide when to perform updates
+    // Check system idle time
     idleTime := getIdleSeconds()
     if idleTime < 300 {
-        fmt.Println("System has not been idle for long enough, deferring updates.")
+        fmt.Println("System has not been idle long enough, deferring updates.")
         os.Exit(0)
     }
 
     // Run the update process
-    fmt.Println("Running software update checks...")
-    runUpdates(cfg)
+    manifestItems, err := manifest.Get(*cfg)
+    if err != nil {
+        logging.Error("Failed to retrieve manifest:", err)
+        os.Exit(1)
+    }
+
+    for _, item := range manifestItems {
+        fmt.Printf("Checking for updates: %s (%s)\n", item.Name, item.Version)
+        if item.NeedsUpdate {
+            fmt.Printf("Installing update for %s...\n", item.Name)
+            installUpdate(item)
+        }
+    }
 
     fmt.Println("Software updates completed.")
 }
 
-// getIdleSeconds uses the Windows API to get the system's idle time in seconds
+// adminCheck checks if the program is running with admin privileges.
+func adminCheck() (bool, error) {
+    if flag.Lookup("test.v") != nil {
+        return false, nil
+    }
+
+    var adminSid *windows.SID
+    adminSid, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid, nil)
+    if err != nil {
+        return false, err
+    }
+
+    token := windows.Token(0)
+    isAdmin, err := token.IsMember(adminSid)
+    if err != nil {
+        return false, err
+    }
+
+    return isAdmin, nil
+}
+
+// getIdleSeconds uses the Windows API to get the system's idle time in seconds.
 func getIdleSeconds() int {
     var lastInput windows.LastInputInfo
     lastInput.Size = uint32(unsafe.Sizeof(lastInput))
@@ -91,7 +129,7 @@ func runUpdates(cfg *config.Configuration) {
     }
 }
 
-// installUpdate handles the installation of different types of packages
+// installUpdate installs a package based on its type.
 func installUpdate(item pkginfo.PkgInfo) {
     switch filepath.Ext(item.Installer) {
     case ".msi":
