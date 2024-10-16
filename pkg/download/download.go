@@ -1,4 +1,3 @@
-
 package download
 
 import (
@@ -6,7 +5,6 @@ import (
     "encoding/hex"
     "fmt"
     "io"
-    "net"
     "net/http"
     "os"
     "path/filepath"
@@ -42,6 +40,7 @@ func DownloadFile(url, dest string) error {
         // Open the destination file with append mode for resumable download
         out, err := os.OpenFile(dest, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
         if err != nil {
+            logging.Error("Failed to open destination file:", err)
             return fmt.Errorf("failed to open destination file: %v", err)
         }
         defer out.Close()
@@ -49,12 +48,14 @@ func DownloadFile(url, dest string) error {
         // Get file size for resuming
         existingFileSize, err := out.Seek(0, io.SeekEnd)
         if err != nil {
+            logging.Error("Failed to get existing file size:", err)
             return fmt.Errorf("failed to get existing file size: %v", err)
         }
 
         // Create request with Range header
         req, err := http.NewRequest("GET", url, nil)
         if err != nil {
+            logging.Error("Failed to create HTTP request:", err)
             return fmt.Errorf("failed to create HTTP request: %v", err)
         }
         if existingFileSize > 0 {
@@ -63,6 +64,7 @@ func DownloadFile(url, dest string) error {
 
         resp, err := http.DefaultClient.Do(req)
         if err != nil {
+            logging.Error("Failed to download file:", err)
             return fmt.Errorf("failed to download file: %v", err)
         }
         defer resp.Body.Close()
@@ -70,17 +72,20 @@ func DownloadFile(url, dest string) error {
         logging.LogDownloadComplete(dest)
 
         if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+            logging.Error("Unexpected HTTP status code:", resp.StatusCode)
             return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
         }
 
         // Write the response body to the destination file
         _, err = io.Copy(out, resp.Body)
         if err != nil {
+            logging.Error("Failed to write downloaded data to file:", err)
             return fmt.Errorf("failed to write downloaded data to file: %v", err)
         }
 
         // Cache the downloaded file
         if err := copyFile(dest, cachedFilePath); err != nil {
+            logging.Error("Failed to cache the downloaded file:", err)
             return fmt.Errorf("failed to cache the downloaded file: %v", err)
         }
 
@@ -180,7 +185,7 @@ func isValidCache(path string) bool {
 
     // Verify file hash (assuming SHA-256 hash is stored in metadata for comparison)
     expectedHash := calculateHash(path)
-    actualHash := getStoredHash(path) // This function would retrieve the hash stored during the original download
+    actualHash := getStoredHash(path) // This function needs to be defined
     return expectedHash == actualHash
 }
 
@@ -214,4 +219,27 @@ func copyFile(src, dest string) error {
 
     _, err = io.Copy(output, input)
     return err
+}
+
+// getStoredHash retrieves the stored hash from a .hash file next to the given path.
+func getStoredHash(path string) string {
+    hashFile := path + ".hash"
+
+    // Open the hash file
+    f, err := os.Open(hashFile)
+    if err != nil {
+        logging.Warn("Unable to open hash file:", err)
+        return ""
+    }
+    defer f.Close()
+
+    // Read the hash from the file
+    hashBytes, err := io.ReadAll(f)
+    if err != nil {
+        logging.Warn("Unable to read hash from file:", err)
+        return ""
+    }
+
+    // Return the hash as a string
+    return string(hashBytes)
 }
