@@ -13,6 +13,7 @@ const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 type Configuration struct {
     Catalogs        []string `yaml:"catalogs"`
     CatalogsPath    string   `yaml:"catalogs_path"`
+    CachePath       string   `yaml:"cache_path"`
     CheckOnly       bool     `yaml:"check_only"`
     CloudBucket     string   `yaml:"cloud_bucket"`
     CloudProvider   string   `yaml:"cloud_provider"`
@@ -81,6 +82,7 @@ func GetDefaultConfig() *Configuration {
         InstallPath:    `C:\Program Files\Gorilla`,
         RepoPath:       `C:\ProgramData\Gorilla\repo`,
         CatalogsPath:   `C:\ProgramData\ManagedInstalls\catalogs`,
+        CachePath:      `C:\ProgramData\ManagedInstalls\Cache`,
         Debug:          false,
         Verbose:        false,
         CheckOnly:      false,
