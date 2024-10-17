@@ -8,6 +8,8 @@
     <description>Gorilla Software Deployment Tools</description>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <tags>admin</tags>
+    <repository url="https://github.com/windowsadmins/gorilla" />
+    <readme>README.md</readme>
   </metadata>
   <files>
     <file src="README.md" target="" />
