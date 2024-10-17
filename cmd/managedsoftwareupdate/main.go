@@ -22,51 +22,48 @@ import (
 var verbosity int
 
 func main() {
-
     // Define the --show-config and -v flags
     showConfig := flag.Bool("show-config", false, "Display the current configuration and exit.")
-    flag.CountVar(&verbosity, "v", "Increase verbosity (-v, -vv, -vvv).")
+    flag.IntVar(&verbosity, "v", 0, "Increase verbosity with multiple -v flags.")
     flag.Parse()
-    
+
     // Load configuration
     cfg, err := config.LoadConfig()
     if err != nil {
-        fmt.Println("Failed to load configuration:", err)
+        logError("Failed to load configuration:", err)
         os.Exit(1)
     }
 
-    // Define the --show-config flag
-    showConfig := flag.Bool("show-config", false, "Display the current configuration and exit.")
-    flag.Parse()
-
     if *showConfig {
-        // Load configuration and display it in a pretty format
+        // Pretty-print the configuration as YAML
         cfgYaml, err := yaml.Marshal(cfg)
         if err != nil {
-            fmt.Println("Failed to marshal configuration:", err)
+            logError("Failed to marshal configuration:", err)
             os.Exit(1)
         }
         fmt.Printf("Current Configuration:\n%s\n", cfgYaml)
-        os.Exit(0) // Exit after displaying config
+        os.Exit(0)
     }
 
     // Initialize logger
     logging.InitLogger(*cfg)
     defer logging.CloseLogger()
 
-   // Handle system signals for cleanup
+    logInfo("Initializing...")
+
+    // Handle system signals for cleanup
     signalChan := make(chan os.Signal, 1)
     signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
     go func() {
         <-signalChan
-        fmt.Println("Signal received, exiting gracefully...")
+        logInfo("Signal received, exiting gracefully...")
         os.Exit(1)
     }()
 
     // Check for admin privileges
     admin, err := adminCheck()
     if err != nil || !admin {
-        fmt.Println("Administrative access is required. Please run as an administrator.")
+        logError("Administrative access is required. Please run as an administrator.")
         os.Exit(1)
     }
 
@@ -74,23 +71,22 @@ func main() {
     cachePath := cfg.CachePath
     err = os.MkdirAll(filepath.Clean(cachePath), 0755)
     if err != nil {
-        logging.LogError(err, "Failed to create cache directory")
+        logError("Failed to create cache directory:", err)
         os.Exit(1)
     }
 
     // Check system idle time
     idleTime := getIdleSeconds()
     if idleTime < 0 {
-        fmt.Println("Running updates immediately, ignoring idle time.")
+        logInfo("Running updates immediately, ignoring idle time.")
     }
 
     // Run the update process
     manifestItems, _ := manifest.Get(*cfg)
-
     for _, item := range manifestItems {
-        fmt.Printf("Checking for updates: %s\n", item.Name)
+        logInfo(fmt.Sprintf("Checking for updates: %s", item.Name))
         if needsUpdate(item, cfg) {
-            fmt.Printf("Installing update for %s...\n", item.Name)
+            logInfo(fmt.Sprintf("Installing update for %s...", item.Name))
             installUpdate(item, cfg)
         }
     }
