@@ -32,8 +32,13 @@ func main() {
     flag.Parse()
 
     if *showConfig {
-        // Display the loaded configuration
-        fmt.Printf("Current Configuration:\n%+v\n", cfg)
+        // Load configuration and display it in a pretty format
+        cfgYaml, err := yaml.Marshal(cfg)
+        if err != nil {
+            fmt.Println("Failed to marshal configuration:", err)
+            os.Exit(1)
+        }
+        fmt.Printf("Current Configuration:\n%s\n", cfgYaml)
         os.Exit(0) // Exit after displaying config
     }
 
