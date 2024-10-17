@@ -102,7 +102,7 @@ jobs:
       - name: Prepare IntuneWin Package
         shell: pwsh
         run: |
-          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.msi -OutputFolder release/intunewin
+          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.msi -OutputFolder release
 
       - name: Verify Generated Files
         shell: pwsh
