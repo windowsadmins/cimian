@@ -123,19 +123,30 @@ jobs:
           # Prepare the release files by renaming them in place during the release step
           $releaseFiles = Get-ChildItem -Path release/* | ForEach-Object {
             $newFileName = $_.FullName
-            if ($_.Name -like "gorilla.msi") {
-              $newFileName = "release/Gorilla-$version.msi"
-              Rename-Item $_.FullName $newFileName
-            } elseif ($_.Name -like "gorilla.intunewin") {
-              $newFileName = "release/Gorilla-$version.intunewin"
-              Rename-Item $_.FullName $newFileName
-            } elseif ($_.Name -like "com.github.windowsadmins.gorilla.$version.nupkg") {
-              $newFileName = "release/Gorilla-$version.nupkg"
-              Rename-Item $_.FullName $newFileName
+            if ($_.Name -eq "gorilla.msi") {
+              $newFileName = Join-Path -Path $_.DirectoryName -ChildPath "Gorilla-$version$($_.Extension)"
+              if ($_.FullName -ne $newFileName) {
+                Write-Host "Renaming '$($_.FullName)' to '$newFileName'"
+                Rename-Item -Path $_.FullName -NewName $newFileName
+              }
+            } elseif ($_.Name -eq "gorilla.intunewin") {
+              $newFileName = Join-Path -Path $_.DirectoryName -ChildPath "Gorilla-$version$($_.Extension)"
+              if ($_.FullName -ne $newFileName) {
+                Write-Host "Renaming '$($_.FullName)' to '$newFileName'"
+                Rename-Item -Path $_.FullName -NewName $newFileName
+              }
+            } elseif ($_.Name -eq "com.github.windowsadmins.gorilla.$version.nupkg") {
+              $newFileName = Join-Path -Path $_.DirectoryName -ChildPath "Gorilla-$version.nupkg"
+              if ($_.FullName -ne $newFileName) {
+                Write-Host "Renaming '$($_.FullName)' to '$newFileName'"
+                Rename-Item -Path $_.FullName -NewName $newFileName
+              }
+            } else {
+              Write-Host "No action taken for '$($_.FullName)'"
             }
             return $newFileName -replace '\\', '/'
           }
-
+          
           # Create the release
           gh release create $version $releaseFiles `
             --title "GorillaPkg v$version" `
