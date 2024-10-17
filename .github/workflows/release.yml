@@ -94,6 +94,7 @@ jobs:
       - name: Prepare NuGet Package
         shell: pwsh
         run: |
+          Copy-Item build/nupkg.ps1 -Destination build/chocolateyInstall.ps1          
           $version = $env:RELEASE_VERSION
           (Get-Content build/nupkg.nuspec) -replace '\$\{\{ env\.RELEASE_VERSION \}\}', $version | Set-Content build/nupkg.nuspec
           nuget pack build/nupkg.nuspec -OutputDirectory release -BasePath $PWD
