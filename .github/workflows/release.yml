@@ -94,7 +94,7 @@ jobs:
       - name: Prepare NuGet Package
         shell: pwsh
         run: |
-          Copy-Item build/nupkg.ps1 -Destination build/chocolateyInstall.ps1          
+          Copy-Item build/nupkg.ps1 -Destination build/install.ps1          
           $version = $env:RELEASE_VERSION
           (Get-Content build/nupkg.nuspec) -replace '\$\{\{ env\.RELEASE_VERSION \}\}', $version | Set-Content build/nupkg.nuspec
           nuget pack build/nupkg.nuspec -OutputDirectory release -BasePath $PWD
@@ -102,7 +102,15 @@ jobs:
       - name: Prepare IntuneWin Package
         shell: pwsh
         run: |
-          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.nupkg -OutputFolder release/intunewin
+          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.msi -OutputFolder release/intunewin
+
+      - name: Rename All Packages
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_VERSION          
+          Rename-Item "release/gorilla.msi" "release/Gorilla-$version.msi"          
+          Rename-Item "release/gorilla.intunewin" "release/Gorilla-$version.intunewin"
+          Rename-Item "release/com.github.windowsadmins.gorilla.$version.nupkg" "release/Gorilla-$version.nupkg"
 
       - name: Verify Generated Files
         shell: pwsh
