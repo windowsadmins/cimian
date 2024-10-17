@@ -4,6 +4,7 @@
 *.so
 *.dylib
 *.msi
+*.nupkg
 
 # Include phony packages for running tests
 !pkg/installer/testdata/packages/*/*
@@ -21,10 +22,7 @@
 # OS files
 *.DS_Store
 
-# Misc files used in dev
-config.json
-config.yaml
-
 # WIX files
 *.wixpdb
 *.wixobj
+/localBuildUpdateGorilla.ps1
