@@ -19,7 +19,15 @@ import (
     "gopkg.in/yaml.v3"
 )
 
+var verbosity int
+
 func main() {
+
+    // Define the --show-config and -v flags
+    showConfig := flag.Bool("show-config", false, "Display the current configuration and exit.")
+    flag.CountVar(&verbosity, "v", "Increase verbosity (-v, -vv, -vvv).")
+    flag.Parse()
+    
     // Load configuration
     cfg, err := config.LoadConfig()
     if err != nil {
@@ -87,10 +95,32 @@ func main() {
         }
     }
 
-    fmt.Println("Cleaning up old cache...")
+    logInfo("Cleaning up old cache...")
     process.CleanUp(cachePath)
 
-    fmt.Println("Software updates completed.")
+    logInfo("Software updates completed.")
+}
+
+func logError(message string, args ...interface{}) {
+    fmt.Fprintf(os.Stderr, message+"\n", args...)
+}
+
+func logInfo(message string, args ...interface{}) {
+    if verbosity >= 1 {
+        fmt.Printf(message+"\n", args...)
+    }
+}
+
+func logVerbose(message string, args ...interface{}) {
+    if verbosity >= 2 {
+        fmt.Printf(message+"\n", args...)
+    }
+}
+
+func logVeryVerbose(message string, args ...interface{}) {
+    if verbosity >= 3 {
+        fmt.Printf(message+"\n", args...)
+    }
 }
 
 // adminCheck checks if the program is running with admin privileges.
