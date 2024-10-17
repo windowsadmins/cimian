@@ -18,6 +18,9 @@
             Comments="Windows Installer Package"
             InstallScope="perMachine"
             Platform="x64" />
+    
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
 
     <!-- Media Definition -->
     <Media Id="1"
@@ -54,13 +57,13 @@
           <!-- Component to Modify PATH Environment Variable -->
           <Component Id="SetPathComponent" Guid="a5f2c571-89df-4c71-967f-ec9d3ef4cdd0" Win64="yes">
             <CreateFolder />
-            <Environment Id="PATH"
-                         Name="PATH"
-                         Value="[INSTALLBIN]"
-                         Permanent="no"
-                         Part="last"
-                         Action="set"
-                         System="yes" />
+            <Environment Id="GorillaPath"
+                        Name="PATH"
+                        Value="[INSTALLBIN];[%PATH]" 
+                        Action="set"
+                        Part="last"
+                        Permanent="no"
+                        System="yes" />
           </Component>
         </Directory>
       </Directory>
