@@ -147,7 +147,15 @@ jobs:
             return $newFileName -replace '\\', '/'
           }
           
-          # Create the release
-          gh release create $version $releaseFiles `
-            --title "GorillaPkg v$version" `
-            --notes "Automated release for version $version."
+          # Prepare the pkgs
+          $releaseFiles = @(
+            "release/Gorilla-$version.msi",
+            "release/Gorilla-$version.intunewin",
+            "release/Gorilla-$version.nupkg"
+          )
+
+          # Publish the release with the selected files and source code
+          gh release create $version @($releaseFiles) `
+            --title "Gorilla v$version" `
+            --notes "Automated release for version $version." `
+            --generate-notes
