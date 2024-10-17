@@ -8,7 +8,7 @@
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Gorilla"
-           Version="!(wix.SemanticVersion)"
+           Version="$(var.SemanticVersion)"
            Manufacturer="Gorilla"
            Language="1033">
 
