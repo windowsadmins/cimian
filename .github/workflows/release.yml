@@ -87,8 +87,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -o build/ build/msi.wxs
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -o release/gorilla.msi build/msi.wixobj
+          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -ext WixUtilExtension.dll -o release/gorilla.msi build/msi.wixobj
+          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -ext WixUtilExtension.dll -o build/ build/msi.wxs
 
       - name: Prepare NuGet Package
         shell: pwsh
