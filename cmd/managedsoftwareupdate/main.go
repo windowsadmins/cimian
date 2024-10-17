@@ -57,9 +57,8 @@ func main() {
 
     // Check system idle time
     idleTime := getIdleSeconds()
-    if idleTime < 300 {
-        fmt.Println("System has not been idle long enough, deferring updates.")
-        os.Exit(0)
+    if idleTime < 0 {
+        fmt.Println("Running updates immediately, ignoring idle time.")
     }
 
     // Run the update process
