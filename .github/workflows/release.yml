@@ -107,10 +107,28 @@ jobs:
       - name: Rename All Packages
         shell: pwsh
         run: |
-          $version = $env:RELEASE_VERSION          
-          Rename-Item "release\gorilla.msi" "release\Gorilla-$version.msi"          
-          Rename-Item "release\gorilla.intunewin" "release\Gorilla-$version.intunewin"
-          Rename-Item "release\com.github.windowsadmins.gorilla.$version.nupkg" "release\Gorilla-$version.nupkg"
+          $version = $env:RELEASE_VERSION
+
+          # Rename the MSI
+          if (Test-Path "release\\gorilla.msi") {
+            Rename-Item "release\\gorilla.msi" "release\\Gorilla-$version.msi"
+          } else {
+            Write-Error "MSI file not found!"
+          }
+
+          # Rename the IntuneWin file
+          if (Test-Path "release\\intunewin\\gorilla.intunewin") {
+            Rename-Item "release\\intunewin\\gorilla.intunewin" "release\\Gorilla-$version.intunewin"
+          } else {
+            Write-Error "IntuneWin file not found!"
+          }
+
+          # Rename the NuGet package
+          if (Test-Path "release\\com.github.windowsadmins.gorilla.$version.nupkg") {
+            Rename-Item "release\\com.github.windowsadmins.gorilla.$version.nupkg" "release\\Gorilla-$version.nupkg"
+          } else {
+            Write-Error "NuGet package file not found!"
+          }
 
       - name: Verify Generated Files
         shell: pwsh
