@@ -125,6 +125,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $version = $env:RELEASE_VERSION
+          $semanticVersion = $env:SEMANTIC_VERSION
           
           # Prepare the release files by renaming them in place during the release step
           $releaseFiles = Get-ChildItem -Path release/* | ForEach-Object {
@@ -141,7 +142,7 @@ jobs:
                 Write-Host "Renaming '$($_.FullName)' to '$newFileName'"
                 Rename-Item -Path $_.FullName -NewName $newFileName
               }
-            } elseif ($_.Name -eq "com.github.windowsadmins.gorilla.$version.nupkg") {
+            } elseif ($_.Name -eq "com.github.windowsadmins.gorilla.$semanticVersion.nupkg") {
               $newFileName = Join-Path -Path $_.DirectoryName -ChildPath "Gorilla-$version.nupkg"
               if ($_.FullName -ne $newFileName) {
                 Write-Host "Renaming '$($_.FullName)' to '$newFileName'"
@@ -153,13 +154,13 @@ jobs:
             return $newFileName -replace '\\', '/'
           }
           
-          # Prepare the pkgs
+          # Prepare the packages
           $releaseFiles = @(
             "release/Gorilla-$version.msi",
             "release/Gorilla-$version.intunewin",
             "release/Gorilla-$version.nupkg"
           )
-
+      
           # Publish the release with the selected files and source code
           gh release create $version @($releaseFiles) `
             --title "Gorilla v$version" `
