@@ -3,7 +3,7 @@
   <metadata>
     <title>Gorilla</title>
     <id>com.github.windowsadmins.gorilla</id>
-    <version>${{ env.RELEASE_VERSION }}</version>
+    <version>${{ env.SEMANTIC_VERSION }}</version>
     <authors>WindowsAdmins</authors>
     <description>Gorilla Software Deployment Tools</description>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
