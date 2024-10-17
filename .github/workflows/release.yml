@@ -54,8 +54,11 @@ jobs:
         id: set_version
         shell: pwsh
         run: |
-          $version = Get-Date -Format "yyyy.MM.dd"
-          echo "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+          $fullVersion = Get-Date -Format "yyyy.MM.dd"
+          $semanticVersion = (Get-Date).Year.ToString() + '.' + (Get-Date).Month.ToString() + '.' + (Get-Date).Day.ToString()
+          
+          echo "RELEASE_VERSION=$fullVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+          echo "SEMANTIC_VERSION=$semanticVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
 
       - name: Build All Binaries
         shell: pwsh
@@ -88,15 +91,16 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -ext WixUtilExtension.dll -o build/msi.wixobj build/msi.wxs
+          $semanticVersion = $env:SEMANTIC_VERSION
+          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -dSemanticVersion=$semanticVersion -ext WixUtilExtension.dll -o build/msi.wixobj build/msi.wxs
           & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -ext WixUtilExtension.dll -v -o release/gorilla.msi build/msi.wixobj
 
       - name: Prepare NuGet Package
         shell: pwsh
         run: |
           Copy-Item build/nupkg.ps1 -Destination build/install.ps1          
-          $version = $env:RELEASE_VERSION
-          (Get-Content build/nupkg.nuspec) -replace '\$\{\{ env\.RELEASE_VERSION \}\}', $version | Set-Content build/nupkg.nuspec
+          $version = $env:SEMANTIC_VERSION
+          (Get-Content build/nupkg.nuspec) -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $version | Set-Content build/nupkg.nuspec
           nuget pack build/nupkg.nuspec -OutputDirectory release -BasePath $PWD
 
       - name: Prepare IntuneWin Package
