@@ -72,7 +72,8 @@ jobs:
               -X github.com/rodchristiansen/gorilla/pkg/version.buildDate=$(Get-Date -Format s) `
               -X github.com/rodchristiansen/gorilla/pkg/version.revision=$(git rev-parse HEAD)
             "@
-          }
+          }          
+          cd ${{ github.workspace }} # Reset to root after builds
 
       - name: Package Binaries
         shell: pwsh
@@ -85,7 +86,6 @@ jobs:
 
       - name: Build MSI Package with WiX
         shell: pwsh
-        working-directory: ${{ github.workspace }}
         run: |
           $ErrorActionPreference = 'Stop'
           & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -ext WixUtilExtension.dll -o build/msi.wixobj build/msi.wxs
