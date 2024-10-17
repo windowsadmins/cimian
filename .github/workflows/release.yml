@@ -55,8 +55,8 @@ jobs:
         shell: pwsh
         run: |
           $fullVersion = Get-Date -Format "yyyy.MM.dd"
-          $semanticVersion = (Get-Date).Year.ToString() + '.' + (Get-Date).Month.ToString() + '.' + (Get-Date).Day.ToString()
-          
+          $semanticVersion = "{0}.{1}.{2}" -f (Get-Date).Year, [int](Get-Date).Month, [int](Get-Date).Day
+
           echo "RELEASE_VERSION=$fullVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
           echo "SEMANTIC_VERSION=$semanticVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
 
