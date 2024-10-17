@@ -93,6 +93,7 @@ jobs:
 
       - name: Prepare NuGet Package
         shell: pwsh
+        working-directory: ${{ github.workspace }}
         run: |
           $version = $env:RELEASE_VERSION
           (Get-Content build/nupkg.nuspec) -replace '\$\{\{ env\.RELEASE_VERSION \}\}', $version | Set-Content build/nupkg.nuspec
