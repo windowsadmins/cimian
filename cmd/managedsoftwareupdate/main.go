@@ -8,7 +8,6 @@ import (
     "path/filepath"
     "syscall"
     "unsafe"
-
     "github.com/rodchristiansen/gorilla/pkg/catalog"
     "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/installer"
@@ -17,6 +16,7 @@ import (
     "github.com/rodchristiansen/gorilla/pkg/process"
     "github.com/rodchristiansen/gorilla/pkg/status"
     "golang.org/x/sys/windows"
+    "gopkg.in/yaml.v3"
 )
 
 func main() {
