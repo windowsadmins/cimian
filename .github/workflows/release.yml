@@ -104,35 +104,6 @@ jobs:
         run: |
           pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/gorilla.msi -OutputFolder release/intunewin
 
-      - name: Rename All Packages
-        shell: pwsh
-        run: |
-          $version = $env:RELEASE_VERSION
-
-          # Check if the MSI exists and log the path
-          if (Test-Path "release\\gorilla.msi") {
-            Write-Host "MSI file found: release\\gorilla.msi"
-            Rename-Item "release\\gorilla.msi" "release\\Gorilla-$version.msi"
-          } else {
-            Write-Error "MSI file not found at release\\gorilla.msi"
-          }
-
-          # Check if the IntuneWin file exists and log the path
-          if (Test-Path "release\\intunewin\\gorilla.intunewin") {
-            Write-Host "IntuneWin file found: release\\intunewin\\gorilla.intunewin"
-            Rename-Item "release\\intunewin\\gorilla.intunewin" "release\\Gorilla-$version.intunewin"
-          } else {
-            Write-Error "IntuneWin file not found at release\\intunewin\\gorilla.intunewin"
-          }
-
-          # Check if the NuGet package exists and log the path
-          if (Test-Path "release\\com.github.windowsadmins.gorilla.$version.nupkg") {
-            Write-Host "NuGet package file found: release\\com.github.windowsadmins.gorilla.$version.nupkg"
-            Rename-Item "release\\com.github.windowsadmins.gorilla.$version.nupkg" "release\\Gorilla-$version.nupkg"
-          } else {
-            Write-Error "NuGet package file not found at release\\com.github.windowsadmins.gorilla.$version.nupkg"
-          }
-
       - name: Verify Generated Files
         shell: pwsh
         run: |
@@ -147,7 +118,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $releaseFiles = Get-ChildItem -Path release/* | ForEach-Object { $_.FullName -replace '\\', '/' }
-          gh release create $env:RELEASE_VERSION $releaseFiles `
-            --title "GorillaPkg v$env:RELEASE_VERSION" `
-            --notes "Automated release for version $env:RELEASE_VERSION."
+          $version = $env:RELEASE_VERSION
+          
+          # Prepare the release files by renaming them in place during the release step
+          $releaseFiles = Get-ChildItem -Path release/* | ForEach-Object {
+            $newFileName = $_.FullName
+            if ($_.Name -like "gorilla.msi") {
+              $newFileName = "release/Gorilla-$version.msi"
+              Rename-Item $_.FullName $newFileName
+            } elseif ($_.Name -like "gorilla.intunewin") {
+              $newFileName = "release/Gorilla-$version.intunewin"
+              Rename-Item $_.FullName $newFileName
+            } elseif ($_.Name -like "com.github.windowsadmins.gorilla.$version.nupkg") {
+              $newFileName = "release/Gorilla-$version.nupkg"
+              Rename-Item $_.FullName $newFileName
+            }
+            return $newFileName -replace '\\', '/'
+          }
+
+          # Create the release
+          gh release create $version $releaseFiles `
+            --title "GorillaPkg v$version" `
+            --notes "Automated release for version $version."
