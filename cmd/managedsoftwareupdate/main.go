@@ -27,6 +27,16 @@ func main() {
         os.Exit(1)
     }
 
+    // Define the --show-config flag
+    showConfig := flag.Bool("show-config", false, "Display the current configuration and exit.")
+    flag.Parse()
+
+    if *showConfig {
+        // Display the loaded configuration
+        fmt.Printf("Current Configuration:\n%+v\n", cfg)
+        os.Exit(0) // Exit after displaying config
+    }
+
     // Initialize logger
     logging.InitLogger(*cfg)
     defer logging.CloseLogger()
