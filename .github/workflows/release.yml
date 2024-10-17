@@ -55,10 +55,11 @@ jobs:
         shell: pwsh
         run: |
           $fullVersion = Get-Date -Format "yyyy.MM.dd"
-          $semanticVersion = "{0}.{1}.{2}" -f (Get-Date).Year, [int](Get-Date).Month, [int](Get-Date).Day
-
           echo "RELEASE_VERSION=$fullVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
-          echo "SEMANTIC_VERSION=$semanticVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+
+          $year = (Get-Date).Year - 2000
+          $semanticVersion = "{0}.{1}.{2}" -f $year, (Get-Date).Month, (Get-Date).Day          
+          echo "SEMANTIC_VERSION=$semanticVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build All Binaries
         shell: pwsh
@@ -92,6 +93,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $semanticVersion = $env:SEMANTIC_VERSION
+          Write-Host "SemanticVersion is $semanticVersion"
           & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -dSemanticVersion=$semanticVersion -ext WixUtilExtension.dll -o build/msi.wixobj build/msi.wxs
           & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -dSemanticVersion=$semanticVersion -ext WixUtilExtension.dll -v -o release/gorilla.msi build/msi.wixobj
 
