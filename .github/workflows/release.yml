@@ -93,7 +93,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $semanticVersion = $env:SEMANTIC_VERSION
           & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -dSemanticVersion=$semanticVersion -ext WixUtilExtension.dll -o build/msi.wixobj build/msi.wxs
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -ext WixUtilExtension.dll -v -o release/gorilla.msi build/msi.wixobj
+          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -dSemanticVersion=$semanticVersion -ext WixUtilExtension.dll -v -o release/gorilla.msi build/msi.wixobj
 
       - name: Prepare NuGet Package
         shell: pwsh
