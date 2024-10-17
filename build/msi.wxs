@@ -14,9 +14,10 @@
 
     <!-- Package Information -->
     <Package InstallerVersion="500"
-             Compressed="yes"
-             Comments="Windows Installer Package"
-             InstallScope="perMachine" />
+            Compressed="yes"
+            Comments="Windows Installer Package"
+            InstallScope="perMachine"
+            Platform="x64" />
 
     <!-- Media Definition -->
     <Media Id="1"
@@ -31,6 +32,7 @@
           <!-- Component for Config.yaml -->
           <Component Id="Config" Guid="4882d10a-47bf-48ae-8d00-50ea2c9897ec">
             <File Id="ConfigFile" Source="build/config.yaml" Name="Config.yaml"/>
+            <CreateFolder /> <!-- Ensures directory creation -->
           </Component>
         </Directory>
       </Directory>
@@ -40,33 +42,39 @@
         <Directory Id="INSTALLBIN" Name="Gorilla">
           <Directory Id="BINDIR" Name="bin">
             <!-- Binaries Components -->
-            <Component Id="Binary1" Guid="47855ccd-7eab-464c-a795-26091de8b83a">
+            <Component Id="Binary1" Guid="47855ccd-7eab-464c-a795-26091de8b83a" Win64="yes">
               <File Id="BinaryFile1" Source="release/gorillaimport.exe" KeyPath="yes" />
+              <CreateFolder /> <!-- Ensures directory creation -->
             </Component>
-            <Component Id="Binary2" Guid="67855cdd-8eab-564c-b795-26091fe9b83a">
+            <Component Id="Binary2" Guid="67855cdd-8eab-564c-b795-26091fe9b83a" Win64="yes">
               <File Id="BinaryFile2" Source="release/makecatalogs.exe" KeyPath="yes" />
+              <CreateFolder />
             </Component>
-            <Component Id="Binary3" Guid="77855cde-9fab-464d-c795-26091de8b83a">
+            <Component Id="Binary3" Guid="77855cde-9fab-464d-c795-26091de8b83a" Win64="yes">
               <File Id="BinaryFile3" Source="release/makepkginfo.exe" KeyPath="yes" />
+              <CreateFolder />
             </Component>
-            <Component Id="Binary4" Guid="87855cde-afab-564d-d795-26091fe8b83a">
+            <Component Id="Binary4" Guid="87855cde-afab-564d-d795-26091fe9b83a" Win64="yes">
               <File Id="BinaryFile4" Source="release/managedsoftwareupdate.exe" KeyPath="yes" />
+              <CreateFolder />
             </Component>
-            <Component Id="Binary5" Guid="97855cde-bfab-664d-e795-26091de8b83a">
+            <Component Id="Binary5" Guid="97855cde-bfab-664d-e795-26091de8b83a" Win64="yes">
               <File Id="BinaryFile5" Source="release/manifestutil.exe" KeyPath="yes" />
+              <CreateFolder />
             </Component>
 
             <!-- Component to Modify PATH Environment Variable -->
-            <Component Id="SetPathComponent" Guid="a5f2c571-89df-4c71-967f-ec9d3ef4cdd0">
+            <Component Id="SetPathComponent" Guid="a5f2c571-89df-4c71-967f-ec9d3ef4cdd0" Win64="yes">
               <CreateFolder />
               <Environment Id="PATH"
-                           Name="PATH"
-                           Value="[BINDIR]"
-                           Permanent="no"
-                           Part="last"
-                           Action="set"
-                           System="yes" />
+                          Name="PATH"
+                          Value="[BINDIR]"
+                          Permanent="no"
+                          Part="last"
+                          Action="set"
+                          System="yes" />
             </Component>
+
           </Directory>
         </Directory>
       </Directory>
