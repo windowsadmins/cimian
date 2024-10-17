@@ -109,25 +109,28 @@ jobs:
         run: |
           $version = $env:RELEASE_VERSION
 
-          # Rename the MSI
+          # Check if the MSI exists and log the path
           if (Test-Path "release\\gorilla.msi") {
+            Write-Host "MSI file found: release\\gorilla.msi"
             Rename-Item "release\\gorilla.msi" "release\\Gorilla-$version.msi"
           } else {
-            Write-Error "MSI file not found!"
+            Write-Error "MSI file not found at release\\gorilla.msi"
           }
 
-          # Rename the IntuneWin file
+          # Check if the IntuneWin file exists and log the path
           if (Test-Path "release\\intunewin\\gorilla.intunewin") {
+            Write-Host "IntuneWin file found: release\\intunewin\\gorilla.intunewin"
             Rename-Item "release\\intunewin\\gorilla.intunewin" "release\\Gorilla-$version.intunewin"
           } else {
-            Write-Error "IntuneWin file not found!"
+            Write-Error "IntuneWin file not found at release\\intunewin\\gorilla.intunewin"
           }
 
-          # Rename the NuGet package
+          # Check if the NuGet package exists and log the path
           if (Test-Path "release\\com.github.windowsadmins.gorilla.$version.nupkg") {
+            Write-Host "NuGet package file found: release\\com.github.windowsadmins.gorilla.$version.nupkg"
             Rename-Item "release\\com.github.windowsadmins.gorilla.$version.nupkg" "release\\Gorilla-$version.nupkg"
           } else {
-            Write-Error "NuGet package file not found!"
+            Write-Error "NuGet package file not found at release\\com.github.windowsadmins.gorilla.$version.nupkg"
           }
 
       - name: Verify Generated Files
