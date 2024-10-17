@@ -13,9 +13,10 @@
            Language="1033">
 
     <!-- Package Information -->
-    <Package InstallerVersion="200"
+    <Package InstallerVersion="500"
              Compressed="yes"
-             Comments="Windows Installer Package"/>
+             Comments="Windows Installer Package"
+             InstallScope="perMachine" />
 
     <!-- Media Definition -->
     <Media Id="1"
@@ -34,8 +35,8 @@
         </Directory>
       </Directory>
 
-      <!-- Program Files Directory -->
-      <Directory Id="ProgramFilesFolder">
+      <!-- Program Files Directory for 64-bit Systems -->
+      <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLBIN" Name="Gorilla">
           <Directory Id="BINDIR" Name="bin">
             <!-- Binaries Components -->
