@@ -108,9 +108,9 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:RELEASE_VERSION          
-          Rename-Item "release/gorilla.msi" "release/Gorilla-$version.msi"          
-          Rename-Item "release/gorilla.intunewin" "release/Gorilla-$version.intunewin"
-          Rename-Item "release/com.github.windowsadmins.gorilla.$version.nupkg" "release/Gorilla-$version.nupkg"
+          Rename-Item "release\gorilla.msi" "release\Gorilla-$version.msi"          
+          Rename-Item "release\gorilla.intunewin" "release\Gorilla-$version.intunewin"
+          Rename-Item "release\com.github.windowsadmins.gorilla.$version.nupkg" "release\Gorilla-$version.nupkg"
 
       - name: Verify Generated Files
         shell: pwsh
