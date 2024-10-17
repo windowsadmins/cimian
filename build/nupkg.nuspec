@@ -10,6 +10,7 @@
     <tags>admin</tags>
   </metadata>
   <files>
+    <file src="README.md" target="" />
     <file src="release/*.exe" target="tools" />
     <file src="build/config.yaml" target="tools" />
     <file src="build/chocolateyInstall.ps1" target="tools" />
