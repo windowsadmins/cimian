@@ -13,6 +13,6 @@
     <file src="README.md" target="" />
     <file src="release/*.exe" target="tools" />
     <file src="build/config.yaml" target="tools" />
-    <file src="build/chocolateyInstall.ps1" target="tools" />
+    <file src="build/install.ps1" target="tools" />
   </files>
 </package>
