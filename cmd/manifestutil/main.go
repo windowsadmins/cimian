@@ -1,3 +1,5 @@
+// cmd/manifestutil/main.go
+
 package main
 
 import (

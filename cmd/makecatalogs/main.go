@@ -1,3 +1,5 @@
+// cmd/makecatalogs/main.go
+
 package main
 
 import (
