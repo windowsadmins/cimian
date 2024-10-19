@@ -1,3 +1,5 @@
+// cmd/managedsoftwareupdate/main.go
+
 package main
 
 import (
@@ -8,13 +10,16 @@ import (
     "path/filepath"
     "syscall"
     "unsafe"
+
     "github.com/rodchristiansen/gorilla/pkg/catalog"
     "github.com/rodchristiansen/gorilla/pkg/config"
     "github.com/rodchristiansen/gorilla/pkg/installer"
     "github.com/rodchristiansen/gorilla/pkg/logging"
     "github.com/rodchristiansen/gorilla/pkg/manifest"
+    "github.com/rodchristiansen/gorilla/pkg/preflight"
     "github.com/rodchristiansen/gorilla/pkg/process"
     "github.com/rodchristiansen/gorilla/pkg/status"
+
     "golang.org/x/sys/windows"
     "gopkg.in/yaml.v3"
 )
@@ -30,7 +35,7 @@ func main() {
     // Load configuration
     cfg, err := config.LoadConfig()
     if err != nil {
-        logError("Failed to load configuration:", err)
+        logError("Failed to load configuration: %v", err)
         os.Exit(1)
     }
 
@@ -38,7 +43,7 @@ func main() {
         // Pretty-print the configuration as YAML
         cfgYaml, err := yaml.Marshal(cfg)
         if err != nil {
-            logError("Failed to marshal configuration:", err)
+            logError("Failed to marshal configuration: %v", err)
             os.Exit(1)
         }
         fmt.Printf("Current Configuration:\n%s\n", cfgYaml)
@@ -67,11 +72,25 @@ func main() {
         os.Exit(1)
     }
 
+    // Run the preflight script
+    err = preflight.RunPreflight(verbosity, logInfo, logError)
+    if err != nil {
+        logError("Preflight script failed: %v", err)
+        os.Exit(1)
+    }
+
+    // Reload configuration in case the preflight script modified it
+    cfg, err = config.LoadConfig()
+    if err != nil {
+        logError("Failed to reload configuration after preflight: %v", err)
+        os.Exit(1)
+    }
+
     // Create the cache directory if needed
     cachePath := cfg.CachePath
     err = os.MkdirAll(filepath.Clean(cachePath), 0755)
     if err != nil {
-        logError("Failed to create cache directory:", err)
+        logError("Failed to create cache directory: %v", err)
         os.Exit(1)
     }
 
@@ -84,9 +103,9 @@ func main() {
     // Run the update process
     manifestItems, _ := manifest.Get(*cfg)
     for _, item := range manifestItems {
-        logInfo(fmt.Sprintf("Checking for updates: %s", item.Name))
+        logInfo("Checking for updates: %s", item.Name)
         if needsUpdate(item, cfg) {
-            logInfo(fmt.Sprintf("Installing update for %s...", item.Name))
+            logInfo("Installing update for %s...", item.Name)
             installUpdate(item, cfg)
         }
     }
