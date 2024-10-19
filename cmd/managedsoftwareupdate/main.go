@@ -9,6 +9,7 @@ import (
     "os/signal"
     "path/filepath"
     "syscall"
+    "time"
     "unsafe"
 
     "github.com/rodchristiansen/gorilla/pkg/catalog"
@@ -27,15 +28,91 @@ import (
 var verbosity int
 
 func main() {
-    // Define the --show-config and -v flags
-    showConfig := flag.Bool("show-config", false, "Display the current configuration and exit.")
+    // Define command-line flags
+    var (
+        showConfig  = flag.Bool("show-config", false, "Display the current configuration and exit.")
+        checkOnly   = flag.Bool("checkonly", false, "Check for updates, but don't install them.")
+        installOnly = flag.Bool("installonly", false, "Install pending updates without checking for new ones.")
+        auto        = flag.Bool("auto", false, "Perform automatic updates.")
+    )
+
     flag.IntVar(&verbosity, "v", 0, "Increase verbosity with multiple -v flags.")
+
+    // Custom usage function
+    flag.Usage = func() {
+        fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
+        fmt.Println("Options:")
+        flag.PrintDefaults()
+        fmt.Println("\nCommon Options:")
+        fmt.Println("  -v, --verbose       Increase verbosity. Can be used multiple times.")
+        fmt.Println("  --checkonly         Check for updates, but don't install them.")
+        fmt.Println("  --installonly       Install pending updates without checking for new ones.")
+        fmt.Println("  --auto              Perform automatic updates.")
+        fmt.Println("  --show-config       Display the current configuration and exit.")
+    }
+
+    // Parse flags early
     flag.Parse()
 
-    // Load configuration
+    // Initialize logging functions after parsing flags
+    logInfo := func(message string, args ...interface{}) {
+        if verbosity >= 1 {
+            fmt.Printf(message+"\n", args...)
+        }
+    }
+
+    logError := func(message string, args ...interface{}) {
+        fmt.Fprintf(os.Stderr, message+"\n", args...)
+    }
+
+    // Handle system signals for cleanup
+    signalChan := make(chan os.Signal, 1)
+    signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
+    go func() {
+        <-signalChan
+        logInfo("Signal received, exiting gracefully...")
+        os.Exit(1)
+    }()
+
+    // Run the preflight script regardless of runType or flags
+    err := preflight.RunPreflight(verbosity, logInfo, logError)
+    if err != nil {
+        logError("Preflight script failed: %v", err)
+        os.Exit(1)
+    }
+
+    // Load configuration (in case preflight modified it)
     cfg, err := config.LoadConfig()
     if err != nil {
         logError("Failed to load configuration: %v", err)
+        os.Exit(1)
+    }
+
+    // Initialize logger with loaded configuration
+    logging.InitLogger(*cfg)
+    defer logging.CloseLogger()
+
+    logInfo("Initializing...")
+
+    // Check for conflicting flags
+    if *checkOnly && *installOnly {
+        fmt.Fprintln(os.Stderr, "--checkonly and --installonly options are mutually exclusive!")
+        flag.Usage()
+        os.Exit(1)
+    }
+
+    // Check for admin privileges
+    admin, err := adminCheck()
+    if err != nil || !admin {
+        logError("Administrative access is required. Please run as an administrator.")
+        os.Exit(1)
+    }
+
+    // Create the cache directory if needed
+    cachePath := cfg.CachePath
+    err = os.MkdirAll(filepath.Clean(cachePath), 0755)
+    if err != nil {
+        logError("Failed to create cache directory: %v", err)
         os.Exit(1)
     }
 
@@ -50,70 +127,48 @@ func main() {
         os.Exit(0)
     }
 
-    // Initialize logger
-    logging.InitLogger(*cfg)
-    defer logging.CloseLogger()
-
-    logInfo("Initializing...")
-
-    // Handle system signals for cleanup
-    signalChan := make(chan os.Signal, 1)
-    signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
-    go func() {
-        <-signalChan
-        logInfo("Signal received, exiting gracefully...")
-        os.Exit(1)
-    }()
-
-    // Check for admin privileges
-    admin, err := adminCheck()
-    if err != nil || !admin {
-        logError("Administrative access is required. Please run as an administrator.")
-        os.Exit(1)
+    // Determine run type based on flags
+    runType := "custom"
+    if *auto {
+        runType = "auto"
+        *checkOnly = false
+        *installOnly = false
     }
 
-    // Run the preflight script
-    err = preflight.RunPreflight(verbosity, logInfo, logError)
-    if err != nil {
-        logError("Preflight script failed: %v", err)
-        os.Exit(1)
+    if *installOnly {
+        // Skip checking, just install pending updates
+        logInfo("Running in install-only mode.")
+        installPendingUpdates(cfg)
+        os.Exit(0)
     }
 
-    // Reload configuration in case the preflight script modified it
-    cfg, err = config.LoadConfig()
-    if err != nil {
-        logError("Failed to reload configuration after preflight: %v", err)
-        os.Exit(1)
+    if *checkOnly {
+        // Only check for updates, do not install
+        logInfo("Running in check-only mode.")
+        checkForUpdates(cfg)
+        os.Exit(0)
     }
 
-    // Create the cache directory if needed
-    cachePath := cfg.CachePath
-    err = os.MkdirAll(filepath.Clean(cachePath), 0755)
-    if err != nil {
-        logError("Failed to create cache directory: %v", err)
-        os.Exit(1)
-    }
-
-    // Check system idle time
-    idleTime := getIdleSeconds()
-    if idleTime < 0 {
-        logInfo("Running updates immediately, ignoring idle time.")
-    }
-
-    // Run the update process
-    manifestItems, _ := manifest.Get(*cfg)
-    for _, item := range manifestItems {
-        logInfo("Checking for updates: %s", item.Name)
-        if needsUpdate(item, cfg) {
-            logInfo("Installing update for %s...", item.Name)
-            installUpdate(item, cfg)
+    // Default behavior: check for updates and install them
+    if *auto {
+        // For automatic updates, we might want to check for user activity
+        if isUserActive() {
+            logInfo("User is active. Skipping automatic updates.")
+            os.Exit(0)
         }
     }
 
-    logInfo("Cleaning up old cache...")
-    process.CleanUp(cachePath)
+    // Check for updates
+    updatesAvailable := checkForUpdates(cfg)
+    if updatesAvailable {
+        // Install updates
+        installPendingUpdates(cfg)
+    } else {
+        logInfo("No updates available.")
+    }
 
     logInfo("Software updates completed.")
+    os.Exit(0)
 }
 
 func logError(message string, args ...interface{}) {
@@ -194,6 +249,64 @@ func getIdleSeconds() int {
 
     idleTime := (uint32(tickCount) - lastInput.DwTime) / 1000
     return int(idleTime)
+}
+
+// isUserActive checks if the user is active based on idle time.
+func isUserActive() bool {
+    idleSeconds := getIdleSeconds()
+    // Consider user active if idle time is less than 300 seconds (5 minutes)
+    return idleSeconds < 300
+}
+
+// checkForUpdates checks for available updates and returns true if updates are available.
+func checkForUpdates(cfg *config.Configuration) bool {
+    logInfo("Checking for updates...")
+
+    updatesAvailable := false
+
+    // Fetch manifest items
+    manifestItems, err := manifest.Get(*cfg)
+    if err != nil {
+        logError("Failed to get manifest items: %v", err)
+        return false
+    }
+
+    // Check each item for updates
+    for _, item := range manifestItems {
+        logInfo("Checking for updates: %s", item.Name)
+        if needsUpdate(item, cfg) {
+            logInfo("Update available for %s", item.Name)
+            updatesAvailable = true
+        }
+    }
+
+    return updatesAvailable
+}
+
+// installPendingUpdates installs updates for all items that need updating.
+func installPendingUpdates(cfg *config.Configuration) {
+    logInfo("Installing updates...")
+
+    // Fetch manifest items
+    manifestItems, err := manifest.Get(*cfg)
+    if err != nil {
+        logError("Failed to get manifest items: %v", err)
+        return
+    }
+
+    // Install updates for each item
+    for _, item := range manifestItems {
+        logInfo("Checking for updates: %s", item.Name)
+        if needsUpdate(item, cfg) {
+            logInfo("Installing update for %s...", item.Name)
+            installUpdate(item, cfg)
+        }
+    }
+
+    // Clean up cache
+    cachePath := cfg.CachePath
+    logInfo("Cleaning up old cache...")
+    process.CleanUp(cachePath)
 }
 
 func needsUpdate(item manifest.Item, cfg *config.Configuration) bool {
