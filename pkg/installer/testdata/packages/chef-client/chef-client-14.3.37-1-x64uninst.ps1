@@ -1,1 +1,0 @@
-fake ps1 file for testing uninstall!
