@@ -5,10 +5,10 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/rodchristiansen/gorilla/pkg/config"
-	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
-	"github.com/rodchristiansen/gorilla/pkg/report"
+	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/download"
+	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/report"
 	"gopkg.in/yaml.v3"
 )
 

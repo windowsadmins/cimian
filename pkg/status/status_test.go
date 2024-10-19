@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rodchristiansen/gorilla/pkg/catalog"
-	"github.com/rodchristiansen/gorilla/pkg/config"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/catalog"
+	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/logging"
 )
 
 var (

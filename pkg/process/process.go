@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
-	"github.com/rodchristiansen/gorilla/pkg/catalog"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
-	"github.com/rodchristiansen/gorilla/pkg/installer"
-	"github.com/rodchristiansen/gorilla/pkg/manifest"
+	"github.com/windowsadmins/gorilla/pkg/catalog"
+	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/installer"
+	"github.com/windowsadmins/gorilla/pkg/manifest"
 )
 
 // firstItem returns the first occurrence of an item in a map of catalogs

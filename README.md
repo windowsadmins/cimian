@@ -18,11 +18,11 @@ Gorilla is intended to provide application management on Windows using [Munki](h
 Gorilla supports `.msi`, `.ps1`, `.exe`, or `.nupkg` [(via chocolatey)](https://github.com/chocolatey/choco).
 
 ## Getting Started
-Information related to installing and configuring Gorilla can be found on the [Wiki](https://github.com/rodchristiansen/gorilla/wiki).
+Information related to installing and configuring Gorilla can be found on the [Wiki](https://github.com/windowsadmins/gorilla/wiki).
 
 ## Building
 
-If you just want the latest version, download it from the [releases page](https://github.com/rodchristiansen/gorilla/releases).
+If you just want the latest version, download it from the [releases page](https://github.com/windowsadmins/gorilla/releases).
 
 Building from source requires the [Go tools](https://golang.org/doc/install).
 

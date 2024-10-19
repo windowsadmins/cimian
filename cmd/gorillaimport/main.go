@@ -18,8 +18,8 @@ import (
     "bytes"
     "gopkg.in/yaml.v3"
     "github.com/AlecAivazis/survey/v2"
-    "github.com/rodchristiansen/gorilla/pkg/logging"
-    "github.com/rodchristiansen/gorilla/pkg/config"
+    "github.com/windowsadmins/gorilla/pkg/logging"
+    "github.com/windowsadmins/gorilla/pkg/config"
 )
 
 type PkgsInfo struct {

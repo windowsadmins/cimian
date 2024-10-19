@@ -12,12 +12,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rodchristiansen/gorilla/pkg/catalog"
-	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
-	"github.com/rodchristiansen/gorilla/pkg/pkginfo"
-	"github.com/rodchristiansen/gorilla/pkg/report"
-	"github.com/rodchristiansen/gorilla/pkg/status"
+	"github.com/windowsadmins/gorilla/pkg/catalog"
+	"github.com/windowsadmins/gorilla/pkg/download"
+	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/pkginfo"
+	"github.com/windowsadmins/gorilla/pkg/report"
+	"github.com/windowsadmins/gorilla/pkg/status"
 )
 
 var (
