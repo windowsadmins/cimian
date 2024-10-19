@@ -1,6 +1,0 @@
----
-  name: example_local_manifest
-  managed_installs:
-    - Opera
-  managed_uninstalls:
-    - SomeUninstall
