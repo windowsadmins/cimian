@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"gopkg.in/yaml.v3"
-	"github.com/rodchristiansen/gorilla/pkg/config"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/logging"
 )
 
 // Initialize logger with configuration.

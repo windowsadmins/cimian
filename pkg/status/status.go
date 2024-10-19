@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rodchristiansen/gorilla/pkg/catalog"
-	"github.com/rodchristiansen/gorilla/pkg/download"
-	"github.com/rodchristiansen/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/catalog"
+	"github.com/windowsadmins/gorilla/pkg/download"
+	"github.com/windowsadmins/gorilla/pkg/logging"
 	version "github.com/hashicorp/go-version"
 )
 

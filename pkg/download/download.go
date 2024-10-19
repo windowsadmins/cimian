@@ -10,8 +10,8 @@ import (
     "path/filepath"
     "time"
 
-    "github.com/rodchristiansen/gorilla/pkg/logging"
-    "github.com/rodchristiansen/gorilla/pkg/retry"
+    "github.com/windowsadmins/gorilla/pkg/logging"
+    "github.com/windowsadmins/gorilla/pkg/retry"
 )
 
 const (

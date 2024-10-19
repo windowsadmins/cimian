@@ -7,7 +7,7 @@ import (
     "log"
     "fmt"
     "golang.org/x/sys/windows/registry"
-	"github.com/rodchristiansen/gorilla/pkg/rollback"
+	"github.com/windowsadmins/gorilla/pkg/rollback"
 )
 
 const (
