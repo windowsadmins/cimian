@@ -1,6 +1,6 @@
 # Define installation paths
-$installPath = "C:\Program Files\Gorilla\bin"
-$configPath = "C:\ProgramData\Gorilla"
+$installPath = "C:\Program Files\Gorilla"
+$configPath = "C:\ProgramData\ManagedInstalls"
 
 # Ensure directories exist
 New-Item -ItemType Directory -Path $installPath, $configPath -Force | Out-Null
