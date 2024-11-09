@@ -24,8 +24,9 @@
            Cabinet="product.cab"
            EmbedCab="yes"/>
 
-    <!-- Define a Property for MSI Path -->
-    <Property Id="MSI_PATH" Value="[OriginalDatabase]" />
+    <!-- Define Custom Actions to Set Properties -->
+    <CustomAction Id="SetMSIPath" Property="MSI_PATH" Value="[OriginalDatabase]" />
+    <CustomAction Id="SetCA_CreateScheduledTask" Property="CA_CreateScheduledTask" Value="MSIPath=[MSI_PATH]" />
 
     <!-- Directory Structure -->
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -103,18 +104,13 @@
                   Return="ignore"
                   Impersonate="no" />
 
-    <!-- Define a Property to Pass to Deferred Custom Action -->
-    <Property Id="CA_CreateScheduledTask" Value="MSIPath=[MSI_PATH]" />
-
-    <!-- Custom Action to Set CustomActionData -->
-    <CustomAction Id="Set_CA_CreateScheduledTask" 
-                  Property="CreateScheduledTask" 
-                  Value="[CA_CreateScheduledTask]" />
-
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
-      <!-- Set CustomActionData before deferred action -->
-      <Custom Action="Set_CA_CreateScheduledTask" Before="CreateScheduledTask">NOT REMOVE</Custom>
+      <!-- Set MSI_PATH before using it -->
+      <Custom Action="SetMSIPath" Before="CreateScheduledTask_Cmd">NOT REMOVE</Custom>
+
+      <!-- Set CA_CreateScheduledTask before using it -->
+      <Custom Action="SetCA_CreateScheduledTask" Before="CreateScheduledTask">NOT REMOVE</Custom>
       
       <!-- Create Scheduled Task -->
       <Custom Action="CreateScheduledTask_Cmd" Before="CreateScheduledTask">NOT REMOVE</Custom>
