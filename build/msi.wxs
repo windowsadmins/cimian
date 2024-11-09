@@ -10,61 +10,68 @@
            Name="Gorilla"
            Version="1.0.0"
            Manufacturer="Gorilla"
-           Language="1033">
+           Language="1033"
+           InstallScope="perMachine">
 
     <!-- Package Information -->
-    <Package InstallerVersion="500"
-            Compressed="yes"
-            Comments="Windows Installer Package"
-            InstallScope="perMachine"
-            Platform="x64" />
-    
-    <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <Package InstallerVersion="200"
+             Compressed="yes"
+             Comments="Windows Installer Package"
+             Platform="x64" />
 
     <!-- Media Definition -->
     <Media Id="1"
            Cabinet="product.cab"
            EmbedCab="yes"/>
 
+    <!-- Define a Property for MSI Path -->
+    <Property Id="MSI_PATH" Value="[OriginalDatabase]" />
+
     <!-- Directory Structure -->
     <Directory Id="TARGETDIR" Name="SourceDir">
+      <!-- Common Application Data Directory -->
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="INSTALLDIR" Name="ManagedInstalls">
+          <!-- Component for Config.yaml -->
+          <Component Id="Config" Guid="4882d10a-47bf-48ae-8d00-50ea2c9897ec" Win64="yes">
+            <File Id="ConfigFile" Source="build/config.yaml" Name="Config.yaml"/>
+          </Component>
+        </Directory>
+      </Directory>
 
-      <!-- Program Files Directory for 64-bit Systems -->
+      <!-- Program Files Directory (64-bit) -->
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLBIN" Name="Gorilla">
-          <Component Id="CreateProgramFolder" Guid="A7C3F1A2-7EAB-4A7D-BDA1-9C1F1D73AEDA" Win64="yes">
-            <CreateFolder />
-          </Component>
-          
-          <!-- Binaries Components -->
-          <Component Id="Binary1" Guid="47855ccd-7eab-464c-a795-26091de8b83a" Win64="yes">
-            <File Id="BinaryFile1" Source="release/gorillaimport.exe" KeyPath="yes" />
-          </Component>
-          <Component Id="Binary2" Guid="67855cdd-8eab-564c-b795-26091fe9b83a" Win64="yes">
-            <File Id="BinaryFile2" Source="release/makecatalogs.exe" KeyPath="yes" />
-          </Component>
-          <Component Id="Binary3" Guid="77855cde-9fab-464d-c795-26091de8b83a" Win64="yes">
-            <File Id="BinaryFile3" Source="release/makepkginfo.exe" KeyPath="yes" />
-          </Component>
-          <Component Id="Binary4" Guid="87855cde-afab-564d-d795-26091fe9b83a" Win64="yes">
-            <File Id="BinaryFile4" Source="release/managedsoftwareupdate.exe" KeyPath="yes" />
-          </Component>
-          <Component Id="Binary5" Guid="97855cde-bfab-664d-e795-26091de8b83a" Win64="yes">
-            <File Id="BinaryFile5" Source="release/manifestutil.exe" KeyPath="yes" />
-          </Component>
+          <Directory Id="BINDIR" Name="bin">
+            <!-- Binaries Components -->
+            <Component Id="Binary1" Guid="47855ccd-7eab-464c-a795-26091de8b83a" Win64="yes">
+              <File Id="BinaryFile1" Source="release/gorillaimport.exe" KeyPath="yes" />
+            </Component>
+            <Component Id="Binary2" Guid="67855cdd-8eab-564c-b795-26091fe9b83a" Win64="yes">
+              <File Id="BinaryFile2" Source="release/makecatalogs.exe" KeyPath="yes" />
+            </Component>
+            <Component Id="Binary3" Guid="77855cde-9fab-464d-c795-26091de8b83a" Win64="yes">
+              <File Id="BinaryFile3" Source="release/makepkginfo.exe" KeyPath="yes" />
+            </Component>
+            <Component Id="Binary4" Guid="87855cde-afab-564d-d795-26091fe8b83a" Win64="yes">
+              <File Id="BinaryFile4" Source="release/managedsoftwareupdate.exe" KeyPath="yes" />
+            </Component>
+            <Component Id="Binary5" Guid="97855cde-bfab-664d-e795-26091de8b83a" Win64="yes">
+              <File Id="BinaryFile5" Source="release/manifestutil.exe" KeyPath="yes" />
+            </Component>
 
-          <!-- Component to Modify PATH Environment Variable -->
-          <Component Id="SetPathComponent" Guid="a5f2c571-89df-4c71-967f-ec9d3ef4cdd0" Win64="yes">
-            <CreateFolder />
-            <Environment Id="GorillaPath"
-                        Name="PATH"
-                        Value="[INSTALLBIN];[%PATH]" 
-                        Action="set"
-                        Part="last"
-                        Permanent="no"
-                        System="yes" />
-          </Component>
+            <!-- Component to Modify PATH Environment Variable -->
+            <Component Id="SetPathComponent" Guid="a5f2c571-89df-4c71-967f-ec9d3ef4cdd0" Win64="yes">
+              <CreateFolder />
+              <Environment Id="PATH"
+                           Name="PATH"
+                           Value="[BINDIR]"
+                           Permanent="no"
+                           Part="last"
+                           Action="set"
+                           System="yes" />
+            </Component>
+          </Directory>
         </Directory>
       </Directory>
     </Directory>
@@ -73,7 +80,7 @@
     <!-- Custom Action to Set the Command for Creating Scheduled Task -->
     <CustomAction Id="CreateScheduledTask_Cmd"
                   Property="CreateScheduledTask"
-                  Value="&quot;[SystemFolder]SCHTASKS.EXE&quot; /CREATE /SC MINUTE /MO 60 /TN Gorilla /TR &quot;[INSTALLBIN]managedsoftwareupdate.exe&quot; /RU SYSTEM /RL HIGHEST" />
+                  Value='"[SystemFolder]SCHTASKS.EXE" /CREATE /SC MINUTE /MO 60 /TN Gorilla /TR "[BINDIR]managedsoftwareupdate.exe [MSI_PATH]" /RU SYSTEM /RL HIGHEST' />
 
     <!-- Deferred Custom Action to Create the Scheduled Task -->
     <CustomAction Id="CreateScheduledTask"
@@ -96,9 +103,20 @@
                   Return="ignore"
                   Impersonate="no" />
 
+    <!-- Define a Property to Pass to Deferred Custom Action -->
+    <Property Id="CA_CreateScheduledTask" Value="MSIPath=[MSI_PATH]" />
+
+    <!-- Custom Action to Set CustomActionData -->
+    <CustomAction Id="Set_CA_CreateScheduledTask" 
+                  Property="CreateScheduledTask" 
+                  Value="[CA_CreateScheduledTask]" />
+
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
-      <!-- Custom Actions for Installation and Repair -->
+      <!-- Set CustomActionData before deferred action -->
+      <Custom Action="Set_CA_CreateScheduledTask" Before="CreateScheduledTask">NOT REMOVE</Custom>
+      
+      <!-- Create Scheduled Task -->
       <Custom Action="CreateScheduledTask_Cmd" Before="CreateScheduledTask">NOT REMOVE</Custom>
       <Custom Action="CreateScheduledTask" After="InstallFiles">NOT REMOVE</Custom>
 
@@ -109,12 +127,12 @@
 
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
-      <ComponentRef Id="CreateProgramFolder"/>
       <ComponentRef Id="Binary1"/>
       <ComponentRef Id="Binary2"/>
       <ComponentRef Id="Binary3"/>
       <ComponentRef Id="Binary4"/>
       <ComponentRef Id="Binary5"/>
+      <ComponentRef Id="Config"/>
       <ComponentRef Id="SetPathComponent"/>
     </Feature>
 
