@@ -10,14 +10,14 @@
            Name="Gorilla"
            Version="1.0.0"
            Manufacturer="Gorilla"
-           Language="1033"
-           InstallScope="perMachine">
+           Language="1033">
 
     <!-- Package Information -->
     <Package InstallerVersion="200"
              Compressed="yes"
              Comments="Windows Installer Package"
-             Platform="x64" />
+             Platform="x64"
+             InstallScope="perMachine" />
 
     <!-- Media Definition -->
     <Media Id="1"
