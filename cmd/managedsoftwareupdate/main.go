@@ -9,7 +9,6 @@ import (
     "os/signal"
     "path/filepath"
     "syscall"
-    "time"
     "unsafe"
 
     "github.com/windowsadmins/gorilla/pkg/catalog"
@@ -74,7 +73,7 @@ func main() {
         os.Exit(1)
     }()
 
-    // Run the preflight script regardless of runType or flags
+    // Run the preflight script regardless of flags
     err := preflight.RunPreflight(verbosity, logInfo, logError)
     if err != nil {
         logError("Preflight script failed: %v", err)
@@ -128,9 +127,7 @@ func main() {
     }
 
     // Determine run type based on flags
-    runType := "custom"
     if *auto {
-        runType = "auto"
         *checkOnly = false
         *installOnly = false
     }
@@ -146,7 +143,7 @@ func main() {
         // Only check for updates, do not install
         logInfo("Running in check-only mode.")
         checkForUpdates(cfg)
-        os.Exit(0)
+        os.Exit(1)
     }
 
     // Default behavior: check for updates and install them
