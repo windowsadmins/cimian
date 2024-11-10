@@ -1,4 +1,4 @@
-module github.com/rodchristiansen/gorilla
+module github.com/windowsadmins/gorilla
 
 go 1.16
 
