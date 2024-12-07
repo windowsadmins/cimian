@@ -26,3 +26,9 @@
 *.wixpdb
 *.wixobj
 /localBuildUpdateGorilla.ps1
+
+# Local go
+/go
+
+# Local builds
+/release
