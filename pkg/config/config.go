@@ -80,7 +80,7 @@ func GetDefaultConfig() *Configuration {
     return &Configuration{
         LogLevel:       "INFO",
         InstallPath:    `C:\Program Files\Gorilla`,
-        RepoPath:       `C:\ProgramData\Gorilla\repo`,
+        RepoPath:       `C:\ProgramData\ManagedInstalls\repo`,
         CatalogsPath:   `C:\ProgramData\ManagedInstalls\catalogs`,
         CachePath:      `C:\ProgramData\ManagedInstalls\Cache`,
         Debug:          false,
