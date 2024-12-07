@@ -70,7 +70,8 @@ func main() {
         fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
         fmt.Println("Options:")
         flag.PrintDefaults()
-        fmt.Println("\nCommon Options:")        fmt.Println("  -v, --verbose       Increase verbosity. Can be used multiple times.")
+        fmt.Println("\nCommon Options:")
+        fmt.Println("  -v, --verbose       Increase verbosity. Can be used multiple times.")
         fmt.Println("  --checkonly         Check for updates, but don't install them.")
         fmt.Println("  --installonly       Install pending updates without checking for new ones.")
         fmt.Println("  --auto              Perform automatic updates.")
@@ -81,14 +82,37 @@ func main() {
     flag.Parse()
 
     // Initialize logging functions after parsing flags
+    logError := func(message string, args ...interface{}) {
+        // Errors always print regardless of verbosity
+        fmt.Fprintf(os.Stderr, message+"\n", args...)
+    }
+
     logInfo := func(message string, args ...interface{}) {
+        // Basic info shown if verbosity >= 1
         if verbosity >= 1 {
             fmt.Printf(message+"\n", args...)
         }
     }
 
-    logError := func(message string, args ...interface{}) {
-        fmt.Fprintf(os.Stderr, message+"\n", args...)
+    logVerbose := func(message string, args ...interface{}) {
+        // More detailed info if verbosity >= 2
+        if verbosity >= 2 {
+            fmt.Printf(message+"\n", args...)
+        }
+    }
+
+    logVeryVerbose := func(message string, args ...interface{}) {
+        // Even more detailed if verbosity >= 3
+        if verbosity >= 3 {
+            fmt.Printf(message+"\n", args...)
+        }
+    }
+
+    logDebug := func(message string, args ...interface{}) {
+        // Full debug if verbosity >= 4
+        if verbosity >= 4 {
+            fmt.Printf("[DEBUG] "+message+"\n", args...)
+        }
     }
 
     // Handle system signals for cleanup
@@ -96,7 +120,9 @@ func main() {
     signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
     go func() {
         <-signalChan
-        logInfo("Signal received, exiting gracefully...")
+        if verbosity >= 1 {
+            fmt.Println("Signal received, exiting gracefully...")
+        }
         os.Exit(1)
     }()
 
@@ -118,7 +144,19 @@ func main() {
     logging.InitLogger(*cfg)
     defer logging.CloseLogger()
 
-    logInfo("Initializing...")
+    if verbosity >= 4 {
+        logDebug("Loaded configuration:")
+        cfgYaml, _ := yaml.Marshal(cfg)
+        logDebug("%s", cfgYaml)
+        logDebug("Environment Variables:")
+        for _, e := range os.Environ() {
+            logDebug("%s", e)
+        }
+    }
+
+    if verbosity >= 1 {
+        fmt.Println("Initializing...")
+    }
 
     // Check for conflicting flags
     if *checkOnly && *installOnly {
@@ -161,17 +199,23 @@ func main() {
         *installOnly = false
     }
 
+    if verbosity >= 1 {
+        fmt.Printf("Run type: %s\n", runType)
+    }
+
     if *installOnly {
-        // Skip checking, just install pending updates
-        logInfo("Running in install-only mode.")
-        installPendingUpdates(cfg)
+        if verbosity >= 1 {
+            fmt.Println("Running in install-only mode.")
+        }
+        installPendingUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
         os.Exit(0)
     }
 
     if *checkOnly {
-        // Only check for updates, do not install
-        logInfo("Running in check-only mode.")
-        checkForUpdates(cfg)
+        if verbosity >= 1 {
+            fmt.Println("Running in check-only mode.")
+        }
+        checkForUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
         os.Exit(0)
     }
 
@@ -179,34 +223,45 @@ func main() {
     if *auto {
         // For automatic updates, we might want to check for user activity
         if isUserActive() {
-            logInfo("User is active. Skipping automatic updates.")
+            if verbosity >= 1 {
+                fmt.Println("User is active. Skipping automatic updates.")
+            }
             os.Exit(0)
         }
     }
 
     // Check for updates
-    updatesAvailable := checkForUpdates(cfg)
+    updatesAvailable := checkForUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
     if updatesAvailable {
         // Install updates
-        installPendingUpdates(cfg)
+        installPendingUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
     } else {
-        logInfo("No updates available.")
+        if verbosity >= 1 {
+            fmt.Println("No updates available.")
+        }
     }
 
-    logInfo("Software updates completed.")
+    if verbosity == 0 {
+        // Minimal info at no verbosity: just a final success message.
+        fmt.Println("Updates completed.")
+    } else {
+        // Higher verbosity: more detailed final message.
+        fmt.Println("Software updates completed.")
+    }
     os.Exit(0)
 }
 
 func logVerbose(message string, args ...interface{}) {
-    if verbosity >= 2 {
-        fmt.Printf(message+"\n", args...)
-    }
+    // This placeholder is required to prevent a compile error if needed
+    // since we redefined above, remove the duplicate definition if it occurs
 }
 
 func logVeryVerbose(message string, args ...interface{}) {
-    if verbosity >= 3 {
-        fmt.Printf(message+"\n", args...)
-    }
+    // Same note as above
+}
+
+func logDebug(message string, args ...interface{}) {
+    // Same note as above
 }
 
 // adminCheck checks if the program is running with admin privileges.
@@ -217,7 +272,6 @@ func adminCheck() (bool, error) {
     }
 
     var adminSid *windows.SID
-
     // Allocate and initialize SID
     err := windows.AllocateAndInitializeSid(
         &windows.SECURITY_NT_AUTHORITY,
@@ -232,7 +286,6 @@ func adminCheck() (bool, error) {
     defer windows.FreeSid(adminSid)
 
     token := windows.Token(0)
-
     admin, err := token.IsMember(adminSid)
     if err != nil {
         return false, fmt.Errorf("Token Membership Error: %v", err)
@@ -275,24 +328,41 @@ func isUserActive() bool {
 }
 
 // checkForUpdates checks for available updates and returns true if updates are available.
-func checkForUpdates(cfg *config.Configuration) bool {
-    logInfo("Checking for updates...")
+func checkForUpdates(cfg *config.Configuration, verbosity int,
+    logInfo func(string, ...interface{}),
+    logVerbose func(string, ...interface{}),
+    logVeryVerbose func(string, ...interface{}),
+    logDebug func(string, ...interface{})) bool {
 
-    updatesAvailable := false
+    if verbosity >= 1 {
+        logInfo("Checking for updates...")
+    }
 
     // Fetch manifest items
+    updatesAvailable := false
     manifestItems, err := manifest.Get(*cfg)
     if err != nil {
-        logError("Failed to get manifest items: %v", err)
+        fmt.Fprintf(os.Stderr, "Failed to get manifest items: %v\n", err)
         return false
     }
 
     // Check each item for updates
     for _, item := range manifestItems {
-        logInfo("Checking for updates: %s", item.Name)
+        if verbosity >= 2 {
+            logVerbose("Checking item: %s (Version: %s)", item.Name, item.Version)
+        }
+        if verbosity >= 3 {
+            logVeryVerbose("Installer location: %s", item.InstallerLocation)
+            logVeryVerbose("Catalogs: %v", item.Catalogs)
+        }
+
         if needsUpdate(item, cfg) {
-            logInfo("Update available for %s", item.Name)
+            if verbosity >= 1 {
+                logInfo("Update available for %s", item.Name)
+            }
             updatesAvailable = true
+        } else if verbosity >= 2 {
+            logVerbose("No update needed for %s", item.Name)
         }
     }
 
@@ -300,28 +370,43 @@ func checkForUpdates(cfg *config.Configuration) bool {
 }
 
 // installPendingUpdates installs updates for all items that need updating.
-func installPendingUpdates(cfg *config.Configuration) {
-    logInfo("Installing updates...")
+func installPendingUpdates(cfg *config.Configuration, verbosity int,
+    logInfo func(string, ...interface{}),
+    logVerbose func(string, ...interface{}),
+    logVeryVerbose func(string, ...interface{}),
+    logDebug func(string, ...interface{})) {
+
+    if verbosity >= 1 {
+        logInfo("Installing updates...")
+    }
 
     // Fetch manifest items
     manifestItems, err := manifest.Get(*cfg)
     if err != nil {
-        logError("Failed to get manifest items: %v", err)
+        fmt.Fprintf(os.Stderr, "Failed to get manifest items: %v\n", err)
         return
     }
 
     // Install updates for each item
     for _, item := range manifestItems {
-        logInfo("Checking for updates: %s", item.Name)
+        if verbosity >= 2 {
+            logVerbose("Checking if %s needs an update...", item.Name)
+        }
         if needsUpdate(item, cfg) {
-            logInfo("Installing update for %s...", item.Name)
-            installUpdate(item, cfg)
+            if verbosity >= 2 {
+                logVerbose("Installing update for %s...", item.Name)
+            }
+            installUpdate(item, cfg, verbosity, logVeryVerbose, logDebug)
+        } else if verbosity >= 2 {
+            logVerbose("Skipping %s, no update needed.", item.Name)
         }
     }
 
     // Clean up cache
     cachePath := cfg.CachePath
-    logInfo("Cleaning up old cache...")
+    if verbosity >= 2 {
+        logVerbose("Cleaning up old cache...")
+    }
     process.CleanUp(cachePath)
 }
 
@@ -335,7 +420,10 @@ func needsUpdate(item manifest.Item, cfg *config.Configuration) bool {
     return err != nil || actionNeeded
 }
 
-func installUpdate(item manifest.Item, cfg *config.Configuration) {
+func installUpdate(item manifest.Item, cfg *config.Configuration, verbosity int,
+    logVeryVerbose func(string, ...interface{}),
+    logDebug func(string, ...interface{})) {
+
     catalogItem := catalog.Item{
         DisplayName: item.Name,
         Version:     item.Version,
@@ -345,12 +433,20 @@ func installUpdate(item manifest.Item, cfg *config.Configuration) {
         },
     }
 
+    if verbosity >= 3 {
+        logVeryVerbose("Updating %s: Running installer type %s at %s", item.Name, catalogItem.Installer.Type, catalogItem.Installer.Location)
+    }
+
     result := installer.Install(catalogItem, "install", cfg.URLPkgsInfo, cfg.CachePath, false)
 
     if result != "" && result != "Item not needed" {
         fmt.Printf("Failed to install %s: %s\n", item.Name, result)
     } else {
         fmt.Printf("Successfully installed %s\n", item.Name)
+    }
+
+    if verbosity >= 4 {
+        logDebug("Install update completed for %s", item.Name)
     }
 }
 
