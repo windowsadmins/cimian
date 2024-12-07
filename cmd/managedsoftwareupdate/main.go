@@ -8,6 +8,7 @@ import (
     "os"
     "os/signal"
     "path/filepath"
+    "strings"
     "syscall"
     "unsafe"
 
@@ -18,11 +19,36 @@ import (
     "github.com/windowsadmins/gorilla/pkg/manifest"
     "github.com/windowsadmins/gorilla/pkg/preflight"
     "github.com/windowsadmins/gorilla/pkg/process"
+    "github.com/windowsadmins/gorilla/pkg/report"
     "github.com/windowsadmins/gorilla/pkg/status"
 
     "golang.org/x/sys/windows"
     "gopkg.in/yaml.v3"
 )
+
+type verbosityFlag struct {
+    level *int
+}
+
+func (vf *verbosityFlag) String() string {
+    if vf.level == nil {
+        return "0"
+    }
+    return fmt.Sprintf("%d", *vf.level)
+}
+
+func (vf *verbosityFlag) Set(val string) error {
+    count := 0
+    for _, c := range val {
+        if c == 'v' {
+            count++
+        } else {
+            return fmt.Errorf("invalid verbosity flag: %s (only 'v' is allowed)", val)
+        }
+    }
+    *vf.level = count
+    return nil
+}
 
 var verbosity int
 
@@ -35,15 +61,16 @@ func main() {
         auto        = flag.Bool("auto", false, "Perform automatic updates.")
     )
 
-    flag.IntVar(&verbosity, "v", 0, "Increase verbosity with multiple -v flags.")
+    // Replace integer-based verbosity with custom verbosityFlag
+    vf := &verbosityFlag{&verbosity}
+    flag.Var(vf, "v", "Increase verbosity by adding more 'v' (e.g. -v, -vv, -vvv, -vvvv)")
 
     // Custom usage function
     flag.Usage = func() {
         fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
         fmt.Println("Options:")
         flag.PrintDefaults()
-        fmt.Println("\nCommon Options:")
-        fmt.Println("  -v, --verbose       Increase verbosity. Can be used multiple times.")
+        fmt.Println("\nCommon Options:")        fmt.Println("  -v, --verbose       Increase verbosity. Can be used multiple times.")
         fmt.Println("  --checkonly         Check for updates, but don't install them.")
         fmt.Println("  --installonly       Install pending updates without checking for new ones.")
         fmt.Println("  --auto              Perform automatic updates.")
@@ -73,7 +100,7 @@ func main() {
         os.Exit(1)
     }()
 
-    // Run the preflight script regardless of flags
+    // Run the preflight script regardless of runType or flags
     err := preflight.RunPreflight(verbosity, logInfo, logError)
     if err != nil {
         logError("Preflight script failed: %v", err)
@@ -127,7 +154,9 @@ func main() {
     }
 
     // Determine run type based on flags
+    runType := "custom"
     if *auto {
+        runType = "auto"
         *checkOnly = false
         *installOnly = false
     }
@@ -143,7 +172,7 @@ func main() {
         // Only check for updates, do not install
         logInfo("Running in check-only mode.")
         checkForUpdates(cfg)
-        os.Exit(1)
+        os.Exit(0)
     }
 
     // Default behavior: check for updates and install them
@@ -166,16 +195,6 @@ func main() {
 
     logInfo("Software updates completed.")
     os.Exit(0)
-}
-
-func logError(message string, args ...interface{}) {
-    fmt.Fprintf(os.Stderr, message+"\n", args...)
-}
-
-func logInfo(message string, args ...interface{}) {
-    if verbosity >= 1 {
-        fmt.Printf(message+"\n", args...)
-    }
 }
 
 func logVerbose(message string, args ...interface{}) {
