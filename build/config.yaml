@@ -19,5 +19,5 @@ manifest: employee
 
 ## `app_data_path` is Gorilla's working directory, and may store copies of
 ## manifests, catalogs, or packages. If `app_data_path` is not provided,
-## it will default to `%ProgramData%/gorilla/`
-# app_data_path: C:/gorilla/cache
+## it will default to `%ProgramData%\ManagedInstalls\Gorilla`
+# app_data_path: C:\ProgramData\ManagedInstalls\Config.yaml
