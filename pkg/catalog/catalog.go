@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
 	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/download"
 	"github.com/windowsadmins/gorilla/pkg/logging"
@@ -13,16 +14,16 @@ import (
 
 // Item contains an individual entry from the catalog
 type Item struct {
-	Name          string        `yaml:"name"`
-	Dependencies  []string      `yaml:"dependencies"`
-	DisplayName   string        `yaml:"display_name"`
-	Check         InstallCheck  `yaml:"check"`
-	Installer     InstallerItem `yaml:"installer"`
-	Uninstaller   InstallerItem `yaml:"uninstaller"`
-	Version       string        `yaml:"version"`
-	BlockingApps  []string      `yaml:"blocking_apps"`
-	PreScript     string        `yaml:"preinstall_script"`
-	PostScript    string        `yaml:"postinstall_script"`
+	Name         string        `yaml:"name"`
+	Dependencies []string      `yaml:"dependencies"`
+	DisplayName  string        `yaml:"display_name"`
+	Check        InstallCheck  `yaml:"check"`
+	Installer    InstallerItem `yaml:"installer"`
+	Uninstaller  InstallerItem `yaml:"uninstaller"`
+	Version      string        `yaml:"version"`
+	BlockingApps []string      `yaml:"blocking_apps"`
+	PreScript    string        `yaml:"preinstall_script"`
+	PostScript   string        `yaml:"postinstall_script"`
 }
 
 // InstallerItem holds information about how to install a catalog item
@@ -87,11 +88,11 @@ func Get(cfg config.Configuration) map[int]map[string]Item {
 		catalogCount++
 
 		// Download the catalog
-		catalogURL := filepath.Join(cfg.URLPkgsInfo, catalog + ".yaml")
-		logging.Info("Catalog Url:", catalogURL)
-		yamlFile, err := downloadGet(catalogURL)
+		catalogURL := filepath.Join(cfg.URLPkgsInfo, catalog+".yaml")
+		logging.Info("Catalog Url:", "url", catalogURL)
+		yamlFile, err := downloadGet(catalogURL, &cfg)
 		if err != nil {
-			logging.Error("Unable to retrieve catalog: ", err)
+			logging.Error("Unable to retrieve catalog: ", "error", err)
 		}
 
 		// Parse the catalog
