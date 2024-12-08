@@ -1,158 +1,159 @@
+// pkg/logging/logging.go
 
 package logging
 
 import (
-    "fmt"
-    "log"
-    "os"
-    "path/filepath"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"path/filepath"
 
-    "github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/config"
 )
 
-const (
-    LogsPath = `C:\ProgramData\ManagedInstalls\Logs`
-)
-
+// Logger is the centralized logger instance.
 var (
-    managedSoftwareUpdateLog *os.File
-    installLog               *os.File
-    warningsLog              *os.File
-    debug                    bool
-    verbose                  bool
-    checkonly                bool
+	logger  *log.Logger
+	debug   bool
+	verbose bool
+	logFile *os.File
 )
 
-// InitLogger initializes the logger and creates the log files
-func InitLogger(cfg config.Configuration) {
-    os.MkdirAll(LogsPath, 0755)
+// Init initializes the logging based on the provided configuration.
+// It sets up the logger with appropriate prefixes and outputs based on the log level.
+func Init(cfg *config.Configuration) error {
+	logLevel := cfg.LogLevel
+	verbose = cfg.Verbose
+	debug = cfg.Debug
 
-    // Open ManagedSoftwareUpdate.log
-    var err error
-    managedSoftwareUpdateLog, err = os.OpenFile(filepath.Join(LogsPath, "ManagedSoftwareUpdate.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-    if err != nil {
-        log.Fatalf("Failed to create ManagedSoftwareUpdate.log: %v", err)
-    }
+	// Ensure log directory exists
+	logDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "Logs")
+	err := os.MkdirAll(logDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
+	}
 
-    // Open Install.log
-    installLog, err = os.OpenFile(filepath.Join(LogsPath, "Install.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-    if err != nil {
-        log.Fatalf("Failed to create Install.log: %v", err)
-    }
+	// Open or create the log file
+	logFilePath := filepath.Join(logDir, "gorilla.log")
+	logFile, err = os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
+	}
 
-    // Open Warnings.log
-    warningsLog, err = os.OpenFile(filepath.Join(LogsPath, "Warnings.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-    if err != nil {
-        log.Fatalf("Failed to create Warnings.log: %v", err)
-    }
+	// Create a multi-writer to write to both terminal and log file
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
 
-    log.SetOutput(managedSoftwareUpdateLog)
-    log.SetFlags(log.Ldate | log.Lmicroseconds)
-    log.Println("Logger initialized.")
+	// Set logger based on log level
+	switch logLevel {
+	case "DEBUG":
+		logger = log.New(multiWriter, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	case "INFO":
+		logger = log.New(multiWriter, "INFO: ", log.Ldate|log.Ltime)
+	case "WARN":
+		logger = log.New(multiWriter, "WARN: ", log.Ldate|log.Ltime)
+	case "ERROR":
+		logger = log.New(multiWriter, "ERROR: ", log.Ldate|log.Ltime)
+	default:
+		logger = log.New(multiWriter, "INFO: ", log.Ldate|log.Ltime)
+	}
 
-    // Set logging verbosity levels
-    debug = cfg.Debug
-    verbose = cfg.Verbose
-    checkonly = cfg.CheckOnly
+	logger.Println("Logger initialized", "log_level", logLevel, "verbose", verbose, "debug", debug)
+	return nil
 }
 
-// Debug logs a message with a DEBUG prefix if debug is enabled
-func Debug(logStrings ...interface{}) {
-    log.SetPrefix("DEBUG: ")
-    if debug {
-        fmt.Println(logStrings...)
-        if checkonly {
-            return
-        }
-        log.SetOutput(managedSoftwareUpdateLog)
-        log.Println(logStrings...)
-    }
+// Info logs informational messages.
+func Info(message string, keyValues ...interface{}) {
+	logStructured("INFO", message, keyValues...)
 }
 
-// Info logs a message with an INFO prefix if verbose is enabled
-func Info(logStrings ...interface{}) {
-    log.SetPrefix("INFO: ")
-    if verbose {
-        fmt.Println(logStrings...)
-    }
-    if checkonly {
-        return
-    }
-    log.SetOutput(managedSoftwareUpdateLog)
-    log.Println(logStrings...)
+// Debug logs debug messages.
+func Debug(message string, keyValues ...interface{}) {
+	if debug {
+		logStructured("DEBUG", message, keyValues...)
+	}
 }
 
-// Warn logs a message with a WARNING prefix and writes to Warnings.log
-func Warn(logStrings ...interface{}) {
-    log.SetPrefix("WARNING: ")
-    log.SetOutput(warningsLog)
-    log.Println(logStrings...)
+// Warn logs warning messages.
+func Warn(message string, keyValues ...interface{}) {
+	logStructured("WARN", message, keyValues...)
 }
 
-// Error logs a message with an ERROR prefix and writes to Warnings.log
-func Error(logStrings ...interface{}) {
-    log.SetPrefix("ERROR: ")
-    if checkonly {
-        return
-    }
-    log.SetOutput(warningsLog)
-    log.Println(logStrings...)
+// Error logs error messages.
+func Error(message string, keyValues ...interface{}) {
+	logStructured("ERROR", message, keyValues...)
 }
 
-// LogDownloadStart logs the beginning of a download to ManagedSoftwareUpdate.log
+// LogDownloadStart logs the start of a download.
 func LogDownloadStart(url string) {
-    log.SetOutput(managedSoftwareUpdateLog)
-    log.Printf("[DOWNLOAD START] URL: %s", url)
+	Info("Starting download", "url", url)
 }
 
-// LogDownloadComplete logs the completion of a download to ManagedSoftwareUpdate.log
+// LogDownloadComplete logs the completion of a download.
 func LogDownloadComplete(dest string) {
-    log.SetOutput(managedSoftwareUpdateLog)
-    log.Printf("[DOWNLOAD COMPLETE] File saved to: %s", dest)
+	Info("Download complete", "destination", dest)
 }
 
-// LogVerification logs the verification process of a package to ManagedSoftwareUpdate.log
-func LogVerification(filePath string, status string) {
-    log.SetOutput(managedSoftwareUpdateLog)
-    log.Printf("[VERIFICATION] File: %s Status: %s", filePath, status)
+// LogVerification logs the verification status of a file.
+func LogVerification(filePath, status string) {
+	Info("Verification status", "file", filePath, "status", status)
 }
 
-// LogInstallStart logs the beginning of an installation to Install.log
+// LogInstallStart logs the start of an installation.
 func LogInstallStart(packageName, version string) {
-    log.SetOutput(installLog)
-    log.Printf("[INSTALL START] Package: %s Version: %s", packageName, version)
+	Info("Starting installation", "package", packageName, "version", version)
 }
 
-// LogInstallComplete logs the completion of an installation to Install.log
-func LogInstallComplete(packageName, version string, status string) {
-    log.SetOutput(installLog)
-    log.Printf("[INSTALL COMPLETE] Package: %s Version: %s Status: %s", packageName, version, status)
+// LogInstallComplete logs the completion of an installation.
+func LogInstallComplete(packageName, version, status string) {
+	if status != "" {
+		Info("Installation complete", "package", packageName, "version", version, "status", status)
+	} else {
+		Info("Installation complete", "package", packageName, "version", version)
+	}
 }
 
-// LogError logs errors during the installation process to Warnings.log
-func LogError(err error, context string) {
-    log.SetOutput(warningsLog)
-    log.Printf("[ERROR] %s: %v", context, err)
+// LogErrorDuringInstall logs errors that occur during the installation process.
+func LogErrorDuringInstall(err error, context string) {
+	Error("Installation error", "context", context, "error", err.Error())
 }
 
-// CloseLogger closes all log files
+// logStructured formats and logs the message with key-value pairs.
+func logStructured(level, message string, keyValues ...interface{}) {
+	// Ensure even number of keyValues
+	if len(keyValues)%2 != 0 {
+		// Append a placeholder for the missing value
+		keyValues = append(keyValues, "MISSING_VALUE")
+	}
+
+	// Build the key-value string
+	kvPairs := ""
+	for i := 0; i < len(keyValues); i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			// If the key is not a string, use a placeholder
+			key = fmt.Sprintf("NON_STRING_KEY_%d", i)
+		}
+		value := keyValues[i+1]
+		kvPairs += fmt.Sprintf("%s=%v ", key, value)
+	}
+
+	// Trim the trailing space
+	if len(kvPairs) > 0 {
+		kvPairs = kvPairs[:len(kvPairs)-1]
+	}
+
+	// Log the structured message
+	logger.Println(fmt.Sprintf("%s: %s %s", level, message, kvPairs))
+}
+
+// CloseLogger performs necessary cleanup for the logger.
+// Closes the log file if it was opened.
 func CloseLogger() {
-    if managedSoftwareUpdateLog != nil {
-        err := managedSoftwareUpdateLog.Close()
-        if err != nil {
-            fmt.Printf("Failed to close ManagedSoftwareUpdate.log: %v\n", err)
-        }
-    }
-    if installLog != nil {
-        err := installLog.Close()
-        if err != nil {
-            fmt.Printf("Failed to close Install.log: %v\n", err)
-        }
-    }
-    if warningsLog != nil {
-        err := warningsLog.Close()
-        if err != nil {
-            fmt.Printf("Failed to close Warnings.log: %v\n", err)
-        }
-    }
+	if logFile != nil {
+		err := logFile.Close()
+		if err != nil {
+			fmt.Printf("Failed to close log file: %v\n", err)
+		}
+	}
 }
