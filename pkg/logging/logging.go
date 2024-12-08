@@ -4,288 +4,132 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 )
 
-const (
-	DefaultLogsPath = `C:\ProgramData\ManagedInstalls\Logs`
-)
-
+// logger is the centralized logger instance.
 var (
-	// File handles
-	managedSoftwareUpdateLog *os.File
-	installLog               *os.File
-	warningsLog              *os.File
-	singleLogFile            *os.File
-
-	// Configuration flags
-	debug     bool
-	verbose   bool
-	checkonly bool
-
-	// Mode flags
-	multiLogMode bool
+	logger  *log.Logger
+	debug   bool
+	verbose bool
 )
 
-// InitLogger initializes the logger. It supports both multi-log mode (ManagedSoftwareUpdate.log, Install.log, Warnings.log)
-// and single-log mode (gorilla.log), depending on configuration.
-// If cfg.AppDataPath is set, it will use a single gorilla.log file under that path.
-// Otherwise, it uses the multi-log structure under DefaultLogsPath.
-func InitLogger(cfg config.Configuration) {
-	debug = cfg.Debug
+// Init initializes the logging based on the provided configuration.
+// It sets up the logger with appropriate prefixes and outputs based on the log level.
+func Init(cfg *config.Configuration) error {
+	logLevel := cfg.LogLevel
 	verbose = cfg.Verbose
-	checkonly = cfg.CheckOnly
+	debug = cfg.Debug
 
-	// If AppDataPath is provided, assume single log mode. Otherwise, use multi-log mode.
-	if cfg.AppDataPath != "" {
-		initSingleLog(cfg)
-	} else {
-		initMultiLogs(cfg)
+	switch logLevel {
+	case "DEBUG":
+		logger = log.New(os.Stdout, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	case "INFO":
+		logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	case "WARN":
+		logger = log.New(os.Stdout, "WARN: ", log.Ldate|log.Ltime)
+	case "ERROR":
+		logger = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime)
+	default:
+		logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
 	}
 
-	// Set default logger flags and a default file output.
-	if multiLogMode {
-		// Default to ManagedSoftwareUpdate.log
-		log.SetOutput(managedSoftwareUpdateLog)
-	} else {
-		// Default to single log file
-		log.SetOutput(singleLogFile)
-	}
-	log.SetFlags(log.Ldate | log.Lmicroseconds)
-	log.Println("Logger initialized.")
+	return nil
 }
 
-func initSingleLog(cfg config.Configuration) {
-	multiLogMode = false
-	logPath := filepath.Join(cfg.AppDataPath, "gorilla.log")
-
-	err := os.MkdirAll(filepath.Dir(logPath), 0755)
-	if err != nil {
-		panic(fmt.Sprintf("Unable to create directory: %s - %v", filepath.Dir(logPath), err))
-	}
-
-	singleLogFile, err = os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		panic(fmt.Sprintf("Unable to open file: %s - %v", logPath, err))
+// Info logs informational messages based on verbosity.
+// It accepts a message and an optional list of key-value pairs.
+func Info(message string, keyValues ...interface{}) {
+	if verbose || debug {
+		logStructured("INFO", message, keyValues...)
 	}
 }
 
-func initMultiLogs(cfg config.Configuration) {
-	multiLogMode = true
-
-	// Ensure the default logs directory
-	err := os.MkdirAll(DefaultLogsPath, 0755)
-	if err != nil {
-		log.Fatalf("Failed to create logs directory: %v", err)
-	}
-
-	managedSoftwareUpdateLog, err = os.OpenFile(filepath.Join(DefaultLogsPath, "ManagedSoftwareUpdate.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Failed to create ManagedSoftwareUpdate.log: %v", err)
-	}
-
-	installLog, err = os.OpenFile(filepath.Join(DefaultLogsPath, "Install.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Failed to create Install.log: %v", err)
-	}
-
-	warningsLog, err = os.OpenFile(filepath.Join(DefaultLogsPath, "Warnings.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Failed to create Warnings.log: %v", err)
+// Debug logs debug messages.
+// It accepts a message and an optional list of key-value pairs.
+func Debug(message string, keyValues ...interface{}) {
+	if debug {
+		logStructured("DEBUG", message, keyValues...)
 	}
 }
 
-// Debug logs a debug message if debug is enabled.
-func Debug(logStrings ...interface{}) {
-	if !debug {
-		return
-	}
-
-	log.SetPrefix("DEBUG: ")
-	if verbose {
-		fmt.Println(logStrings...)
-	}
-
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(managedSoftwareUpdateLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Println(logStrings...)
+// Warn logs warning messages.
+// It accepts a message and an optional list of key-value pairs.
+func Warn(message string, keyValues ...interface{}) {
+	logStructured("WARN", message, keyValues...)
 }
 
-// Info logs an informational message if verbose is enabled.
-func Info(logStrings ...interface{}) {
-	log.SetPrefix("INFO: ")
-	if verbose {
-		fmt.Println(logStrings...)
-	}
-
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(managedSoftwareUpdateLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Println(logStrings...)
+// Error logs error messages.
+// It accepts a message and an optional list of key-value pairs.
+func Error(message string, keyValues ...interface{}) {
+	logStructured("ERROR", message, keyValues...)
 }
 
-// Warn logs a warning message. Always logged to disk. In multi-log mode, goes to Warnings.log.
-func Warn(logStrings ...interface{}) {
-	log.SetPrefix("WARNING: ")
-	if verbose {
-		fmt.Println(logStrings...)
-	}
-
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(warningsLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Println(logStrings...)
-}
-
-// Error logs an error message. In multi-log mode, goes to Warnings.log; in single mode, goes to single log.
-func Error(logStrings ...interface{}) {
-	log.SetPrefix("ERROR: ")
-	if verbose {
-		fmt.Println(logStrings...)
-	}
-
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(warningsLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Println(logStrings...)
-}
-
-// LogDownloadStart logs the beginning of a download.
+// LogDownloadStart logs the start of a download.
 func LogDownloadStart(url string) {
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(managedSoftwareUpdateLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-
-	log.Printf("[DOWNLOAD START] URL: %s", url)
+	Info("Starting download", "url", url)
 }
 
 // LogDownloadComplete logs the completion of a download.
 func LogDownloadComplete(dest string) {
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(managedSoftwareUpdateLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-
-	log.Printf("[DOWNLOAD COMPLETE] File saved to: %s", dest)
+	Info("Download complete", "destination", dest)
 }
 
-// LogVerification logs file verification status.
-func LogVerification(filePath string, status string) {
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(managedSoftwareUpdateLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Printf("[VERIFICATION] File: %s Status: %s", filePath, status)
+// LogVerification logs the verification status of a file.
+func LogVerification(filePath, status string) {
+	Info("Verification status", "file", filePath, "status", status)
 }
 
-// LogInstallStart logs the beginning of an installation (if multiLogMode).
+// LogInstallStart logs the start of an installation.
 func LogInstallStart(packageName, version string) {
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(installLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Printf("[INSTALL START] Package: %s Version: %s", packageName, version)
+	Info("Starting installation", "package", packageName, "version", version)
 }
 
-// LogInstallComplete logs the completion of an installation (if multiLogMode).
-func LogInstallComplete(packageName, version string, status string) {
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(installLog)
+// LogInstallComplete logs the completion of an installation.
+func LogInstallComplete(packageName, version, status string) {
+	if status != "" {
+		Info("Installation complete", "package", packageName, "version", version, "status", status)
 	} else {
-		log.SetOutput(singleLogFile)
+		Info("Installation complete", "package", packageName, "version", version)
 	}
-	log.Printf("[INSTALL COMPLETE] Package: %s Version: %s Status: %s", packageName, version, status)
 }
 
-// LogError logs errors during the installation process to warnings (in multi mode) or single log.
-func LogError(err error, context string) {
-	if checkonly {
-		return
-	}
-
-	if multiLogMode {
-		log.SetOutput(warningsLog)
-	} else {
-		log.SetOutput(singleLogFile)
-	}
-	log.Printf("[ERROR] %s: %v", context, err)
+// LogErrorDuringInstall logs errors that occur during the installation process.
+func LogErrorDuringInstall(err error, context string) {
+	Error("Installation error", "context", context, "error", err.Error())
 }
 
-// CloseLogger closes all open log files.
+// logStructured formats and logs the message with key-value pairs.
+// It ensures that keyValues are in key-value pair format.
+func logStructured(level, message string, keyValues ...interface{}) {
+	// Ensure even number of keyValues
+	if len(keyValues)%2 != 0 {
+		// Append a placeholder for the missing value
+		keyValues = append(keyValues, "MISSING_VALUE")
+	}
+
+	// Build the key-value string
+	kvPairs := ""
+	for i := 0; i < len(keyValues); i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			// If the key is not a string, use a placeholder
+			key = fmt.Sprintf("NON_STRING_KEY_%d", i)
+		}
+		value := keyValues[i+1]
+		kvPairs += fmt.Sprintf("%s=%v ", key, value)
+	}
+
+	// Trim the trailing space
+	kvPairs = kvPairs[:len(kvPairs)-1]
+
+	// Log the structured message
+	logger.Println(fmt.Sprintf("%s: %s %s", level, message, kvPairs))
+}
+
+// CloseLogger performs any necessary cleanup for the logger.
+// Currently, there are no resources to clean up, but this function is provided for future enhancements.
 func CloseLogger() {
-	// If in single log mode
-	if singleLogFile != nil {
-		if err := singleLogFile.Close(); err != nil {
-			fmt.Printf("Failed to close gorilla.log: %v\n", err)
-		}
-	}
-
-	// If in multi log mode
-	if managedSoftwareUpdateLog != nil {
-		if err := managedSoftwareUpdateLog.Close(); err != nil {
-			fmt.Printf("Failed to close ManagedSoftwareUpdate.log: %v\n", err)
-		}
-	}
-	if installLog != nil {
-		if err := installLog.Close(); err != nil {
-			fmt.Printf("Failed to close Install.log: %v\n", err)
-		}
-	}
-	if warningsLog != nil {
-		if err := warningsLog.Close(); err != nil {
-			fmt.Printf("Failed to close Warnings.log: %v\n", err)
-		}
-	}
+	// Placeholder for future cleanup logic, such as closing file handles if logging to files.
 }

@@ -4,6 +4,7 @@ import (
     "os"
     "log"
     "path/filepath"
+
     "gopkg.in/yaml.v3"
 )
 
@@ -28,6 +29,7 @@ type Configuration struct {
     URL             string   `yaml:"url"`
     URLPkgsInfo     string   `yaml:"url_pkgsinfo"`
     Verbose         bool     `yaml:"verbose"`
+    ForceBasicAuth  bool     `yaml:"force_basic_auth"`
 }
 
 // LoadConfig loads the configuration from a YAML file.
@@ -90,5 +92,6 @@ func GetDefaultConfig() *Configuration {
         DefaultCatalog: "testing",
         CloudProvider:  "none",
         CloudBucket:    "",
+        ForceBasicAuth: false,
     }
 }
