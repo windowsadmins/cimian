@@ -10,7 +10,10 @@
 # Exit immediately if a command exits with a non-zero status
 $ErrorActionPreference = 'Stop'
 
-# Function to display messages
+# Ensure GO111MODULE is enabled for module-based builds
+$env:GO111MODULE = "on"
+
+# Function to display messages with different log levels
 function Write-Log {
     param (
         [string]$Message,
@@ -162,8 +165,16 @@ $wixBinPath = Find-WiXBinPath
 
 if ($wixBinPath) {
     Write-Log "WiX Toolset bin directory found at $wixBinPath" "INFO"
-    $env:PATH = "$wixBinPath;$env:PATH"
-    Write-Log "Added WiX Toolset bin directory to PATH." "SUCCESS"
+    # Check if WiX bin path is already in PATH to prevent duplication
+    $wixPathNormalized = [System.IO.Path]::GetFullPath($wixBinPath).TrimEnd('\')
+    $pathEntries = $env:PATH -split ";" | ForEach-Object { $_.Trim() }
+    if (-not ($pathEntries -contains $wixPathNormalized)) {
+        $env:PATH = "$wixBinPath;$env:PATH"
+        Write-Log "Added WiX Toolset bin directory to PATH." "SUCCESS"
+    }
+    else {
+        Write-Log "WiX Toolset bin directory already in PATH. Skipping addition." "INFO"
+    }
 }
 else {
     Write-Log "WiX Toolset binaries not found. Ensure WiX is installed correctly." "ERROR"
@@ -181,8 +192,9 @@ Write-Log "WiX Toolset is available." "SUCCESS"
 # Step 5: Set Up Go Environment Variables
 Write-Log "Setting up Go environment variables..." "INFO"
 
-$env:GOPATH = "$PSScriptRoot\go"
-$env:PATH = "$env:GOPATH\bin;C:\Program Files\Go\bin;$env:PATH"
+# Removed setting GOPATH to a local directory and adding $PSScriptRoot\go\bin to PATH
+# Assuming GOPATH is correctly set at the user level (C:\Users\rchristiansen\go)
+# Ensure that Go binaries are already in PATH via system installation
 
 Write-Log "Go environment variables set." "SUCCESS"
 
@@ -191,7 +203,9 @@ Write-Log "Preparing release version..." "INFO"
 
 $fullVersion = Get-Date -Format "yyyy.MM.dd"
 $year = (Get-Date).Year - 2000
-$semanticVersion = "{0}.{1}.{2}" -f $year, (Get-Date).Month, (Get-Date).Day
+$month = (Get-Date).Month
+$day = (Get-Date).Day
+$semanticVersion = "{0}.{1}.{2}" -f $year, $month, $day
 
 $env:RELEASE_VERSION = $fullVersion
 $env:SEMANTIC_VERSION = $semanticVersion
@@ -219,6 +233,7 @@ foreach ($dir in $binaryDirs) {
     # Retrieve the current Git branch name
     try {
         $branchName = (git rev-parse --abbrev-ref HEAD)
+        Write-Log "Current Git branch: $branchName" "INFO"
     }
     catch {
         Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
@@ -236,14 +251,20 @@ foreach ($dir in $binaryDirs) {
     $buildDate = Get-Date -Format s
 
     $ldflags = "-X github.com/windowsadmins/gorilla/pkg/version.appName=$binaryName " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.version=$env:RELEASE_VERSION " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.branch=$branchName " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$buildDate " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision"
+        "-X github.com/windowsadmins/gorilla/pkg/version.version=$env:RELEASE_VERSION " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.branch=$branchName " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$buildDate " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision"
 
-    go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
-
-    Write-Log "$binaryName built successfully." "SUCCESS"
+    # Build command with error handling
+    try {
+        go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
+        Write-Log "$binaryName built successfully." "SUCCESS"
+    }
+    catch {
+        Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
+        exit 1
+    }
 }
 
 Write-Log "All binaries built." "SUCCESS"
@@ -251,7 +272,6 @@ Write-Log "All binaries built." "SUCCESS"
 # Step 9: Package Binaries
 Write-Log "Packaging binaries..." "INFO"
 
-# Create release directory (already cleaned)
 # Copy binaries to release
 Get-ChildItem -Path "bin\*.exe" | ForEach-Object {
     Copy-Item $_.FullName "release\"
@@ -281,20 +301,38 @@ Write-Log "Building MSI package with WiX..." "INFO"
 $msiOutput = "release\Gorilla-$env:RELEASE_VERSION.msi"
 
 # Compile WiX source
-candle.exe -ext WixUtilExtension.dll -out "build\msi.wixobj" "build\msi.wxs"
-light.exe -sice:ICE61 -ext WixUtilExtension.dll -out $msiOutput "build\msi.wixobj"
-
-Write-Log "MSI package built at $msiOutput." "SUCCESS"
+try {
+    candle.exe -ext WixUtilExtension.dll -out "build\msi.wixobj" "build\msi.wxs"
+    light.exe -sice:ICE61 -ext WixUtilExtension.dll -out $msiOutput "build\msi.wixobj"
+    Write-Log "MSI package built at $msiOutput." "SUCCESS"
+}
+catch {
+    Write-Log "Failed to build MSI package. Error: $_" "ERROR"
+    exit 1
+}
 
 # Step 11: Prepare NuGet Package
 Write-Log "Preparing NuGet package..." "INFO"
 
 # Replace SEMANTIC_VERSION in nuspec
-(Get-Content "build\nupkg.nuspec") -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $env:SEMANTIC_VERSION | Set-Content "build\nupkg.nuspec"
+try {
+    (Get-Content "build\nupkg.nuspec") -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $env:SEMANTIC_VERSION | Set-Content "build\nupkg.nuspec"
+    Write-Log "Updated nuspec with SEMANTIC_VERSION." "INFO"
+}
+catch {
+    Write-Log "Failed to update nuspec. Error: $_" "ERROR"
+    exit 1
+}
 
 # Pack NuGet package
-nuget pack "build\nupkg.nuspec" -OutputDirectory "release" -BasePath "$PSScriptRoot" | Out-Null
-Write-Log "NuGet package created in release directory." "SUCCESS"
+try {
+    nuget pack "build\nupkg.nuspec" -OutputDirectory "release" -BasePath "$PSScriptRoot" | Out-Null
+    Write-Log "NuGet package created in release directory." "SUCCESS"
+}
+catch {
+    Write-Log "Failed to pack NuGet package. Error: $_" "ERROR"
+    exit 1
+}
 
 # Step 11.1: Revert `nupkg.nuspec` to its dynamic state
 Write-Log "Reverting build/nupkg.nuspec to dynamic state..." "INFO"
@@ -310,7 +348,6 @@ catch {
 }
 
 Write-Log "Build process completed successfully with cleanup." "SUCCESS"
-
 
 # Step 12: Prepare IntuneWin Package
 Write-Log "Preparing IntuneWin package..." "INFO"
@@ -367,7 +404,8 @@ if (Test-Path $releaseZip) {
     catch {
         Write-Log "Failed to delete '$releaseZip'. Error: $_" "WARNING"
     }
-} else {
+}
+else {
     Write-Log "'$releaseZip' does not exist. Skipping deletion." "INFO"
 }
 
@@ -387,7 +425,8 @@ foreach ($file in $msiFiles) {
         catch {
             Write-Log "Failed to delete '$file'. Error: $_" "WARNING"
         }
-    } else {
+    }
+    else {
         Write-Log "'$file' does not exist. Skipping deletion." "INFO"
     }
 }
