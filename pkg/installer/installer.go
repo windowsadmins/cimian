@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/windowsadmins/gorilla/pkg/catalog"
+	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/download"
 	"github.com/windowsadmins/gorilla/pkg/logging"
 	"github.com/windowsadmins/gorilla/pkg/pkginfo"
@@ -23,34 +24,34 @@ import (
 var (
 	// Base command for each installer type
 	commandNupkg = filepath.Join(os.Getenv("ProgramData"), "chocolatey/bin/choco.exe")
-	commandMsi   = filepath.Join(os.Getenv("WINDIR"), "system32/", "msiexec.exe")
-	commandPs1   = filepath.Join(os.Getenv("WINDIR"), "system32/", "WindowsPowershell", "v1.0", "powershell.exe")
+	commandMsi   = filepath.Join(os.Getenv("WINDIR"), "system32", "msiexec.exe")
+	commandPs1   = filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
 
-	// These abstractions allows us to override when testing
+	// These abstractions allow us to override when testing
 	execCommand       = exec.Command
 	statusCheckStatus = status.CheckStatus
 	runCommand        = runCMD
 
-	// Stores url where we will download an item
+	// Stores URL where we will download an item
 	installerURL   string
 	uninstallerURL string
 )
 
-// runCommand executes a command and it's argurments in the CMD environment
+// runCommand executes a command and its arguments in the CMD environment
 func runCMD(command string, arguments []string) (string, error) {
 	cmd := execCommand(command, arguments...)
 	var cmdOutput string
 	cmdReader, err := cmd.StdoutPipe()
 	if err != nil {
-		logging.Warn("command:", command, arguments)
-		logging.Warn("Error creating pipe to stdout", err)
+		logging.Warn("command", command, "arguments", arguments)
+		logging.Warn("Error creating pipe to stdout", "error", err)
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 
 	scanner := bufio.NewScanner(cmdReader)
-	logging.Debug("command:", command, arguments)
+	logging.Debug("command", command, "arguments", arguments)
 	go func() {
 		logging.Debug("Command Output:")
 		logging.Debug("--------------------")
@@ -64,24 +65,23 @@ func runCMD(command string, arguments []string) (string, error) {
 
 	err = cmd.Start()
 	if err != nil {
-		logging.Warn("command:", command, arguments)
-		logging.Warn("Error running command:", err)
+		logging.Warn("command", command, "arguments", arguments)
+		logging.Warn("Error running command:", "error", err)
 	}
 
 	wg.Wait()
 	err = cmd.Wait()
 	if err != nil {
-		logging.Warn("command:", command, arguments)
-		logging.Warn("Command error:", err)
+		logging.Warn("command", command, "arguments", arguments)
+		logging.Warn("Command error:", "error", err)
 	}
 
 	return cmdOutput, err
 }
 
-// Get a Nupkg's id using `choco list`
+// getNupkgID retrieves the Nupkg ID using `choco list`
 func getNupkgID(nupkgDir, versionArg string) string {
-
-	// Compile the arguments needed to get the id
+	// Compile the arguments needed to get the ID
 	command := commandNupkg
 	arguments := []string{"list", versionArg, "--id-only", "-r", "-s", nupkgDir}
 
@@ -89,21 +89,21 @@ func getNupkgID(nupkgDir, versionArg string) string {
 	cmdOut, _ := runCommand(command, arguments)
 	nupkgID := strings.TrimSpace(cmdOut)
 
-	// The final output should just be the nupkg id
+	// The final output should just be the Nupkg ID
 	return nupkgID
 }
 
-func installItem(item catalog.Item, itemURL, cachePath string) string {
-
+// installItem installs a catalog item using the provided configuration
+func installItem(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
 	// Determine the paths needed for download and install
 	relPath, fileName := path.Split(item.Installer.Location)
 	absPath := filepath.Join(cachePath, relPath)
 	absFile := filepath.Join(absPath, fileName)
 
 	// Download the item if it is needed
-	valid := download.IfNeeded(absFile, itemURL, item.Installer.Hash)
+	valid := download.IfNeeded(absFile, itemURL, item.Installer.Hash, cfg)
 	if !valid {
-		msg := fmt.Sprint("Unable to download valid file: ", itemURL)
+		msg := fmt.Sprintf("Unable to download valid file: %s", itemURL)
 		logging.Warn(msg)
 		return msg
 	}
@@ -111,13 +111,13 @@ func installItem(item catalog.Item, itemURL, cachePath string) string {
 	// Determine the install type and command to pass
 	var installCmd string
 	var installArgs []string
-	if item.Installer.Type == "nupkg" {
+	if strings.ToLower(item.Installer.Type) == "nupkg" {
 		// choco wants the "id" and parent dir when we install, so we need to determine both
-		logging.Info("Determining nupkg id for", item.DisplayName)
+		logging.Info("Determining nupkg ID for", "display_name", item.DisplayName)
 		nupkgDir := filepath.Dir(absFile)
 
 		// Since choco recommends the source is a directory,
-		// we need to pass a version to filter unexpected nupkgs (if we have a version)
+		// we need to pass a version to filter unexpected Nupkgs (if we have a version)
 		var versionArg string
 		var nupkgID string
 		if item.Version != "" {
@@ -125,35 +125,35 @@ func installItem(item catalog.Item, itemURL, cachePath string) string {
 			nupkgID = getNupkgID(nupkgDir, versionArg)
 		}
 
-		// Now pass the id along with the parent directory
-		logging.Info("Installing nupkg for", item.DisplayName)
+		// Now pass the ID along with the parent directory
+		logging.Info("Installing Nupkg for", "display_name", item.DisplayName)
 		installCmd = commandNupkg
 		if nupkgID != "" && versionArg != "" {
 			// Only use this form if we have an ID and version number
 			installArgs = []string{"install", nupkgID, "-s", nupkgDir, versionArg, "-f", "-y", "-r"}
 		} else {
-			// If we dont have an id and version, fallback to the method choco doesn't recommend (but works)
+			// If we don't have an ID and version, fallback to the method choco doesn't recommend (but works)
 			installArgs = []string{"install", absFile, "-f", "-y", "-r"}
 		}
 
-	} else if item.Installer.Type == "msi" {
-		logging.Info("Installing msi for", item.DisplayName)
+	} else if strings.ToLower(item.Installer.Type) == "msi" {
+		logging.Info("Installing MSI for", "display_name", item.DisplayName)
 		installCmd = commandMsi
 		installArgs = []string{"/i", absFile, "/qn", "/norestart"}
 		installArgs = append(installArgs, item.Installer.Arguments...)
 
-	} else if item.Installer.Type == "exe" {
-		logging.Info("Installing exe for", item.DisplayName)
+	} else if strings.ToLower(item.Installer.Type) == "exe" {
+		logging.Info("Installing EXE for", "display_name", item.DisplayName)
 		installCmd = absFile
 		installArgs = item.Installer.Arguments
 
-	} else if item.Installer.Type == "ps1" {
-		logging.Info("Installing ps1 for", item.DisplayName)
+	} else if strings.ToLower(item.Installer.Type) == "ps1" {
+		logging.Info("Installing PS1 for", "display_name", item.DisplayName)
 		installCmd = commandPs1
 		installArgs = []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", absFile}
 
 	} else {
-		msg := fmt.Sprint("Unsupported installer type", item.Installer.Type)
+		msg := fmt.Sprintf("Unsupported installer type: %s", item.Installer.Type)
 		logging.Warn(msg)
 		return msg
 	}
@@ -163,9 +163,9 @@ func installItem(item catalog.Item, itemURL, cachePath string) string {
 
 	// Write success/failure event to log
 	if errOut != nil {
-		logging.Warn(item.DisplayName, item.Version, "Installation FAILED")
+		logging.Warn("Installation FAILED", "display_name", item.DisplayName, "version", item.Version)
 	} else {
-		logging.Info(item.DisplayName, item.Version, "Installation SUCCESSFUL")
+		logging.Info("Installation SUCCESSFUL", "display_name", item.DisplayName, "version", item.Version)
 	}
 
 	// Add the item to InstalledItems in GorillaReport
@@ -174,17 +174,17 @@ func installItem(item catalog.Item, itemURL, cachePath string) string {
 	return installerOut
 }
 
-func uninstallItem(item catalog.Item, itemURL, cachePath string) string {
-
-	// Determine the paths needed for download and uinstall
+// uninstallItem uninstalls a catalog item using the provided configuration
+func uninstallItem(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+	// Determine the paths needed for download and uninstall
 	relPath, fileName := path.Split(item.Uninstaller.Location)
 	absPath := filepath.Join(cachePath, relPath)
 	absFile := filepath.Join(absPath, fileName)
 
 	// Download the item if it is needed
-	valid := download.IfNeeded(absFile, itemURL, item.Uninstaller.Hash)
+	valid := download.IfNeeded(absFile, itemURL, item.Uninstaller.Hash, cfg)
 	if !valid {
-		msg := fmt.Sprint("Unable to download valid file: ", itemURL)
+		msg := fmt.Sprintf("Unable to download valid file: %s", itemURL)
 		logging.Warn(msg)
 		return msg
 	}
@@ -193,13 +193,13 @@ func uninstallItem(item catalog.Item, itemURL, cachePath string) string {
 	var uninstallCmd string
 	var uninstallArgs []string
 
-	if item.Uninstaller.Type == "nupkg" {
+	if strings.ToLower(item.Uninstaller.Type) == "nupkg" {
 		// choco wants the "id" and parent dir when we uninstall, so we need to determine both
-		logging.Info("Determining nupkg id for", item.DisplayName)
+		logging.Info("Determining nupkg ID for", "display_name", item.DisplayName)
 		nupkgDir := filepath.Dir(absFile)
 
 		// Since choco recommends the source is a directory,
-		// we need to pass a version to filter unexpected nupkgs (if we have a version)
+		// we need to pass a version to filter unexpected Nupkgs (if we have a version)
 		var versionArg string
 		var nupkgID string
 		if item.Version != "" {
@@ -207,34 +207,34 @@ func uninstallItem(item catalog.Item, itemURL, cachePath string) string {
 			nupkgID = getNupkgID(nupkgDir, versionArg)
 		}
 
-		// Now pass the id along with the parent directory
-		logging.Info("Uninstalling nupkg for", item.DisplayName)
+		// Now pass the ID along with the parent directory
+		logging.Info("Uninstalling Nupkg for", "display_name", item.DisplayName)
 		uninstallCmd = commandNupkg
 		if nupkgID != "" && versionArg != "" {
 			// Only use this form if we have an ID and version number
 			uninstallArgs = []string{"uninstall", nupkgID, "-s", nupkgDir, versionArg, "-f", "-y", "-r"}
 		} else {
-			// If we dont have an id and version, fallback to the method choco doesn't recommend (but works)
+			// If we don't have an ID and version, fallback to the method choco doesn't recommend (but works)
 			uninstallArgs = []string{"uninstall", absFile, "-f", "-y", "-r"}
 		}
 
-	} else if item.Uninstaller.Type == "msi" {
-		logging.Info("Uninstalling msi for", item.DisplayName)
+	} else if strings.ToLower(item.Uninstaller.Type) == "msi" {
+		logging.Info("Uninstalling MSI for", "display_name", item.DisplayName)
 		uninstallCmd = commandMsi
 		uninstallArgs = []string{"/x", absFile, "/qn", "/norestart"}
 
-	} else if item.Uninstaller.Type == "exe" {
-		logging.Info("Uninstalling exe for", item.DisplayName)
+	} else if strings.ToLower(item.Uninstaller.Type) == "exe" {
+		logging.Info("Uninstalling EXE for", "display_name", item.DisplayName)
 		uninstallCmd = absFile
 		uninstallArgs = item.Uninstaller.Arguments
 
-	} else if item.Uninstaller.Type == "ps1" {
-		logging.Info("Uninstalling ps1 for", item.DisplayName)
+	} else if strings.ToLower(item.Uninstaller.Type) == "ps1" {
+		logging.Info("Uninstalling PS1 for", "display_name", item.DisplayName)
 		uninstallCmd = commandPs1
 		uninstallArgs = []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", absFile}
 
 	} else {
-		msg := fmt.Sprint("Unsupported uninstaller type", item.Uninstaller.Type)
+		msg := fmt.Sprintf("Unsupported uninstaller type: %s", item.Uninstaller.Type)
 		logging.Warn(msg)
 		return msg
 	}
@@ -244,25 +244,29 @@ func uninstallItem(item catalog.Item, itemURL, cachePath string) string {
 
 	// Write success/failure event to log
 	if errOut != nil {
-		logging.Warn(item.DisplayName, item.Version, "Uninstallation FAILED")
+		logging.Warn("Uninstallation FAILED", "display_name", item.DisplayName, "version", item.Version)
 	} else {
-		logging.Info(item.DisplayName, item.Version, "Uninstallation SUCCESSFUL")
+		logging.Info("Uninstallation SUCCESSFUL", "display_name", item.DisplayName, "version", item.Version)
 	}
 
-	// Add the item to InstalledItems in GorillaReport
+	// Add the item to UninstalledItems in GorillaReport
 	report.UninstalledItems = append(report.UninstalledItems, item)
 
 	return uninstallerOut
 }
 
+// preinstallScript executes a pre-install script if provided
 func preinstallScript(catalogItem catalog.Item, cachePath string) (actionNeeded bool, checkErr error) {
-
-	// Write InstallCheckScript to disk as a Powershell file
-	tmpScript := filepath.Join(cachePath, "tmpPostScript.ps1")
-	ioutil.WriteFile(tmpScript, []byte(catalogItem.PreScript), 0755)
+	// Write PreInstallScript to disk as a PowerShell file
+	tmpScript := filepath.Join(cachePath, "tmpPreScript.ps1")
+	err := ioutil.WriteFile(tmpScript, []byte(catalogItem.PreScript), 0755)
+	if err != nil {
+		logging.Error("Failed to write pre-install script:", "error", err)
+		return false, err
+	}
 
 	// Build the command to execute the script
-	psCmd := filepath.Join(os.Getenv("WINDIR"), "system32/", "WindowsPowershell", "v1.0", "powershell.exe")
+	psCmd := commandPs1
 	psArgs := []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpScript}
 
 	// Execute the script
@@ -270,7 +274,7 @@ func preinstallScript(catalogItem catalog.Item, cachePath string) (actionNeeded 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	cmdSuccess := cmd.ProcessState.Success()
 	outStr, errStr := stdout.String(), stderr.String()
 
@@ -278,21 +282,25 @@ func preinstallScript(catalogItem catalog.Item, cachePath string) (actionNeeded 
 	os.Remove(tmpScript)
 
 	// Log results
-	logging.Debug("Command Error:", err)
-	logging.Debug("stdout:", outStr)
-	logging.Debug("stderr:", errStr)
+	logging.Debug("Pre-Install Command Error:", "error", err)
+	logging.Debug("Pre-Install stdout:", "output", outStr)
+	logging.Debug("Pre-Install stderr:", "error_output", errStr)
 
 	return cmdSuccess, err
 }
 
+// postinstallScript executes a post-install script if provided
 func postinstallScript(catalogItem catalog.Item, cachePath string) (actionNeeded bool, checkErr error) {
-
-	// Write InstallCheckScript to disk as a Powershell file
+	// Write PostInstallScript to disk as a PowerShell file
 	tmpScript := filepath.Join(cachePath, "tmpPostScript.ps1")
-	ioutil.WriteFile(tmpScript, []byte(catalogItem.PostScript), 0755)
+	err := ioutil.WriteFile(tmpScript, []byte(catalogItem.PostScript), 0755)
+	if err != nil {
+		logging.Error("Failed to write post-install script:", "error", err)
+		return false, err
+	}
 
 	// Build the command to execute the script
-	psCmd := filepath.Join(os.Getenv("WINDIR"), "system32/", "WindowsPowershell", "v1.0", "powershell.exe")
+	psCmd := commandPs1
 	psArgs := []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpScript}
 
 	// Execute the script
@@ -300,7 +308,7 @@ func postinstallScript(catalogItem catalog.Item, cachePath string) (actionNeeded
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	cmdSuccess := cmd.ProcessState.Success()
 	outStr, errStr := stdout.String(), stderr.String()
 
@@ -308,26 +316,26 @@ func postinstallScript(catalogItem catalog.Item, cachePath string) (actionNeeded
 	os.Remove(tmpScript)
 
 	// Log results
-	logging.Debug("Command Error:", err)
-	logging.Debug("stdout:", outStr)
-	logging.Debug("stderr:", errStr)
+	logging.Debug("Post-Install Command Error:", "error", err)
+	logging.Debug("Post-Install stdout:", "output", outStr)
+	logging.Debug("Post-Install stderr:", "error_output", errStr)
 
 	return cmdSuccess, err
 }
 
 var (
-	// By putting the functions in a variable, we can override later in tests
+	// By putting the functions in variables, we can override them later in tests
 	installItemFunc   = installItem
 	uninstallItemFunc = uninstallItem
 )
 
-// Install determines if action needs to be taken on a item and then
+// Install determines if action needs to be taken on an item and then
 // calls the appropriate function to install or uninstall
-func Install(item catalog.Item, installerType, urlPackages, cachePath string, checkOnly bool) string {
+func Install(item catalog.Item, installerType, urlPackages, cachePath string, checkOnly bool, cfg *config.Configuration) string {
 	// Check the status and determine if any action is needed for this item
 	actionNeeded, err := statusCheckStatus(item, installerType, cachePath)
 	if err != nil {
-		msg := fmt.Sprint("Unable to check status: ", err)
+		msg := fmt.Sprintf("Unable to check status: %v", err)
 		logging.Warn(msg)
 		return msg
 	}
@@ -338,11 +346,11 @@ func Install(item catalog.Item, installerType, urlPackages, cachePath string, ch
 	}
 
 	// Install or uninstall the item
-	if installerType == "install" || installerType == "update" {
+	if strings.ToLower(installerType) == "install" || strings.ToLower(installerType) == "update" {
 		// Check if checkonly mode is enabled
 		if checkOnly {
 			report.InstalledItems = append(report.InstalledItems, item)
-			logging.Info("[CHECK ONLY] Skipping actions for", item.DisplayName)
+			logging.Info("[CHECK ONLY] Skipping actions for", "display_name", item.DisplayName)
 			// Check only mode doesn't perform any action, return
 			return "Check only enabled"
 		} else {
@@ -350,75 +358,63 @@ func Install(item catalog.Item, installerType, urlPackages, cachePath string, ch
 			itemURL := urlPackages + item.Installer.Location
 			// Run PreInstall_Script if needed
 			if item.PreScript != "" {
-				logging.Info("Running Pre-Install script for", item.DisplayName)
+				logging.Info("Running Pre-Install script for", "display_name", item.DisplayName)
 				preScriptSuccess, err := preinstallScript(item, cachePath)
 				if !preScriptSuccess {
-					logging.Error("Pre-Install script error:", err)
+					logging.Error("Pre-Install script error:", "error", err)
 					return "PreInstall-Script error"
 				}
 			}
 
 			// Run the installer
-			installItemFunc(item, itemURL, cachePath)
-
-			// Run PostInstall_Script if needed
-			if item.PostScript != "" {
-				logging.Info("Running Post-Install script for", item.DisplayName)
-				postScriptSuccess, err := postinstallScript(item, cachePath)
-				if !postScriptSuccess {
-					logging.Error("Post-Install script error:", err)
-					return "PostInstall-Script error"
-				}
-			}
+			installItemFunc(item, itemURL, cachePath, cfg)
 		}
-	} else if installerType == "uninstall" {
+	} else if strings.ToLower(installerType) == "uninstall" {
 		if checkOnly {
 			report.InstalledItems = append(report.InstalledItems, item)
-			logging.Info("[CHECK ONLY] Skipping actions for", item.DisplayName)
+			logging.Info("[CHECK ONLY] Skipping actions for", "display_name", item.DisplayName)
 			// Check only mode doesn't perform any action, return
 			return "Check only enabled"
 		} else {
 			// Compile the item's URL
 			itemURL := urlPackages + item.Uninstaller.Location
-			// Run the installer
-			uninstallItemFunc(item, itemURL, cachePath)
+			// Run the uninstaller
+			uninstallItemFunc(item, itemURL, cachePath, cfg)
 		}
 	} else {
-		logging.Warn("Unsupported item type", item.DisplayName, installerType)
+		logging.Warn("Unsupported item type", "display_name", item.DisplayName, "type", installerType)
 		return "Unsupported item type"
-
 	}
 
 	return ""
 }
 
-
 // InstallPackage installs a package using its pkgsinfo metadata.
-func InstallPackage(pkgInfoPath string, pkgsDir string) error {
-    // Read the pkgsinfo metadata
-    pkgInfo, err := pkginfo.ReadPkgInfo(pkgInfoPath)
-    if err != nil {
-        return fmt.Errorf("failed to read pkgsinfo: %v", err)
-    }
+func InstallPackage(pkgInfoPath string, pkgsDir string, cfg *config.Configuration) error {
+	// Read the pkgsinfo metadata
+	pkgInfo, err := pkginfo.ReadPkgInfo(pkgInfoPath)
+	if err != nil {
+		return fmt.Errorf("failed to read pkgsinfo: %v", err)
+	}
 
-    // Extract relevant information from pkgInfo
-    packageName, ok := pkgInfo["name"].(string)
-    if !ok {
-        return fmt.Errorf("invalid pkgsinfo format: missing 'name'")
-    }
-    installerPath := filepath.Join(pkgsDir, fmt.Sprintf("%s.msi", packageName)) // Assuming .msi for now, could be extended
+	// Extract relevant information from pkgInfo
+	packageName, ok := pkgInfo["name"].(string)
+	if !ok {
+		return fmt.Errorf("invalid pkgsinfo format: missing 'name'")
+	}
+	installerPath := filepath.Join(pkgsDir, fmt.Sprintf("%s.msi", packageName)) // Assuming .msi for now, could be extended
 
-    // Check if the installer exists
-    if _, err := os.Stat(installerPath); os.IsNotExist(err) {
-        return fmt.Errorf("installer not found: %s", installerPath)
-    }
+	// Check if the installer exists
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		return fmt.Errorf("installer not found: %s", installerPath)
+	}
 
-    // Execute the installer (example for MSI, should be expanded for other formats)
-    cmd := exec.Command("msiexec", "/i", installerPath, "/quiet", "/norestart")
-    if err := cmd.Run(); err != nil {
-        return fmt.Errorf("failed to install package: %v", err)
-    }
+	// Execute the installer (example for MSI, should be expanded for other formats)
+	cmd := exec.Command("msiexec", "/i", installerPath, "/quiet", "/norestart")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install package: %v", err)
+	}
 
-    logging.Info("Successfully installed package:", packageName)
-    return nil
+	logging.Info("Successfully installed package", "package_name", packageName)
+	return nil
 }
