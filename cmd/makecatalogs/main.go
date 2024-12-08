@@ -8,17 +8,20 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"gopkg.in/yaml.v3"
+
 	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/logging"
+	"gopkg.in/yaml.v3"
 )
 
-// Initialize logger with configuration.
+// Initialize the logger.
 func initLogger(conf *config.Configuration) {
-	logging.InitLogger(*conf)
+	if err := logging.Init(conf); err != nil {
+		fmt.Printf("Error initializing logging: %v\n", err)
+		os.Exit(1)
+	}
 }
 
-// PkgsInfo represents the structure of a package's metadata.
 type PkgsInfo struct {
 	Name                string   `yaml:"name"`
 	DisplayName         string   `yaml:"display_name"`
@@ -36,52 +39,6 @@ type PkgsInfo struct {
 	FilePath            string
 }
 
-// Check structure for file, script, and registry checks
-type Check struct {
-	File     []FileCheck   `yaml:"file,omitempty"`
-	Script   string        `yaml:"script,omitempty"`
-	Registry *RegistryCheck `yaml:"registry,omitempty"`
-}
-
-// FileCheck structure for checking files
-type FileCheck struct {
-	Path    string `yaml:"path"`
-	Version string `yaml:"version,omitempty"`
-	Hash    string `yaml:"hash,omitempty"`
-}
-
-// RegistryCheck structure for checking registry entries
-type RegistryCheck struct {
-	Name    string `yaml:"name"`
-	Version string `yaml:"version,omitempty"`
-}
-
-// Installer structure for both installers and uninstallers
-type Installer struct {
-	Arguments []string `yaml:"arguments,omitempty"`
-	Hash      string   `yaml:"hash"`
-	Location  string   `yaml:"location"`
-	Type      string   `yaml:"type"`
-}
-
-// Catalog structure holds a list of packages for each catalog
-type Catalog struct {
-	Packages []PkgsInfo `yaml:"packages"`
-}
-
-// CatalogsMap stores catalogs with their respective package information.
-type CatalogsMap map[string][]PkgsInfo
-
-// Config structure holds the configuration settings
-type Config struct {
-	RepoPath       string `yaml:"repo_path"`
-	CloudProvider  string `yaml:"cloud_provider"`
-	CloudBucket    string `yaml:"cloud_bucket"`
-	DefaultCatalog string `yaml:"default_catalog"`
-	DefaultArch    string `yaml:"default_arch"`
-}
-
-// Get the appropriate configuration path based on the OS.
 func getConfigPath() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -93,12 +50,10 @@ func getConfigPath() string {
 	}
 }
 
-// Load the configuration from a YAML file.
 func loadConfig(configPath string) (*config.Configuration, error) {
 	return config.LoadConfig()
 }
 
-// Scan the pkgsinfo directory and read all pkginfo YAML files.
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	var pkgsInfos []PkgsInfo
 
@@ -124,9 +79,8 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	return pkgsInfos, err
 }
 
-// Build catalogs by processing the list of package information.
-func buildCatalogs(pkgsInfos []PkgsInfo) (CatalogsMap, error) {
-	catalogs := make(CatalogsMap)
+func buildCatalogs(pkgsInfos []PkgsInfo) (map[string][]PkgsInfo, error) {
+	catalogs := make(map[string][]PkgsInfo)
 
 	for _, pkg := range pkgsInfos {
 		for _, catalog := range pkg.Catalogs {
@@ -137,8 +91,7 @@ func buildCatalogs(pkgsInfos []PkgsInfo) (CatalogsMap, error) {
 	return catalogs, nil
 }
 
-// Write the catalogs to YAML files in the output directory.
-func writeCatalogs(catalogs CatalogsMap, outputDir string) error {
+func writeCatalogs(catalogs map[string][]PkgsInfo, outputDir string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
 	}
@@ -162,7 +115,6 @@ func writeCatalogs(catalogs CatalogsMap, outputDir string) error {
 	return nil
 }
 
-// Main function for building and writing catalogs.
 func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
 	fmt.Println("Getting list of pkgsinfo...")
 	pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
@@ -182,7 +134,6 @@ func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
 	return nil
 }
 
-// Main entry point.
 func main() {
 	configPath := getConfigPath()
 	conf, err := loadConfig(configPath)
@@ -205,7 +156,7 @@ func main() {
 	}
 
 	if *repoPath == "" {
-	    *repoPath = conf.RepoPath
+		*repoPath = conf.RepoPath
 	}
 
 	if err := makeCatalogs(*repoPath, *skipPkgCheck, *force); err != nil {

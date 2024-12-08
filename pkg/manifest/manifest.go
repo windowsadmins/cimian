@@ -33,10 +33,6 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 	var manifests []Item
 	var newCatalogs []string
 
-	// Initialize counters for processing manifests
-	manifestsTotal := 0
-	manifestsProcessed := 0
-
 	// Add the primary manifest to the list
 	manifestsList = append(manifestsList, cfg.Manifest)
 
@@ -50,7 +46,7 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 	}()
 
 	// Process each manifest in the list
-	for manifestsProcessed < len(manifestsList) {
+	for manifestsProcessed := 0; manifestsProcessed < len(manifestsList); manifestsProcessed++ {
 		currentManifest := manifestsList[manifestsProcessed]
 
 		// Construct the URL for the current manifest
@@ -64,7 +60,6 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 				"url", manifestURL,
 				"manifest_name", currentManifest,
 				"error", err)
-			manifestsProcessed++
 			continue // Skip to the next manifest
 		}
 
@@ -109,9 +104,6 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 					"catalog", newCatalog)
 			}
 		}
-
-		// Increment the processed counter
-		manifestsProcessed++
 	}
 
 	// Handle local manifests specified in the configuration

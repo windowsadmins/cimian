@@ -1,18 +1,23 @@
+// pkg/logging/logging.go
+
 package logging
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 )
 
-// logger is the centralized logger instance.
+// Logger is the centralized logger instance.
 var (
 	logger  *log.Logger
 	debug   bool
 	verbose bool
+	logFile *os.File
 )
 
 // Init initializes the logging based on the provided configuration.
@@ -22,32 +27,47 @@ func Init(cfg *config.Configuration) error {
 	verbose = cfg.Verbose
 	debug = cfg.Debug
 
-	switch logLevel {
-	case "DEBUG":
-		logger = log.New(os.Stdout, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
-	case "INFO":
-		logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
-	case "WARN":
-		logger = log.New(os.Stdout, "WARN: ", log.Ldate|log.Ltime)
-	case "ERROR":
-		logger = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime)
-	default:
-		logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	// Ensure log directory exists
+	logDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "Logs")
+	err := os.MkdirAll(logDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
+	// Open or create the log file
+	logFilePath := filepath.Join(logDir, "gorilla.log")
+	logFile, err = os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
+	}
+
+	// Create a multi-writer to write to both terminal and log file
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+
+	// Set logger based on log level
+	switch logLevel {
+	case "DEBUG":
+		logger = log.New(multiWriter, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	case "INFO":
+		logger = log.New(multiWriter, "INFO: ", log.Ldate|log.Ltime)
+	case "WARN":
+		logger = log.New(multiWriter, "WARN: ", log.Ldate|log.Ltime)
+	case "ERROR":
+		logger = log.New(multiWriter, "ERROR: ", log.Ldate|log.Ltime)
+	default:
+		logger = log.New(multiWriter, "INFO: ", log.Ldate|log.Ltime)
+	}
+
+	logger.Println("Logger initialized", "log_level", logLevel, "verbose", verbose, "debug", debug)
 	return nil
 }
 
-// Info logs informational messages based on verbosity.
-// It accepts a message and an optional list of key-value pairs.
+// Info logs informational messages.
 func Info(message string, keyValues ...interface{}) {
-	if verbose || debug {
-		logStructured("INFO", message, keyValues...)
-	}
+	logStructured("INFO", message, keyValues...)
 }
 
 // Debug logs debug messages.
-// It accepts a message and an optional list of key-value pairs.
 func Debug(message string, keyValues ...interface{}) {
 	if debug {
 		logStructured("DEBUG", message, keyValues...)
@@ -55,13 +75,11 @@ func Debug(message string, keyValues ...interface{}) {
 }
 
 // Warn logs warning messages.
-// It accepts a message and an optional list of key-value pairs.
 func Warn(message string, keyValues ...interface{}) {
 	logStructured("WARN", message, keyValues...)
 }
 
 // Error logs error messages.
-// It accepts a message and an optional list of key-value pairs.
 func Error(message string, keyValues ...interface{}) {
 	logStructured("ERROR", message, keyValues...)
 }
@@ -101,7 +119,6 @@ func LogErrorDuringInstall(err error, context string) {
 }
 
 // logStructured formats and logs the message with key-value pairs.
-// It ensures that keyValues are in key-value pair format.
 func logStructured(level, message string, keyValues ...interface{}) {
 	// Ensure even number of keyValues
 	if len(keyValues)%2 != 0 {
@@ -122,14 +139,21 @@ func logStructured(level, message string, keyValues ...interface{}) {
 	}
 
 	// Trim the trailing space
-	kvPairs = kvPairs[:len(kvPairs)-1]
+	if len(kvPairs) > 0 {
+		kvPairs = kvPairs[:len(kvPairs)-1]
+	}
 
 	// Log the structured message
 	logger.Println(fmt.Sprintf("%s: %s %s", level, message, kvPairs))
 }
 
-// CloseLogger performs any necessary cleanup for the logger.
-// Currently, there are no resources to clean up, but this function is provided for future enhancements.
+// CloseLogger performs necessary cleanup for the logger.
+// Closes the log file if it was opened.
 func CloseLogger() {
-	// Placeholder for future cleanup logic, such as closing file handles if logging to files.
+	if logFile != nil {
+		err := logFile.Close()
+		if err != nil {
+			fmt.Printf("Failed to close log file: %v\n", err)
+		}
+	}
 }
