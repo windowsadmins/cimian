@@ -8,18 +8,17 @@ import (
     "os"
     "os/signal"
     "path/filepath"
-    "strings"
     "syscall"
     "unsafe"
 
     "github.com/windowsadmins/gorilla/pkg/catalog"
     "github.com/windowsadmins/gorilla/pkg/config"
+    "github.com/windowsadmins/gorilla/pkg/download"
     "github.com/windowsadmins/gorilla/pkg/installer"
     "github.com/windowsadmins/gorilla/pkg/logging"
     "github.com/windowsadmins/gorilla/pkg/manifest"
     "github.com/windowsadmins/gorilla/pkg/preflight"
     "github.com/windowsadmins/gorilla/pkg/process"
-    "github.com/windowsadmins/gorilla/pkg/report"
     "github.com/windowsadmins/gorilla/pkg/status"
 
     "golang.org/x/sys/windows"
@@ -81,81 +80,51 @@ func main() {
     // Parse flags early
     flag.Parse()
 
-    // Initialize logging functions after parsing flags
-    logError := func(message string, args ...interface{}) {
-        // Errors always print regardless of verbosity
-        fmt.Fprintf(os.Stderr, message+"\n", args...)
-    }
-
-    logInfo := func(message string, args ...interface{}) {
-        // Basic info shown if verbosity >= 1
-        if verbosity >= 1 {
-            fmt.Printf(message+"\n", args...)
-        }
-    }
-
-    logVerbose := func(message string, args ...interface{}) {
-        // More detailed info if verbosity >= 2
-        if verbosity >= 2 {
-            fmt.Printf(message+"\n", args...)
-        }
-    }
-
-    logVeryVerbose := func(message string, args ...interface{}) {
-        // Even more detailed if verbosity >= 3
-        if verbosity >= 3 {
-            fmt.Printf(message+"\n", args...)
-        }
-    }
-
-    logDebug := func(message string, args ...interface{}) {
-        // Full debug if verbosity >= 4
-        if verbosity >= 4 {
-            fmt.Printf("[DEBUG] "+message+"\n", args...)
-        }
-    }
-
     // Handle system signals for cleanup
     signalChan := make(chan os.Signal, 1)
     signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
     go func() {
         <-signalChan
         if verbosity >= 1 {
-            fmt.Println("Signal received, exiting gracefully...")
+            logging.Info("Signal received, exiting gracefully...")
         }
         os.Exit(1)
     }()
 
     // Run the preflight script regardless of runType or flags
-    err := preflight.RunPreflight(verbosity, logInfo, logError)
+    err := preflight.RunPreflight(verbosity, logging.Info, logging.Error)
     if err != nil {
-        logError("Preflight script failed: %v", err)
+        logging.Error("Preflight script failed: %v", err)
         os.Exit(1)
     }
 
     // Load configuration (in case preflight modified it)
     cfg, err := config.LoadConfig()
     if err != nil {
-        logError("Failed to load configuration: %v", err)
+        logging.Error("Failed to load configuration: %v", err)
         os.Exit(1)
     }
 
     // Initialize logger with loaded configuration
-    logging.InitLogger(*cfg)
+    err = logging.Init(cfg)
+    if err != nil {
+        fmt.Printf("Error initializing logging: %v\n", err)
+        os.Exit(1)
+    }
     defer logging.CloseLogger()
 
     if verbosity >= 4 {
-        logDebug("Loaded configuration:")
+        logging.Debug("Loaded configuration:")
         cfgYaml, _ := yaml.Marshal(cfg)
-        logDebug("%s", cfgYaml)
-        logDebug("Environment Variables:")
+        logging.Debug(string(cfgYaml))
+        logging.Debug("Environment Variables:")
         for _, e := range os.Environ() {
-            logDebug("%s", e)
+            logging.Debug(e)
         }
     }
 
     if verbosity >= 1 {
-        fmt.Println("Initializing...")
+        logging.Info("Initializing...")
     }
 
     // Check for conflicting flags
@@ -168,7 +137,7 @@ func main() {
     // Check for admin privileges
     admin, err := adminCheck()
     if err != nil || !admin {
-        logError("Administrative access is required. Please run as an administrator.")
+        logging.Error("Administrative access is required. Please run as an administrator.")
         os.Exit(1)
     }
 
@@ -176,7 +145,7 @@ func main() {
     cachePath := cfg.CachePath
     err = os.MkdirAll(filepath.Clean(cachePath), 0755)
     if err != nil {
-        logError("Failed to create cache directory: %v", err)
+        logging.Error("Failed to create cache directory: %v", err)
         os.Exit(1)
     }
 
@@ -184,7 +153,7 @@ func main() {
         // Pretty-print the configuration as YAML
         cfgYaml, err := yaml.Marshal(cfg)
         if err != nil {
-            logError("Failed to marshal configuration: %v", err)
+            logging.Error("Failed to marshal configuration: %v", err)
             os.Exit(1)
         }
         fmt.Printf("Current Configuration:\n%s\n", cfgYaml)
@@ -200,22 +169,22 @@ func main() {
     }
 
     if verbosity >= 1 {
-        fmt.Printf("Run type: %s\n", runType)
+        logging.Info("Run type: %s", runType)
     }
 
     if *installOnly {
         if verbosity >= 1 {
-            fmt.Println("Running in install-only mode.")
+            logging.Info("Running in install-only mode.")
         }
-        installPendingUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
+        installPendingUpdates(cfg, verbosity, logging.Info, logging.Verbose, logging.VeryVerbose, logging.Debug)
         os.Exit(0)
     }
 
     if *checkOnly {
         if verbosity >= 1 {
-            fmt.Println("Running in check-only mode.")
+            logging.Info("Running in check-only mode.")
         }
-        checkForUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
+        checkForUpdates(cfg, verbosity, logging.Info, logging.Verbose, logging.VeryVerbose, logging.Debug)
         os.Exit(0)
     }
 
@@ -224,20 +193,20 @@ func main() {
         // For automatic updates, we might want to check for user activity
         if isUserActive() {
             if verbosity >= 1 {
-                fmt.Println("User is active. Skipping automatic updates.")
+                logging.Info("User is active. Skipping automatic updates.")
             }
             os.Exit(0)
         }
     }
 
     // Check for updates
-    updatesAvailable := checkForUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
+    updatesAvailable := checkForUpdates(cfg, verbosity, logging.Info, logging.Verbose, logging.VeryVerbose, logging.Debug)
     if updatesAvailable {
         // Install updates
-        installPendingUpdates(cfg, verbosity, logInfo, logVerbose, logVeryVerbose, logDebug)
+        installPendingUpdates(cfg, verbosity, logging.Info, logging.Verbose, logging.VeryVerbose, logging.Debug)
     } else {
         if verbosity >= 1 {
-            fmt.Println("No updates available.")
+            logging.Info("No updates available.")
         }
     }
 
@@ -246,25 +215,11 @@ func main() {
         fmt.Println("Updates completed.")
     } else {
         // Higher verbosity: more detailed final message.
-        fmt.Println("Software updates completed.")
+        logging.Info("Software updates completed.")
     }
     os.Exit(0)
 }
 
-func logVerbose(message string, args ...interface{}) {
-    // This placeholder is required to prevent a compile error if needed
-    // since we redefined above, remove the duplicate definition if it occurs
-}
-
-func logVeryVerbose(message string, args ...interface{}) {
-    // Same note as above
-}
-
-func logDebug(message string, args ...interface{}) {
-    // Same note as above
-}
-
-// adminCheck checks if the program is running with admin privileges.
 func adminCheck() (bool, error) {
     // Skip the check if this is test
     if flag.Lookup("test.v") != nil {
@@ -437,7 +392,8 @@ func installUpdate(item manifest.Item, cfg *config.Configuration, verbosity int,
         logVeryVerbose("Updating %s: Running installer type %s at %s", item.Name, catalogItem.Installer.Type, catalogItem.Installer.Location)
     }
 
-    result := installer.Install(catalogItem, "install", cfg.URLPkgsInfo, cfg.CachePath, false)
+    // Pass cfg.ForceBasicAuth to installer.Install if needed
+    result := installer.Install(catalogItem, "install", cfg.URLPkgsInfo, cfg.CachePath, cfg.ForceBasicAuth)
 
     if result != "" && result != "Item not needed" {
         fmt.Printf("Failed to install %s: %s\n", item.Name, result)

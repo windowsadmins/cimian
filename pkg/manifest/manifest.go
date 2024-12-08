@@ -2,7 +2,6 @@ package manifest
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
@@ -16,7 +15,7 @@ import (
 type Item struct {
 	Name              string   `yaml:"name"`
 	Version           string   `yaml:"version"`
-    InstallerLocation string   `yaml:"installer_location"`
+	InstallerLocation string   `yaml:"installer_location"`
 	Includes          []string `yaml:"included_manifests"`
 	Installs          []string `yaml:"managed_installs"`
 	Uninstalls        []string `yaml:"managed_uninstalls"`
@@ -24,126 +23,155 @@ type Item struct {
 	Catalogs          []string `yaml:"catalogs"`
 }
 
-// This abstraction allows us to override when testing
-var downloadGet = download.Get
-
-// Get returns two slices:
+// Get retrieves all manifest items and any new catalogs that need to be added to the configuration.
+// It returns two slices:
 // 1) All manifest objects
-// 2) Aditional catalogs that need to be added to the config
-func Get(cfg config.Configuration) (manifests []Item, newCatalogs []string) {
-	// Create a slice with the names of all manifests
-	// This is so we can track them before we get the data
+// 2) Additional catalogs to be added to the configuration
+func Get(cfg *config.Configuration) ([]Item, []string) {
+	// Initialize slices to store manifest names and new catalogs
 	var manifestsList []string
+	var manifests []Item
+	var newCatalogs []string
 
-	// Setup iteration tracking for manifests
-	var manifestsTotal int
-	var manifestsProcessed = 0
-	var manifestsRemaining = 1
+	// Initialize counters for processing manifests
+	manifestsTotal := 0
+	manifestsProcessed := 0
 
-	// Add the top level manifest to the list
+	// Add the primary manifest to the list
 	manifestsList = append(manifestsList, cfg.Manifest)
 
-	// Setup to catch a potential failure
+	// Deferred function to handle potential panics gracefully
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println(r)
+			logging.Error("Recovered from panic", "panic", r)
 			report.End()
 			os.Exit(1)
 		}
 	}()
 
-	for manifestsRemaining > 0 {
+	// Process each manifest in the list
+	for manifestsProcessed < len(manifestsList) {
 		currentManifest := manifestsList[manifestsProcessed]
 
-		// Add the current manifest to our working list
-		workingList := []string{currentManifest}
+		// Construct the URL for the current manifest
+		manifestURL := fmt.Sprintf("%smanifests/%s.yaml", cfg.URL, currentManifest)
+		logging.Info("Fetching Manifest", "url", manifestURL, "manifest_name", currentManifest)
 
-		// Download the manifest
-		manifestURL := cfg.URL + "manifests/" + currentManifest + ".yaml"
-		logging.Info("Manifest Url:", manifestURL)
-		yamlFile, err := downloadGet(manifestURL)
+		// Download the manifest YAML content
+		yamlContent, err := download.Get(manifestURL, cfg)
 		if err != nil {
-			logging.Error("Unable to retrieve manifest: ", err)
+			logging.Error("Failed to retrieve manifest",
+				"url", manifestURL,
+				"manifest_name", currentManifest,
+				"error", err)
+			manifestsProcessed++
+			continue // Skip to the next manifest
 		}
 
-		newManifest := parseManifest(manifestURL, yamlFile)
+		// Parse the downloaded YAML content into an Item struct
+		newManifest := parseManifest(manifestURL, yamlContent)
 
-		// Add any includes to our working list
-		workingList = append(workingList, newManifest.Includes...)
-
-		// Get workingList unique items, and add to the real list
-		for _, item := range workingList {
-
-			// Check if unique in manifestsList
-			var uniqueInList = true
-			for i := range manifestsList {
-				if manifestsList[i] == item {
-					uniqueInList = false
-				}
-			}
-			// Update manifestsList if it is unique
-			if uniqueInList {
-				manifestsList = append(manifestsList, item)
+		// Add any included manifests to the manifestsList for processing
+		for _, include := range newManifest.Includes {
+			if !contains(manifestsList, include) {
+				logging.Debug("Including nested manifest",
+					"parent_manifest", currentManifest,
+					"nested_manifest", include)
+				manifestsList = append(manifestsList, include)
+			} else {
+				logging.Debug("Nested manifest already processed",
+					"parent_manifest", currentManifest,
+					"nested_manifest", include)
 			}
 		}
 
-		// Check if this is unique in manifests
-		var uniqueInManifests = true
-		for i := range manifests {
-			if manifests[i].Name == newManifest.Name {
-				uniqueInManifests = false
-			}
-		}
-		// Update manifests
-		if uniqueInManifests {
-			// manifests = append([]Item{newManifest}, manifests...)
+		// Append the new manifest to the manifests slice if it's unique
+		if !containsManifest(manifests, newManifest.Name) {
 			manifests = append(manifests, newManifest)
+			logging.Info("Added new manifest",
+				"name", newManifest.Name,
+				"version", newManifest.Version)
+		} else {
+			logging.Debug("Manifest already exists",
+				"name", newManifest.Name,
+				"version", newManifest.Version)
 		}
 
-		// If any catalogs are in the manifest, append them to the end of the list
+		// Process any new catalogs specified in the manifest
 		for _, newCatalog := range newManifest.Catalogs {
-			// Before adding it, check if it is already on the list
-			var match bool
-			for _, oldCatalog := range cfg.Catalogs {
-				if oldCatalog == newCatalog {
-					match = true
-				}
-			}
-			// If "match" is still false, it is not already in the catalog slice
-			if !match {
+			if !contains(cfg.Catalogs, newCatalog) && !contains(newCatalogs, newCatalog) {
 				newCatalogs = append(newCatalogs, newCatalog)
+				logging.Info("Detected new catalog",
+					"catalog", newCatalog,
+					"manifest", newManifest.Name)
+			} else {
+				logging.Debug("Catalog already exists or pending addition",
+					"catalog", newCatalog)
 			}
 		}
 
-		// Increment counters
-		manifestsTotal = len(manifestsList)
+		// Increment the processed counter
 		manifestsProcessed++
-		manifestsRemaining = manifestsTotal - manifestsProcessed
 	}
 
-	// Add the local manifest after processing all other manifests
+	// Handle local manifests specified in the configuration
 	if len(cfg.LocalManifests) > 0 {
-		for _, manifest := range cfg.LocalManifests {
-			var localManifest Item
-			logging.Info("Manifest File:", manifest)
-			localManifestsYaml, err := ioutil.ReadFile(manifest)
+		for _, localManifestPath := range cfg.LocalManifests {
+			logging.Info("Processing Local Manifest File", "path", localManifestPath)
+			localYamlContent, err := os.ReadFile(localManifestPath)
 			if err != nil {
-				logging.Warn("Unable to parse yaml manifest: ", manifest, err)
+				logging.Warn("Unable to read local manifest file",
+					"path", localManifestPath,
+					"error", err)
+				continue // Skip to the next local manifest
 			}
-			localManifest = parseManifest(manifest, localManifestsYaml)
-			manifests = append(manifests, localManifest)
+
+			localManifest := parseManifest(localManifestPath, localYamlContent)
+			if !containsManifest(manifests, localManifest.Name) {
+				manifests = append(manifests, localManifest)
+				logging.Info("Added local manifest",
+					"name", localManifest.Name,
+					"version", localManifest.Version)
+			} else {
+				logging.Debug("Local manifest already exists",
+					"name", localManifest.Name,
+					"version", localManifest.Version)
+			}
 		}
 	}
 
 	return manifests, newCatalogs
 }
 
-func parseManifest(manifestURL string, yamlFile []byte) Item {
-	// Parse the new manifest
-	var newManifest Item
-	err := yaml.Unmarshal(yamlFile, &newManifest)
+// parseManifest unmarshals YAML content into an Item struct.
+// It logs an error if unmarshalling fails.
+func parseManifest(source string, yamlContent []byte) Item {
+	var manifestItem Item
+	err := yaml.Unmarshal(yamlContent, &manifestItem)
 	if err != nil {
-		logging.Error("Unable to parse yaml manifest: ", manifestURL, err)
+		logging.Error("Unable to parse YAML manifest",
+			"source", source,
+			"error", err)
 	}
-	return newManifest
+	return manifestItem
+}
+
+// contains checks if a slice of strings contains a specific string.
+func contains(slice []string, item string) bool {
+	for _, elem := range slice {
+		if elem == item {
+			return true
+		}
+	}
+	return false
+}
+
+// containsManifest checks if a slice of Items contains a manifest with the specified name.
+func containsManifest(manifests []Item, name string) bool {
+	for _, manifest := range manifests {
+		if manifest.Name == name {
+			return true
+		}
+	}
+	return false
 }

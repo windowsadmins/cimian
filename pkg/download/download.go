@@ -8,25 +8,33 @@ import (
     "net/http"
     "os"
     "path/filepath"
+    "strings"
     "time"
 
+    "github.com/windowsadmins/gorilla/pkg/auth"
+    "github.com/windowsadmins/gorilla/pkg/config"
     "github.com/windowsadmins/gorilla/pkg/logging"
     "github.com/windowsadmins/gorilla/pkg/retry"
 )
 
 const (
-    CachePath           = `C:\ProgramData\ManagedInstalls\Cache`
-    CacheExpirationDays = 30
-    Timeout             = 10 * time.Second
+    DefaultCachePath           = `C:\ProgramData\ManagedInstalls\Cache`
+    CacheExpirationDays        = 30
+    Timeout                    = 10 * time.Second
 )
 
 // DownloadFile handles downloading files with resumable capability and caching verification
-func DownloadFile(url, dest string) error {
-    config := retry.RetryConfig{MaxRetries: 3, InitialInterval: time.Second, Multiplier: 2.0}
-    return retry.Retry(config, func() error {
+func DownloadFile(url, dest string, cfg *config.Configuration) error {
+    cfgCachePath := DefaultCachePath
+    if cfg.CachePath != "" {
+        cfgCachePath = cfg.CachePath
+    }
+
+    configRetry := retry.RetryConfig{MaxRetries: 3, InitialInterval: time.Second, Multiplier: 2.0}
+    return retry.Retry(configRetry, func() error {
         logging.LogDownloadStart(url)
-        os.MkdirAll(CachePath, 0755)
-        cachedFilePath := filepath.Join(CachePath, filepath.Base(dest))
+        os.MkdirAll(cfgCachePath, 0755)
+        cachedFilePath := filepath.Join(cfgCachePath, filepath.Base(dest))
 
         // Check if the cached file exists and is valid
         if fileExists(cachedFilePath) {
@@ -58,11 +66,37 @@ func DownloadFile(url, dest string) error {
             logging.Error("Failed to create HTTP request:", err)
             return fmt.Errorf("failed to create HTTP request: %v", err)
         }
+
+        // Set Authorization header based on configuration
+        if cfg.ForceBasicAuth {
+            authHeader, authErr := auth.GetAuthHeader()
+            if authErr == nil && authHeader != "" {
+                req.Header.Set("Authorization", authHeader)
+            } else {
+                logging.Error("Failed to retrieve required authorization header:", authErr)
+                return fmt.Errorf("failed to retrieve required authorization header: %v", authErr)
+            }
+        } else {
+            // Optional: Set Authorization header if available but not forced
+            authHeader, authErr := auth.GetAuthHeader()
+            if authErr == nil && authHeader != "" {
+                req.Header.Set("Authorization", authHeader)
+            } else if authErr != nil {
+                logging.Warn("No valid authorization header found:", authErr)
+            }
+        }
+
+        // Set Range header if resuming
         if existingFileSize > 0 {
             req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingFileSize))
         }
 
-        resp, err := http.DefaultClient.Do(req)
+        // Use a client with timeout
+        client := &http.Client{
+            Timeout: Timeout,
+        }
+
+        resp, err := client.Do(req)
         if err != nil {
             logging.Error("Failed to download file:", err)
             return fmt.Errorf("failed to download file: %v", err)
@@ -94,7 +128,7 @@ func DownloadFile(url, dest string) error {
 }
 
 // Get downloads a URL and returns the body as a byte slice, with a 10-second timeout
-func Get(url string) ([]byte, error) {
+func Get(url string, cfg *config.Configuration) ([]byte, error) {
     client := &http.Client{
         Timeout: Timeout,
     }
@@ -105,7 +139,25 @@ func Get(url string) ([]byte, error) {
         return nil, err
     }
 
-    // Actually send the request, using the client we set up
+    // Set Authorization header based on configuration
+    if cfg.ForceBasicAuth {
+        authHeader, authErr := auth.GetAuthHeader()
+        if authErr == nil && authHeader != "" {
+            req.Header.Set("Authorization", authHeader)
+        } else {
+            logging.Error("Failed to retrieve required authorization header:", authErr)
+            return nil, fmt.Errorf("failed to retrieve required authorization header: %v", authErr)
+        }
+    } else {
+        // Optional: Set Authorization header if available but not forced
+        authHeader, authErr := auth.GetAuthHeader()
+        if authErr == nil && authHeader != "" {
+            req.Header.Set("Authorization", authHeader)
+        } else if authErr != nil {
+            logging.Warn("No valid authorization header found:", authErr)
+        }
+    }
+
     resp, err := client.Do(req)
     if err != nil {
         return nil, err
@@ -142,11 +194,11 @@ func Verify(file string, expectedHash string) bool {
     }
 
     actualHash := hex.EncodeToString(h.Sum(nil))
-    return actualHash == expectedHash
+    return strings.EqualFold(actualHash, expectedHash)
 }
 
 // IfNeeded downloads a file if the existing one is missing or the hash does not match
-func IfNeeded(filePath, url, hash string) bool {
+func IfNeeded(filePath, url, hash string, cfg *config.Configuration) bool {
     verified := false
     if _, err := os.Stat(filePath); err == nil {
         verified = Verify(filePath, hash)
@@ -154,7 +206,7 @@ func IfNeeded(filePath, url, hash string) bool {
 
     if !verified {
         logging.Info("Downloading", url, "to", filePath)
-        err := DownloadFile(url, filePath)
+        err := DownloadFile(url, filePath, cfg)
         if err != nil {
             logging.Warn("Unable to retrieve package:", url, err)
             return false
@@ -186,7 +238,7 @@ func isValidCache(path string) bool {
     // Verify file hash (assuming SHA-256 hash is stored in metadata for comparison)
     expectedHash := calculateHash(path)
     actualHash := getStoredHash(path) // This function needs to be defined
-    return expectedHash == actualHash
+    return strings.EqualFold(expectedHash, actualHash)
 }
 
 func calculateHash(path string) string {
@@ -241,5 +293,5 @@ func getStoredHash(path string) string {
     }
 
     // Return the hash as a string
-    return string(hashBytes)
+    return strings.TrimSpace(string(hashBytes))
 }
