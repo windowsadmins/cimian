@@ -12,6 +12,8 @@ const (
 )
 
 // GetAuthHeader retrieves the Authorization header from Windows Credential Manager.
+// It sanitizes the value by removing null characters and does not log the raw credential.
+// Even at high verbosity or debug, we do not print the plaintext Basic token.
 func GetAuthHeader() (string, error) {
 	cred, err := wincred.GetGenericCredential(additionalHeadersTarget)
 	if err != nil {
@@ -20,10 +22,15 @@ func GetAuthHeader() (string, error) {
 	if cred == nil || len(cred.CredentialBlob) == 0 {
 		return "", errors.New("no Authorization header credential found")
 	}
-	val := strings.TrimSpace(string(cred.CredentialBlob))
-	// Remove CR and LF just in case
-	val = strings.ReplaceAll(val, "\r", "")
-	val = strings.ReplaceAll(val, "\n", "")
+
+	// Convert CredentialBlob to string
+	val := string(cred.CredentialBlob)
+
+	// Remove any embedded null characters (sometimes appear as wide-char encoding)
+	val = strings.ReplaceAll(val, "\x00", "")
+
+	// Trim whitespace
+	val = strings.TrimSpace(val)
 
 	// If the stored value includes "Authorization:" prefix, remove it.
 	lowerVal := strings.ToLower(val)
@@ -36,8 +43,15 @@ func GetAuthHeader() (string, error) {
 		}
 	}
 
+	// Remove any \r or \n just to be safe
+	val = strings.ReplaceAll(val, "\r", "")
+	val = strings.ReplaceAll(val, "\n", "")
+	val = strings.TrimSpace(val)
+
 	if val == "" {
 		return "", errors.New("authorization header is empty")
 	}
+
+	// Return the sanitized header value without logging its content.
 	return val, nil
 }
