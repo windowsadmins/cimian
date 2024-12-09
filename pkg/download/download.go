@@ -71,17 +71,16 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		if cfg.ForceBasicAuth {
 			authHeader, authErr := auth.GetAuthHeader()
 			if authErr == nil && authHeader != "" {
-				logging.Debug("Setting Authorization header for forced basic auth", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
+				logging.Debug("Setting Authorization header for forced basic auth")
 				req.Header.Set("Authorization", authHeader)
 			} else {
 				logging.Error("Failed to retrieve required authorization header:", "error", authErr)
 				return fmt.Errorf("failed to retrieve required authorization header: %v", authErr)
 			}
-			// Optional: Set Authorization header if available but not forced
 		} else {
 			authHeader, authErr := auth.GetAuthHeader()
 			if authErr == nil && authHeader != "" {
-				logging.Debug("Optional Authorization header found", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
+				logging.Debug("Optional Authorization header found")
 				req.Header.Set("Authorization", authHeader)
 			} else if authErr != nil {
 				logging.Warn("No valid authorization header found:", "error", authErr)
@@ -115,7 +114,6 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 			logging.Error("Failed to write downloaded data to file:", "error", err)
 			return fmt.Errorf("failed to write downloaded data to file: %v", err)
 		}
-		// Write the response body to the destination file
 
 		if err := copyFile(dest, cachedFilePath); err != nil {
 			logging.Error("Failed to cache the downloaded file:", "error", err)
@@ -143,7 +141,7 @@ func Get(url string, cfg *config.Configuration) ([]byte, error) {
 	if cfg.ForceBasicAuth {
 		authHeader, authErr := auth.GetAuthHeader()
 		if authErr == nil && authHeader != "" {
-			logging.Debug("Setting Authorization header (ForceBasicAuth)", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
+			logging.Debug("Setting Authorization header (ForceBasicAuth)")
 			req.Header.Set("Authorization", authHeader)
 		} else {
 			logging.Error("Failed to retrieve required authorization header:", "error", authErr)
@@ -152,7 +150,7 @@ func Get(url string, cfg *config.Configuration) ([]byte, error) {
 	} else {
 		authHeader, authErr := auth.GetAuthHeader()
 		if authErr == nil && authHeader != "" {
-			logging.Debug("Optional Authorization header found", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
+			logging.Debug("Optional Authorization header found")
 			req.Header.Set("Authorization", authHeader)
 		} else if authErr != nil {
 			logging.Warn("No valid authorization header found:", "error", authErr)
@@ -169,9 +167,9 @@ func Get(url string, cfg *config.Configuration) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: download status code: %d", url, resp.StatusCode)
-	// Read the response body
 	}
 
+	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -239,7 +237,7 @@ func isValidCache(path string) bool {
 
 	// Verify file hash (assuming SHA-256 hash is stored in metadata for comparison)
 	expectedHash := calculateHash(path)
-	actualHash := getStoredHash(path) // This function needs to be defined
+	actualHash := getStoredHash(path)
 	return strings.EqualFold(expectedHash, actualHash)
 }
 
