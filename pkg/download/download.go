@@ -53,15 +53,15 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		}
 		defer out.Close()
 
-		// Get file size for resuming
 		existingFileSize, err := out.Seek(0, io.SeekEnd)
+		// Get file size for resuming
 		if err != nil {
 			logging.Error("Failed to get existing file size:", "error", err)
 			return fmt.Errorf("failed to get existing file size: %v", err)
 		}
 
-		// Create request with Range header
 		req, err := http.NewRequest("GET", url, nil)
+		// Create request with Range header
 		if err != nil {
 			logging.Error("Failed to create HTTP request:", "error", err)
 			return fmt.Errorf("failed to create HTTP request: %v", err)
@@ -71,27 +71,27 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		if cfg.ForceBasicAuth {
 			authHeader, authErr := auth.GetAuthHeader()
 			if authErr == nil && authHeader != "" {
+				logging.Debug("Setting Authorization header for forced basic auth", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
 				req.Header.Set("Authorization", authHeader)
 			} else {
 				logging.Error("Failed to retrieve required authorization header:", "error", authErr)
 				return fmt.Errorf("failed to retrieve required authorization header: %v", authErr)
 			}
-		} else {
 			// Optional: Set Authorization header if available but not forced
+		} else {
 			authHeader, authErr := auth.GetAuthHeader()
 			if authErr == nil && authHeader != "" {
+				logging.Debug("Optional Authorization header found", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
 				req.Header.Set("Authorization", authHeader)
 			} else if authErr != nil {
 				logging.Warn("No valid authorization header found:", "error", authErr)
 			}
 		}
 
-		// Set Range header if resuming
 		if existingFileSize > 0 {
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingFileSize))
 		}
 
-		// Use a client with timeout
 		client := &http.Client{
 			Timeout: Timeout,
 		}
@@ -110,19 +110,19 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
 		}
 
-		// Write the response body to the destination file
 		_, err = io.Copy(out, resp.Body)
 		if err != nil {
 			logging.Error("Failed to write downloaded data to file:", "error", err)
 			return fmt.Errorf("failed to write downloaded data to file: %v", err)
 		}
+		// Write the response body to the destination file
 
-		// Cache the downloaded file
 		if err := copyFile(dest, cachedFilePath); err != nil {
 			logging.Error("Failed to cache the downloaded file:", "error", err)
 			return fmt.Errorf("failed to cache the downloaded file: %v", err)
 		}
 
+		// Cache the downloaded file
 		return nil
 	})
 }
@@ -143,15 +143,16 @@ func Get(url string, cfg *config.Configuration) ([]byte, error) {
 	if cfg.ForceBasicAuth {
 		authHeader, authErr := auth.GetAuthHeader()
 		if authErr == nil && authHeader != "" {
+			logging.Debug("Setting Authorization header (ForceBasicAuth)", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
 			req.Header.Set("Authorization", authHeader)
 		} else {
 			logging.Error("Failed to retrieve required authorization header:", "error", authErr)
 			return nil, fmt.Errorf("failed to retrieve required authorization header: %v", authErr)
 		}
 	} else {
-		// Optional: Set Authorization header if available but not forced
 		authHeader, authErr := auth.GetAuthHeader()
 		if authErr == nil && authHeader != "" {
+			logging.Debug("Optional Authorization header found", "raw_header_value_quoted", fmt.Sprintf("%q", authHeader))
 			req.Header.Set("Authorization", authHeader)
 		} else if authErr != nil {
 			logging.Warn("No valid authorization header found:", "error", authErr)
@@ -160,16 +161,17 @@ func Get(url string, cfg *config.Configuration) ([]byte, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
+		logging.Error("HTTP GET request failed", "url", url, "error", err)
 		return nil, err
 	}
+	// Check that the request was successful
 	defer resp.Body.Close()
 
-	// Check that the request was successful
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: download status code: %d", url, resp.StatusCode)
+	// Read the response body
 	}
 
-	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
