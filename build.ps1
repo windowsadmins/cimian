@@ -259,12 +259,15 @@ foreach ($dir in $binaryDirs) {
     # Build command with error handling
     try {
         go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Build failed for $binaryName with exit code $LASTEXITCODE."
+        }
         Write-Log "$binaryName built successfully." "SUCCESS"
     }
     catch {
         Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
         exit 1
-    }
+    }    
 }
 
 Write-Log "All binaries built." "SUCCESS"
