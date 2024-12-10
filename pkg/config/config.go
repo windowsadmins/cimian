@@ -27,8 +27,6 @@ type Configuration struct {
 	ClientIdentifier string   `yaml:"ClientIdentifier"`
 	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
 	RepoPath         string   `yaml:"repo_path"`
-	ClientIdentifier string   `yaml:"ClientIdentifier"`
-	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
 	URLPkgsInfo      string   `yaml:"url_pkgsinfo"`
 	Verbose          bool     `yaml:"verbose"`
 	ForceBasicAuth   bool     `yaml:"force_basic_auth"`
