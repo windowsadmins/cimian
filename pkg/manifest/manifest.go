@@ -34,7 +34,7 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 	var newCatalogs []string
 
 	// Add the primary manifest to the list
-	manifestsList = append(manifestsList, cfg.Manifest)
+	manifestsList = append(manifestsList, cfg.ClientIdentifier)
 
 	// Deferred function to handle potential panics gracefully
 	defer func() {
@@ -50,7 +50,7 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 		currentManifest := manifestsList[manifestsProcessed]
 
 		// Construct the URL for the current manifest
-		manifestURL := fmt.Sprintf("%smanifests/%s.yaml", cfg.URL, currentManifest)
+		manifestURL := fmt.Sprintf("%smanifests/%s.yaml", cfg.SoftwareRepoURL, currentManifest)
 		logging.Info("Fetching Manifest", "url", manifestURL, "manifest_name", currentManifest)
 
 		// Download the manifest YAML content
