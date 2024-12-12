@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/download"
@@ -27,7 +28,7 @@ type Item struct {
 // It returns two slices:
 // 1) All manifest objects
 // 2) Additional catalogs to be added to the configuration
-func Get(cfg *config.Configuration) ([]Item, []string) {
+func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 	// Initialize slices to store manifest names and new catalogs
 	var manifestsList []string
 	var manifests []Item
@@ -50,7 +51,7 @@ func Get(cfg *config.Configuration) ([]Item, []string) {
 		currentManifest := manifestsList[manifestsProcessed]
 
 		// Construct the URL for the current manifest
-		manifestURL := fmt.Sprintf("%smanifests/%s.yaml", cfg.SoftwareRepoURL, currentManifest)
+		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), currentManifest)
 		logging.Info("Fetching Manifest", "url", manifestURL, "manifest_name", currentManifest)
 
 		// Download the manifest YAML content
