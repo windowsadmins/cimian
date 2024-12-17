@@ -30,6 +30,12 @@ function Write-Log {
     }
 }
 
+# Refresh environment variables
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+            [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+Write-Host "Environment variables reloaded for PATH." -ForegroundColor Green
+
 # Function to check if a command exists
 function Test-Command {
     param (
@@ -218,13 +224,13 @@ Write-Log "WiX Toolset is available." "SUCCESS"
 
 # Step 5: Set Up Go Environment Variables
 Write-Log "Setting up Go environment variables..." "INFO"
-
+ 
 Write-Log "Go environment variables set." "SUCCESS"
 
 # Step 6: Prepare Release Version
 function Set-Version {
     $fullVersion = Get-Date -Format "yyyy.MM.dd"
-    $semanticVersion = "{0}.{1}.{2}" -f (Get-Date).Year - 2000, (Get-Date).Month, (Get-Date).Day
+    $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
 
     $env:RELEASE_VERSION = $fullVersion
     $env:SEMANTIC_VERSION = $semanticVersion
@@ -243,45 +249,43 @@ go mod download
 
 Write-Log "Go modules tidied and downloaded." "SUCCESS"
 
-# Step 8: Build All Binaries
-Write-Log "Building all binaries in parallel..." "INFO"
 
-# Get all directories under ./cmd
+# Step 8: Build All Binaries
+Write-Log "Building all binaries..." "INFO"
+
 $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
 
-# Define reusable metadata
-$buildDate = Get-Date -Format s
-try {
-    $branchName = (git rev-parse --abbrev-ref HEAD)
-    Write-Log "Current Git branch: $branchName" "INFO"
-}
-catch {
-    Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
-    $branchName = "main"
-}
-
-$revision = "unknown"
-try {
-    $revision = (git rev-parse HEAD)
-    Write-Log "Git revision: $revision" "INFO"
-}
-catch {
-    Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
-}
-
-# Parallelize binary builds
-$binaryDirs | ForEach-Object -Parallel {
-    $binaryName = $_.Name
+foreach ($dir in $binaryDirs) {
+    $binaryName = $dir.Name
     Write-Log "Building $binaryName..." "INFO"
 
-    # Prepare ldflags for version metadata
-    $ldflags = "-X github.com/windowsadmins/gorilla/pkg/version.appName=$using:binaryName " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.version=$using:env:RELEASE_VERSION " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.branch=$using:branchName " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$using:buildDate " +
-               "-X github.com/windowsadmins/gorilla/pkg/version.revision=$using:revision"
+    # Retrieve the current Git branch name
+    try {
+        $branchName = (git rev-parse --abbrev-ref HEAD)
+        Write-Log "Current Git branch: $branchName" "INFO"
+    }
+    catch {
+        Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
+        $branchName = "main"
+    }
 
-    # Build binary with error handling
+    $revision = "unknown"
+    try {
+        $revision = (git rev-parse HEAD)
+    }
+    catch {
+        Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
+    }
+
+    $buildDate = Get-Date -Format s
+
+    $ldflags = "-X github.com/windowsadmins/gorilla/pkg/version.appName=$binaryName " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.version=$env:RELEASE_VERSION " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.branch=$branchName " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$buildDate " +
+        "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision"
+
+    # Build command with error handling
     try {
         go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
         if ($LASTEXITCODE -ne 0) {
@@ -292,10 +296,10 @@ $binaryDirs | ForEach-Object -Parallel {
     catch {
         Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
         exit 1
-    }
-} -ThrottleLimit 4
+    }    
+}
 
-Write-Log "All binaries built successfully." "SUCCESS"
+Write-Log "All binaries built." "SUCCESS"
 
 # Step 9: Package Binaries
 Write-Log "Packaging binaries..." "INFO"
