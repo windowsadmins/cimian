@@ -219,26 +219,21 @@ Write-Log "WiX Toolset is available." "SUCCESS"
 # Step 5: Set Up Go Environment Variables
 Write-Log "Setting up Go environment variables..." "INFO"
 
-# Removed setting GOPATH to a local directory and adding $PSScriptRoot\go\bin to PATH
-# Assuming GOPATH is correctly set at the user level (C:\Users\rchristiansen\go)
-# Ensure that Go binaries are already in PATH via system installation
-
 Write-Log "Go environment variables set." "SUCCESS"
 
 # Step 6: Prepare Release Version
-Write-Log "Preparing release version..." "INFO"
+function Set-Version {
+    $fullVersion = Get-Date -Format "yyyy.MM.dd"
+    $semanticVersion = "{0}.{1}.{2}" -f (Get-Date).Year - 2000, (Get-Date).Month, (Get-Date).Day
 
-$fullVersion = Get-Date -Format "yyyy.MM.dd"
-$year = (Get-Date).Year - 2000
-$month = (Get-Date).Month
-$day = (Get-Date).Day
-$semanticVersion = "{0}.{1}.{2}" -f $year, $month, $day
+    $env:RELEASE_VERSION = $fullVersion
+    $env:SEMANTIC_VERSION = $semanticVersion
 
-$env:RELEASE_VERSION = $fullVersion
-$env:SEMANTIC_VERSION = $semanticVersion
+    Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
+    Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
+}
 
-Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
-Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
+Set-Version
 
 # Step 7: Tidy and Download Go Modules
 Write-Log "Tidying and downloading Go modules..." "INFO"
@@ -249,41 +244,44 @@ go mod download
 Write-Log "Go modules tidied and downloaded." "SUCCESS"
 
 # Step 8: Build All Binaries
-Write-Log "Building all binaries..." "INFO"
+Write-Log "Building all binaries in parallel..." "INFO"
 
+# Get all directories under ./cmd
 $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
 
-foreach ($dir in $binaryDirs) {
-    $binaryName = $dir.Name
+# Define reusable metadata
+$buildDate = Get-Date -Format s
+try {
+    $branchName = (git rev-parse --abbrev-ref HEAD)
+    Write-Log "Current Git branch: $branchName" "INFO"
+}
+catch {
+    Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
+    $branchName = "main"
+}
+
+$revision = "unknown"
+try {
+    $revision = (git rev-parse HEAD)
+    Write-Log "Git revision: $revision" "INFO"
+}
+catch {
+    Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
+}
+
+# Parallelize binary builds
+$binaryDirs | ForEach-Object -Parallel {
+    $binaryName = $_.Name
     Write-Log "Building $binaryName..." "INFO"
 
-    # Retrieve the current Git branch name
-    try {
-        $branchName = (git rev-parse --abbrev-ref HEAD)
-        Write-Log "Current Git branch: $branchName" "INFO"
-    }
-    catch {
-        Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
-        $branchName = "main"
-    }
+    # Prepare ldflags for version metadata
+    $ldflags = "-X github.com/windowsadmins/gorilla/pkg/version.appName=$using:binaryName " +
+               "-X github.com/windowsadmins/gorilla/pkg/version.version=$using:env:RELEASE_VERSION " +
+               "-X github.com/windowsadmins/gorilla/pkg/version.branch=$using:branchName " +
+               "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$using:buildDate " +
+               "-X github.com/windowsadmins/gorilla/pkg/version.revision=$using:revision"
 
-    $revision = "unknown"
-    try {
-        $revision = (git rev-parse HEAD)
-    }
-    catch {
-        Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
-    }
-
-    $buildDate = Get-Date -Format s
-
-    $ldflags = "-X github.com/windowsadmins/gorilla/pkg/version.appName=$binaryName " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.version=$env:RELEASE_VERSION " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.branch=$branchName " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$buildDate " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision"
-
-    # Build command with error handling
+    # Build binary with error handling
     try {
         go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
         if ($LASTEXITCODE -ne 0) {
@@ -294,10 +292,10 @@ foreach ($dir in $binaryDirs) {
     catch {
         Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
         exit 1
-    }    
-}
+    }
+} -ThrottleLimit 4
 
-Write-Log "All binaries built." "SUCCESS"
+Write-Log "All binaries built successfully." "SUCCESS"
 
 # Step 9: Package Binaries
 Write-Log "Packaging binaries..." "INFO"
@@ -328,12 +326,29 @@ else {
 # Step 10: Build MSI Package with WiX
 Write-Log "Building MSI package with WiX..." "INFO"
 
+# Define WiX Toolset Path
+$wixToolsetPath = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+$candlePath = Join-Path $wixToolsetPath "candle.exe"
+$lightPath = Join-Path $wixToolsetPath "light.exe"
+$wixUtilExtension = Join-Path $wixToolsetPath "WixUtilExtension.dll"
+
+# Validate WiX Toolset path
+if (-not (Test-Path $wixToolsetPath)) {
+    Write-Log "WiX Toolset path '$wixToolsetPath' not found. Exiting..." "ERROR"
+    exit 1
+}
+
+# Define output paths
 $msiOutput = "release\Gorilla-$env:RELEASE_VERSION.msi"
 
 # Compile WiX source
 try {
-    candle.exe -ext WixUtilExtension.dll -out "build\msi.wixobj" "build\msi.wxs"
-    light.exe -sice:ICE61 -ext WixUtilExtension.dll -out $msiOutput "build\msi.wixobj"
+    Write-Log "Compiling WiX source with candle..." "INFO"
+    & $candlePath -ext $wixUtilExtension -out "build\msi.wixobj" "build\msi.wxs"
+
+    Write-Log "Linking and creating MSI with light..." "INFO"
+    & $lightPath -sice:ICE* -ext $wixUtilExtension -out $msiOutput "build\msi.wixobj"
+
     Write-Log "MSI package built at $msiOutput." "SUCCESS"
 }
 catch {
@@ -422,43 +437,27 @@ Write-Log "Verification complete." "SUCCESS"
 Write-Log "Build and packaging process completed successfully." "SUCCESS"
 
 # Step 14: Clean Up Temporary Files
+function Clean-UpFiles {
+    param ([string[]]$Files)
+
+    foreach ($file in $Files) {
+        if (Test-Path $file) {
+            try {
+                Remove-Item -Path $file -Force
+                Write-Log "Temporary file '$file' deleted successfully." "SUCCESS"
+            }
+            catch {
+                Write-Log "Failed to delete '$file'. Error: $_" "WARNING"
+            }
+        }
+        else {
+            Write-Log "'$file' does not exist. Skipping deletion." "INFO"
+        }
+    }
+}
+
+# Use Clean-UpFiles for cleanup
 Write-Log "Cleaning up temporary files..." "INFO"
-
-$releaseZip = "release.zip"
-
-if (Test-Path $releaseZip) {
-    try {
-        Remove-Item -Path $releaseZip -Force
-        Write-Log "Temporary file '$releaseZip' deleted successfully." "SUCCESS"
-    }
-    catch {
-        Write-Log "Failed to delete '$releaseZip'. Error: $_" "WARNING"
-    }
-}
-else {
-    Write-Log "'$releaseZip' does not exist. Skipping deletion." "INFO"
-}
-
-Write-Log "Clean-up process completed." "SUCCESS"
-
-# Step 15: Clean Up MSI-Related Temporary Files
-Write-Log "Cleaning up MSI-related temporary files..." "INFO"
-
-$msiFiles = @("build\msi.msi", "build\msi.wixobj", "build\msi.wixpdb")
-
-foreach ($file in $msiFiles) {
-    if (Test-Path $file) {
-        try {
-            Remove-Item -Path $file -Force
-            Write-Log "Temporary file '$file' deleted successfully." "SUCCESS"
-        }
-        catch {
-            Write-Log "Failed to delete '$file'. Error: $_" "WARNING"
-        }
-    }
-    else {
-        Write-Log "'$file' does not exist. Skipping deletion." "INFO"
-    }
-}
-
-Write-Log "MSI-related temporary files clean-up completed." "SUCCESS"
+$temporaryFiles = @("release.zip", "build\msi.msi", "build\msi.wixobj", "build\msi.wixpdb")
+Clean-UpFiles -Files $temporaryFiles
+Write-Log "Temporary files cleanup completed." "SUCCESS"
