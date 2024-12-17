@@ -21,71 +21,63 @@ import (
 
 const (
 	DefaultCachePath    = `C:\ProgramData\ManagedInstalls\Cache`
+	ManifestBasePath    = `C:\ProgramData\ManagedInstalls\manifests`
+	CatalogBasePath     = `C:\ProgramData\ManagedInstalls\catalogs`
 	CacheExpirationDays = 30
 	Timeout             = 10 * time.Second
 )
 
-// DownloadFile downloads the specified URL to a destination file, supports resuming, caching, and hash verification.
+// DownloadFile downloads the specified URL to a destination file, ensuring the folder structure matches the server truth.
 func DownloadFile(url, dest string, cfg *config.Configuration) error {
-	if url == "" || dest == "" {
-		return fmt.Errorf("invalid parameters: url or destination cannot be empty")
+	if url == "" {
+		return fmt.Errorf("invalid parameters: url cannot be empty")
 	}
 
-	// Use DefaultCachePath if cfg.CachePath is not set
-	cfgCachePath := DefaultCachePath
-	if cfg != nil && cfg.CachePath != "" {
-		cfgCachePath = cfg.CachePath
+	// Determine the base directory for manifests, catalogs, or cache
+	var basePath string
+	var subPath string
+
+	switch {
+	case strings.Contains(url, "/manifests/"):
+		basePath = ManifestBasePath
+		subPath = strings.SplitN(url, "/manifests/", 2)[1] // Preserve only the part after "/manifests/"
+	case strings.Contains(url, "/catalogs/"):
+		basePath = CatalogBasePath
+		subPath = strings.SplitN(url, "/catalogs/", 2)[1] // Preserve only the part after "/catalogs/"
+	default:
+		basePath = DefaultCachePath
+		subPath = filepath.Base(url) // For packages, use only the filename
 	}
-	logging.Debug("Resolved cache path", "path", cfgCachePath)
+
+	// Construct the final destination path
+	dest = filepath.Join(basePath, subPath)
+
+	// Log the resolved destination path
+	logging.Debug("Resolved download destination", "url", url, "destination", dest)
+
+	// Ensure the full directory structure exists
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return fmt.Errorf("failed to create directory structure: %v", err)
+	}
 
 	configRetry := retry.RetryConfig{MaxRetries: 3, InitialInterval: time.Second, Multiplier: 2.0}
 	return retry.Retry(configRetry, func() error {
-		// Resolve destination relative to cache path
-		dest = filepath.Join(cfgCachePath, filepath.Base(dest))
 		logging.Info("Starting download", "url", url, "destination", dest)
 
-		// Ensure the full directory structure for the destination file exists
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return fmt.Errorf("failed to create directory structure: %v", err)
-		}
-
-		cachedFilePath := filepath.Join(cfgCachePath, filepath.Base(dest))
-		hashFilePath := cachedFilePath + ".hash"
-
-		// Check if cached file exists and is valid
-		if fileExists(cachedFilePath) && fileExists(hashFilePath) {
-			if isValidCache(cachedFilePath, hashFilePath) {
-				logging.Info("Using valid cached file", "file", cachedFilePath)
-				return copyFile(cachedFilePath, dest)
-			}
-			logging.Warn("Cached file is invalid or expired. Deleting it.", "file", cachedFilePath)
-			os.Remove(cachedFilePath)
-			os.Remove(hashFilePath)
-		}
-
-		// Handle partial downloads
-		out, err := os.OpenFile(dest, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		// Overwrite manifest or catalog files directly
+		out, err := os.Create(dest)
 		if err != nil {
 			return fmt.Errorf("failed to open destination file: %v", err)
 		}
 		defer out.Close()
 
-		existingFileSize, err := out.Seek(0, io.SeekEnd)
-		if err != nil {
-			return fmt.Errorf("failed to determine existing file size: %v", err)
-		}
-
-		// Prepare HTTP request
+		// Prepare the HTTP request
 		req, err := utils.NewAuthenticatedRequest("GET", url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to prepare HTTP request: %v", err)
 		}
 
-		if existingFileSize > 0 {
-			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingFileSize))
-			logging.Info("Resuming download", "from_byte", existingFileSize)
-		}
-
+		// Perform the download
 		client := &http.Client{Timeout: Timeout}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -93,48 +85,54 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		}
 		defer resp.Body.Close()
 
-		// Handle HTTP 416: Remove invalid partial file
-		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
-			logging.Warn("Invalid Range header (HTTP 416). Deleting partial file and retrying.")
-			out.Close()
-			os.Remove(dest)
-			return fmt.Errorf("HTTP 416: Partial download invalid")
-		}
-
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		// Verify successful response
+		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
 		}
 
-		// Append download data
+		// Write downloaded data to file
 		_, err = io.Copy(out, resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to write downloaded data: %v", err)
 		}
 
-		// Write hash file
-		calculatedHash := calculateHash(dest)
-		if err := os.WriteFile(hashFilePath, []byte(calculatedHash), 0644); err != nil {
-			return fmt.Errorf("failed to write hash file: %v", err)
-		}
-
-		// Cache the file
-		if err := copyFile(dest, cachedFilePath); err != nil {
-			return fmt.Errorf("failed to cache the downloaded file: %v", err)
-		}
-
-		// Debug log for downloaded YAML file if verbosity is high
-		if cfg != nil && cfg.Debug {
-			contents, readErr := os.ReadFile(dest)
-			if readErr != nil {
-				logging.Debug("Failed to read downloaded file for debugging", "error", readErr)
-			} else {
-				logging.Debug("Downloaded file contents", "contents", string(contents))
-			}
-		}
-
 		logging.Info("Download completed successfully", "file", dest)
 		return nil
 	})
+}
+
+// cleanFolder removes all existing files and folders in the given path.
+func cleanFolder(path string) error {
+	// Ensure the base path exists; if not, create it
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return fmt.Errorf("failed to create directory: %v", err)
+		}
+		return nil // Nothing to clean; path is newly created
+	}
+
+	// Walk the directory and clean contents without removing the base path
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("failed to list directory contents: %v", err)
+	}
+
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
+
+		// Remove file or directory
+		if entry.IsDir() {
+			if err := os.RemoveAll(entryPath); err != nil {
+				return fmt.Errorf("failed to remove directory: %v", err)
+			}
+		} else {
+			if err := os.Remove(entryPath); err != nil {
+				return fmt.Errorf("failed to remove file: %v", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Verify checks if the given file matches the expected hash.
