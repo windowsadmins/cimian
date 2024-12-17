@@ -3,44 +3,47 @@
 package preflight
 
 import (
-    "os"
-    "os/exec"
-    "path/filepath"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 // RunPreflight runs the preflight script if it exists.
 func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
-    scriptPath := `C:\Program Files\Gorilla\preflight.ps1`
+	scriptPath := `C:\Program Files\Gorilla\preflight.ps1`
+	displayName := "preflight"
 
-    // Check if the script exists
-    if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-        // Script does not exist; nothing to do
-        return nil
-    }
+	// Log the script path
+	logInfo("Preflight script path", "path", scriptPath)
 
-    displayName := "preflight"
-    runType := "checkandinstall"
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		logInfo("Preflight script not found", "path", scriptPath)
+		return nil
+	}
 
-    logInfo("Performing %s tasks...", displayName)
+	// Build the command
+	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	cmd.Dir = filepath.Dir(scriptPath)
 
-    // Optionally, verify script permissions here
+	// Log the full command and working directory
+	logInfo("Preflight command", "command", strings.Join(cmd.Args, " "))
+	logInfo("Preflight working directory", "directory", cmd.Dir)
 
-    // Prepare the command to run the script
-    cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-File", scriptPath, runType)
-    cmd.Dir = filepath.Dir(scriptPath)
+	// Execute the command
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
 
-    // Capture the output
-    output, err := cmd.CombinedOutput()
-    if err != nil {
-        logError("%s returned error: %v", displayName, err)
-        logError("%s output: %s", displayName, string(output))
-        return err
-    }
+	// Log the raw output
+	logInfo("Preflight raw output", "output", outputStr)
 
-    // Log the output
-    if verbosity >= 1 {
-        logInfo("%s output: %s", displayName, string(output))
-    }
+	if err != nil {
+		logError("Preflight script error", "error", err)
+		return fmt.Errorf("preflight script error: %w", err)
+	}
 
-    return nil
+	logInfo("Preflight script completed successfully", "script", displayName)
+	return nil
 }
