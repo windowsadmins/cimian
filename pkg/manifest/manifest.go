@@ -26,38 +26,36 @@ type Item struct {
 	Catalogs          []string `yaml:"catalogs"`
 }
 
-const ManifestPath = `C:\ProgramData\ManagedInstalls\manifests`
-
-// AuthenticatedGet retrieves manifests from the server or local paths.
+// AuthenticatedGet retrieves manifests and downloads catalogs listed within them.
 func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 	var manifestsList []string
 	var manifests []Item
-	var newCatalogs []string
+	var downloadedCatalogs []string
+	visitedManifests := make(map[string]bool) // To track visited manifests
 
-	manifestsList = append(manifestsList, cfg.ClientIdentifier)
-
-	defer func() {
-		if r := recover(); r != nil {
-			logging.Error("Recovered from panic", "panic", r)
-			os.Exit(1)
-		}
-	}()
+	manifestsList = append(manifestsList, cfg.ClientIdentifier) // Start with the client manifest
 
 	for manifestsProcessed := 0; manifestsProcessed < len(manifestsList); manifestsProcessed++ {
 		currentManifest := manifestsList[manifestsProcessed]
 
-		// Construct the manifest URL
+		// Skip already visited manifests
+		if visitedManifests[currentManifest] {
+			continue
+		}
+
+		visitedManifests[currentManifest] = true
+
+		// Construct manifest URL and file path
 		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), currentManifest)
-		manifestFilePath := filepath.Join(ManifestPath, fmt.Sprintf("%s.yaml", filepath.Base(currentManifest)))
+		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, currentManifest+".yaml")
 
 		// Download the manifest
-		logging.Info("Downloading manifest", "url", manifestURL, "path", manifestFilePath)
 		if err := download.DownloadFile(manifestURL, manifestFilePath, cfg); err != nil {
 			logging.Warn("Failed to download manifest", "url", manifestURL, "error", err)
 			continue
 		}
 
-		// Parse the downloaded manifest
+		// Parse the manifest file
 		manifestContent, err := os.ReadFile(manifestFilePath)
 		if err != nil {
 			logging.Error("Failed to read manifest file", "path", manifestFilePath, "error", err)
@@ -66,71 +64,53 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 
 		newManifest := parseManifest(manifestContent, manifestFilePath)
 
-		// Process includes (nested manifests)
+		// Add to manifests list
+		manifests = append(manifests, newManifest)
+		logging.Info("Processed manifest", "name", newManifest.Name)
+
+		// Process included manifests recursively
 		for _, include := range newManifest.Includes {
-			if !contains(manifestsList, include) {
+			if !visitedManifests[include] {
 				logging.Info("Including nested manifest", "parent", currentManifest, "nested", include)
 				manifestsList = append(manifestsList, include)
 			}
 		}
 
-		// Avoid duplicates
-		if !containsManifest(manifests, newManifest.Name) {
-			manifests = append(manifests, newManifest)
-			logging.Info("Added manifest", "name", newManifest.Name, "version", newManifest.Version)
-		}
-
-		// Process any new catalogs
+		// Process catalogs
 		for _, catalog := range newManifest.Catalogs {
-			if !contains(cfg.Catalogs, catalog) && !contains(newCatalogs, catalog) {
-				newCatalogs = append(newCatalogs, catalog)
-				logging.Info("Detected new catalog", "catalog", catalog)
+			if contains(downloadedCatalogs, catalog) {
+				continue
 			}
+
+			catalogURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catalog)
+			catalogFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalog+".yaml")
+
+			if err := download.DownloadFile(catalogURL, catalogFilePath, cfg); err != nil {
+				logging.Warn("Failed to download catalog", "url", catalogURL, "error", err)
+				continue
+			}
+
+			downloadedCatalogs = append(downloadedCatalogs, catalog)
+			logging.Info("Downloaded catalog", "catalog", catalog, "path", catalogFilePath)
 		}
 	}
 
-	// Handle local manifests
-	for _, localPath := range cfg.LocalManifests {
-		logging.Info("Processing local manifest", "path", localPath)
-		localContent, err := os.ReadFile(localPath)
-		if err != nil {
-			logging.Warn("Unable to read local manifest file", "path", localPath, "error", err)
-			continue
-		}
-
-		localManifest := parseManifest(localContent, localPath)
-		if !containsManifest(manifests, localManifest.Name) {
-			manifests = append(manifests, localManifest)
-			logging.Info("Added local manifest", "name", localManifest.Name)
-		}
-	}
-
-	return manifests, newCatalogs
+	return manifests, downloadedCatalogs
 }
 
-// parseManifest unmarshals YAML content into an Item.
+// Helper function to parse manifest content
 func parseManifest(yamlContent []byte, source string) Item {
-	var manifestItem Item
-	if err := yaml.Unmarshal(yamlContent, &manifestItem); err != nil {
-		logging.Error("Failed to parse YAML manifest", "source", source, "error", err)
+	var manifest Item
+	if err := yaml.Unmarshal(yamlContent, &manifest); err != nil {
+		logging.Error("Failed to parse manifest", "source", source, "error", err)
 	}
-	return manifestItem
+	return manifest
 }
 
-// contains checks if a string exists in a slice.
+// Helper function to check for duplicates
 func contains(slice []string, item string) bool {
 	for _, v := range slice {
 		if v == item {
-			return true
-		}
-	}
-	return false
-}
-
-// containsManifest checks if a manifest name exists in a list of Items.
-func containsManifest(manifests []Item, name string) bool {
-	for _, m := range manifests {
-		if m.Name == name {
 			return true
 		}
 	}
