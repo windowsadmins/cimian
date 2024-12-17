@@ -41,50 +41,62 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 	return catalog.Item{}, fmt.Errorf("did not find a valid item in any catalog; Item name: %v", itemName)
 }
 
-// Manifests iterates through the first manifest and any included manifests
+// Manifests iterates through manifests, processes items from managed arrays, and ensures manifest names are excluded.
 func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog.Item) (installs, uninstalls, updates []string) {
-	// Compile all of the installs, uninstalls, and updates into arrays
-	for _, manifestItem := range manifests {
-		// Installs
-		for _, item := range manifestItem.Installs {
-			// Check for the first valid item from our catalogs
-			_, err := firstItem(item, catalogsMap)
-			if err != nil {
-				logging.Error("Processing Error", "error", err)
-				logging.Warn("Processing warning: failed to process install item", "error", err)
+	processedManifests := make(map[string]bool) // Track processed manifests to avoid loops
+
+	// Helper function to add valid catalog items to the target list
+	addValidItems := func(items []string, target *[]string) {
+		for _, item := range items {
+			if item == "" {
 				continue
 			}
-
-			// If we didn't error, append the item to our installs list
-			installs = append(installs, item)
-		}
-		// Uninstalls
-		for _, item := range manifestItem.Uninstalls {
-			// Check for the first valid item from our catalogs
-			_, err := firstItem(item, catalogsMap)
-			if err != nil {
-				logging.Error("Processing Error", "error", err)
-				logging.Warn("Processing warning: failed to process uninstall item", "error", err)
-				continue
+			// Validate against the catalog
+			valid := false
+			for _, catalog := range catalogsMap {
+				if _, exists := catalog[item]; exists {
+					*target = append(*target, item)
+					valid = true
+					break
+				}
 			}
-
-			// If we didn't error, append the item to our uninstalls list
-			uninstalls = append(uninstalls, item)
-		}
-		// Updates
-		for _, item := range manifestItem.Updates {
-			// Check for the first valid item from our catalogs
-			_, err := firstItem(item, catalogsMap)
-			if err != nil {
-				logging.Error("Processing Error", "error", err)
-				logging.Warn("Processing warning: failed to process update item", "error", err)
-				continue
+			if !valid {
+				logging.Error("Item not found in catalog", "item", item)
 			}
-
-			// If we didn't error, append the item to our updates list
-			updates = append(updates, item)
 		}
 	}
+
+	// Recursive function to process manifests
+	var processManifest func(manifestItem manifest.Item)
+	processManifest = func(manifestItem manifest.Item) {
+		// Skip already processed manifests
+		if processedManifests[manifestItem.Name] {
+			return
+		}
+		processedManifests[manifestItem.Name] = true
+
+		// Process managed arrays only
+		addValidItems(manifestItem.Installs, &installs)
+		addValidItems(manifestItem.Uninstalls, &uninstalls)
+		addValidItems(manifestItem.Updates, &updates)
+		addValidItems(manifestItem.OptionalInstalls, &installs)
+
+		// Recursively process included manifests
+		for _, included := range manifestItem.Includes {
+			for _, nextManifest := range manifests {
+				if nextManifest.Name == included {
+					processManifest(nextManifest)
+					break
+				}
+			}
+		}
+	}
+
+	// Start processing manifests
+	for _, manifestItem := range manifests {
+		processManifest(manifestItem)
+	}
+
 	return
 }
 
