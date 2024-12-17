@@ -106,13 +106,40 @@ else {
     }
 }
 
-# Step 1: Install Required Tools via Chocolatey (if not already available)
+# Function to ensure Chocolatey is installed
+function Ensure-Chocolatey {
+    Write-Log "Checking if Chocolatey is installed..." "INFO"
+
+    if (-not (Test-Command "choco")) {
+        Write-Log "Chocolatey is not installed. Installing now..." "INFO"
+
+        try {
+            # Bypass Execution Policy and install Chocolatey
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+            Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+            Write-Log "Chocolatey installed successfully." "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to install Chocolatey. Error: $_" "ERROR"
+            exit 1
+        }
+    }
+    else {
+        Write-Log "Chocolatey is already installed." "SUCCESS"
+    }
+}
+
+# Step 1: Ensure Chocolatey is installed
+Ensure-Chocolatey
+
+# Step 2: Install required tools via Chocolatey
 Write-Log "Checking and installing required tools..." "INFO"
 
 $tools = @(
     @{ Name = "nuget.commandline"; Command = "nuget" },
     @{ Name = "intunewinapputil"; Command = "intunewinapputil" },
-    @{ Name = "wixtoolset"; Command = "candle.exe" },  # Check for WiX via `candle.exe`
+    @{ Name = "wixtoolset"; Command = "candle.exe" },
     @{ Name = "go"; Command = "go" }
 )
 
@@ -127,7 +154,6 @@ foreach ($tool in $tools) {
         continue
     }
 
-    # If the tool is not installed, install it via Chocolatey
     Write-Log "$toolName is not installed. Installing via Chocolatey..." "INFO"
     try {
         choco install $toolName --no-progress --yes | Out-Null
@@ -140,6 +166,7 @@ foreach ($tool in $tools) {
 }
 
 Write-Log "Required tools check and installation completed." "SUCCESS"
+
 
 # Step 1.1: Refresh Environment Variables to Update PATH
 Write-Log "Refreshing environment variables to include newly installed tools..." "INFO"
