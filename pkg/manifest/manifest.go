@@ -26,6 +26,8 @@ type Item struct {
 	Catalogs          []string `yaml:"catalogs"`
 }
 
+const ManifestPath = `C:\ProgramData\ManagedInstalls\manifests`
+
 // AuthenticatedGet retrieves manifests from the server or local paths.
 func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 	var manifestsList []string
@@ -46,9 +48,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 
 		// Construct the manifest URL
 		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), currentManifest)
-		manifestFilePath := filepath.Join(cfg.CachePath, "manifests", fmt.Sprintf("%s.yaml", currentManifest))
+		manifestFilePath := filepath.Join(ManifestPath, fmt.Sprintf("%s.yaml", filepath.Base(currentManifest)))
 
-		// Download the manifest using download.go
+		// Download the manifest
 		logging.Info("Downloading manifest", "url", manifestURL, "path", manifestFilePath)
 		if err := download.DownloadFile(manifestURL, manifestFilePath, cfg); err != nil {
 			logging.Warn("Failed to download manifest", "url", manifestURL, "error", err)
