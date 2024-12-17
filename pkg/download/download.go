@@ -55,10 +55,12 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 				logging.Info("Using valid cached file", "file", cachedFilePath)
 				return copyFile(cachedFilePath, dest)
 			}
-			logging.Warn("Cached file is expired or invalid, re-downloading", "file", cachedFilePath)
+			logging.Warn("Cached file is invalid or expired. Deleting it.", "file", cachedFilePath)
+			os.Remove(cachedFilePath)
+			os.Remove(hashFilePath)
 		}
 
-		// Open destination file for resumable download
+		// Handle partial downloads
 		out, err := os.OpenFile(dest, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to open destination file: %v", err)
@@ -67,23 +69,15 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 
 		existingFileSize, err := out.Seek(0, io.SeekEnd)
 		if err != nil {
-			return fmt.Errorf("failed to get existing file size: %v", err)
+			return fmt.Errorf("failed to determine existing file size: %v", err)
 		}
 
-		// Prepare the authenticated request
+		// Prepare HTTP request
 		req, err := utils.NewAuthenticatedRequest("GET", url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to prepare HTTP request: %v", err)
 		}
 
-		// Log Authorization header (sanitized)
-		if authHeader := req.Header.Get("Authorization"); authHeader != "" {
-			logging.Debug("Authorization header included")
-		} else {
-			logging.Warn("No Authorization header included")
-		}
-
-		// Set Range header for resuming
 		if existingFileSize > 0 {
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingFileSize))
 			logging.Info("Resuming download", "from_byte", existingFileSize)
@@ -92,26 +86,35 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		client := &http.Client{Timeout: Timeout}
 		resp, err := client.Do(req)
 		if err != nil {
-			return fmt.Errorf("failed to download file: %v", err)
+			return fmt.Errorf("failed to perform HTTP request: %v", err)
 		}
 		defer resp.Body.Close()
+
+		// Handle HTTP 416: Remove invalid partial file
+		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			logging.Warn("Invalid Range header (HTTP 416). Deleting partial file and retrying.")
+			out.Close()
+			os.Remove(dest)
+			return fmt.Errorf("HTTP 416: Partial download invalid")
+		}
 
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
 		}
 
+		// Append download data
 		_, err = io.Copy(out, resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to write downloaded data: %v", err)
 		}
 
-		// Write hash file for caching
+		// Write hash file
 		calculatedHash := calculateHash(dest)
 		if err := os.WriteFile(hashFilePath, []byte(calculatedHash), 0644); err != nil {
 			return fmt.Errorf("failed to write hash file: %v", err)
 		}
 
-		// Cache the downloaded file
+		// Cache the file
 		if err := copyFile(dest, cachedFilePath); err != nil {
 			return fmt.Errorf("failed to cache the downloaded file: %v", err)
 		}
@@ -126,7 +129,7 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 			}
 		}
 
-		logging.Info("Download complete", "file", dest)
+		logging.Info("Download completed successfully", "file", dest)
 		return nil
 	})
 }
@@ -152,7 +155,8 @@ func isValidCache(filePath, hashFilePath string) bool {
 	}
 
 	fileInfo, err := os.Stat(filePath)
-	if err != nil {
+	if err != nil || fileInfo.Size() == 0 {
+		logging.Warn("Failed to retrieve file info or file size invalid", "file", filePath)
 		return false
 	}
 
