@@ -4,7 +4,6 @@ go 1.16
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
-	github.com/danieljoos/wincred v1.2.2
 	github.com/gonutz/w32 v1.0.0
 	github.com/hashicorp/go-version v1.3.0
 	github.com/kr/pretty v0.3.0 // indirect
