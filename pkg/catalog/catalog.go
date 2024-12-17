@@ -1,3 +1,5 @@
+// pkg/catalog/catalog.go
+
 package catalog
 
 import (
@@ -55,55 +57,60 @@ type RegCheck struct {
 	Version string `yaml:"version"`
 }
 
-// This abstraction allows us to override the function while testing
-var downloadGet = download.Get
-
-// Get returns a map of `Item` from the catalog
-func Get(cfg config.Configuration) map[int]map[string]Item {
-
-	// catalogMap is an map of parsed catalogs
+// AuthenticatedGet retrieves and parses catalogs into a map
+func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
+	// catalogMap holds parsed catalog data
 	var catalogMap = make(map[int]map[string]Item)
+	catalogCount := 0
 
-	// catalogCount allows us to be sure we are processing catalogs in order
-	var catalogCount = 0
-
-	// Setup to catch a potential failure
+	// Catch unexpected failures
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println(r)
 			report.End()
 			os.Exit(1)
-
 		}
 	}()
 
-	// Error if dont have at least one catalog
+	// Ensure at least one catalog is defined
 	if len(cfg.Catalogs) < 1 {
-		logging.Error("Unable to continue, no catalogs assigned: ", cfg.Catalogs)
+		logging.Error("Unable to continue, no catalogs assigned", "catalogs", cfg.Catalogs)
+		return catalogMap
 	}
 
-	// Loop through the catalogs and get each one in order
+	// Loop through and process each catalog
 	for _, catalog := range cfg.Catalogs {
-
 		catalogCount++
 
-		// Download the catalog
+		// Build catalog URL and local path
 		catalogURL := filepath.Join(cfg.URLPkgsInfo, catalog+".yaml")
-		logging.Info("Catalog Url:", "url", catalogURL)
-		yamlFile, err := downloadGet(catalogURL, &cfg)
-		if err != nil {
-			logging.Error("Unable to retrieve catalog: ", "error", err)
+		yamlFilePath := filepath.Join(cfg.CachePath, filepath.Base(catalogURL))
+
+		logging.Info("Downloading catalog", "url", catalogURL, "path", yamlFilePath)
+
+		// Download the catalog file
+		if err := download.DownloadFile(catalogURL, yamlFilePath, &cfg); err != nil {
+			logging.Error("Failed to download catalog", "url", catalogURL, "error", err)
+			continue
 		}
 
-		// Parse the catalog
+		// Read the downloaded YAML file
+		yamlFile, err := os.ReadFile(yamlFilePath)
+		if err != nil {
+			logging.Error("Failed to read downloaded catalog file", "path", yamlFilePath, "error", err)
+			continue
+		}
+
+		// Parse the catalog YAML content
 		var catalogItems map[string]Item
-		err = yaml.Unmarshal(yamlFile, &catalogItems)
-		if err != nil {
-			logging.Error("Unable to parse yaml catalog: ", err)
+		if err := yaml.Unmarshal(yamlFile, &catalogItems); err != nil {
+			logging.Error("Unable to parse YAML catalog", "path", yamlFilePath, "error", err)
+			continue
 		}
 
-		// Add the new parsed catalog items to the catalogMap
+		// Add parsed items to the catalogMap
 		catalogMap[catalogCount] = catalogItems
+		logging.Info("Successfully processed catalog", "name", catalog, "items", len(catalogItems))
 	}
 
 	return catalogMap
