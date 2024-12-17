@@ -31,18 +31,21 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		return fmt.Errorf("invalid parameters: url or destination cannot be empty")
 	}
 
+	// Use DefaultCachePath if cfg.CachePath is not set
 	cfgCachePath := DefaultCachePath
-	if cfg.CachePath != "" {
+	if cfg != nil && cfg.CachePath != "" {
 		cfgCachePath = cfg.CachePath
 	}
+	logging.Debug("Resolved cache path", "path", cfgCachePath)
 
 	configRetry := retry.RetryConfig{MaxRetries: 3, InitialInterval: time.Second, Multiplier: 2.0}
 	return retry.Retry(configRetry, func() error {
+		// Resolve destination relative to cache path
+		dest = filepath.Join(cfgCachePath, filepath.Base(dest))
 		logging.Info("Starting download", "url", url, "destination", dest)
 
 		// Ensure the full directory structure for the destination file exists
-		err := os.MkdirAll(filepath.Dir(dest), 0755)
-		if err != nil {
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 			return fmt.Errorf("failed to create directory structure: %v", err)
 		}
 
@@ -120,7 +123,7 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		}
 
 		// Debug log for downloaded YAML file if verbosity is high
-		if cfg.Debug {
+		if cfg != nil && cfg.Debug {
 			contents, readErr := os.ReadFile(dest)
 			if readErr != nil {
 				logging.Debug("Failed to read downloaded file for debugging", "error", readErr)
