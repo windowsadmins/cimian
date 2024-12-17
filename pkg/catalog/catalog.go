@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/download"
@@ -82,29 +83,29 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 	for _, catalog := range cfg.Catalogs {
 		catalogCount++
 
-		// Build catalog URL and local path
-		catalogURL := filepath.Join(cfg.URLPkgsInfo, catalog+".yaml")
-		yamlFilePath := filepath.Join(cfg.CachePath, filepath.Base(catalogURL))
+		// Build catalog URL and destination path (preserve structure)
+		catalogURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catalog)
+		catalogFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalog+".yaml")
 
-		logging.Info("Downloading catalog", "url", catalogURL, "path", yamlFilePath)
+		logging.Info("Downloading catalog", "url", catalogURL, "path", catalogFilePath)
 
 		// Download the catalog file
-		if err := download.DownloadFile(catalogURL, yamlFilePath, &cfg); err != nil {
+		if err := download.DownloadFile(catalogURL, catalogFilePath, &cfg); err != nil {
 			logging.Error("Failed to download catalog", "url", catalogURL, "error", err)
 			continue
 		}
 
 		// Read the downloaded YAML file
-		yamlFile, err := os.ReadFile(yamlFilePath)
+		yamlFile, err := os.ReadFile(catalogFilePath)
 		if err != nil {
-			logging.Error("Failed to read downloaded catalog file", "path", yamlFilePath, "error", err)
+			logging.Error("Failed to read downloaded catalog file", "path", catalogFilePath, "error", err)
 			continue
 		}
 
 		// Parse the catalog YAML content
 		var catalogItems map[string]Item
 		if err := yaml.Unmarshal(yamlFile, &catalogItems); err != nil {
-			logging.Error("Unable to parse YAML catalog", "path", yamlFilePath, "error", err)
+			logging.Error("Unable to parse YAML catalog", "path", catalogFilePath, "error", err)
 			continue
 		}
 
