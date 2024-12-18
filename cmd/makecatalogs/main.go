@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/logging"
@@ -22,6 +21,7 @@ func initLogger(conf *config.Configuration) {
 	}
 }
 
+// PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
 	Name                string   `yaml:"name"`
 	DisplayName         string   `yaml:"display_name"`
@@ -39,21 +39,12 @@ type PkgsInfo struct {
 	FilePath            string
 }
 
-func getConfigPath() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(os.Getenv("HOME"), "Library/Preferences/com.github.gorilla.import.yaml")
-	case "windows":
-		return filepath.Join(os.Getenv("APPDATA"), "Gorilla", "import.yaml")
-	default:
-		return "config.yaml"
-	}
-}
-
-func loadConfig(configPath string) (*config.Configuration, error) {
+// loadConfig loads the configuration using config.LoadConfig without any parameters.
+func loadConfig() (*config.Configuration, error) {
 	return config.LoadConfig()
 }
 
+// scanRepo scans the repoPath for pkginfo YAML files and returns a slice of PkgsInfo.
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	var pkgsInfos []PkgsInfo
 
@@ -79,6 +70,7 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	return pkgsInfos, err
 }
 
+// buildCatalogs organizes pkgsInfos into catalogs.
 func buildCatalogs(pkgsInfos []PkgsInfo) (map[string][]PkgsInfo, error) {
 	catalogs := make(map[string][]PkgsInfo)
 
@@ -91,6 +83,7 @@ func buildCatalogs(pkgsInfos []PkgsInfo) (map[string][]PkgsInfo, error) {
 	return catalogs, nil
 }
 
+// writeCatalogs writes each catalog to its respective YAML file in outputDir.
 func writeCatalogs(catalogs map[string][]PkgsInfo, outputDir string) error {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %v", err)
@@ -115,7 +108,8 @@ func writeCatalogs(catalogs map[string][]PkgsInfo, outputDir string) error {
 	return nil
 }
 
-func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
+// makeCatalogs orchestrates the process of scanning the repo and building catalogs.
+func makeCatalogs(repoPath string) error {
 	fmt.Println("Getting list of pkgsinfo...")
 	pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
 	if err != nil {
@@ -135,31 +129,34 @@ func makeCatalogs(repoPath string, skipPkgCheck, force bool) error {
 }
 
 func main() {
-	configPath := getConfigPath()
-	conf, err := loadConfig(configPath)
+	// Load configuration.
+	conf, err := loadConfig()
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Initialize logger.
 	initLogger(conf)
 
+	// Parse command-line flags.
 	repoPath := flag.String("repo_url", "", "Path to the Gorilla repo.")
-	force := flag.Bool("force", false, "Disable sanity checks.")
-	skipPkgCheck := flag.Bool("skip-pkg-check", false, "Skip checking of pkg existence.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
 
+	// Handle version flag.
 	if *showVersion {
 		fmt.Println("gorilla makecatalogs version 1.0")
 		return
 	}
 
+	// Use config repo path if repo_url flag is not provided.
 	if *repoPath == "" {
 		*repoPath = conf.RepoPath
 	}
 
-	if err := makeCatalogs(*repoPath, *skipPkgCheck, *force); err != nil {
+	// Execute the makeCatalogs function.
+	if err := makeCatalogs(*repoPath); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
