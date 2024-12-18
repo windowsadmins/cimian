@@ -9,17 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/logging"
 	"gopkg.in/yaml.v3"
 )
-
-// Initialize the logger.
-func initLogger(conf *config.Configuration) {
-	if err := logging.Init(conf); err != nil {
-		fmt.Printf("Error initializing logging: %v\n", err)
-		os.Exit(1)
-	}
-}
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
@@ -135,9 +126,6 @@ func main() {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Initialize logger.
-	initLogger(conf)
 
 	// Parse command-line flags.
 	repoPath := flag.String("repo_url", "", "Path to the Gorilla repo.")
