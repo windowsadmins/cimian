@@ -1,23 +1,19 @@
 ---
-##
-## Gorilla configuration template
-## Only `url` and `manifest` are required
-## More details at https://github.com/windowsadmins/gorilla/wiki/Client-Configuration
-##
+# Gorilla Configuration File
+# Define the server details, client-specific configurations, and options.
+# See: https://github.com/windowsadmins/gorilla/wiki/Client-Configuration
 
-## `url` is the path on your server that contains the directories for
-## manifests, catalogs, and packages.
-url: https://example.com/gorilla/
+# The base URL for the repository hosting manifests, catalogs, and packages.
+software_repo_url: https://gorilla.example.com
 
-## `manifest` is the primary manifest that is assigned to this machine.
-manifest: employee
+# The primary manifest assigned to this machine.
+client_identifier: Bootstrap
 
-## `catalogs` is an *optional* array of catalogs that are assigned to this machine.
-## If you do not provide a catalog in the config, you must have one in a manifest.
-# catalogs: 
-#   - beta
+# Force basic authentication for all HTTP requests.
+force_basic_auth: false
 
-## `app_data_path` is Gorilla's working directory, and may store copies of
-## manifests, catalogs, or packages. If `app_data_path` is not provided,
-## it will default to `%ProgramData%\ManagedInstalls\Gorilla`
-# app_data_path: C:\ProgramData\ManagedInstalls\Config.yaml
+# Default architecture for the packages.
+default_arch: x86_64
+
+# Default catalog used when a specific catalog is not specified.
+default_catalog: Testing
