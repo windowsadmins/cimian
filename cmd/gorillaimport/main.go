@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +20,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/logging"
 )
 
 type PkgsInfo struct {
@@ -79,7 +77,8 @@ func main() {
 	// Load configuration.
 	conf, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Error loading config: %v", err)
+		fmt.Printf("Error loading config: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Parse command-line flags.
@@ -95,13 +94,6 @@ func main() {
 	installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
 	uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")
 	flag.Parse()
-
-	// Initialize the logger.
-	if err := logging.Init(conf); err != nil {
-		fmt.Printf("Error initializing logging: %v\n", err)
-		os.Exit(1)
-	}
-	defer logging.CloseLogger()
 
 	// Run interactive configuration setup if --config is provided.
 	if *configFlag {
@@ -125,18 +117,17 @@ func main() {
 	}
 
 	importSuccess, err := gorillaImport(
-		packagePath, *conf, *installScriptFlag, *preuninstallScriptFlag,
+		packagePath, conf, *installScriptFlag, *preuninstallScriptFlag,
 		*postuninstallScriptFlag, *postinstallScriptFlag, *uninstallerFlag,
 		*installCheckScriptFlag, *uninstallCheckScriptFlag,
 	)
 	if err != nil {
-		logging.Error("Import Error", "error", err)
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
 	if importSuccess && conf.CloudProvider != "none" {
-		if err := uploadToCloud(*conf); err != nil {
+		if err := uploadToCloud(conf); err != nil {
 			fmt.Printf("Error uploading to cloud: %v\n", err)
 			os.Exit(1)
 		}
@@ -144,7 +135,8 @@ func main() {
 
 	if confirmAction("Run makecatalogs? (y/n)") {
 		if err := runMakeCatalogs(); err != nil {
-			log.Fatalf("makecatalogs error: %v", err)
+			fmt.Printf("makecatalogs error: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
@@ -172,7 +164,8 @@ func configureGorillaImport() {
 	fmt.Scanln(&conf.DefaultArch)
 
 	if err := config.SaveConfig(conf); err != nil {
-		log.Fatalf("Failed to save config: %v", err)
+		fmt.Printf("Failed to save config: %v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -182,7 +175,16 @@ func extractInstallerMetadata(packagePath string) (Metadata, error) {
 	case ".nupkg":
 		return extractNuGetMetadata(packagePath)
 	case ".msi":
-		return extractMSIMetadata(packagePath)
+		metadata, err := extractMSIMetadata(packagePath)
+		if err != nil {
+			return Metadata{}, err
+		}
+		// Prompt for metadata after extracting MSI metadata
+		metadata, err = promptForMetadataWithDefaults(packagePath, metadata)
+		if err != nil {
+			return Metadata{}, err
+		}
+		return metadata, nil
 	case ".exe", ".bat", ".ps1":
 		return promptForMetadata(packagePath)
 	default:
@@ -369,7 +371,8 @@ func addField(node *yaml.Node, key string, value interface{}) {
 		valueNode.Kind = yaml.SequenceNode
 		for _, item := range v {
 			valueNode.Content = append(valueNode.Content, &yaml.Node{
-				Kind: yaml.ScalarNode, Value: item,
+				Kind:  yaml.ScalarNode,
+				Value: item,
 			})
 		}
 	}
@@ -377,7 +380,7 @@ func addField(node *yaml.Node, key string, value interface{}) {
 	node.Content = append(node.Content, keyNode, valueNode)
 }
 
-func addScriptField(node *yaml.Node, key string, value string) {
+func addScriptFieldNode(node *yaml.Node, key string, value string) {
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
 	valueNode := &yaml.Node{
 		Kind:  yaml.ScalarNode,
@@ -437,7 +440,6 @@ func createPkgsInfo(
 	category string,
 	developer string,
 	supportedArch []string,
-	repoPath string,
 	installerSubPath string,
 	productCode string,
 	upgradeCode string,
@@ -457,7 +459,7 @@ func createPkgsInfo(
 	pkgsInfo := PkgsInfo{
 		Name:                 name,
 		Version:              version,
-		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: filepath.Ext(filePath)[1:]},
+		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: strings.TrimPrefix(filepath.Ext(filePath), ".")},
 		Uninstaller:          uninstaller,
 		Catalogs:             catalogs,
 		Category:             category,
@@ -616,7 +618,7 @@ func generatePkgsInfo(config config.Configuration, installerSubPath string, info
 
 func gorillaImport(
 	packagePath string,
-	conf config.Configuration,
+	conf *config.Configuration,
 	installScriptPath, preuninstallScriptPath, postuninstallScriptPath string,
 	postinstallScriptPath, uninstallerPath, installCheckScriptPath, uninstallCheckScriptPath string,
 ) (bool, error) {
@@ -693,7 +695,7 @@ func gorillaImport(
 	}
 
 	// Generate pkgsinfo
-	if err := generatePkgsInfo(conf, "apps", pkgsInfo); err != nil {
+	if err := generatePkgsInfo(*conf, "apps", pkgsInfo); err != nil {
 		return false, fmt.Errorf("failed to generate pkgsinfo: %v", err)
 	}
 
@@ -712,7 +714,7 @@ $batchFile = "$env:TEMP\\temp_script.bat"
 Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
 & cmd.exe /c $batchFile
 Remove-Item $batchFile
-        `, strings.TrimLeft(batchContent, " "))
+	`, strings.TrimLeft(batchContent, " "))
 	} else if scriptType == "ps1" {
 		return batchContent
 	}
@@ -729,6 +731,20 @@ func promptForMetadata(packagePath string) (Metadata, error) {
 	promptSurvey(&metadata.Version, "Enter the version", "1.0.0")
 	promptSurvey(&metadata.Authors, "Enter the developer/author", "")
 	promptSurvey(&metadata.Description, "Enter the description", "")
+
+	return metadata, nil
+}
+
+func promptForMetadataWithDefaults(packagePath string, existing Metadata) (Metadata, error) {
+	var metadata Metadata = existing
+
+	defaultName := strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath))
+
+	promptSurvey(&metadata.Title, "Enter the display name", defaultName)
+	promptSurvey(&metadata.ID, "Enter the package name (unique identifier)", metadata.ID)
+	promptSurvey(&metadata.Version, "Enter the version", metadata.Version)
+	promptSurvey(&metadata.Authors, "Enter the developer/author", metadata.Authors)
+	promptSurvey(&metadata.Description, "Enter the description", metadata.Description)
 
 	return metadata, nil
 }
@@ -761,11 +777,11 @@ func confirmAction(prompt string) bool {
 	return strings.ToLower(response) == "y"
 }
 
-func uploadToCloud(conf config.Configuration) error {
+func uploadToCloud(conf *config.Configuration) error {
 	localPkgsPath := filepath.Join(conf.RepoPath, "pkgs")
 
 	if conf.CloudProvider == "aws" {
-		cmd := exec.Command("/usr/local/bin/aws", "s3", "sync", localPkgsPath,
+		cmd := exec.Command("C:\\Program Files\\Gorilla\\makecatalogs", "aws", "s3", "sync", localPkgsPath,
 			fmt.Sprintf("s3://%s/pkgs/", conf.CloudBucket),
 			"--exclude", "*.git/*", "--exclude", "**/.DS_Store")
 
@@ -775,7 +791,7 @@ func uploadToCloud(conf config.Configuration) error {
 			return fmt.Errorf("error syncing to S3: %v", err)
 		}
 	} else if conf.CloudProvider == "azure" {
-		cmd := exec.Command("/opt/homebrew/bin/azcopy", "sync", localPkgsPath,
+		cmd := exec.Command("C:\\Program Files\\Gorilla\\makecatalogs", "azure", "azcopy", "sync", localPkgsPath,
 			fmt.Sprintf("https://%s/pkgs/", conf.CloudBucket),
 			"--exclude-path", "*/.git/*;*/.DS_Store", "--recursive", "--put-md5")
 
@@ -789,16 +805,7 @@ func uploadToCloud(conf config.Configuration) error {
 }
 
 func runMakeCatalogs() error {
-	var makeCatalogsBinary string
-
-	switch runtime.GOOS {
-	case "windows":
-		makeCatalogsBinary = `C:\Program Files\Gorilla\bin\makecatalogs`
-	case "darwin":
-		makeCatalogsBinary = `/usr/local/gorilla/makecatalogs`
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
+	makeCatalogsBinary := `C:\Program Files\Gorilla\makecatalogs.exe`
 
 	if _, err := os.Stat(makeCatalogsBinary); os.IsNotExist(err) {
 		return fmt.Errorf("makecatalogs binary not found at %s", makeCatalogsBinary)
