@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -195,22 +196,57 @@ func loadOrCreateConfig() (*config.Configuration, error) {
 func configureGorillaImport() error {
 	conf := config.GetDefaultConfig()
 
-	fmt.Print("Enter Repo Path: ")
-	fmt.Scanln(&conf.RepoPath)
+	usr, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("failed to get current user: %v", err)
+	}
 
-	fmt.Print("Enter Cloud Provider (aws/azure/none): ")
-	fmt.Scanln(&conf.CloudProvider)
+	// Construct the default repo path using the current user's home directory.
+	defaultRepoPath := filepath.Join(usr.HomeDir, "DevOps", "Gorilla", "deployment")
+	defaultCloudProvider := "none"
+	defaultCatalog := "Upcoming"
+	defaultArch := "x86_64"
+
+	fmt.Printf("Enter Repo Path [%s]: ", defaultRepoPath)
+	var repoPathInput string
+	fmt.Scanln(&repoPathInput)
+	if strings.TrimSpace(repoPathInput) == "" {
+		conf.RepoPath = defaultRepoPath
+	} else {
+		conf.RepoPath = repoPathInput
+	}
+
+	fmt.Printf("Enter Cloud Provider (aws/azure/none) [%s]: ", defaultCloudProvider)
+	var cloudProviderInput string
+	fmt.Scanln(&cloudProviderInput)
+	if strings.TrimSpace(cloudProviderInput) == "" {
+		conf.CloudProvider = defaultCloudProvider
+	} else {
+		conf.CloudProvider = cloudProviderInput
+	}
 
 	if conf.CloudProvider != "none" {
 		fmt.Print("Enter Cloud Bucket: ")
 		fmt.Scanln(&conf.CloudBucket)
 	}
 
-	fmt.Print("Enter Default Catalog: ")
-	fmt.Scanln(&conf.DefaultCatalog)
+	fmt.Printf("Enter Default Catalog [%s]: ", defaultCatalog)
+	var defaultCatalogInput string
+	fmt.Scanln(&defaultCatalogInput)
+	if strings.TrimSpace(defaultCatalogInput) == "" {
+		conf.DefaultCatalog = defaultCatalog
+	} else {
+		conf.DefaultCatalog = defaultCatalogInput
+	}
 
-	fmt.Print("Enter Default Architecture: ")
-	fmt.Scanln(&conf.DefaultArch)
+	fmt.Printf("Enter Default Architecture [%s]: ", defaultArch)
+	var defaultArchInput string
+	fmt.Scanln(&defaultArchInput)
+	if strings.TrimSpace(defaultArchInput) == "" {
+		conf.DefaultArch = defaultArch
+	} else {
+		conf.DefaultArch = defaultArchInput
+	}
 
 	configPath := getConfigPath()
 	configDir := filepath.Dir(configPath)
