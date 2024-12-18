@@ -462,14 +462,26 @@ $properties | ConvertTo-Json -Compress`, msiFilePathEscaped)
 		return Metadata{}, fmt.Errorf("failed to parse JSON output: %v", err)
 	}
 
+	productName := properties["ProductName"]
+	developer := properties["Manufacturer"]
+	description := properties["Comments"]
+	productCode := properties["ProductCode"]
+	upgradeCode := properties["UpgradeCode"]
+	version := properties["ProductVersion"]
+
 	metadata := Metadata{
-		Title:       properties["ProductName"],
-		ID:          properties["ProductCode"],
-		Version:     properties["ProductVersion"],
-		Developer:   properties["Manufacturer"],
-		Description: properties["Comments"],
-		ProductCode: properties["ProductCode"],
-		UpgradeCode: properties["UpgradeCode"],
+		Developer:   developer,
+		Description: description,
+		ProductCode: productCode,
+		UpgradeCode: upgradeCode,
+		Version:     version,
+	}
+
+	// If ProductName is available, use it as Title and ID.
+	// Otherwise, leave them empty so the user is prompted for a friendly name.
+	if strings.TrimSpace(productName) != "" {
+		metadata.Title = productName
+		metadata.ID = productName
 	}
 
 	return metadata, nil
