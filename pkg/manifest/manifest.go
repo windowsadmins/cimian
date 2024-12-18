@@ -23,6 +23,7 @@ type Item struct {
 	Installs          []string `yaml:"managed_installs"`
 	Uninstalls        []string `yaml:"managed_uninstalls"`
 	Updates           []string `yaml:"managed_updates"`
+	OptionalInstalls  []string `yaml:"optional_installs"`
 	Catalogs          []string `yaml:"catalogs"`
 }
 
