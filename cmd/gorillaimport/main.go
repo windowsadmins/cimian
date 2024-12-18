@@ -289,42 +289,95 @@ func extractInstallerMetadata(packagePath string) (Metadata, error) {
 		return Metadata{}, err
 	}
 
-	// Now prompt only if fields are missing
-	metadata = promptForMissingMetadata(packagePath, metadata)
+	metadata = promptForAllMetadata(packagePath, metadata)
 
 	return metadata, nil
 }
 
-// promptForMissingMetadata prompts only for fields that are empty in the Metadata.
-func promptForMissingMetadata(packagePath string, m Metadata) Metadata {
-	// Determine defaults
+func promptForAllMetadata(packagePath string, m Metadata) Metadata {
+	// If metadata fields are empty, set reasonable defaults
 	defaultID := m.ID
 	if defaultID == "" {
 		defaultID = parsePackageName(filepath.Base(packagePath))
 	}
+
 	defaultTitle := m.Title
 	if defaultTitle == "" {
 		defaultTitle = defaultID
 	}
 
-	// We'll prompt only if the field is empty
-	if m.ID == "" {
-		m.ID = getInput(fmt.Sprintf("Enter the Package Name (unique identifier) [%s]: ", defaultID), defaultID)
+	defaultVersion := m.Version
+	if defaultVersion == "" {
+		defaultVersion = "1.0.0"
 	}
-	if m.Title == "" {
-		m.Title = getInput(fmt.Sprintf("Enter the Display Name [%s]: ", defaultTitle), defaultTitle)
+
+	defaultDeveloper := m.Developer
+	// If developer wasn't extracted, just leave it blank as default
+	// No need to fill in a placeholder if you don't have one
+	// same logic for description and category
+
+	defaultDescription := m.Description
+	defaultCategory := m.Category
+
+	// Always prompt user, providing current or default values
+	fmt.Printf("Enter the Package Name (unique identifier) [%s]: ", defaultID)
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.ID = defaultID
+	} else {
+		m.ID = input
 	}
-	if m.Version == "" {
-		m.Version = getInput("Enter the Version [1.0.0]: ", "1.0.0")
+
+	fmt.Printf("Enter the Display Name [%s]: ", defaultTitle)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Title = defaultTitle
+	} else {
+		m.Title = input
 	}
-	if m.Developer == "" {
-		m.Developer = getInput("Enter the Developer: ", "")
+
+	fmt.Printf("Enter the Version [%s]: ", defaultVersion)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Version = defaultVersion
+	} else {
+		m.Version = input
 	}
-	if m.Description == "" {
-		m.Description = getInput("Enter the Description: ", "")
+
+	fmt.Printf("Enter the Developer [%s]: ", defaultDeveloper)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Developer = defaultDeveloper
+	} else {
+		m.Developer = input
 	}
-	if m.Category == "" {
-		m.Category = getInput("Enter the Category: ", "")
+
+	fmt.Printf("Enter the Description [%s]: ", defaultDescription)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Description = defaultDescription
+	} else {
+		m.Description = input
+	}
+
+	fmt.Printf("Enter the Category [%s]: ", defaultCategory)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Category = defaultCategory
+	} else {
+		m.Category = input
 	}
 
 	return m
