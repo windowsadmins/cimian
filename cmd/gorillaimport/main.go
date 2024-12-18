@@ -59,7 +59,7 @@ type Metadata struct {
 	Title       string `xml:"title"`
 	ID          string `xml:"id"`
 	Version     string `xml:"version"`
-	Authors     string `xml:"authors"`
+	Developer   string `xml:"manufacturer"` // Mapped from MSI's Manufacturer property
 	Description string `xml:"description"`
 	Tags        string `xml:"tags,omitempty"`
 	Readme      string `xml:"readme,omitempty"`
@@ -104,12 +104,14 @@ func main() {
 		conf.DefaultArch = *archFlag
 	}
 
+	// Determine the installer path.
 	packagePath := getInstallerPath(*installerFlag)
 	if packagePath == "" {
 		fmt.Println("Error: No installer provided.")
 		os.Exit(1)
 	}
 
+	// Perform the import.
 	importSuccess, err := gorillaImport(
 		packagePath, conf, *installScriptFlag, *preuninstallScriptFlag,
 		*postuninstallScriptFlag, *postinstallScriptFlag, *uninstallerFlag,
@@ -120,6 +122,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Upload to cloud if needed.
 	if importSuccess && conf.CloudProvider != "none" {
 		if err := uploadToCloud(conf); err != nil {
 			fmt.Printf("Error uploading to cloud: %v\n", err)
@@ -127,14 +130,13 @@ func main() {
 		}
 	}
 
-	if confirmAction("Run makecatalogs? (y/n)") {
-		if err := runMakeCatalogs(); err != nil {
-			fmt.Printf("makecatalogs error: %v\n", err)
-			os.Exit(1)
-		}
+	// Always run makecatalogs without confirmation.
+	if err := runMakeCatalogs(); err != nil {
+		fmt.Printf("makecatalogs error: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Sync icons and pkgs directories to cloud
+	// Sync icons and pkgs directories to cloud.
 	if conf.CloudProvider == "aws" || conf.CloudProvider == "azure" {
 		fmt.Println("Starting upload for icons")
 		err = syncToCloud(conf, filepath.Join(conf.RepoPath, "icons"), "icons")
@@ -281,8 +283,8 @@ $properties | ConvertTo-Json -Compress`, msiFilePathEscaped)
 		Title:       properties["ProductName"],
 		ID:          properties["ProductCode"], // Use ProductCode as ID
 		Version:     properties["ProductVersion"],
-		Authors:     properties["Manufacturer"],
-		Description: properties["Comments"], // If available
+		Developer:   properties["Manufacturer"], // Mapped from MSI's Manufacturer property
+		Description: properties["Comments"],     // If available
 		ProductCode: properties["ProductCode"],
 		UpgradeCode: properties["UpgradeCode"],
 	}
@@ -395,6 +397,51 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 	}, nil
 }
 
+// promptInstallerItemPath interactively prompts the user to enter the installer item path.
+func promptInstallerItemPath() (string, error) {
+	var path string
+	prompt := &survey.Input{
+		Message: "Enter the Installer Item Path in the repo (default: /apps)",
+		Default: "/apps",
+	}
+	err := survey.AskOne(prompt, &path)
+	if err != nil {
+		return "", err
+	}
+	// Ensure the path starts with a "/"
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	// Remove any trailing slashes
+	path = strings.TrimRight(path, "/")
+	return path, nil
+}
+
+// findMatchingItemInAllCatalog checks if a package with the same ProductCode and UpgradeCode already exists in All.yaml.
+func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
+	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+	fileContent, err := os.ReadFile(allCatalogPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
+	}
+
+	var allPackages []PkgsInfo
+	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+	}
+
+	cleanedProductCode := strings.TrimSpace(strings.ToLower(productCode))
+	cleanedUpgradeCode := strings.TrimSpace(strings.ToLower(upgradeCode))
+
+	for _, item := range allPackages {
+		if strings.TrimSpace(strings.ToLower(item.ProductCode)) == cleanedProductCode &&
+			strings.TrimSpace(strings.ToLower(item.UpgradeCode)) == cleanedUpgradeCode {
+			return &item, item.Installer != nil && item.Installer.Hash == currentFileHash, nil
+		}
+	}
+	return nil, false, nil
+}
+
 // gorillaImport handles the import process of the installer into the repo.
 func gorillaImport(
 	packagePath string,
@@ -456,27 +503,44 @@ func gorillaImport(
 		return false, fmt.Errorf("failed to calculate file hash: %v", err)
 	}
 
-	// Copy installer to pkgs directory
-	installerFilename := filepath.Base(packagePath)
-	pkgsFolderPath := filepath.Join(conf.RepoPath, "pkgs", "apps")
-	if err := os.MkdirAll(pkgsFolderPath, 0755); err != nil {
-		return false, fmt.Errorf("failed to create pkgs directory: %v", err)
+	// Prompt for Installer Item Path
+	installerItemPath, err := promptInstallerItemPath()
+	if err != nil {
+		return false, fmt.Errorf("error processing installer item path: %v", err)
 	}
-	installerDest := filepath.Join(pkgsFolderPath, installerFilename)
+
+	// Define installer and pkginfo folder paths
+	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", installerItemPath)
+	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", installerItemPath)
+
+	// Create directories if they don't exist
+	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
+		return false, fmt.Errorf("failed to create installer directory: %v", err)
+	}
+	if err := os.MkdirAll(pkginfoFolderPath, 0755); err != nil {
+		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
+	}
+
+	// Copy installer to installerFolderPath
+	installerFilename := filepath.Base(packagePath)
+	installerDest := filepath.Join(installerFolderPath, installerFilename)
 	if _, err := copyFile(packagePath, installerDest); err != nil {
 		return false, fmt.Errorf("failed to copy installer: %v", err)
 	}
+
+	// Set Installer.Location relative to repo
+	installerLocation := "/" + installerItemPath + "/" + installerFilename
 
 	// Create PkgsInfo struct with extracted metadata
 	pkgsInfo := PkgsInfo{
 		Name:                 metadata.ID,
 		DisplayName:          metadata.Title,
 		Version:              metadata.Version,
-		Developer:            metadata.Authors,
+		Developer:            metadata.Developer,
 		Description:          metadata.Description,
 		Catalogs:             []string{conf.DefaultCatalog},
 		SupportedArch:        []string{conf.DefaultArch},
-		Installer:            &Installer{Location: filepath.Join("/", "apps", installerFilename), Hash: fileHash, Type: installerType, Arguments: []string{}},
+		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType, Arguments: []string{}},
 		Uninstaller:          uninstaller,
 		PreinstallScript:     preinstallScript,
 		PostinstallScript:    postinstallScript,
@@ -513,12 +577,12 @@ func gorillaImport(
 
 	// Prompt user to confirm import
 	fmt.Printf("\nPkginfo details:\n")
-	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
-	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
-	fmt.Printf("    Version: %s\n", pkgsInfo.Version)
-	fmt.Printf("    Description: %s\n", pkgsInfo.Description)
-	fmt.Printf("    Category: %s\n", pkgsInfo.Category)
-	fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
+	fmt.Printf("    Name: %s\n", capitalizeFirst(pkgsInfo.Name))
+	fmt.Printf("    Display Name: %s\n", capitalizeFirst(pkgsInfo.DisplayName))
+	fmt.Printf("    Version: %s\n", capitalizeFirst(pkgsInfo.Version))
+	fmt.Printf("    Description (optional): %s\n", pkgsInfo.Description)
+	fmt.Printf("    Category: %s\n", capitalizeFirst(pkgsInfo.Category))
+	fmt.Printf("    Developer: %s\n", capitalizeFirst(pkgsInfo.Developer))
 	fmt.Printf("    Supported Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
 	fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
 	fmt.Println()
@@ -528,60 +592,34 @@ func gorillaImport(
 		return false, nil
 	}
 
-	// Generate pkgsinfo
+	// Generate pkginfo using positional arguments
 	if err := createPkgsInfo(
-		packagePath,
-		filepath.Join(conf.RepoPath, "pkgsinfo", "apps"),
-		pkgsInfo.Name,
-		pkgsInfo.Version,
-		pkgsInfo.Catalogs,
-		pkgsInfo.Category,
-		pkgsInfo.Developer,
-		pkgsInfo.SupportedArch,
-		"apps",
-		pkgsInfo.ProductCode,
-		pkgsInfo.UpgradeCode,
-		pkgsInfo.Installer.Hash,
-		pkgsInfo.UnattendedInstall,
-		pkgsInfo.UnattendedUninstall,
-		pkgsInfo.PreinstallScript,
-		pkgsInfo.PostinstallScript,
-		pkgsInfo.PreuninstallScript,
-		pkgsInfo.PostuninstallScript,
-		pkgsInfo.InstallCheckScript,
-		pkgsInfo.UninstallCheckScript,
-		pkgsInfo.Uninstaller,
+		packagePath,                   // filePath
+		pkginfoFolderPath,             // outputDir
+		pkgsInfo.Name,                 // name
+		pkgsInfo.Version,              // version
+		pkgsInfo.Catalogs,             // catalogs
+		pkgsInfo.Category,             // category
+		pkgsInfo.Developer,            // developer
+		pkgsInfo.SupportedArch,        // supportedArch
+		installerItemPath,             // installerSubPath
+		pkgsInfo.ProductCode,          // productCode
+		pkgsInfo.UpgradeCode,          // upgradeCode
+		pkgsInfo.Installer.Hash,       // fileHash
+		pkgsInfo.UnattendedInstall,    // unattendedInstall
+		pkgsInfo.UnattendedUninstall,  // unattendedUninstall
+		pkgsInfo.PreinstallScript,     // preinstallScript
+		pkgsInfo.PostinstallScript,    // postinstallScript
+		pkgsInfo.PreuninstallScript,   // preuninstallScript
+		pkgsInfo.PostuninstallScript,  // postuninstallScript
+		pkgsInfo.InstallCheckScript,   // installCheckScript
+		pkgsInfo.UninstallCheckScript, // uninstallCheckScript
+		pkgsInfo.Uninstaller,          // uninstaller
 	); err != nil {
-		return false, fmt.Errorf("failed to generate pkgsinfo: %v", err)
+		return false, fmt.Errorf("failed to generate pkginfo: %v", err)
 	}
 
-	fmt.Printf("Pkgsinfo created at: /apps/%s-%s.yaml\n", pkgsInfo.Name, pkgsInfo.Version)
 	return true, nil
-}
-
-// findMatchingItemInAllCatalog checks if a package with the same ProductCode and UpgradeCode already exists in All.yaml.
-func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
-	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-	fileContent, err := os.ReadFile(allCatalogPath)
-	if err != nil {
-		return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
-	}
-
-	var allPackages []PkgsInfo
-	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-	}
-
-	cleanedProductCode := strings.TrimSpace(strings.ToLower(productCode))
-	cleanedUpgradeCode := strings.TrimSpace(strings.ToLower(upgradeCode))
-
-	for _, item := range allPackages {
-		if strings.TrimSpace(strings.ToLower(item.ProductCode)) == cleanedProductCode &&
-			strings.TrimSpace(strings.ToLower(item.UpgradeCode)) == cleanedUpgradeCode {
-			return &item, item.Installer != nil && item.Installer.Hash == currentFileHash, nil
-		}
-	}
-	return nil, false, nil
 }
 
 // createPkgsInfo generates the pkginfo YAML file based on the provided information.
@@ -608,12 +646,15 @@ func createPkgsInfo(
 	uninstallCheckScript string,
 	uninstaller *Installer,
 ) error {
-	installerLocation := filepath.Join("/", installerSubPath, fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath)))
+	// Calculate installerType directly here instead of using undefined installerType
+	installerType := strings.TrimPrefix(filepath.Ext(filePath), ".")
+
+	installerLocation := "/" + installerSubPath + "/" + fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath))
 
 	pkgsInfo := PkgsInfo{
 		Name:                 name,
 		Version:              version,
-		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: strings.TrimPrefix(filepath.Ext(filePath), ".")},
+		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType},
 		Uninstaller:          uninstaller,
 		Catalogs:             catalogs,
 		Category:             category,
@@ -634,15 +675,23 @@ func createPkgsInfo(
 	outputPath := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
 	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
-		return fmt.Errorf("failed to encode pkgsinfo: %v", err)
+		return fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
 
 	if err := os.WriteFile(outputPath, pkgsInfoContent, 0644); err != nil {
-		return fmt.Errorf("failed to write pkgsinfo to file: %v", err)
+		return fmt.Errorf("failed to write pkginfo to file: %v", err)
 	}
 
-	fmt.Printf("Pkgsinfo created at: /%s/%s-%s.yaml\n", installerSubPath, pkgsInfo.Name, pkgsInfo.Version)
+	fmt.Printf("Pkginfo created at: /%s/%s-%s.yaml\n", installerSubPath, pkgsInfo.Name, pkgsInfo.Version)
 	return nil
+}
+
+// capitalizeFirst capitalizes the first letter of the given string.
+func capitalizeFirst(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	return strings.ToUpper(string(s[0])) + s[1:]
 }
 
 // encodeWithSelectiveBlockScalars encodes the PkgsInfo struct into YAML with selective block scalars for scripts.
@@ -651,17 +700,20 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 
-	// Custom encoding to handle script fields with block scalars
-	node := &yaml.Node{}
+	// Encode the PkgsInfo into YAML
 	if err := encoder.Encode(&pkgsInfo); err != nil {
-		return nil, fmt.Errorf("failed to encode pkgsinfo: %v", err)
+		return nil, fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
+	encoder.Close()
+
+	// Decode it back to manipulate script fields
+	node := &yaml.Node{}
 	decoder := yaml.NewDecoder(&buf)
 	if err := decoder.Decode(node); err != nil {
-		return nil, fmt.Errorf("failed to decode encoded pkgsinfo: %v", err)
+		return nil, fmt.Errorf("failed to decode encoded pkginfo: %v", err)
 	}
 
-	// Handle script fields
+	// Handle script fields with block scalars
 	scriptFields := map[string]bool{
 		"preinstall_script":     true,
 		"postinstall_script":    true,
@@ -686,8 +738,9 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	finalEncoder := yaml.NewEncoder(finalBuf)
 	finalEncoder.SetIndent(2)
 	if err := finalEncoder.Encode(node); err != nil {
-		return nil, fmt.Errorf("failed to re-encode pkgsinfo with block scalars: %v", err)
+		return nil, fmt.Errorf("failed to re-encode pkginfo with block scalars: %v", err)
 	}
+	finalEncoder.Close()
 
 	return finalBuf.Bytes(), nil
 }
@@ -715,13 +768,15 @@ Remove-Item $batchFile
 func promptForMetadata(packagePath string) (Metadata, error) {
 	var metadata Metadata
 
-	defaultName := strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath))
+	// Start with Package Name
+	promptSurvey(&metadata.ID, "Enter the Package Name (unique identifier)", strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath)))
 
-	promptSurvey(&metadata.Title, "Enter the display name", defaultName)
-	promptSurvey(&metadata.ID, "Enter the package name (unique identifier)", defaultName)
-	promptSurvey(&metadata.Version, "Enter the version", "1.0.0")
-	promptSurvey(&metadata.Authors, "Enter the developer/author", "")
-	promptSurvey(&metadata.Description, "Enter the description", "")
+	// Pre-populate Display Name with Package Name
+	promptSurvey(&metadata.Title, "Enter the Display Name", metadata.ID)
+
+	promptSurvey(&metadata.Version, "Enter the Version", "1.0.0")
+	promptSurvey(&metadata.Developer, "Enter the Developer", "")
+	promptSurvey(&metadata.Description, "Enter the Description (optional)", "")
 
 	return metadata, nil
 }
@@ -730,13 +785,15 @@ func promptForMetadata(packagePath string) (Metadata, error) {
 func promptForMetadataWithDefaults(packagePath string, existing Metadata) (Metadata, error) {
 	var metadata Metadata = existing
 
-	defaultName := strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath))
+	// Start with Package Name
+	promptSurvey(&metadata.ID, "Enter the Package Name (unique identifier)", strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath)))
 
-	promptSurvey(&metadata.Title, "Enter the display name", defaultName)
-	promptSurvey(&metadata.ID, "Enter the package name (unique identifier)", metadata.ID)
-	promptSurvey(&metadata.Version, "Enter the version", metadata.Version)
-	promptSurvey(&metadata.Authors, "Enter the developer/author", metadata.Authors)
-	promptSurvey(&metadata.Description, "Enter the description", metadata.Description)
+	// Pre-populate Display Name with Package Name
+	promptSurvey(&metadata.Title, "Enter the Display Name", metadata.ID)
+
+	promptSurvey(&metadata.Version, "Enter the Version", metadata.Version)
+	promptSurvey(&metadata.Developer, "Enter the Developer", metadata.Developer)
+	promptSurvey(&metadata.Description, "Enter the Description (optional)", metadata.Description)
 
 	return metadata, nil
 }
