@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"github.com/AlecAivazis/survey/v2"
 	"gopkg.in/yaml.v3"
@@ -60,6 +62,7 @@ type Metadata struct {
 	ID          string `xml:"id"`
 	Version     string `xml:"version"`
 	Developer   string `xml:"manufacturer"` // Mapped from MSI's Manufacturer property
+	Category    string `xml:"category"`
 	Description string `xml:"description"`
 	Tags        string `xml:"tags,omitempty"`
 	Readme      string `xml:"readme,omitempty"`
@@ -122,8 +125,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// If import was not successful or canceled, exit without further actions.
+	if !importSuccess {
+		os.Exit(0)
+	}
+
 	// Upload to cloud if needed.
-	if importSuccess && conf.CloudProvider != "none" {
+	if conf.CloudProvider != "none" {
 		if err := uploadToCloud(conf); err != nil {
 			fmt.Printf("Error uploading to cloud: %v\n", err)
 			os.Exit(1)
@@ -198,7 +206,19 @@ func extractInstallerMetadata(packagePath string) (Metadata, error) {
 			return Metadata{}, err
 		}
 		return metadata, nil
-	case ".exe", ".bat", ".ps1":
+	case ".exe":
+		metadata, err := extractExeMetadata(packagePath)
+		if err != nil {
+			// Fallback to prompting if version extraction fails
+			return promptForMetadata(packagePath)
+		}
+		// Prompt for other metadata fields with extracted version
+		metadata, err = promptForMetadataWithDefaults(packagePath, metadata)
+		if err != nil {
+			return Metadata{}, err
+		}
+		return metadata, nil
+	case ".bat", ".ps1":
 		return promptForMetadata(packagePath)
 	default:
 		return Metadata{}, fmt.Errorf("unsupported installer type: %s", ext)
@@ -287,6 +307,173 @@ $properties | ConvertTo-Json -Compress`, msiFilePathEscaped)
 		Description: properties["Comments"],     // If available
 		ProductCode: properties["ProductCode"],
 		UpgradeCode: properties["UpgradeCode"],
+	}
+
+	return metadata, nil
+}
+
+// VSFixedFileInfo holds version info from the resource.
+type VSFixedFileInfo struct {
+	Signature        uint32
+	StrucVersion     uint32
+	FileVersionMS    uint32
+	FileVersionLS    uint32
+	ProductVersionMS uint32
+	ProductVersionLS uint32
+	FileFlagsMask    uint32
+	FileFlags        uint32
+	FileOS           uint32
+	FileType         uint32
+	FileSubtype      uint32
+	FileDateMS       uint32
+	FileDateLS       uint32
+}
+
+// Load version.dll and get the procedures
+var (
+	versionDLL                  = syscall.MustLoadDLL("version.dll")
+	procGetFileVersionInfoSizeW = versionDLL.MustFindProc("GetFileVersionInfoSizeW")
+	procGetFileVersionInfoW     = versionDLL.MustFindProc("GetFileVersionInfoW")
+	procVerQueryValueW          = versionDLL.MustFindProc("VerQueryValueW")
+)
+
+// getFileVersionInfoSize calls GetFileVersionInfoSizeW to get the size of version info.
+func getFileVersionInfoSize(filename string) (uint32, error) {
+	p, err := syscall.UTF16PtrFromString(filename)
+	if err != nil {
+		return 0, err
+	}
+	r0, _, e1 := syscall.Syscall(procGetFileVersionInfoSizeW.Addr(), 2,
+		uintptr(unsafe.Pointer(p)), 0, 0)
+	size := uint32(r0)
+	if size == 0 {
+		if e1 != 0 {
+			return 0, error(e1)
+		}
+		return 0, fmt.Errorf("GetFileVersionInfoSizeW failed for '%s'", filename)
+	}
+	return size, nil
+}
+
+// getFileVersionInfo calls GetFileVersionInfoW to get the actual version info data block.
+func getFileVersionInfo(filename string, size uint32) ([]byte, error) {
+	info := make([]byte, size)
+	p, err := syscall.UTF16PtrFromString(filename)
+	if err != nil {
+		return nil, err
+	}
+	r0, _, e1 := syscall.Syscall6(procGetFileVersionInfoW.Addr(), 4,
+		uintptr(unsafe.Pointer(p)),
+		0,
+		uintptr(size),
+		uintptr(unsafe.Pointer(&info[0])),
+		0, 0)
+	if r0 == 0 {
+		if e1 != 0 {
+			return nil, error(e1)
+		}
+		return nil, fmt.Errorf("GetFileVersionInfoW failed for '%s'", filename)
+	}
+	return info, nil
+}
+
+// verQueryValue calls VerQueryValueW to query a value from the version info block.
+func verQueryValue(block []byte, subBlock string) (unsafe.Pointer, uint32, error) {
+	pSubBlock, err := syscall.UTF16PtrFromString(subBlock)
+	if err != nil {
+		return nil, 0, err
+	}
+	var buf unsafe.Pointer
+	var size uint32
+	r0, _, e1 := syscall.Syscall6(procVerQueryValueW.Addr(), 4,
+		uintptr(unsafe.Pointer(&block[0])),
+		uintptr(unsafe.Pointer(pSubBlock)),
+		uintptr(unsafe.Pointer(&buf)),
+		uintptr(unsafe.Pointer(&size)),
+		0, 0)
+	if r0 == 0 {
+		if e1 != 0 {
+			return nil, 0, error(e1)
+		}
+		return nil, 0, fmt.Errorf("VerQueryValueW failed for subBlock '%s'", subBlock)
+	}
+	return buf, size, nil
+}
+
+// extractExeMetadata uses Win32 API calls to retrieve version information from a Windows .exe file.
+func extractExeMetadata(exePath string) (Metadata, error) {
+	if runtime.GOOS != "windows" {
+		return Metadata{}, fmt.Errorf(".exe metadata extraction is only supported on Windows")
+	}
+
+	size, err := getFileVersionInfoSize(exePath)
+	if err != nil {
+		return Metadata{}, err
+	}
+
+	verInfo, err := getFileVersionInfo(exePath, size)
+	if err != nil {
+		return Metadata{}, err
+	}
+
+	// Get the fixed file info
+	fixedInfoPtr, fixedInfoLen, err := verQueryValue(verInfo, `\`)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if fixedInfoLen == 0 {
+		return Metadata{}, fmt.Errorf("no VS_FIXEDFILEINFO found")
+	}
+	fixedInfo := (*VSFixedFileInfo)(fixedInfoPtr)
+
+	major := fixedInfo.FileVersionMS >> 16
+	minor := fixedInfo.FileVersionMS & 0xFFFF
+	build := fixedInfo.FileVersionLS >> 16
+	revision := fixedInfo.FileVersionLS & 0xFFFF
+	versionStr := fmt.Sprintf("%d.%d.%d.%d", major, minor, build, revision)
+
+	// Query the translation info
+	langPtr, langLen, err := verQueryValue(verInfo, `\VarFileInfo\Translation`)
+	if err != nil {
+		// If no translation found, just return version
+		return Metadata{Version: versionStr}, nil
+	}
+
+	if langLen == 0 {
+		// No language info found, return version only
+		return Metadata{Version: versionStr}, nil
+	}
+
+	// LangAndCodePage is two uint16s: Language and CodePage
+	type LangAndCodePage struct {
+		Language uint16
+		CodePage uint16
+	}
+
+	langData := (*LangAndCodePage)(langPtr)
+	language := fmt.Sprintf("%04x", langData.Language)
+	codepage := fmt.Sprintf("%04x", langData.CodePage)
+
+	queryString := func(name string) string {
+		subBlock := fmt.Sprintf(`\StringFileInfo\%s%s\%s`, language, codepage, name)
+		valPtr, valLen, err := verQueryValue(verInfo, subBlock)
+		if err != nil || valLen == 0 {
+			return ""
+		}
+		return syscall.UTF16ToString((*[1 << 20]uint16)(valPtr)[:valLen])
+	}
+
+	companyName := queryString("CompanyName")
+	productName := queryString("ProductName")
+	fileDescription := queryString("FileDescription")
+
+	metadata := Metadata{
+		Title:       fileDescription,
+		ID:          productName,
+		Developer:   companyName,
+		Version:     versionStr,
+		Description: fileDescription,
+		Category:    "", // Not available in .exe metadata, will be prompted later if needed
 	}
 
 	return metadata, nil
@@ -459,7 +646,13 @@ func gorillaImport(
 	// Extract metadata
 	metadata, err := extractInstallerMetadata(packagePath)
 	if err != nil {
+		// If metadata extraction fails, return an error
 		return false, fmt.Errorf("metadata extraction failed: %v", err)
+	}
+
+	// Parse package name from filename if not provided
+	if metadata.ID == "" {
+		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
 	// Process scripts
@@ -537,6 +730,7 @@ func gorillaImport(
 		DisplayName:          metadata.Title,
 		Version:              metadata.Version,
 		Developer:            metadata.Developer,
+		Category:             metadata.Category,
 		Description:          metadata.Description,
 		Catalogs:             []string{conf.DefaultCatalog},
 		SupportedArch:        []string{conf.DefaultArch},
@@ -550,8 +744,8 @@ func gorillaImport(
 		UninstallCheckScript: uninstallCheckScript,
 		UnattendedInstall:    true,
 		UnattendedUninstall:  true,
-		ProductCode:          metadata.ProductCode,
-		UpgradeCode:          metadata.UpgradeCode,
+		ProductCode:          strings.TrimSpace(metadata.ProductCode),
+		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
 	}
 
 	// Check for existing package in catalog
@@ -580,14 +774,14 @@ func gorillaImport(
 	fmt.Printf("    Name: %s\n", capitalizeFirst(pkgsInfo.Name))
 	fmt.Printf("    Display Name: %s\n", capitalizeFirst(pkgsInfo.DisplayName))
 	fmt.Printf("    Version: %s\n", capitalizeFirst(pkgsInfo.Version))
-	fmt.Printf("    Description (optional): %s\n", pkgsInfo.Description)
+	fmt.Printf("    Description: %s\n", pkgsInfo.Description)
 	fmt.Printf("    Category: %s\n", capitalizeFirst(pkgsInfo.Category))
 	fmt.Printf("    Developer: %s\n", capitalizeFirst(pkgsInfo.Developer))
-	fmt.Printf("    Supported Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
+	fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
 	fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
 	fmt.Println()
 
-	if !confirmAction("Import this item? (y/n)") {
+	if !confirmAction("Import this item?") {
 		fmt.Println("Import canceled.")
 		return false, nil
 	}
@@ -618,6 +812,14 @@ func gorillaImport(
 	); err != nil {
 		return false, fmt.Errorf("failed to generate pkginfo: %v", err)
 	}
+
+	// Get absolute path for pkginfo
+	outputPath := filepath.Join(pkginfoFolderPath, fmt.Sprintf("%s-%s.yaml", pkgsInfo.Name, pkgsInfo.Version))
+	absOutputPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return true, fmt.Errorf("failed to get absolute path for pkginfo: %v", err)
+	}
+	fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
 
 	return true, nil
 }
@@ -682,7 +884,6 @@ func createPkgsInfo(
 		return fmt.Errorf("failed to write pkginfo to file: %v", err)
 	}
 
-	fmt.Printf("Pkginfo created at: /%s/%s-%s.yaml\n", installerSubPath, pkgsInfo.Name, pkgsInfo.Version)
 	return nil
 }
 
@@ -757,7 +958,7 @@ $batchFile = "$env:TEMP\\temp_script.bat"
 Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
 & cmd.exe /c $batchFile
 Remove-Item $batchFile
-`, strings.TrimLeft(batchContent, " "))
+`, strings.TrimSpace(batchContent))
 	} else if scriptType == "ps1" {
 		return batchContent
 	}
@@ -769,14 +970,15 @@ func promptForMetadata(packagePath string) (Metadata, error) {
 	var metadata Metadata
 
 	// Start with Package Name
-	promptSurvey(&metadata.ID, "Enter the Package Name (unique identifier)", strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath)))
+	promptSurvey(&metadata.ID, "Enter the Package Name (unique identifier)", parsePackageName(filepath.Base(packagePath)))
 
 	// Pre-populate Display Name with Package Name
 	promptSurvey(&metadata.Title, "Enter the Display Name", metadata.ID)
 
 	promptSurvey(&metadata.Version, "Enter the Version", "1.0.0")
 	promptSurvey(&metadata.Developer, "Enter the Developer", "")
-	promptSurvey(&metadata.Description, "Enter the Description (optional)", "")
+	promptSurvey(&metadata.Description, "Enter the Description", "")
+	promptSurvey(&metadata.Category, "Enter the Category", "")
 
 	return metadata, nil
 }
@@ -786,14 +988,15 @@ func promptForMetadataWithDefaults(packagePath string, existing Metadata) (Metad
 	var metadata Metadata = existing
 
 	// Start with Package Name
-	promptSurvey(&metadata.ID, "Enter the Package Name (unique identifier)", strings.TrimSuffix(filepath.Base(packagePath), filepath.Ext(packagePath)))
+	promptSurvey(&metadata.ID, "Enter the Package Name (unique identifier)", parsePackageName(filepath.Base(packagePath)))
 
 	// Pre-populate Display Name with Package Name
 	promptSurvey(&metadata.Title, "Enter the Display Name", metadata.ID)
 
 	promptSurvey(&metadata.Version, "Enter the Version", metadata.Version)
 	promptSurvey(&metadata.Developer, "Enter the Developer", metadata.Developer)
-	promptSurvey(&metadata.Description, "Enter the Description (optional)", metadata.Description)
+	promptSurvey(&metadata.Description, "Enter the Description", metadata.Description)
+	promptSurvey(&metadata.Category, "Enter the Category", metadata.Category)
 
 	return metadata, nil
 }
@@ -940,4 +1143,14 @@ func syncToCloud(conf *config.Configuration, source, destinationSubPath string) 
 
 	fmt.Printf("Successfully synced %s to %s\n", source, destination)
 	return nil
+}
+
+// parsePackageName extracts the package name from the filename before the version number.
+func parsePackageName(filename string) string {
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+	parts := strings.Split(base, "-")
+	if len(parts) > 1 {
+		return strings.Join(parts[:len(parts)-1], "-")
+	}
+	return base
 }
