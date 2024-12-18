@@ -12,24 +12,24 @@ const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 
 // Configuration holds the configurable options for Gorilla in YAML format
 type Configuration struct {
-	Catalogs         []string `yaml:"catalogs"`
-	CatalogsPath     string   `yaml:"catalogs_path"`
-	CachePath        string   `yaml:"cache_path"`
-	CheckOnly        bool     `yaml:"check_only"`
-	CloudBucket      string   `yaml:"cloud_bucket"`
-	CloudProvider    string   `yaml:"cloud_provider"`
-	Debug            bool     `yaml:"debug"`
-	DefaultArch      string   `yaml:"default_arch"`
-	DefaultCatalog   string   `yaml:"default_catalog"`
-	InstallPath      string   `yaml:"install_path"`
-	LocalManifests   []string `yaml:"local_manifests"`
-	LogLevel         string   `yaml:"log_level"`
+	Catalogs         []string `yaml:"Catalogs"`
+	CatalogsPath     string   `yaml:"CatalogsPath"`
+	CachePath        string   `yaml:"CachePath"`
+	CheckOnly        bool     `yaml:"CheckOnly"`
+	CloudBucket      string   `yaml:"CloudBucket"`
+	CloudProvider    string   `yaml:"CloudProvider"`
+	Debug            bool     `yaml:"Debug"`
+	DefaultArch      string   `yaml:"DefaultArch"`
+	DefaultCatalog   string   `yaml:"DefaultCatalog"`
+	InstallPath      string   `yaml:"InstallPath"`
+	LocalManifests   []string `yaml:"LocalManifests"`
+	LogLevel         string   `yaml:"LogLevel"`
 	ClientIdentifier string   `yaml:"ClientIdentifier"`
 	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
-	RepoPath         string   `yaml:"repo_path"`
-	URLPkgsInfo      string   `yaml:"url_pkgsinfo"`
-	Verbose          bool     `yaml:"verbose"`
-	ForceBasicAuth   bool     `yaml:"force_basic_auth"`
+	RepoPath         string   `yaml:"RepoPath"`
+	URLPkgsInfo      string   `yaml:"URLPkgsInfo"`
+	Verbose          bool     `yaml:"Verbose"`
+	ForceBasicAuth   bool     `yaml:"ForceBasicAuth"`
 }
 
 // LoadConfig loads the configuration from a YAML file.
@@ -89,7 +89,7 @@ func GetDefaultConfig() *Configuration {
 		Verbose:          false,
 		CheckOnly:        false,
 		ClientIdentifier: "",
-		SoftwareRepoURL:  "http://gorilla/repo",
+		SoftwareRepoURL:  "https://gorilla.example.com",
 		DefaultArch:      "x86_64",
 		DefaultCatalog:   "testing",
 		CloudProvider:    "none",
