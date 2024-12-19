@@ -809,30 +809,48 @@ func gorillaImport(
 	if err != nil {
 		return false, fmt.Errorf("failed to read preinstall script: %v", err)
 	}
+	if scripts.Preinstall != "" && strings.HasSuffix(strings.ToLower(scripts.Preinstall), ".bat") {
+		preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "bat")
+	}
 
 	postinstallScriptContent, err := readScriptContent(scripts.Postinstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read postinstall script: %v", err)
+	}
+	if scripts.Postinstall != "" && strings.HasSuffix(strings.ToLower(scripts.Postinstall), ".bat") {
+		postinstallScriptContent = generateWrapperScript(postinstallScriptContent, "bat")
 	}
 
 	preuninstallScriptContent, err := readScriptContent(scripts.Preuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read preuninstall script: %v", err)
 	}
+	if scripts.Preuninstall != "" && strings.HasSuffix(strings.ToLower(scripts.Preuninstall), ".bat") {
+		preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "bat")
+	}
 
 	postuninstallScriptContent, err := readScriptContent(scripts.Postuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read postuninstall script: %v", err)
+	}
+	if scripts.Postuninstall != "" && strings.HasSuffix(strings.ToLower(scripts.Postuninstall), ".bat") {
+		postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "bat")
 	}
 
 	installCheckScriptContent, err := readScriptContent(scripts.InstallCheck)
 	if err != nil {
 		return false, fmt.Errorf("failed to read install check script: %v", err)
 	}
+	if scripts.InstallCheck != "" && strings.HasSuffix(strings.ToLower(scripts.InstallCheck), ".bat") {
+		installCheckScriptContent = generateWrapperScript(installCheckScriptContent, "bat")
+	}
 
 	uninstallCheckScriptContent, err := readScriptContent(scripts.UninstallCheck)
 	if err != nil {
 		return false, fmt.Errorf("failed to read uninstall check script: %v", err)
+	}
+	if scripts.UninstallCheck != "" && strings.HasSuffix(strings.ToLower(scripts.UninstallCheck), ".bat") {
+		uninstallCheckScriptContent = generateWrapperScript(uninstallCheckScriptContent, "bat")
 	}
 
 	// Process uninstaller
@@ -1005,6 +1023,7 @@ func createPkgsInfo(
 
 	pkgsInfo := PkgsInfo{
 		Name:                 name,
+		DisplayName:          displayName,
 		Version:              version,
 		Developer:            developer,
 		Category:             category,
