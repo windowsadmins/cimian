@@ -70,6 +70,16 @@ type Metadata struct {
 	UpgradeCode string
 }
 
+// ScriptPaths holds paths to various scripts.
+type ScriptPaths struct {
+	Preinstall     string
+	Postinstall    string
+	Preuninstall   string
+	Postuninstall  string
+	InstallCheck   string
+	UninstallCheck string
+}
+
 func main() {
 	// Attempt to load configuration, if fails due to missing directories, create them.
 	conf, err := loadOrCreateConfig()
@@ -117,11 +127,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Collect script paths into a struct.
+	scripts := ScriptPaths{
+		Preinstall:     *installScriptFlag,
+		Postinstall:    *postinstallScriptFlag,
+		Preuninstall:   *preuninstallScriptFlag,
+		Postuninstall:  *postuninstallScriptFlag,
+		InstallCheck:   *installCheckScriptFlag,
+		UninstallCheck: *uninstallCheckScriptFlag,
+	}
+
 	// Perform the import.
 	importSuccess, err := gorillaImport(
-		packagePath, conf, *installScriptFlag, *preuninstallScriptFlag,
-		*postuninstallScriptFlag, *postinstallScriptFlag, *uninstallerFlag,
-		*installCheckScriptFlag, *uninstallCheckScriptFlag,
+		packagePath, conf,
+		scripts,
+		*uninstallerFlag,
 	)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -178,16 +198,19 @@ func loadOrCreateConfig() (*config.Configuration, error) {
 		configPath := getConfigPath()
 		configDir := filepath.Dir(configPath)
 		if _, statErr := os.Stat(configDir); os.IsNotExist(statErr) {
-			if mkErr := os.MkdirAll(configDir, 0755); mkErr != nil {
-				return nil, fmt.Errorf("failed to create config directory: %v", mkErr)
+
+			// Create the config directory
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create config directory: %v", err)
 			}
+
 			// Try loading config again
 			conf, err = config.LoadConfig()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("failed to load config after creating directories: %v", err)
 			}
 		} else {
-			return nil, err
+			return nil, fmt.Errorf("failed to load config: %v", err)
 		}
 	}
 	return conf, nil
@@ -379,9 +402,13 @@ func extractNuGetMetadata(nupkgPath string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("failed to extract .nupkg: %v", err)
 	}
 
-	nuspecFiles, err := filepath.Glob(filepath.Join(tempDir, "*", "*.nuspec"))
-	if err != nil || len(nuspecFiles) == 0 {
-		return Metadata{}, fmt.Errorf(".nuspec file not found")
+	// Added code to find the .nuspec files
+	nuspecFiles, err := filepath.Glob(filepath.Join(tempDir, "**", "*.nuspec"))
+	if err != nil {
+		return Metadata{}, fmt.Errorf("error finding .nuspec files: %v", err)
+	}
+	if len(nuspecFiles) == 0 {
+		return Metadata{}, fmt.Errorf("no .nuspec files found")
 	}
 
 	content, err := os.ReadFile(nuspecFiles[0])
@@ -403,20 +430,19 @@ func extractMSIMetadata(msiFilePath string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("MSI metadata extraction is only supported on Windows")
 	}
 
-	msiFilePathEscaped := strings.ReplaceAll(msiFilePath, `\`, `\\`)
+	msiFilePathEscaped := strings.ReplaceAll(msiFilePath, `"`, `\"`)
 
-	psScript := fmt.Sprintf(`$WindowsInstaller = New-Object -ComObject WindowsInstaller.Installer
+	psScript := fmt.Sprintf(`
+$WindowsInstaller = New-Object -ComObject WindowsInstaller.Installer
 $Database = $WindowsInstaller.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $WindowsInstaller, @("%s", 0))
 $View = $Database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $Database, @('SELECT * FROM Property'))
 $View.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $View, $null)
-$Record = $View.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $View, $null)
 
-$properties = @{}
-while ($Record -ne $null) {
+$properties = @{} 
+while ($Record = $View.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $View, $null)) {
     $property = $Record.StringData(1)
     $value = $Record.StringData(2)
     $properties[$property] = $value
-    $Record = $View.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $View, $null)
 }
 
 $properties | ConvertTo-Json -Compress`, msiFilePathEscaped)
@@ -765,8 +791,8 @@ func getInput(prompt, defaultVal string) string {
 func gorillaImport(
 	packagePath string,
 	conf *config.Configuration,
-	installScriptPath, preuninstallScriptPath, postuninstallScriptPath string,
-	postinstallScriptPath, uninstallerPath, installCheckScriptPath, uninstallCheckScriptPath string,
+	scripts ScriptPaths,
+	uninstallerPath string,
 ) (bool, error) {
 
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
@@ -786,27 +812,27 @@ func gorillaImport(
 	}
 
 	// Process scripts
-	preinstallScript, err := processScript(installScriptPath, filepath.Ext(installScriptPath))
+	preinstallScript, err := processScript(scripts.Preinstall, filepath.Ext(scripts.Preinstall))
 	if err != nil {
 		return false, fmt.Errorf("preinstall script processing failed: %v", err)
 	}
-	postinstallScript, err := processScript(postinstallScriptPath, filepath.Ext(postinstallScriptPath))
+	postinstallScript, err := processScript(scripts.Postinstall, filepath.Ext(scripts.Postinstall))
 	if err != nil {
 		return false, fmt.Errorf("postinstall script processing failed: %v", err)
 	}
-	preuninstallScript, err := processScript(preuninstallScriptPath, filepath.Ext(preuninstallScriptPath))
+	preuninstallScript, err := processScript(scripts.Preuninstall, filepath.Ext(scripts.Preuninstall))
 	if err != nil {
 		return false, fmt.Errorf("preuninstall script processing failed: %v", err)
 	}
-	postuninstallScript, err := processScript(postuninstallScriptPath, filepath.Ext(postuninstallScriptPath))
+	postuninstallScript, err := processScript(scripts.Postuninstall, filepath.Ext(scripts.Postuninstall))
 	if err != nil {
 		return false, fmt.Errorf("postuninstall script processing failed: %v", err)
 	}
-	installCheckScript, err := processScript(installCheckScriptPath, filepath.Ext(installCheckScriptPath))
+	installCheckScript, err := processScript(scripts.InstallCheck, filepath.Ext(scripts.InstallCheck))
 	if err != nil {
 		return false, fmt.Errorf("install check script processing failed: %v", err)
 	}
-	uninstallCheckScript, err := processScript(uninstallCheckScriptPath, filepath.Ext(uninstallCheckScriptPath))
+	uninstallCheckScript, err := processScript(scripts.UninstallCheck, filepath.Ext(scripts.UninstallCheck))
 	if err != nil {
 		return false, fmt.Errorf("uninstall check script processing failed: %v", err)
 	}
@@ -1020,7 +1046,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 
-	if err := encoder.Encode(&pkgsInfo); err != nil {
+	if err := encoder.Encode(&pkgsInfo); err != nil { // Added '!= nil'
 		return nil, fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
 	encoder.Close()
@@ -1097,7 +1123,7 @@ func uploadToCloud(conf *config.Configuration) error {
 		cmdPkgs.Stdout = os.Stdout
 		cmdPkgs.Stderr = os.Stderr
 		if err := cmdPkgs.Run(); err != nil {
-			return fmt.Errorf("error syncing pkgs to S3: %v", err)
+			return fmt.Errorf("failed to sync pkgs to AWS S3: %v", err)
 		}
 
 		iconsDestination := fmt.Sprintf("s3://%s/icons/", conf.CloudBucket)
@@ -1105,7 +1131,7 @@ func uploadToCloud(conf *config.Configuration) error {
 		cmdIcons.Stdout = os.Stdout
 		cmdIcons.Stderr = os.Stderr
 		if err := cmdIcons.Run(); err != nil {
-			return fmt.Errorf("error syncing icons to S3: %v", err)
+			return fmt.Errorf("failed to sync icons to AWS S3: %v", err)
 		}
 	} else if conf.CloudProvider == "azure" {
 		pkgsDestination := fmt.Sprintf("https://%s/pkgs/", conf.CloudBucket)
@@ -1113,7 +1139,7 @@ func uploadToCloud(conf *config.Configuration) error {
 		cmdPkgs.Stdout = os.Stdout
 		cmdPkgs.Stderr = os.Stderr
 		if err := cmdPkgs.Run(); err != nil {
-			return fmt.Errorf("error syncing pkgs to Azure: %v", err)
+			return fmt.Errorf("failed to sync pkgs to Azure: %v", err)
 		}
 
 		iconsDestination := fmt.Sprintf("https://%s/icons/", conf.CloudBucket)
@@ -1121,7 +1147,7 @@ func uploadToCloud(conf *config.Configuration) error {
 		cmdIcons.Stdout = os.Stdout
 		cmdIcons.Stderr = os.Stderr
 		if err := cmdIcons.Run(); err != nil {
-			return fmt.Errorf("error syncing icons to Azure: %v", err)
+			return fmt.Errorf("failed to sync icons to Azure: %v", err)
 		}
 	} else {
 		return fmt.Errorf("unsupported cloud provider: %s", conf.CloudProvider)
