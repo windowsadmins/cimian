@@ -804,53 +804,53 @@ func gorillaImport(
 		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
-	// Read script contents from file paths specified in scripts
-	preinstallScriptContent, err := readScriptContent(scripts.Preinstall)
-	if err != nil {
-		return false, fmt.Errorf("failed to read preinstall script: %v", err)
-	}
-	if scripts.Preinstall != "" && strings.HasSuffix(strings.ToLower(scripts.Preinstall), ".bat") {
-		preinstallScriptContent = generateWrapperScript(preinstallScriptContent, "bat")
-	}
-
-	postinstallScriptContent, err := readScriptContent(scripts.Postinstall)
-	if err != nil {
-		return false, fmt.Errorf("failed to read postinstall script: %v", err)
-	}
-	if scripts.Postinstall != "" && strings.HasSuffix(strings.ToLower(scripts.Postinstall), ".bat") {
-		postinstallScriptContent = generateWrapperScript(postinstallScriptContent, "bat")
-	}
-
-	preuninstallScriptContent, err := readScriptContent(scripts.Preuninstall)
-	if err != nil {
-		return false, fmt.Errorf("failed to read preuninstall script: %v", err)
-	}
-	if scripts.Preuninstall != "" && strings.HasSuffix(strings.ToLower(scripts.Preuninstall), ".bat") {
-		preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, "bat")
+	// Read and process script contents
+	processScript := func(scriptPath string) (string, error) {
+		if scriptPath == "" {
+			return "", nil
+		}
+		content, err := readScriptContent(scriptPath)
+		if err != nil {
+			return "", err
+		}
+		ext := strings.ToLower(filepath.Ext(scriptPath))
+		if ext == ".bat" {
+			wrappedContent := generateWrapperScript(content, "bat")
+			wrappedContent = strings.TrimSpace(wrappedContent)
+			return wrappedContent, nil
+		}
+		// For .ps1 or other scripts, return as-is
+		return content, nil
 	}
 
-	postuninstallScriptContent, err := readScriptContent(scripts.Postuninstall)
+	preinstallScriptContent, err := processScript(scripts.Preinstall)
 	if err != nil {
-		return false, fmt.Errorf("failed to read postuninstall script: %v", err)
-	}
-	if scripts.Postuninstall != "" && strings.HasSuffix(strings.ToLower(scripts.Postuninstall), ".bat") {
-		postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, "bat")
+		return false, fmt.Errorf("failed to process preinstall script: %v", err)
 	}
 
-	installCheckScriptContent, err := readScriptContent(scripts.InstallCheck)
+	postinstallScriptContent, err := processScript(scripts.Postinstall)
 	if err != nil {
-		return false, fmt.Errorf("failed to read install check script: %v", err)
-	}
-	if scripts.InstallCheck != "" && strings.HasSuffix(strings.ToLower(scripts.InstallCheck), ".bat") {
-		installCheckScriptContent = generateWrapperScript(installCheckScriptContent, "bat")
+		return false, fmt.Errorf("failed to process postinstall script: %v", err)
 	}
 
-	uninstallCheckScriptContent, err := readScriptContent(scripts.UninstallCheck)
+	preuninstallScriptContent, err := processScript(scripts.Preuninstall)
 	if err != nil {
-		return false, fmt.Errorf("failed to read uninstall check script: %v", err)
+		return false, fmt.Errorf("failed to process preuninstall script: %v", err)
 	}
-	if scripts.UninstallCheck != "" && strings.HasSuffix(strings.ToLower(scripts.UninstallCheck), ".bat") {
-		uninstallCheckScriptContent = generateWrapperScript(uninstallCheckScriptContent, "bat")
+
+	postuninstallScriptContent, err := processScript(scripts.Postuninstall)
+	if err != nil {
+		return false, fmt.Errorf("failed to process postuninstall script: %v", err)
+	}
+
+	installCheckScriptContent, err := processScript(scripts.InstallCheck)
+	if err != nil {
+		return false, fmt.Errorf("failed to process install check script: %v", err)
+	}
+
+	uninstallCheckScriptContent, err := processScript(scripts.UninstallCheck)
+	if err != nil {
+		return false, fmt.Errorf("failed to process uninstall check script: %v", err)
 	}
 
 	// Process uninstaller
@@ -884,9 +884,9 @@ func gorillaImport(
 		Name:                 metadata.ID,
 		DisplayName:          "", // Will set after this if needed
 		Version:              metadata.Version,
-		Developer:            metadata.Developer,
-		Category:             metadata.Category,
 		Description:          metadata.Description,
+		Category:             metadata.Category,
+		Developer:            metadata.Developer,
 		Catalogs:             []string{conf.DefaultCatalog},
 		SupportedArch:        []string{metadata.Architecture},
 		Installer:            &Installer{Location: "", Hash: fileHash, Type: installerType},
@@ -1068,7 +1068,7 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
 
-	if err := encoder.Encode(&pkgsInfo); err != nil { // Added '!= nil'
+	if err := encoder.Encode(&pkgsInfo); err != nil {
 		return nil, fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
 	encoder.Close()
@@ -1077,6 +1077,10 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	decoder := yaml.NewDecoder(&buf)
 	if err := decoder.Decode(node); err != nil {
 		return nil, fmt.Errorf("failed to decode encoded pkginfo: %v", err)
+	}
+
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
 	}
 
 	scriptFields := map[string]bool{
@@ -1088,12 +1092,15 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 		"uninstallcheck_script": true,
 	}
 
+	// Iterate over the mapping nodes to set Style
 	for i := 0; i < len(node.Content); i += 2 {
 		key := node.Content[i].Value
-		if scriptFields[key] {
-			if node.Content[i+1].Value != "" {
-				node.Content[i+1].Style = yaml.LiteralStyle
-			}
+		if scriptFields[key] && node.Content[i+1].Kind == yaml.ScalarNode && node.Content[i+1].Value != "" {
+			// Normalize line breaks to Unix style
+			node.Content[i+1].Value = strings.ReplaceAll(node.Content[i+1].Value, "\r\n", "\n")
+			node.Content[i+1].Value = strings.ReplaceAll(node.Content[i+1].Value, "\r", "\n")
+			node.Content[i+1].Value = strings.TrimRight(node.Content[i+1].Value, "\n")
+			node.Content[i+1].Style = yaml.LiteralStyle
 		}
 	}
 
@@ -1110,23 +1117,25 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 
 func generateWrapperScript(batchContent, scriptType string) string {
 	if scriptType == "bat" {
-		return fmt.Sprintf(`
-$batchScriptContent = @'
-%s
+		// Trim leading/trailing whitespace and replace CRLF with LF
+		trimmedContent := strings.TrimSpace(batchContent)
+		trimmedContent = strings.ReplaceAll(trimmedContent, "\r\n", "\n")
+
+		// Return the PowerShell wrapper with actual line breaks
+		return `$batchScriptContent = @'
+` + trimmedContent + `
 '@
 
 $batchFile = "$env:TEMP\\temp_script.bat"
 Set-Content -Path $batchFile -Value $batchScriptContent -Encoding UTF8
 try {
-	& cmd.exe /c $batchFile
+    & cmd.exe /c $batchFile
 } finally {
-	Remove-Item $batchFile -ErrorAction SilentlyContinue
-}
-`, strings.TrimSpace(batchContent))
-	} else if scriptType == "ps1" {
-		return batchContent
+    Remove-Item $batchFile -ErrorAction SilentlyContinue
+}`
 	}
-	return ""
+	// For .ps1 or other script types, return the content as-is
+	return batchContent
 }
 
 func parsePackageName(filename string) string {
