@@ -838,45 +838,36 @@ func gorillaImport(
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
 	}
 
-	installerFilename := filepath.Base(packagePath)
-	installerDest := filepath.Join(installerFolderPath, installerFilename)
-	if _, err := copyFile(packagePath, installerDest); err != nil {
-		return false, fmt.Errorf("failed to copy installer: %v", err)
-	}
-
-	installerItemPath = strings.TrimLeft(installerItemPath, "/")
-	installerLocation := "/" + installerItemPath + "/" + installerFilename
-
-	// After metadata is extracted and user input is done:
-
 	pkgsInfo := PkgsInfo{
 		Name:                 metadata.ID,
-		DisplayName:          metadata.Title,
+		DisplayName:          "", // Will set after this if needed
 		Version:              metadata.Version,
 		Developer:            metadata.Developer,
 		Category:             metadata.Category,
 		Description:          metadata.Description,
 		Catalogs:             []string{conf.DefaultCatalog},
 		SupportedArch:        []string{conf.DefaultArch},
-		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType},
+		Installer:            &Installer{Location: "", Hash: fileHash, Type: installerType},
 		Uninstaller:          uninstaller,
+		UnattendedInstall:    true,
+		UnattendedUninstall:  true,
+		ProductCode:          strings.TrimSpace(metadata.ProductCode),
+		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
 		PreinstallScript:     preinstallScript,
 		PostinstallScript:    postinstallScript,
 		PreuninstallScript:   preuninstallScript,
 		PostuninstallScript:  postuninstallScript,
 		InstallCheckScript:   installCheckScript,
 		UninstallCheckScript: uninstallCheckScript,
-		UnattendedInstall:    true,
-		UnattendedUninstall:  true,
-		ProductCode:          strings.TrimSpace(metadata.ProductCode),
-		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
 	}
-	// If metadata.Title is empty, fallback display_name to name
-	if strings.TrimSpace(pkgsInfo.DisplayName) == "" {
+
+	if strings.TrimSpace(metadata.Title) != "" {
+		pkgsInfo.DisplayName = metadata.Title
+	} else {
 		pkgsInfo.DisplayName = pkgsInfo.Name
 	}
 
-	existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, pkgsInfo.Installer.Hash)
+	existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, "")
 	if err != nil {
 		return false, fmt.Errorf("error checking existing packages: %v", err)
 	}
@@ -912,6 +903,10 @@ func gorillaImport(
 		return false, nil
 	}
 
+	// Sanitize name and version for filenames:
+	nameForFilename := strings.ReplaceAll(pkgsInfo.Name, " ", "")
+	versionForFilename := strings.ReplaceAll(pkgsInfo.Version, " ", "")
+
 	if err := createPkgsInfo(
 		packagePath,
 		pkginfoFolderPath,
@@ -924,7 +919,7 @@ func gorillaImport(
 		installerItemPath,
 		pkgsInfo.ProductCode,
 		pkgsInfo.UpgradeCode,
-		pkgsInfo.Installer.Hash,
+		fileHash,
 		pkgsInfo.UnattendedInstall,
 		pkgsInfo.UnattendedUninstall,
 		pkgsInfo.PreinstallScript,
@@ -934,11 +929,13 @@ func gorillaImport(
 		pkgsInfo.InstallCheckScript,
 		pkgsInfo.UninstallCheckScript,
 		pkgsInfo.Uninstaller,
+		nameForFilename,
+		versionForFilename,
 	); err != nil {
 		return false, fmt.Errorf("failed to generate pkginfo: %v", err)
 	}
 
-	outputPath := filepath.Join(pkginfoFolderPath, fmt.Sprintf("%s-%s.yaml", pkgsInfo.Name, pkgsInfo.Version))
+	outputPath := filepath.Join(pkginfoFolderPath, nameForFilename+"-"+versionForFilename+".yaml")
 	absOutputPath, err := filepath.Abs(outputPath)
 	if err != nil {
 		return true, fmt.Errorf("failed to get absolute path for pkginfo: %v", err)
@@ -970,16 +967,19 @@ func createPkgsInfo(
 	installCheckScript string,
 	uninstallCheckScript string,
 	uninstaller *Installer,
+	sanitizedName string,
+	sanitizedVersion string,
 ) error {
 	installerType := strings.TrimPrefix(filepath.Ext(filePath), ".")
-	installerLocation := "/" + installerSubPath + "/" + fmt.Sprintf("%s-%s%s", name, version, filepath.Ext(filePath))
+	installerFilename := sanitizedName + "-" + sanitizedVersion + filepath.Ext(filePath)
+	installerLocation := installerSubPath + "/" + installerFilename
 
 	pkgsInfo := PkgsInfo{
 		Name:                 name,
 		Version:              version,
 		Developer:            developer,
 		Category:             category,
-		Description:          strings.TrimSpace(postinstallScript),
+		Description:          "",
 		Catalogs:             catalogs,
 		SupportedArch:        supportedArch,
 		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType},
@@ -996,15 +996,18 @@ func createPkgsInfo(
 		UninstallCheckScript: uninstallCheckScript,
 	}
 
-	// Set display_name to name
-	pkgsInfo.DisplayName = pkgsInfo.Name
+	// If DisplayName is empty, set it to Name
+	if pkgsInfo.DisplayName == "" {
+		pkgsInfo.DisplayName = pkgsInfo.Name
+	}
+
+	outputPath := filepath.Join(outputDir, sanitizedName+"-"+sanitizedVersion+".yaml")
 
 	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
 		return fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
 
-	outputPath := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
 	if err := os.WriteFile(outputPath, pkgsInfoContent, 0644); err != nil {
 		return fmt.Errorf("failed to write pkginfo to file: %v", err)
 	}
