@@ -685,26 +685,6 @@ func getInstallerPath(installerFlag string) string {
 	return path
 }
 
-func processScript(scriptPath, wrapperType string) (string, error) {
-	if scriptPath == "" {
-		return "", nil
-	}
-
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return "", fmt.Errorf("error reading script file: %v", err)
-	}
-
-	scriptContent := strings.ReplaceAll(string(content), "\r\n", "\n")
-
-	if wrapperType == ".bat" {
-		return generateWrapperScript(scriptContent, "bat"), nil
-	} else if wrapperType == ".ps1" {
-		return scriptContent, nil
-	}
-	return scriptContent, nil
-}
-
 func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string) (*Installer, error) {
 	if uninstallerPath == "" {
 		return nil, nil
@@ -811,30 +791,30 @@ func gorillaImport(
 		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
-	// Process scripts
-	preinstallScript, err := processScript(scripts.Preinstall, filepath.Ext(scripts.Preinstall))
+	// Read script contents from file paths specified in scripts
+	preinstallScriptContent, err := readScriptContent(scripts.Preinstall)
 	if err != nil {
-		return false, fmt.Errorf("preinstall script processing failed: %v", err)
+		return false, fmt.Errorf("failed to read preinstall script: %v", err)
 	}
-	postinstallScript, err := processScript(scripts.Postinstall, filepath.Ext(scripts.Postinstall))
+	postinstallScriptContent, err := readScriptContent(scripts.Postinstall)
 	if err != nil {
-		return false, fmt.Errorf("postinstall script processing failed: %v", err)
+		return false, fmt.Errorf("failed to read postinstall script: %v", err)
 	}
-	preuninstallScript, err := processScript(scripts.Preuninstall, filepath.Ext(scripts.Preuninstall))
+	preuninstallScriptContent, err := readScriptContent(scripts.Preuninstall)
 	if err != nil {
-		return false, fmt.Errorf("preuninstall script processing failed: %v", err)
+		return false, fmt.Errorf("failed to read preuninstall script: %v", err)
 	}
-	postuninstallScript, err := processScript(scripts.Postuninstall, filepath.Ext(scripts.Postuninstall))
+	postuninstallScriptContent, err := readScriptContent(scripts.Postuninstall)
 	if err != nil {
-		return false, fmt.Errorf("postuninstall script processing failed: %v", err)
+		return false, fmt.Errorf("failed to read postuninstall script: %v", err)
 	}
-	installCheckScript, err := processScript(scripts.InstallCheck, filepath.Ext(scripts.InstallCheck))
+	installCheckScriptContent, err := readScriptContent(scripts.InstallCheck)
 	if err != nil {
-		return false, fmt.Errorf("install check script processing failed: %v", err)
+		return false, fmt.Errorf("failed to read install check script: %v", err)
 	}
-	uninstallCheckScript, err := processScript(scripts.UninstallCheck, filepath.Ext(scripts.UninstallCheck))
+	uninstallCheckScriptContent, err := readScriptContent(scripts.UninstallCheck)
 	if err != nil {
-		return false, fmt.Errorf("uninstall check script processing failed: %v", err)
+		return false, fmt.Errorf("failed to read uninstall check script: %v", err)
 	}
 
 	// Process uninstaller
@@ -879,12 +859,12 @@ func gorillaImport(
 		UnattendedUninstall:  true,
 		ProductCode:          strings.TrimSpace(metadata.ProductCode),
 		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
-		PreinstallScript:     preinstallScript,
-		PostinstallScript:    postinstallScript,
-		PreuninstallScript:   preuninstallScript,
-		PostuninstallScript:  postuninstallScript,
-		InstallCheckScript:   installCheckScript,
-		UninstallCheckScript: uninstallCheckScript,
+		PreinstallScript:     preinstallScriptContent,
+		PostinstallScript:    postinstallScriptContent,
+		PreuninstallScript:   preuninstallScriptContent,
+		PostuninstallScript:  postuninstallScriptContent,
+		InstallCheckScript:   installCheckScriptContent,
+		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
 	if strings.TrimSpace(metadata.Title) != "" {
@@ -933,11 +913,13 @@ func gorillaImport(
 	nameForFilename := strings.ReplaceAll(pkgsInfo.Name, " ", "")
 	versionForFilename := strings.ReplaceAll(pkgsInfo.Version, " ", "")
 
-	if err := createPkgsInfo(
+	err = createPkgsInfo(
 		packagePath,
 		pkginfoFolderPath,
 		pkgsInfo.Name,
+		pkgsInfo.DisplayName,
 		pkgsInfo.Version,
+		pkgsInfo.Description,
 		pkgsInfo.Catalogs,
 		pkgsInfo.Category,
 		pkgsInfo.Developer,
@@ -957,7 +939,8 @@ func gorillaImport(
 		pkgsInfo.Uninstaller,
 		nameForFilename,
 		versionForFilename,
-	); err != nil {
+	)
+	if err != nil {
 		return false, fmt.Errorf("failed to generate pkginfo: %v", err)
 	}
 
@@ -975,7 +958,9 @@ func createPkgsInfo(
 	filePath string,
 	outputDir string,
 	name string,
+	displayName string,
 	version string,
+	description string,
 	catalogs []string,
 	category string,
 	developer string,
@@ -1005,7 +990,7 @@ func createPkgsInfo(
 		Version:              version,
 		Developer:            developer,
 		Category:             category,
-		Description:          "",
+		Description:          description,
 		Catalogs:             catalogs,
 		SupportedArch:        supportedArch,
 		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType},
@@ -1204,4 +1189,17 @@ func syncToCloud(conf *config.Configuration, source, destinationSubPath string) 
 
 	fmt.Printf("Successfully synced %s to %s\n", source, destination)
 	return nil
+}
+
+func readScriptContent(scriptPath string) (string, error) {
+	if scriptPath == "" {
+		return "", nil
+	}
+
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return "", fmt.Errorf("error reading script file: %v", err)
+	}
+
+	return string(content), nil
 }
