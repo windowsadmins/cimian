@@ -809,26 +809,43 @@ func gorillaImport(
 	if err != nil {
 		return false, fmt.Errorf("failed to read preinstall script: %v", err)
 	}
+	// { Use generateWrapperScript for preinstall script }
+	preinstallScriptContent = generateWrapperScript(preinstallScriptContent, filepath.Ext(scripts.Preinstall)[1:])
+
 	postinstallScriptContent, err := readScriptContent(scripts.Postinstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read postinstall script: %v", err)
 	}
+	// { Use generateWrapperScript for postinstall script }
+	postinstallScriptContent = generateWrapperScript(postinstallScriptContent, filepath.Ext(scripts.Postinstall)[1:])
+
 	preuninstallScriptContent, err := readScriptContent(scripts.Preuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read preuninstall script: %v", err)
 	}
+	// { Use generateWrapperScript for preuninstall script }
+	preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, filepath.Ext(scripts.Preuninstall)[1:])
+
 	postuninstallScriptContent, err := readScriptContent(scripts.Postuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read postuninstall script: %v", err)
 	}
+	// { Use generateWrapperScript for postuninstall script }
+	postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, filepath.Ext(scripts.Postuninstall)[1:])
+
 	installCheckScriptContent, err := readScriptContent(scripts.InstallCheck)
 	if err != nil {
 		return false, fmt.Errorf("failed to read install check script: %v", err)
 	}
+	// { Use generateWrapperScript for install check script }
+	installCheckScriptContent = generateWrapperScript(installCheckScriptContent, filepath.Ext(scripts.InstallCheck)[1:])
+
 	uninstallCheckScriptContent, err := readScriptContent(scripts.UninstallCheck)
 	if err != nil {
 		return false, fmt.Errorf("failed to read uninstall check script: %v", err)
 	}
+	// { Use generateWrapperScript for uninstall check script }
+	uninstallCheckScriptContent = generateWrapperScript(uninstallCheckScriptContent, filepath.Ext(scripts.UninstallCheck)[1:])
 
 	// Process uninstaller
 	uninstaller, err := processUninstaller(uninstallerPath, filepath.Join(conf.RepoPath, "pkgs"), "apps")
@@ -1092,9 +1109,12 @@ $batchScriptContent = @'
 '@
 
 $batchFile = "$env:TEMP\\temp_script.bat"
-Set-Content -Path $batchFile -Value $batchScriptContent -Encoding ASCII
-& cmd.exe /c $batchFile
-Remove-Item $batchFile
+Set-Content -Path $batchFile -Value $batchScriptContent -Encoding UTF8
+try {
+	& cmd.exe /c $batchFile
+} finally {
+	Remove-Item $batchFile -ErrorAction SilentlyContinue
+}
 `, strings.TrimSpace(batchContent))
 	} else if scriptType == "ps1" {
 		return batchContent
