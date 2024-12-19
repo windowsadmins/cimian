@@ -27,12 +27,12 @@ import (
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
 	Name                 string     `yaml:"name"`
-	DisplayName          string     `yaml:"display_name"`
+	DisplayName          string     `yaml:"display_name,omitempty"`
 	Version              string     `yaml:"version"`
-	Description          string     `yaml:"description"`
+	Description          string     `yaml:"description,omitempty"`
 	Catalogs             []string   `yaml:"catalogs"`
-	Category             string     `yaml:"category"`
-	Developer            string     `yaml:"developer"`
+	Category             string     `yaml:"category,omitempty"`
+	Developer            string     `yaml:"developer,omitempty"`
 	UnattendedInstall    bool       `yaml:"unattended_install"`
 	UnattendedUninstall  bool       `yaml:"unattended_uninstall"`
 	Installer            *Installer `yaml:"installer"`
@@ -295,15 +295,10 @@ func extractInstallerMetadata(packagePath string) (Metadata, error) {
 }
 
 func promptForAllMetadata(packagePath string, m Metadata) Metadata {
-	// If metadata fields are empty, set reasonable defaults
+	// Determine defaults
 	defaultID := m.ID
 	if defaultID == "" {
 		defaultID = parsePackageName(filepath.Base(packagePath))
-	}
-
-	defaultTitle := m.Title
-	if defaultTitle == "" {
-		defaultTitle = defaultID
 	}
 
 	defaultVersion := m.Version
@@ -311,16 +306,12 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 		defaultVersion = "1.0.0"
 	}
 
+	// Developer, Description, and Category can remain empty if not provided
 	defaultDeveloper := m.Developer
-	// If developer wasn't extracted, just leave it blank as default
-	// No need to fill in a placeholder if you don't have one
-	// same logic for description and category
-
 	defaultDescription := m.Description
 	defaultCategory := m.Category
 
-	// Always prompt user, providing current or default values
-	fmt.Printf("Enter the Package Name (unique identifier) [%s]: ", defaultID)
+	fmt.Printf("Identifier [%s]: ", defaultID)
 	var input string
 	fmt.Scanln(&input)
 	input = strings.TrimSpace(input)
@@ -330,17 +321,9 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 		m.ID = input
 	}
 
-	fmt.Printf("Enter the Display Name [%s]: ", defaultTitle)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Title = defaultTitle
-	} else {
-		m.Title = input
-	}
+	// We do NOT prompt for Display Name. We'll set it equal to Name later.
 
-	fmt.Printf("Enter the Version [%s]: ", defaultVersion)
+	fmt.Printf("Version [%s]: ", defaultVersion)
 	input = ""
 	fmt.Scanln(&input)
 	input = strings.TrimSpace(input)
@@ -350,7 +333,7 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 		m.Version = input
 	}
 
-	fmt.Printf("Enter the Developer [%s]: ", defaultDeveloper)
+	fmt.Printf("Developer [%s]: ", defaultDeveloper)
 	input = ""
 	fmt.Scanln(&input)
 	input = strings.TrimSpace(input)
@@ -360,7 +343,7 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 		m.Developer = input
 	}
 
-	fmt.Printf("Enter the Description [%s]: ", defaultDescription)
+	fmt.Printf("Description [%s]: ", defaultDescription)
 	input = ""
 	fmt.Scanln(&input)
 	input = strings.TrimSpace(input)
@@ -370,7 +353,7 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 		m.Description = input
 	}
 
-	fmt.Printf("Enter the Category [%s]: ", defaultCategory)
+	fmt.Printf("Category [%s]: ", defaultCategory)
 	input = ""
 	fmt.Scanln(&input)
 	input = strings.TrimSpace(input)
@@ -381,18 +364,6 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 	}
 
 	return m
-}
-
-// getInput prompts the user and returns the input or a default value.
-func getInput(prompt, defaultVal string) string {
-	fmt.Print(prompt)
-	var input string
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return defaultVal
-	}
-	return input
 }
 
 // extractNuGetMetadata extracts metadata from a .nupkg file.
@@ -682,7 +653,7 @@ func getInstallerPath(installerFlag string) string {
 		return flag.Arg(0)
 	}
 
-	fmt.Print("Enter the path to the installer file: ")
+	fmt.Print("path to the installer file: ")
 	var path string
 	fmt.Scanln(&path)
 	return path
@@ -737,7 +708,7 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 }
 
 func promptInstallerItemPath() (string, error) {
-	fmt.Print("Enter the Installer Item Path in the repo (default: /apps): ")
+	fmt.Print("Repo location (default: /apps): ")
 	var path string
 	fmt.Scanln(&path)
 	path = strings.TrimSpace(path)
@@ -778,6 +749,17 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
 		}
 	}
 	return nil, false, nil
+}
+
+func getInput(prompt, defaultVal string) string {
+	fmt.Printf("%s [%s]: ", prompt, defaultVal)
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultVal
+	}
+	return input
 }
 
 func gorillaImport(
@@ -862,7 +844,10 @@ func gorillaImport(
 		return false, fmt.Errorf("failed to copy installer: %v", err)
 	}
 
+	installerItemPath = strings.TrimLeft(installerItemPath, "/")
 	installerLocation := "/" + installerItemPath + "/" + installerFilename
+
+	// After metadata is extracted and user input is done:
 
 	pkgsInfo := PkgsInfo{
 		Name:                 metadata.ID,
@@ -886,6 +871,10 @@ func gorillaImport(
 		ProductCode:          strings.TrimSpace(metadata.ProductCode),
 		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
 	}
+	// If metadata.Title is empty, fallback display_name to name
+	if strings.TrimSpace(pkgsInfo.DisplayName) == "" {
+		pkgsInfo.DisplayName = pkgsInfo.Name
+	}
 
 	existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, pkgsInfo.Installer.Hash)
 	if err != nil {
@@ -907,12 +896,12 @@ func gorillaImport(
 	}
 
 	fmt.Println("\nPkginfo details:")
-	fmt.Printf("    Name: %s\n", capitalizeFirst(pkgsInfo.Name))
-	fmt.Printf("    Display Name: %s\n", capitalizeFirst(pkgsInfo.DisplayName))
-	fmt.Printf("    Version: %s\n", capitalizeFirst(pkgsInfo.Version))
+	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
+	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
+	fmt.Printf("    Version: %s\n", pkgsInfo.Version)
 	fmt.Printf("    Description: %s\n", pkgsInfo.Description)
-	fmt.Printf("    Category: %s\n", capitalizeFirst(pkgsInfo.Category))
-	fmt.Printf("    Developer: %s\n", capitalizeFirst(pkgsInfo.Developer))
+	fmt.Printf("    Category: %s\n", pkgsInfo.Category)
+	fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
 	fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
 	fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
 	fmt.Println()
@@ -988,16 +977,17 @@ func createPkgsInfo(
 	pkgsInfo := PkgsInfo{
 		Name:                 name,
 		Version:              version,
+		Developer:            developer,
+		Category:             category,
+		Description:          strings.TrimSpace(postinstallScript),
+		Catalogs:             catalogs,
+		SupportedArch:        supportedArch,
 		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType},
 		Uninstaller:          uninstaller,
-		Catalogs:             catalogs,
-		Category:             category,
-		Developer:            developer,
-		SupportedArch:        supportedArch,
-		ProductCode:          strings.TrimSpace(productCode),
-		UpgradeCode:          strings.TrimSpace(upgradeCode),
 		UnattendedInstall:    unattendedInstall,
 		UnattendedUninstall:  unattendedUninstall,
+		ProductCode:          strings.TrimSpace(productCode),
+		UpgradeCode:          strings.TrimSpace(upgradeCode),
 		PreinstallScript:     preinstallScript,
 		PostinstallScript:    postinstallScript,
 		PreuninstallScript:   preuninstallScript,
@@ -1006,24 +996,20 @@ func createPkgsInfo(
 		UninstallCheckScript: uninstallCheckScript,
 	}
 
-	outputPath := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
+	// Set display_name to name
+	pkgsInfo.DisplayName = pkgsInfo.Name
+
 	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
 		return fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
 
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("%s-%s.yaml", name, version))
 	if err := os.WriteFile(outputPath, pkgsInfoContent, 0644); err != nil {
 		return fmt.Errorf("failed to write pkginfo to file: %v", err)
 	}
 
 	return nil
-}
-
-func capitalizeFirst(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	return strings.ToUpper(string(s[0])) + s[1:]
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
