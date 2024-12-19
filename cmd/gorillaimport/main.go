@@ -58,16 +58,17 @@ type Installer struct {
 
 // Metadata holds the extracted metadata from installer packages.
 type Metadata struct {
-	Title       string `xml:"title"`
-	ID          string `xml:"id"`
-	Version     string `xml:"version"`
-	Developer   string `xml:"manufacturer"`
-	Category    string `xml:"category"`
-	Description string `xml:"description"`
-	Tags        string `xml:"tags,omitempty"`
-	Readme      string `xml:"readme,omitempty"`
-	ProductCode string
-	UpgradeCode string
+	Title        string `xml:"title"`
+	ID           string `xml:"id"`
+	Version      string `xml:"version"`
+	Developer    string `xml:"manufacturer"`
+	Category     string `xml:"category"`
+	Description  string `xml:"description"`
+	Tags         string `xml:"tags,omitempty"`
+	Readme       string `xml:"readme,omitempty"`
+	ProductCode  string
+	UpgradeCode  string
+	Architecture string
 }
 
 // ScriptPaths holds paths to various scripts.
@@ -228,7 +229,7 @@ func configureGorillaImport() error {
 	defaultRepoPath := filepath.Join(usr.HomeDir, "DevOps", "Gorilla", "deployment")
 	defaultCloudProvider := "none"
 	defaultCatalog := "Upcoming"
-	defaultArch := "x86_64"
+	defaultArch := "x64"
 
 	fmt.Printf("Enter Repo Path [%s]: ", defaultRepoPath)
 	var repoPathInput string
@@ -286,7 +287,7 @@ func configureGorillaImport() error {
 }
 
 // extractInstallerMetadata extracts metadata from the installer package.
-func extractInstallerMetadata(packagePath string) (Metadata, error) {
+func extractInstallerMetadata(packagePath string, conf *config.Configuration) (Metadata, error) {
 	ext := strings.ToLower(filepath.Ext(packagePath))
 	var metadata Metadata
 	var err error
@@ -312,12 +313,12 @@ func extractInstallerMetadata(packagePath string) (Metadata, error) {
 		return Metadata{}, err
 	}
 
-	metadata = promptForAllMetadata(packagePath, metadata)
+	metadata = promptForAllMetadata(packagePath, metadata, conf)
 
 	return metadata, nil
 }
 
-func promptForAllMetadata(packagePath string, m Metadata) Metadata {
+func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configuration) Metadata {
 	// Determine defaults
 	defaultID := m.ID
 	if defaultID == "" {
@@ -384,6 +385,18 @@ func promptForAllMetadata(packagePath string, m Metadata) Metadata {
 		m.Category = defaultCategory
 	} else {
 		m.Category = input
+	}
+
+	// Prompt for architecture
+	defaultArch := conf.DefaultArch
+	fmt.Printf("Supported Architecture [%s]: ", defaultArch)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Architecture = defaultArch
+	} else {
+		m.Architecture = input
 	}
 
 	return m
@@ -782,7 +795,7 @@ func gorillaImport(
 	fmt.Printf("Processing package: %s\n", packagePath)
 
 	// Extract metadata
-	metadata, err := extractInstallerMetadata(packagePath)
+	metadata, err := extractInstallerMetadata(packagePath, conf)
 	if err != nil {
 		return false, fmt.Errorf("metadata extraction failed: %v", err)
 	}
@@ -852,7 +865,7 @@ func gorillaImport(
 		Category:             metadata.Category,
 		Description:          metadata.Description,
 		Catalogs:             []string{conf.DefaultCatalog},
-		SupportedArch:        []string{conf.DefaultArch},
+		SupportedArch:        []string{metadata.Architecture},
 		Installer:            &Installer{Location: "", Hash: fileHash, Type: installerType},
 		Uninstaller:          uninstaller,
 		UnattendedInstall:    true,
