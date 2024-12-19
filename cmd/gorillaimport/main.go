@@ -389,7 +389,7 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 
 	// Prompt for architecture
 	defaultArch := conf.DefaultArch
-	fmt.Printf("Supported Architecture [%s]: ", defaultArch)
+	fmt.Printf("Architecture(s) [%s]: ", defaultArch)
 	input = ""
 	fmt.Scanln(&input)
 	input = strings.TrimSpace(input)
@@ -809,43 +809,31 @@ func gorillaImport(
 	if err != nil {
 		return false, fmt.Errorf("failed to read preinstall script: %v", err)
 	}
-	// { Use generateWrapperScript for preinstall script }
-	preinstallScriptContent = generateWrapperScript(preinstallScriptContent, filepath.Ext(scripts.Preinstall)[1:])
 
 	postinstallScriptContent, err := readScriptContent(scripts.Postinstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read postinstall script: %v", err)
 	}
-	// { Use generateWrapperScript for postinstall script }
-	postinstallScriptContent = generateWrapperScript(postinstallScriptContent, filepath.Ext(scripts.Postinstall)[1:])
 
 	preuninstallScriptContent, err := readScriptContent(scripts.Preuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read preuninstall script: %v", err)
 	}
-	// { Use generateWrapperScript for preuninstall script }
-	preuninstallScriptContent = generateWrapperScript(preuninstallScriptContent, filepath.Ext(scripts.Preuninstall)[1:])
 
 	postuninstallScriptContent, err := readScriptContent(scripts.Postuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to read postuninstall script: %v", err)
 	}
-	// { Use generateWrapperScript for postuninstall script }
-	postuninstallScriptContent = generateWrapperScript(postuninstallScriptContent, filepath.Ext(scripts.Postuninstall)[1:])
 
 	installCheckScriptContent, err := readScriptContent(scripts.InstallCheck)
 	if err != nil {
 		return false, fmt.Errorf("failed to read install check script: %v", err)
 	}
-	// { Use generateWrapperScript for install check script }
-	installCheckScriptContent = generateWrapperScript(installCheckScriptContent, filepath.Ext(scripts.InstallCheck)[1:])
 
 	uninstallCheckScriptContent, err := readScriptContent(scripts.UninstallCheck)
 	if err != nil {
 		return false, fmt.Errorf("failed to read uninstall check script: %v", err)
 	}
-	// { Use generateWrapperScript for uninstall check script }
-	uninstallCheckScriptContent = generateWrapperScript(uninstallCheckScriptContent, filepath.Ext(scripts.UninstallCheck)[1:])
 
 	// Process uninstaller
 	uninstaller, err := processUninstaller(uninstallerPath, filepath.Join(conf.RepoPath, "pkgs"), "apps")
