@@ -109,7 +109,7 @@ func writeCatalogs(catalogs map[string][]PkgsInfo, outputDir string) error {
 // makeCatalogs orchestrates the process of scanning the repo and building catalogs.
 func makeCatalogs(repoPath string) error {
 	fmt.Println("Getting list of pkgsinfo...")
-	pkgsInfos, err := scanRepo(filepath.Join(repoPath, "pkgsinfo"))
+	pkgsInfos, err := scanRepo(repoPath)
 	if err != nil {
 		return fmt.Errorf("error scanning repo: %v", err)
 	}
