@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/windowsadmins/gorilla/pkg/catalog"
@@ -82,8 +83,39 @@ func runCMD(command string, arguments []string) (string, error) {
 	return output, nil
 }
 
-// installItem installs a single catalog item.
+// getSystemArchitecture returns the architecture of the system.
+func getSystemArchitecture() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x64"
+	case "arm64":
+		return "arm64"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+// supportsArchitecture checks if the package supports the given system architecture.
+func supportsArchitecture(item catalog.Item, systemArch string) bool {
+	for _, arch := range item.SupportedArch {
+		if arch == systemArch {
+			return true
+		}
+	}
+	return false
+}
+
+// installItem installs a single catalog item based on the system architecture.
 func installItem(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+	systemArch := getSystemArchitecture()
+
+	// Check if the package supports the system architecture
+	if !supportsArchitecture(item, systemArch) {
+		msg := fmt.Sprintf("Skipping installation due to architecture mismatch: %s", item.Name)
+		logging.Info(msg, "required_architectures", item.SupportedArch, "system_architecture", systemArch)
+		return msg
+	}
+
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
 

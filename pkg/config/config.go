@@ -90,7 +90,7 @@ func GetDefaultConfig() *Configuration {
 		CheckOnly:        false,
 		ClientIdentifier: "",
 		SoftwareRepoURL:  "https://gorilla.example.com",
-		DefaultArch:      "x86_64",
+		DefaultArch:      "x64",
 		DefaultCatalog:   "testing",
 		CloudProvider:    "none",
 		CloudBucket:      "",

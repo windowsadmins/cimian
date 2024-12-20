@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"time"
 
@@ -103,8 +104,33 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 // This abstraction allows us to override when testing
 var installerInstall = installer.Install
 
-// Installs prepares and then installs an array of items
+// getSystemArchitecture returns the architecture of the system.
+func getSystemArchitecture() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x64"
+	case "arm64":
+		return "arm64"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+// supportsArchitecture checks if the package supports the given system architecture.
+func supportsArchitecture(item catalog.Item, systemArch string) bool {
+	for _, arch := range item.SupportedArch {
+		if arch == systemArch {
+			return true
+		}
+	}
+	return false
+}
+
+// Installs prepares and then installs an array of items based on system architecture.
 func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, urlPackages, cachePath string, CheckOnly bool, cfg *config.Configuration) {
+	systemArch := getSystemArchitecture()
+	logging.Info("System architecture detected", "architecture", systemArch)
+
 	// Iterate through the installs array, install dependencies, and then the item itself
 	for _, item := range installs {
 		// Get the first valid item from our catalogs
@@ -114,6 +140,13 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 			logging.Warn("Processing warning: failed to process install item", "error", err)
 			continue
 		}
+
+		// Check if the package supports the system architecture
+		if !supportsArchitecture(validItem, systemArch) {
+			logging.Info("Skipping installation due to architecture mismatch", "package", validItem.Name, "required_architectures", validItem.SupportedArch, "system_architecture", systemArch)
+			continue
+		}
+
 		// Check for dependencies and install if found
 		if len(validItem.Dependencies) > 0 {
 			for _, dependency := range validItem.Dependencies {
@@ -123,9 +156,17 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 					logging.Warn("Processing warning: failed to process dependency", "error", err)
 					continue
 				}
+
+				// Check if the dependency supports the system architecture
+				if !supportsArchitecture(validDependency, systemArch) {
+					logging.Info("Skipping dependency installation due to architecture mismatch", "package", validDependency.Name, "required_architectures", validDependency.SupportedArch, "system_architecture", systemArch)
+					continue
+				}
+
 				installerInstall(validDependency, "install", urlPackages, cachePath, CheckOnly, cfg)
 			}
 		}
+
 		// Install the item
 		installerInstall(validItem, "install", urlPackages, cachePath, CheckOnly, cfg)
 	}
