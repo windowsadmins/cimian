@@ -278,8 +278,9 @@ func prepareDownloadItems(manifestItems []manifest.Item) map[string]string {
 // needsUpdate checks if the given item needs an update.
 func needsUpdate(item manifest.Item, cfg *config.Configuration) bool {
 	catalogItem := catalog.Item{
-		Name:    item.Name,
-		Version: item.Version,
+		Name:          item.Name,
+		Version:       item.Version,
+		SupportedArch: item.SupportedArch,
 	}
 	cachePath := cfg.CachePath
 	actionNeeded, err := status.CheckStatus(catalogItem, "install", cachePath)
