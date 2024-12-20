@@ -887,6 +887,17 @@ func gorillaImport(
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
 	}
 
+	// Sanitize name and version for filenames:
+	nameForFilename := strings.ReplaceAll(metadata.ID, " ", "")
+	versionForFilename := strings.ReplaceAll(metadata.Version, " ", "")
+
+	// Copy the installer file to the repo's /pkgs folder with sanitized filename
+	installerFilename := nameForFilename + "-" + versionForFilename + filepath.Ext(packagePath)
+	installerDest := filepath.Join(installerFolderPath, installerFilename)
+	if _, err := copyFile(packagePath, installerDest); err != nil {
+		return false, fmt.Errorf("failed to copy installer: %v", err)
+	}
+
 	pkgsInfo := PkgsInfo{
 		Name:                 metadata.ID,
 		DisplayName:          "", // Will set after this if needed
@@ -896,7 +907,7 @@ func gorillaImport(
 		Developer:            metadata.Developer,
 		Catalogs:             []string{conf.DefaultCatalog},
 		SupportedArch:        []string{metadata.Architecture},
-		Installer:            &Installer{Location: "", Hash: fileHash, Type: installerType},
+		Installer:            &Installer{Location: filepath.Join(installerItemPath, installerFilename), Hash: fileHash, Type: installerType},
 		Uninstaller:          uninstaller,
 		UnattendedInstall:    true,
 		UnattendedUninstall:  true,
@@ -951,10 +962,6 @@ func gorillaImport(
 		fmt.Println("Import canceled.")
 		return false, nil
 	}
-
-	// Sanitize name and version for filenames:
-	nameForFilename := strings.ReplaceAll(pkgsInfo.Name, " ", "")
-	versionForFilename := strings.ReplaceAll(pkgsInfo.Version, " ", "")
 
 	err = createPkgsInfo(
 		packagePath,
