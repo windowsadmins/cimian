@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/version"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -133,13 +135,6 @@ func main() {
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
 
-	// Handle version flag.
-	if *showVersion {
-		fmt.Println("gorilla makecatalogs version 1.0")
-		return
-	}
-
-	// Use config repo path if repo_url flag is not provided.
 	// If repo_url not specified, then load from config
 	if *repoPath == "" {
 		conf, err := loadConfig()
@@ -148,6 +143,12 @@ func main() {
 			os.Exit(1)
 		}
 		*repoPath = conf.RepoPath
+	}
+
+	// flag to show version 
+	if *showVersion {
+		version.Print()
+		return
 	}
 
 	// Execute the makeCatalogs function.

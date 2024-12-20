@@ -18,6 +18,7 @@ import (
 	"github.com/windowsadmins/gorilla/pkg/manifest"
 	"github.com/windowsadmins/gorilla/pkg/preflight"
 	"github.com/windowsadmins/gorilla/pkg/status"
+	"github.com/windowsadmins/gorilla/pkg/version"
 
 	"golang.org/x/sys/windows"
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,7 @@ func main() {
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")
 	installOnly := pflag.Bool("installonly", false, "Install pending updates without checking for new ones.")
 	auto := pflag.Bool("auto", false, "Perform automatic updates.")
+	versionFlag := pflag.Bool("version", false, "Print the version and exit.")
 
 	var verbosity int
 	pflag.CountVarP(&verbosity, "verbose", "v", "Increase verbosity by adding more 'v' (e.g. -v, -vv, -vvv)")
@@ -44,9 +46,16 @@ func main() {
 		fmt.Println("  --installonly       Install pending updates without checking for new ones.")
 		fmt.Println("  --auto              Perform automatic updates.")
 		fmt.Println("  --show-config       Display the current configuration and exit.")
+		fmt.Println("  --version           Print the version and exit.")
 	}
 
 	pflag.Parse()
+
+	// Handle --version
+	if *versionFlag {
+		version.Print()
+		os.Exit(0)
+	}
 
 	// Load configuration
 	cfg, err := config.LoadConfig()
