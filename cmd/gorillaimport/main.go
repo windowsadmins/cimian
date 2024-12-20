@@ -170,7 +170,7 @@ func main() {
 	}
 
 	// Always run makecatalogs without confirmation.
-	if err := runMakeCatalogs(); err != nil {
+	if err := runMakeCatalogs(true); err != nil {
 		fmt.Printf("makecatalogs error: %v\n", err)
 		os.Exit(1)
 	}
@@ -753,7 +753,7 @@ func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFil
 	fileContent, err := os.ReadFile(allCatalogPath)
 	if err != nil {
 		// Try running makecatalogs once if All.yaml is missing
-		runMakeCatalogs()
+		runMakeCatalogs(false)
 		fileContent, err = os.ReadFile(allCatalogPath)
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to read All.yaml even after makecatalogs: %v", err)
@@ -1204,14 +1204,19 @@ func uploadToCloud(conf *config.Configuration) error {
 	return nil
 }
 
-func runMakeCatalogs() error {
+func runMakeCatalogs(silent bool) error {
 	makeCatalogsBinary := `C:\Program Files\Gorilla\makecatalogs.exe`
 
 	if _, err := os.Stat(makeCatalogsBinary); os.IsNotExist(err) {
 		return fmt.Errorf("makecatalogs binary not found at %s", makeCatalogsBinary)
 	}
 
-	cmd := exec.Command(makeCatalogsBinary)
+	args := []string{}
+	if silent {
+		args = append(args, "-silent")
+	}
+
+	cmd := exec.Command(makeCatalogsBinary, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
