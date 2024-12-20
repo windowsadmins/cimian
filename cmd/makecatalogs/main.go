@@ -71,12 +71,15 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 }
 
 // buildCatalogs organizes pkgsInfos into catalogs.
-func buildCatalogs(pkgsInfos []PkgsInfo) (map[string][]PkgsInfo, error) {
+func buildCatalogs(pkgsInfos []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) {
 	catalogs := make(map[string][]PkgsInfo)
 
 	for _, pkg := range pkgsInfos {
 		for _, catalog := range pkg.Catalogs {
-			fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catalog)
+
+			if !silent {
+				fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catalog)
+			}
 			catalogs[catalog] = append(catalogs[catalog], pkg)
 		}
 	}
@@ -110,14 +113,14 @@ func writeCatalogs(catalogs map[string][]PkgsInfo, outputDir string) error {
 }
 
 // makeCatalogs orchestrates the process of scanning the repo and building catalogs.
-func makeCatalogs(repoPath string) error {
+func makeCatalogs(repoPath string, silent bool) error {
 	fmt.Println("Getting list of pkgsinfo...")
 	pkgsInfos, err := scanRepo(repoPath)
 	if err != nil {
 		return fmt.Errorf("error scanning repo: %v", err)
 	}
 
-	catalogs, err := buildCatalogs(pkgsInfos)
+	catalogs, err := buildCatalogs(pkgsInfos, silent)
 	if err != nil {
 		return fmt.Errorf("error building catalogs: %v", err)
 	}
@@ -133,6 +136,7 @@ func main() {
 	// Parse flags first
 	repoPath := flag.String("repo_path", "", "Path to the Gorilla repo.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
+	silent := flag.Bool("silent", false, "Suppress output for a silent run.")
 	flag.Parse()
 
 	// If repo_path not specified, then load from config
@@ -145,14 +149,14 @@ func main() {
 		*repoPath = conf.RepoPath
 	}
 
-	// flag to show version 
+	// flag to show version
 	if *showVersion {
 		version.Print()
 		return
 	}
 
 	// Execute the makeCatalogs function.
-	if err := makeCatalogs(*repoPath); err != nil {
+	if err := makeCatalogs(*repoPath, *silent); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
