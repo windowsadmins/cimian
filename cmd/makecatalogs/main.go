@@ -74,6 +74,7 @@ func buildCatalogs(pkgsInfos []PkgsInfo) (map[string][]PkgsInfo, error) {
 
 	for _, pkg := range pkgsInfos {
 		for _, catalog := range pkg.Catalogs {
+			fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catalog)
 			catalogs[catalog] = append(catalogs[catalog], pkg)
 		}
 	}
