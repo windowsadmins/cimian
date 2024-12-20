@@ -131,11 +131,11 @@ func makeCatalogs(repoPath string) error {
 
 func main() {
 	// Parse flags first
-	repoPath := flag.String("repo_url", "", "Path to the Gorilla repo.")
+	repoPath := flag.String("repo_path", "", "Path to the Gorilla repo.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
 
-	// If repo_url not specified, then load from config
+	// If repo_path not specified, then load from config
 	if *repoPath == "" {
 		conf, err := loadConfig()
 		if err != nil {
