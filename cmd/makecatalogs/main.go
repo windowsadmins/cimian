@@ -128,14 +128,7 @@ func makeCatalogs(repoPath string) error {
 }
 
 func main() {
-	// Load configuration.
-	conf, err := loadConfig()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Parse command-line flags.
+	// Parse flags first
 	repoPath := flag.String("repo_url", "", "Path to the Gorilla repo.")
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
@@ -147,7 +140,13 @@ func main() {
 	}
 
 	// Use config repo path if repo_url flag is not provided.
+	// If repo_url not specified, then load from config
 	if *repoPath == "" {
+		conf, err := loadConfig()
+		if err != nil {
+			fmt.Printf("Error loading config: %v\n", err)
+			os.Exit(1)
+		}
 		*repoPath = conf.RepoPath
 	}
 
