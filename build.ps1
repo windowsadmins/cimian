@@ -283,7 +283,8 @@ foreach ($dir in $binaryDirs) {
         "-X github.com/windowsadmins/gorilla/pkg/version.version=$env:RELEASE_VERSION " +
         "-X github.com/windowsadmins/gorilla/pkg/version.branch=$branchName " +
         "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$buildDate " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision"
+        "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision " +
+        "-X main.version=$env:RELEASE_VERSION"
 
     # Build command with error handling
     try {

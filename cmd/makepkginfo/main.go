@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	
+	"github.com/windowsadmins/gorilla/pkg/version"
 )
 
 // PkgsInfo represents the package information
@@ -118,6 +120,7 @@ func main() {
 		description          string
 		unattendedInstall    bool
 	)
+	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.StringVar(&installCheckScript, "installcheck_script", "", "Path to install check script")
 	flag.StringVar(&uninstallCheckScript, "uninstallcheck_script", "", "Path to uninstall check script")
 	flag.StringVar(&preinstallScript, "preinstall_script", "", "Path to preinstall script")
@@ -131,6 +134,12 @@ func main() {
 	flag.BoolVar(&unattendedInstall, "unattended_install", false, "Set unattended_install to true")
 	flag.Parse()
 
+	// Handle --version flag
+	if *showVersion {
+		version.Print()
+		return
+	}
+
 	if flag.NArg() < 1 {
 		fmt.Println("Usage: makepkginfo [options] /path/to/installer.msi")
 		flag.PrintDefaults()
@@ -141,7 +150,7 @@ func main() {
 	installerItem = strings.TrimSuffix(installerItem, "/")
 
 	// Extract MSI metadata
-	productName, version, manufacturer, err := extractMSIMetadata(installerItem)
+	productName, pkgVersion, manufacturer, err := extractMSIMetadata(installerItem)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error extracting MSI metadata: %v\n", err)
 		os.Exit(1)
@@ -158,7 +167,7 @@ func main() {
 	pkgsinfo := PkgsInfo{
 		Name:                 productName,
 		DisplayName:          displayName,
-		Version:              version,
+		Version:              pkgVersion,
 		Catalogs:             strings.Split(catalogs, ","),
 		Category:             category,
 		Developer:            manufacturer,
