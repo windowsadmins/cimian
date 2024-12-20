@@ -25,6 +25,7 @@ type Item struct {
 	Updates           []string `yaml:"managed_updates"`
 	OptionalInstalls  []string `yaml:"optional_installs"`
 	Catalogs          []string `yaml:"catalogs"`
+	SupportedArch     []string `yaml:"supported_architectures"`
 }
 
 // AuthenticatedGet retrieves manifests and downloads catalogs listed within them.
