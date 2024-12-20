@@ -39,7 +39,9 @@ func loadConfig() (*config.Configuration, error) {
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	var pkgsInfos []PkgsInfo
 
-	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+	pkgsinfoPath := filepath.Join(repoPath, "pkgsinfo")
+
+	err := filepath.Walk(pkgsinfoPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -52,7 +54,12 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 			if err := yaml.Unmarshal(fileContent, &pkgsInfo); err != nil {
 				return err
 			}
-			pkgsInfo.FilePath = path
+			// Set FilePath relative to RepoPath
+			relativePath, err := filepath.Rel(repoPath, path)
+			if err != nil {
+				return fmt.Errorf("failed to compute relative path for %s: %v", path, err)
+			}
+			pkgsInfo.FilePath = relativePath
 			pkgsInfos = append(pkgsInfos, pkgsInfo)
 		}
 		return nil
