@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/version"
 )
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
@@ -82,13 +83,6 @@ type ScriptPaths struct {
 }
 
 func main() {
-	// Attempt to load configuration, if fails due to missing directories, create them.
-	conf, err := loadOrCreateConfig()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
 	// Parse command-line flags.
 	configFlag := flag.Bool("config", false, "Run interactive configuration setup.")
 	archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
@@ -101,7 +95,20 @@ func main() {
 	postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script.")
 	installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
 	uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")
+	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
+
+	if *showVersion {
+		version.Print()
+		return
+	}
+
+	// Attempt to load configuration, if fails due to missing directories, create them.
+	conf, err := loadOrCreateConfig()
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Run interactive configuration setup if --config is provided.
 	if *configFlag {

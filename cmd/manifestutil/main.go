@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
+
 	"gopkg.in/yaml.v3"
+
+	"github.com/windowsadmins/gorilla/pkg/version"
 )
 
 // Manifest represents the structure of the manifest YAML files.
@@ -127,7 +130,15 @@ func main() {
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
 	removePackage := flag.String("remove-pkg", "", "Package to remove from manifest")
 
+	showVersion := flag.Bool("version", false, "Print the version and exit.")
+
 	flag.Parse()
+
+	// Handle --version flag
+	if *showVersion {
+		version.Print()
+		return
+	}
 
 	// List manifests
 	if *listManifests {
