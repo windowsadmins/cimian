@@ -1,5 +1,3 @@
-// cmd/makecatalogs/main.go
-
 package main
 
 import (
@@ -7,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 	"github.com/windowsadmins/gorilla/pkg/version"
-
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +27,10 @@ type PkgsInfo struct {
 	SupportedArch       []string `yaml:"supported_architectures"`
 	ProductCode         string   `yaml:"product_code,omitempty"`
 	UpgradeCode         string   `yaml:"upgrade_code,omitempty"`
-	FilePath            string
+	Notes               string   `yaml:"notes,omitempty"`
+	InstallerLocation   string   `yaml:"installer_item_location,omitempty"`
+	UninstallerLocation string   `yaml:"uninstaller_item_location,omitempty"`
+	FilePath string
 }
 
 // loadConfig loads the configuration using config.LoadConfig without any parameters.
@@ -37,10 +38,9 @@ func loadConfig() (*config.Configuration, error) {
 	return config.LoadConfig()
 }
 
-// scanRepo scans the repoPath for pkginfo YAML files and returns a slice of PkgsInfo.
+// scanRepo scans the repoPath for pkgsinfo YAML files and returns a slice of PkgsInfo.
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	var pkgsInfos []PkgsInfo
-
 	pkgsinfoPath := filepath.Join(repoPath, "pkgsinfo")
 
 	err := filepath.Walk(pkgsinfoPath, func(path string, info os.FileInfo, err error) error {
@@ -48,116 +48,220 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 			return err
 		}
 		if filepath.Ext(path) == ".yaml" {
-			fileContent, err := os.ReadFile(path)
-			if err != nil {
-				return err
+			fileContent, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
 			}
 			var pkgsInfo PkgsInfo
-			if err := yaml.Unmarshal(fileContent, &pkgsInfo); err != nil {
-				return err
+			if yamlErr := yaml.Unmarshal(fileContent, &pkgsInfo); yamlErr != nil {
+				return yamlErr
 			}
-			// Set FilePath relative to RepoPath
-			relativePath, err := filepath.Rel(repoPath, path)
-			if err != nil {
-				return fmt.Errorf("failed to compute relative path for %s: %v", path, err)
+			relPath, relErr := filepath.Rel(repoPath, path)
+			if relErr != nil {
+				return fmt.Errorf("failed to compute relative path for %s: %v", path, relErr)
 			}
-			pkgsInfo.FilePath = relativePath
+			pkgsInfo.FilePath = relPath
 			pkgsInfos = append(pkgsInfos, pkgsInfo)
 		}
 		return nil
 	})
-
 	return pkgsInfos, err
 }
 
-// buildCatalogs organizes pkgsInfos into catalogs.
-func buildCatalogs(pkgsInfos []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) {
-	catalogs := make(map[string][]PkgsInfo)
+// processPkgsInfos handles optional verification of installer/uninstaller files.
+func processPkgsInfos(repoPath string, pkgsInfos []PkgsInfo, skipPayloadCheck bool, force bool) ([]PkgsInfo, error) {
+	var verifiedList []PkgsInfo
 
-	for _, pkg := range pkgsInfos {
-		for _, catalog := range pkg.Catalogs {
+	// Map actual package files under repoPath/pkgs.
+	pkgsDir := filepath.Join(repoPath, "pkgs")
+	allPkgFiles := make(map[string]bool)
 
-			if !silent {
-				fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catalog)
-			}
-			catalogs[catalog] = append(catalogs[catalog], pkg)
+	err := filepath.Walk(pkgsDir, func(path string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return werr
 		}
+		if !info.IsDir() {
+			rel, _ := filepath.Rel(repoPath, path)
+			allPkgFiles[strings.ToLower(rel)] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed scanning pkgs: %v", err)
 	}
 
+	for _, pkg := range pkgsInfos {
+		// Remove notes or anything else you don't want in final catalogs.
+		pkg.Notes = ""
+
+		// If skipping checks, accept immediately.
+		if skipPayloadCheck {
+			verifiedList = append(verifiedList, pkg)
+			continue
+		}
+
+		// Check the installer item, if declared.
+		if pkg.InstallerLocation != "" {
+			rel := filepath.Join("pkgs", pkg.InstallerLocation)
+			relLower := strings.ToLower(rel)
+			if !allPkgFiles[relLower] {
+				msg := fmt.Sprintf("WARNING: Missing installer_item_location: %s", rel)
+				if force {
+					fmt.Println(msg, "- continuing due to force")
+				} else {
+					fmt.Println(msg, "- skipping pkginfo because not forced")
+					continue
+				}
+			}
+		}
+
+		// Check the uninstaller item, if declared.
+		if pkg.UninstallerLocation != "" {
+			rel := filepath.Join("pkgs", pkg.UninstallerLocation)
+			relLower := strings.ToLower(rel)
+			if !allPkgFiles[relLower] {
+				msg := fmt.Sprintf("WARNING: Missing uninstaller_item_location: %s", rel)
+				if force {
+					fmt.Println(msg, "- continuing due to force")
+				} else {
+					fmt.Println(msg, "- skipping pkginfo because not forced")
+					continue
+				}
+			}
+		}
+
+		verifiedList = append(verifiedList, pkg)
+	}
+	return verifiedList, nil
+}
+
+// buildCatalogs organizes pkgsInfos into catalogs, always including them in "All".
+func buildCatalogs(pkgsInfos []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) {
+	catalogs := make(map[string][]PkgsInfo)
+	catalogs["All"] = []PkgsInfo{}
+
+	for _, pkg := range pkgsInfos {
+		// Always add to an "All" catalog (distinct from Munki's internal "all").
+		catalogs["All"] = append(catalogs["All"], pkg)
+
+		// Add to any other catalogs the pkg references.
+		for _, catName := range pkg.Catalogs {
+			if !silent {
+				fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catName)
+			}
+			catalogs[catName] = append(catalogs[catName], pkg)
+		}
+	}
 	return catalogs, nil
 }
 
-// writeCatalogs writes each catalog to its respective YAML file in outputDir.
-func writeCatalogs(catalogs map[string][]PkgsInfo, outputDir string) error {
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %v", err)
+// writeCatalogs writes each catalog to YAML, removing stale catalogs not in the new set.
+func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo) error {
+	catalogDir := filepath.Join(repoPath, "catalogs")
+	if err := os.MkdirAll(catalogDir, 0755); err != nil {
+		return fmt.Errorf("failed to create catalogs dir: %v", err)
 	}
 
-	for catalog, pkgs := range catalogs {
-		filePath := filepath.Join(outputDir, catalog+".yaml")
+	// Remove any existing catalog files that aren't in our new set.
+	entries, _ := os.ReadDir(catalogDir)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		base := strings.TrimSuffix(name, filepath.Ext(name)) // e.g. "All" from "All.yaml"
+		if _, ok := catalogs[base]; !ok {
+			removePath := filepath.Join(catalogDir, name)
+			if rmErr := os.Remove(removePath); rmErr == nil {
+				fmt.Printf("Removed stale catalog %s\n", removePath)
+			}
+		}
+	}
+
+	// Write out the updated catalogs.
+	for catName, pkgs := range catalogs {
+		filePath := filepath.Join(catalogDir, catName+".yaml")
 		file, err := os.Create(filePath)
 		if err != nil {
-			return fmt.Errorf("failed to create file %s: %v", filePath, err)
+			return fmt.Errorf("failed creating catalog file %s: %v", filePath, err)
 		}
-		defer file.Close()
-
-		encoder := yaml.NewEncoder(file)
-		if err := encoder.Encode(pkgs); err != nil {
-			return fmt.Errorf("failed to write YAML to %s: %v", filePath, err)
+		enc := yaml.NewEncoder(file)
+		if encErr := enc.Encode(pkgs); encErr != nil {
+			file.Close()
+			return fmt.Errorf("failed encoding yaml for %s: %v", filePath, encErr)
 		}
-		encoder.Close()
-		fmt.Printf("Catalog %s written to %s\n", catalog, filePath)
+		file.Close()
+		fmt.Printf("Wrote catalog %s (%d items)\n", catName, len(pkgs))
 	}
 
 	return nil
 }
 
-// makeCatalogs orchestrates the process of scanning the repo and building catalogs.
-func makeCatalogs(repoPath string, silent bool) error {
-	fmt.Println("Getting list of pkgsinfo...")
-	pkgsInfos, err := scanRepo(repoPath)
-	if err != nil {
-		return fmt.Errorf("error scanning repo: %v", err)
-	}
-
-	catalogs, err := buildCatalogs(pkgsInfos, silent)
-	if err != nil {
-		return fmt.Errorf("error building catalogs: %v", err)
-	}
-
-	if err := writeCatalogs(catalogs, filepath.Join(repoPath, "catalogs")); err != nil {
-		return fmt.Errorf("error writing catalogs: %v", err)
-	}
-
-	return nil
-}
-
+// main is your entry point, handling flags and orchestrating the process.
 func main() {
-	// Parse flags first
-	repoPath := flag.String("repo_path", "", "Path to the Gorilla repo.")
-	showVersion := flag.Bool("version", false, "Print the version and exit.")
-	silent := flag.Bool("silent", false, "Suppress output for a silent run.")
+	// Flags
+	repoPathFlag := flag.String("repo_path", "",
+		"Path to the Gorilla repo (if empty, config is used).")
+	skipCheckFlag := flag.Bool("skip_payload_check", false,
+		"Skip checking that installer/uninstaller items exist.")
+	forceFlag := flag.Bool("force", false,
+		"Allow missing installer/uninstaller items (not recommended).")
+	versionFlag := flag.Bool("version", false,
+		"Print the version of Gorilla and exit.")
+	silentFlag := flag.Bool("silent", false,
+		"Suppress output for a silent run.")
 	flag.Parse()
 
-	// If repo_path not specified, then load from config
-	if *repoPath == "" {
-		conf, err := loadConfig()
-		if err != nil {
-			fmt.Printf("Error loading config: %v\n", err)
+	// Handle version request
+	if *versionFlag {
+		version.Print()
+		os.Exit(0)
+	}
+
+	// Resolve repo path
+	var repoPath string
+	if *repoPathFlag == "" {
+		conf, confErr := loadConfig()
+		if confErr != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", confErr)
 			os.Exit(1)
 		}
-		*repoPath = conf.RepoPath
+		repoPath = conf.RepoPath
+		if repoPath == "" {
+			fmt.Fprintln(os.Stderr, "No repo path provided, and none found in config.")
+			os.Exit(1)
+		}
+	} else {
+		repoPath = *repoPathFlag
 	}
 
-	// flag to show version
-	if *showVersion {
-		version.Print()
-		return
-	}
-
-	// Execute the makeCatalogs function.
-	if err := makeCatalogs(*repoPath, *silent); err != nil {
-		fmt.Printf("Error: %v\n", err)
+	// Step 1: Scan pkgsinfo
+	fmt.Printf("Scanning %s for YAML...\n", repoPath)
+	pkgsInfos, err := scanRepo(repoPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error scanning pkgsinfo: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Step 2: Verify references (unless skipping)
+	verifiedPkgs, err := processPkgsInfos(repoPath, pkgsInfos, *skipCheckFlag, *forceFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error processing pkgsInfos: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Step 3: Build catalogs (respecting -silent)
+	catalogs, err := buildCatalogs(verifiedPkgs, *silentFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building catalogs: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Step 4: Write catalogs
+	if err := writeCatalogs(repoPath, catalogs); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing catalogs: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("makecatalogs completed successfully.")
 }
