@@ -280,6 +280,14 @@ func configureGorillaImport() error {
 		conf.DefaultArch = defaultArchInput
 	}
 
+	fmt.Printf("Open imported YAML after creation? [true/false] (%v): ", conf.OpenImportedYaml)
+	var openYamlInput string
+	fmt.Scanln(&openYamlInput)
+	if strings.TrimSpace(openYamlInput) != "" {
+		val := strings.TrimSpace(strings.ToLower(openYamlInput))
+		conf.OpenImportedYaml = (val == "true")
+	}
+
 	configPath := getConfigPath()
 	configDir := filepath.Dir(configPath)
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
@@ -1295,4 +1303,13 @@ func readScriptContent(scriptPath string) (string, error) {
 	}
 
 	return string(content), nil
+}
+
+func openFileInEditor(filePath string) {
+	codeCmd, err := exec.LookPath("code.cmd")
+	if err != nil {
+		exec.Command("notepad.exe", filePath).Start()
+	} else {
+		exec.Command(codeCmd, filePath).Start()
+	}
 }
