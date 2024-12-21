@@ -3,6 +3,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
@@ -410,36 +411,60 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 }
 
 // extractNuGetMetadata extracts metadata from a .nupkg file.
+type nuspec struct {
+	XMLName  xml.Name `xml:"package"`
+	Metadata struct {
+		ID          string `xml:"id"`
+		Version     string `xml:"version"`
+		Title       string `xml:"title"`
+		Description string `xml:"description"`
+		Authors     string `xml:"authors"`
+		Owners      string `xml:"owners"`
+		Tags        string `xml:"tags"`
+	} `xml:"metadata"`
+}
+
 func extractNuGetMetadata(nupkgPath string) (Metadata, error) {
-	tempDir, err := os.MkdirTemp("", "nuget-extract-")
+	reader, err := zip.OpenReader(nupkgPath)
 	if err != nil {
-		return Metadata{}, fmt.Errorf("failed to create temp directory: %v", err)
+		return Metadata{}, fmt.Errorf("failed to open nupkg as zip: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer reader.Close()
 
-	cmd := exec.Command("nuget", "install", nupkgPath, "-OutputDirectory", tempDir, "-NoCache")
-	if err := cmd.Run(); err != nil {
-		return Metadata{}, fmt.Errorf("failed to extract .nupkg: %v", err)
+	var nuspecFile *zip.File
+	for _, f := range reader.File {
+		if filepath.Ext(f.Name) == ".nuspec" {
+			nuspecFile = f
+			break
+		}
 	}
-
-	// Added code to find the .nuspec files
-	nuspecFiles, err := filepath.Glob(filepath.Join(tempDir, "**", "*.nuspec"))
-	if err != nil {
-		return Metadata{}, fmt.Errorf("error finding .nuspec files: %v", err)
-	}
-	if len(nuspecFiles) == 0 {
-		return Metadata{}, fmt.Errorf("no .nuspec files found")
+	if nuspecFile == nil {
+		return Metadata{}, fmt.Errorf("no .nuspec file found inside .nupkg")
 	}
 
-	content, err := os.ReadFile(nuspecFiles[0])
+	rc, err := nuspecFile.Open()
 	if err != nil {
-		return Metadata{}, fmt.Errorf("failed to read .nuspec: %v", err)
+		return Metadata{}, fmt.Errorf("failed to open .nuspec file: %v", err)
+	}
+	defer rc.Close()
+
+	var doc nuspec
+	if err := xml.NewDecoder(rc).Decode(&doc); err != nil {
+		return Metadata{}, fmt.Errorf("failed to parse .nuspec XML: %v", err)
 	}
 
 	var metadata Metadata
-	if err := xml.Unmarshal(content, &metadata); err != nil {
-		return Metadata{}, fmt.Errorf("failed to parse .nuspec: %v", err)
+	// If the .nuspec doesn't have a <title>, fall back to <id>
+	if doc.Metadata.Title != "" {
+		metadata.Title = doc.Metadata.Title
+	} else {
+		metadata.Title = doc.Metadata.ID
 	}
+	metadata.ID = doc.Metadata.ID
+	metadata.Version = doc.Metadata.Version
+	metadata.Developer = doc.Metadata.Authors
+	metadata.Description = doc.Metadata.Description
+	metadata.Tags = doc.Metadata.Tags
 
 	return metadata, nil
 }
