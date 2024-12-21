@@ -60,17 +60,18 @@ type Installer struct {
 
 // Metadata holds the extracted metadata from installer packages.
 type Metadata struct {
-	Title        string `xml:"title"`
-	ID           string `xml:"id"`
-	Version      string `xml:"version"`
-	Developer    string `xml:"manufacturer"`
-	Category     string `xml:"category"`
-	Description  string `xml:"description"`
-	Tags         string `xml:"tags,omitempty"`
-	Readme       string `xml:"readme,omitempty"`
-	ProductCode  string
-	UpgradeCode  string
-	Architecture string
+	Title         string `xml:"title"`
+	ID            string `xml:"id"`
+	Version       string `xml:"version"`
+	Developer     string `xml:"manufacturer"`
+	Category      string `xml:"category"`
+	Description   string `xml:"description"`
+	Tags          string `xml:"tags,omitempty"`
+	Readme        string `xml:"readme,omitempty"`
+	ProductCode   string
+	UpgradeCode   string
+	Architecture  string
+	SupportedArch []string
 }
 
 // ScriptPaths holds paths to various scripts.
@@ -330,6 +331,9 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 	}
 
 	metadata = promptForAllMetadata(packagePath, metadata, conf)
+
+	// Update SupportedArch from single architecture to slice
+	metadata.SupportedArch = []string{metadata.Architecture}
 
 	return metadata, nil
 }
@@ -924,115 +928,129 @@ func gorillaImport(
 	nameForFilename := strings.ReplaceAll(metadata.ID, " ", "")
 	versionForFilename := strings.ReplaceAll(metadata.Version, " ", "")
 
-	// Copy the installer file to the repo's /pkgs folder with sanitized filename
-	installerFilename := nameForFilename + "-" + versionForFilename + filepath.Ext(packagePath)
-	installerDest := filepath.Join(installerFolderPath, installerFilename)
-	if _, err := copyFile(packagePath, installerDest); err != nil {
-		return false, fmt.Errorf("failed to copy installer: %v", err)
-	}
+	for _, arch := range metadata.SupportedArch {
+		archTag := ""
+		if arch == "x64" {
+			archTag = "-x64-"
+		} else if arch == "arm64" {
+			archTag = "-arm64-"
+		}
 
-	pkgsInfo := PkgsInfo{
-		Name:                 metadata.ID,
-		DisplayName:          "", // Will set after this if needed
-		Version:              metadata.Version,
-		Description:          metadata.Description,
-		Category:             metadata.Category,
-		Developer:            metadata.Developer,
-		Catalogs:             []string{conf.DefaultCatalog},
-		SupportedArch:        []string{metadata.Architecture},
-		Installer:            &Installer{Location: filepath.Join(installerItemPath, installerFilename), Hash: fileHash, Type: installerType},
-		Uninstaller:          uninstaller,
-		UnattendedInstall:    true,
-		UnattendedUninstall:  true,
-		ProductCode:          strings.TrimSpace(metadata.ProductCode),
-		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
-		PreinstallScript:     preinstallScriptContent,
-		PostinstallScript:    postinstallScriptContent,
-		PreuninstallScript:   preuninstallScriptContent,
-		PostuninstallScript:  postuninstallScriptContent,
-		InstallCheckScript:   installCheckScriptContent,
-		UninstallCheckScript: uninstallCheckScriptContent,
-	}
+		// Copy the installer file to the repo's /pkgs folder with sanitized filename
+		installerFilename := nameForFilename + archTag + versionForFilename + filepath.Ext(packagePath)
+		installerDest := filepath.Join(installerFolderPath, installerFilename)
+		if _, err := copyFile(packagePath, installerDest); err != nil {
+			// Handle error
+		}
 
-	if strings.TrimSpace(metadata.Title) != "" {
-		pkgsInfo.DisplayName = metadata.Title
-	} else {
-		pkgsInfo.DisplayName = pkgsInfo.Name
-	}
+		pkgsInfo := PkgsInfo{
+			Name:                 metadata.ID,
+			DisplayName:          "", // Will set after this if needed
+			Version:              metadata.Version,
+			Description:          metadata.Description,
+			Category:             metadata.Category,
+			Developer:            metadata.Developer,
+			Catalogs:             []string{conf.DefaultCatalog},
+			SupportedArch:        []string{arch},
+			Installer:            &Installer{Location: filepath.Join(installerItemPath, installerFilename), Hash: fileHash, Type: installerType},
+			Uninstaller:          uninstaller,
+			UnattendedInstall:    true,
+			UnattendedUninstall:  true,
+			ProductCode:          strings.TrimSpace(metadata.ProductCode),
+			UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
+			PreinstallScript:     preinstallScriptContent,
+			PostinstallScript:    postinstallScriptContent,
+			PreuninstallScript:   preuninstallScriptContent,
+			PostuninstallScript:  postuninstallScriptContent,
+			InstallCheckScript:   installCheckScriptContent,
+			UninstallCheckScript: uninstallCheckScriptContent,
+		}
 
-	existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, "")
-	if err != nil {
-		return false, fmt.Errorf("error checking existing packages: %v", err)
-	}
+		if strings.TrimSpace(metadata.Title) != "" {
+			pkgsInfo.DisplayName = metadata.Title
+		} else {
+			pkgsInfo.DisplayName = pkgsInfo.Name
+		}
 
-	if exists && existingPkg != nil {
-		fmt.Println("This item is similar to an existing item in the repo:")
-		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n", existingPkg.Name, existingPkg.Version, existingPkg.Description)
-		answer := getInput("Use existing item as a template? [y/N]: ", "N")
-		if strings.ToLower(answer) == "y" {
-			pkgsInfo.Name = existingPkg.Name
-			pkgsInfo.DisplayName = existingPkg.DisplayName
-			pkgsInfo.Category = existingPkg.Category
-			pkgsInfo.Developer = existingPkg.Developer
-			pkgsInfo.SupportedArch = existingPkg.SupportedArch
-			pkgsInfo.Catalogs = existingPkg.Catalogs
+		existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, "")
+		if err != nil {
+			return false, fmt.Errorf("error checking existing packages: %v", err)
+		}
+
+		if exists && existingPkg != nil {
+			fmt.Println("This item is similar to an existing item in the repo:")
+			fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n", existingPkg.Name, existingPkg.Version, existingPkg.Description)
+			answer := getInput("Use existing item as a template? [y/N]: ", "N")
+			if strings.ToLower(answer) == "y" {
+				pkgsInfo.Name = existingPkg.Name
+				pkgsInfo.DisplayName = existingPkg.DisplayName
+				pkgsInfo.Category = existingPkg.Category
+				pkgsInfo.Developer = existingPkg.Developer
+				pkgsInfo.SupportedArch = existingPkg.SupportedArch
+				pkgsInfo.Catalogs = existingPkg.Catalogs
+			}
+		}
+
+		fmt.Println("\nPkginfo details:")
+		fmt.Printf("    Name: %s\n", pkgsInfo.Name)
+		fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
+		fmt.Printf("    Version: %s\n", pkgsInfo.Version)
+		fmt.Printf("    Description: %s\n", pkgsInfo.Description)
+		fmt.Printf("    Category: %s\n", pkgsInfo.Category)
+		fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
+		fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
+		fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
+		fmt.Println()
+
+		confirm := getInput("Import this item? (y/n): ", "n")
+		if strings.ToLower(confirm) != "y" {
+			fmt.Println("Import canceled.")
+			return false, nil
+		}
+
+		err = createPkgsInfo(
+			packagePath,
+			pkginfoFolderPath,
+			pkgsInfo.Name,
+			pkgsInfo.DisplayName,
+			pkgsInfo.Version,
+			pkgsInfo.Description,
+			pkgsInfo.Catalogs,
+			pkgsInfo.Category,
+			pkgsInfo.Developer,
+			pkgsInfo.SupportedArch,
+			installerItemPath,
+			pkgsInfo.ProductCode,
+			pkgsInfo.UpgradeCode,
+			fileHash,
+			pkgsInfo.UnattendedInstall,
+			pkgsInfo.UnattendedUninstall,
+			pkgsInfo.PreinstallScript,
+			pkgsInfo.PostinstallScript,
+			pkgsInfo.PreuninstallScript,
+			pkgsInfo.PostuninstallScript,
+			pkgsInfo.InstallCheckScript,
+			pkgsInfo.UninstallCheckScript,
+			pkgsInfo.Uninstaller,
+			nameForFilename,
+			versionForFilename,
+			archTag,
+		)
+		if err != nil {
+			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
+		}
+
+		outputPath := filepath.Join(pkginfoFolderPath, nameForFilename+archTag+versionForFilename+".yaml")
+		absOutputPath, err := filepath.Abs(outputPath)
+		if err != nil {
+			return true, fmt.Errorf("failed to get absolute path for pkginfo: %v", err)
+		}
+		fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
+
+		if conf.OpenImportedYaml {
+			openFileInEditor(absOutputPath)
 		}
 	}
-
-	fmt.Println("\nPkginfo details:")
-	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
-	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
-	fmt.Printf("    Version: %s\n", pkgsInfo.Version)
-	fmt.Printf("    Description: %s\n", pkgsInfo.Description)
-	fmt.Printf("    Category: %s\n", pkgsInfo.Category)
-	fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
-	fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
-	fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
-	fmt.Println()
-
-	confirm := getInput("Import this item? (y/n): ", "n")
-	if strings.ToLower(confirm) != "y" {
-		fmt.Println("Import canceled.")
-		return false, nil
-	}
-
-	err = createPkgsInfo(
-		packagePath,
-		pkginfoFolderPath,
-		pkgsInfo.Name,
-		pkgsInfo.DisplayName,
-		pkgsInfo.Version,
-		pkgsInfo.Description,
-		pkgsInfo.Catalogs,
-		pkgsInfo.Category,
-		pkgsInfo.Developer,
-		pkgsInfo.SupportedArch,
-		installerItemPath,
-		pkgsInfo.ProductCode,
-		pkgsInfo.UpgradeCode,
-		fileHash,
-		pkgsInfo.UnattendedInstall,
-		pkgsInfo.UnattendedUninstall,
-		pkgsInfo.PreinstallScript,
-		pkgsInfo.PostinstallScript,
-		pkgsInfo.PreuninstallScript,
-		pkgsInfo.PostuninstallScript,
-		pkgsInfo.InstallCheckScript,
-		pkgsInfo.UninstallCheckScript,
-		pkgsInfo.Uninstaller,
-		nameForFilename,
-		versionForFilename,
-	)
-	if err != nil {
-		return false, fmt.Errorf("failed to generate pkginfo: %v", err)
-	}
-
-	outputPath := filepath.Join(pkginfoFolderPath, nameForFilename+"-"+versionForFilename+".yaml")
-	absOutputPath, err := filepath.Abs(outputPath)
-	if err != nil {
-		return true, fmt.Errorf("failed to get absolute path for pkginfo: %v", err)
-	}
-	fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
 
 	return true, nil
 }
@@ -1063,9 +1081,10 @@ func createPkgsInfo(
 	uninstaller *Installer,
 	sanitizedName string,
 	sanitizedVersion string,
+	arch string,
 ) error {
 	installerType := strings.TrimPrefix(filepath.Ext(filePath), ".")
-	installerFilename := sanitizedName + "-" + sanitizedVersion + filepath.Ext(filePath)
+	installerFilename := sanitizedName + arch + sanitizedVersion + filepath.Ext(filePath)
 	installerLocation := installerSubPath + "/" + installerFilename
 
 	pkgsInfo := PkgsInfo{
@@ -1096,7 +1115,7 @@ func createPkgsInfo(
 		pkgsInfo.DisplayName = pkgsInfo.Name
 	}
 
-	outputPath := filepath.Join(outputDir, sanitizedName+"-"+sanitizedVersion+".yaml")
+	outputPath := filepath.Join(outputDir, sanitizedName+arch+sanitizedVersion+".yaml")
 
 	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
