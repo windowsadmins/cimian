@@ -678,16 +678,16 @@ func extractExeMetadata(exePath string) (Metadata, error) {
 		return syscall.UTF16ToString((*[1 << 20]uint16)(valPtr)[:valLen])
 	}
 
-	companyName := queryString("CompanyName")
-	productName := queryString("ProductName")
-	fileDescription := queryString("FileDescription")
+	companyName := strings.TrimSpace(queryString("CompanyName"))
+	productName := strings.TrimSpace(queryString("ProductName"))
+	fileDescription := strings.TrimSpace(queryString("FileDescription"))
 
 	return Metadata{
-		Title:       fileDescription,
-		ID:          productName,
-		Developer:   companyName,
+		Title:       strings.TrimSpace(fileDescription),
+		ID:          strings.TrimSpace(productName),
+		Developer:   strings.TrimSpace(companyName),
 		Version:     versionStr,
-		Description: fileDescription,
+		Description: strings.TrimSpace(fileDescription),
 	}, nil
 }
 
