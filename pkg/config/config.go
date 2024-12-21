@@ -16,20 +16,21 @@ type Configuration struct {
 	CatalogsPath     string   `yaml:"CatalogsPath"`
 	CachePath        string   `yaml:"CachePath"`
 	CheckOnly        bool     `yaml:"CheckOnly"`
+	ClientIdentifier string   `yaml:"ClientIdentifier"`
 	CloudBucket      string   `yaml:"CloudBucket"`
 	CloudProvider    string   `yaml:"CloudProvider"`
 	Debug            bool     `yaml:"Debug"`
 	DefaultArch      string   `yaml:"DefaultArch"`
 	DefaultCatalog   string   `yaml:"DefaultCatalog"`
+	ForceBasicAuth   bool     `yaml:"ForceBasicAuth"`
 	InstallPath      string   `yaml:"InstallPath"`
 	LocalManifests   []string `yaml:"LocalManifests"`
 	LogLevel         string   `yaml:"LogLevel"`
-	ClientIdentifier string   `yaml:"ClientIdentifier"`
-	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
+	OpenImportedYaml bool     `yaml:"OpenImportedYaml"`
 	RepoPath         string   `yaml:"RepoPath"`
+	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
 	URLPkgsInfo      string   `yaml:"URLPkgsInfo"`
 	Verbose          bool     `yaml:"Verbose"`
-	ForceBasicAuth   bool     `yaml:"ForceBasicAuth"`
 }
 
 // LoadConfig loads the configuration from a YAML file.
@@ -95,5 +96,6 @@ func GetDefaultConfig() *Configuration {
 		CloudProvider:    "none",
 		CloudBucket:      "",
 		ForceBasicAuth:   false,
+		OpenImportedYaml: true,
 	}
 }
