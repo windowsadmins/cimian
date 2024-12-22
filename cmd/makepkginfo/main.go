@@ -119,6 +119,7 @@ func main() {
 		displayName          string
 		description          string
 		unattendedInstall    bool
+		newPkg               bool
 	)
 	showVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.StringVar(&installCheckScript, "installcheck_script", "", "Path to install check script")
@@ -132,11 +133,41 @@ func main() {
 	flag.StringVar(&displayName, "displayname", "", "Display name")
 	flag.StringVar(&description, "description", "", "Description")
 	flag.BoolVar(&unattendedInstall, "unattended_install", false, "Set unattended_install to true")
+	flag.BoolVar(&newPkg, "new", false, "Create a new pkgsinfo with all possible keys")
 	flag.Parse()
 
 	// Handle --version flag
 	if *showVersion {
 		version.Print()
+		return
+	}
+
+	if newPkg {
+		pkgsinfo := PkgsInfo{
+			Name:                "",
+			DisplayName:         "",
+			Version:             "",
+			Catalogs:            []string{},
+			Category:            "",
+			Description:         "",
+			Developer:           "",
+			InstallerType:       "",
+			InstallerItemHash:   "",
+			InstallerItemSize:   0,
+			InstallerItemLocation: "",
+			UnattendedInstall:   false,
+			Installs:            []string{},
+			InstallCheckScript:  "",
+			UninstallCheckScript: "",
+			PreinstallScript:    "",
+			PostinstallScript:   "",
+		}
+		yamlData, err := yaml.Marshal(&pkgsinfo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling YAML: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(string(yamlData))
 		return
 	}
 
