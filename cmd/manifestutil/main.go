@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
+	"os"
 
 	"gopkg.in/yaml.v3"
 
@@ -21,6 +22,25 @@ type Manifest struct {
 	ManagedUpdates   []string `yaml:"managed_updates"`
 	IncludedManifests []string `yaml:"included_manifests"`
 	Catalogs         []string `yaml:"catalogs"`
+}
+
+// Config represents the configuration structure
+type Config struct {
+	RepoPath string `yaml:"repo_path"`
+}
+
+// LoadConfig loads the configuration from the given path
+func LoadConfig(configPath string) (Config, error) {
+	var config Config
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return config, fmt.Errorf("failed to read config file: %v", err)
+	}
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return config, fmt.Errorf("failed to unmarshal config: %v", err)
+	}
+	return config, nil
 }
 
 // ListManifests lists all available manifests from the manifest directory.
@@ -124,7 +144,6 @@ func main() {
 	// Command-line arguments
 	listManifests := flag.Bool("list-manifests", false, "List available manifests")
 	newManifest := flag.String("new-manifest", "", "Create a new manifest")
-	manifestPath := flag.String("manifest-path", "./manifests", "Path to manifests directory")
 	addPackage := flag.String("add-pkg", "", "Package to add to manifest")
 	section := flag.String("section", "managed_installs", "Manifest section (managed_installs, managed_uninstalls, managed_updates)")
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
@@ -140,9 +159,17 @@ func main() {
 		return
 	}
 
+	config, err := LoadConfig(`C:\ProgramData\ManagedInstalls\Config.yaml`)
+	if (err != nil) {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	manifestPath := filepath.Join(config.RepoPath, "manifests")
+
 	// List manifests
 	if *listManifests {
-		manifests, err := ListManifests(*manifestPath)
+		manifests, err := ListManifests(manifestPath)
 		if err != nil {
 			fmt.Println("Error listing manifests:", err)
 			return
@@ -156,7 +183,7 @@ func main() {
 
 	// Create a new manifest
 	if *newManifest != "" {
-		manifestFilePath := filepath.Join(*manifestPath, *newManifest+".yaml")
+		manifestFilePath := filepath.Join(manifestPath, *newManifest+".yaml")
 		err := CreateNewManifest(manifestFilePath, *newManifest)
 		if err != nil {
 			fmt.Println("Error creating manifest:", err)
@@ -168,7 +195,7 @@ func main() {
 
 	// Load manifest to modify
 	if *manifestName != "" {
-		manifestFilePath := filepath.Join(*manifestPath, *manifestName+".yaml")
+		manifestFilePath := filepath.Join(manifestPath, *manifestName+".yaml")
 		manifest, err := GetManifest(manifestFilePath)
 		if err != nil {
 			fmt.Println("Error loading manifest:", err)
