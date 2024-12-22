@@ -7,35 +7,84 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
-	
+
 	"github.com/windowsadmins/gorilla/pkg/version"
 )
 
 // PkgsInfo represents the package information
 type PkgsInfo struct {
-	Name                string   `yaml:"name"`
-	DisplayName         string   `yaml:"display_name,omitempty"`
-	Version             string   `yaml:"version"`
-	Catalogs            []string `yaml:"catalogs,omitempty"`
-	Category            string   `yaml:"category,omitempty"`
-	Description         string   `yaml:"description,omitempty"`
-	Developer           string   `yaml:"developer,omitempty"`
-	InstallerType       string   `yaml:"installer_type,omitempty"`
-	InstallerItemHash   string   `yaml:"installer_item_hash,omitempty"`
-	InstallerItemSize   int64    `yaml:"installer_item_size,omitempty"`
-	InstallerItemLocation string `yaml:"installer_item_location,omitempty"`
-	UnattendedInstall   bool     `yaml:"unattended_install,omitempty"`
-	Installs            []string `yaml:"installs,omitempty"`
-	InstallCheckScript  string   `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript string  `yaml:"uninstallcheck_script,omitempty"`
-	PreinstallScript    string   `yaml:"preinstall_script,omitempty"`
-	PostinstallScript   string   `yaml:"postinstall_script,omitempty"`
+	Name                  string   `yaml:"name"`
+	DisplayName           string   `yaml:"display_name,omitempty"`
+	Version               string   `yaml:"version"`
+	Catalogs              []string `yaml:"catalogs,omitempty"`
+	Category              string   `yaml:"category,omitempty"`
+	Description           string   `yaml:"description,omitempty"`
+	Developer             string   `yaml:"developer,omitempty"`
+	InstallerType         string   `yaml:"installer_type,omitempty"`
+	InstallerItemHash     string   `yaml:"installer_item_hash,omitempty"`
+	InstallerItemSize     int64    `yaml:"installer_item_size,omitempty"`
+	InstallerItemLocation string   `yaml:"installer_item_location,omitempty"`
+	UnattendedInstall     bool     `yaml:"unattended_install,omitempty"`
+	Installs              []string `yaml:"installs,omitempty"`
+	InstallCheckScript    string   `yaml:"installcheck_script,omitempty"`
+	UninstallCheckScript  string   `yaml:"uninstallcheck_script,omitempty"`
+	PreinstallScript      string   `yaml:"preinstall_script,omitempty"`
+	PostinstallScript     string   `yaml:"postinstall_script,omitempty"`
+}
+
+// NoQuoteString ensures empty strings appear without quotes
+type NoQuoteString string
+
+func (s NoQuoteString) MarshalYAML() (interface{}, error) {
+	node := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Style: 0, // Use 0 for plain style instead of yaml.PlainStyle
+		Value: string(s),
+	}
+	return node, nil
+}
+
+// wrapperPkgsInfo preserves field order and removes quotes for empty strings
+type wrapperPkgsInfo struct {
+	Name                 NoQuoteString `yaml:"name"`
+	DisplayName          NoQuoteString `yaml:"display_name"`
+	Version              NoQuoteString `yaml:"version"`
+	Catalogs             []string      `yaml:"catalogs"`
+	Category             NoQuoteString `yaml:"category"`
+	Description          NoQuoteString `yaml:"description"`
+	Developer            NoQuoteString `yaml:"developer"`
+	UnattendedInstall    bool          `yaml:"unattended_install"`
+	InstallCheckScript   NoQuoteString `yaml:"installcheck_script"`
+	UninstallCheckScript NoQuoteString `yaml:"uninstallcheck_script"`
+	PreinstallScript     NoQuoteString `yaml:"preinstall_script"`
+	PostinstallScript    NoQuoteString `yaml:"postinstall_script"`
+}
+
+// Config represents the configuration structure
+type Config struct {
+	RepoPath string `yaml:"repo_path"`
+}
+
+// LoadConfig loads the configuration from the given path
+func LoadConfig(configPath string) (Config, error) {
+	var config Config
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		return config, fmt.Errorf("failed to read config file: %v", err)
+	}
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		return config, fmt.Errorf("failed to unmarshal config: %v", err)
+	}
+	return config, nil
 }
 
 // Helper function to execute a command and return its output
@@ -50,7 +99,7 @@ func execCommand(name string, arg ...string) (string, error) {
 
 // Function to extract metadata from an MSI installer (Windows-only)
 func extractMSIMetadata(msiPath string) (string, string, string, error) {
-    return extractMSIMetadataWindows(msiPath)
+	return extractMSIMetadataWindows(msiPath)
 }
 
 // Windows-specific MSI metadata extraction using PowerShell
@@ -104,6 +153,61 @@ func getFileInfo(pkgPath string) (int64, string, error) {
 	return fileSize, fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
+// SavePkgsInfo saves a pkgsinfo back to its YAML file.
+func SavePkgsInfo(pkgsinfoPath string, pkgsinfo PkgsInfo) error {
+	data, err := yaml.Marshal(pkgsinfo)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(pkgsinfoPath, data, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateNewPkgsInfo creates a new pkgsinfo file.
+func CreateNewPkgsInfo(pkgsinfoPath, name string) error {
+	newPkgsInfo := PkgsInfo{
+		Name:                 name,
+		DisplayName:          "",
+		Version:              time.Now().Format("2006.01.02"),
+		Catalogs:             []string{"Testing"},
+		Category:             "",
+		Description:          "",
+		Developer:            "",
+		UnattendedInstall:    true,
+		InstallCheckScript:   "",
+		UninstallCheckScript: "",
+		PreinstallScript:     "",
+		PostinstallScript:    "",
+	}
+
+	// Copy fields to wrapperPkgsInfo
+	wrapped := wrapperPkgsInfo{
+		Name:                 NoQuoteString(newPkgsInfo.Name),
+		DisplayName:          NoQuoteString(newPkgsInfo.DisplayName),
+		Version:              NoQuoteString(newPkgsInfo.Version),
+		Catalogs:             newPkgsInfo.Catalogs,
+		Category:             NoQuoteString(newPkgsInfo.Category),
+		Description:          NoQuoteString(newPkgsInfo.Description),
+		Developer:            NoQuoteString(newPkgsInfo.Developer),
+		UnattendedInstall:    newPkgsInfo.UnattendedInstall,
+		InstallCheckScript:   NoQuoteString(newPkgsInfo.InstallCheckScript),
+		UninstallCheckScript: NoQuoteString(newPkgsInfo.UninstallCheckScript),
+		PreinstallScript:     NoQuoteString(newPkgsInfo.PreinstallScript),
+		PostinstallScript:    NoQuoteString(newPkgsInfo.PostinstallScript),
+	}
+
+	data, err := yaml.Marshal(&wrapped)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(pkgsinfoPath, data, 0644)
+}
+
 // Main function
 func main() {
 	// Command-line flags
@@ -142,32 +246,26 @@ func main() {
 		return
 	}
 
+	config, err := LoadConfig(`C:\ProgramData\ManagedInstalls\Config.yaml`)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
 	if newPkg {
-		pkgsinfo := PkgsInfo{
-			Name:                "",
-			DisplayName:         "",
-			Version:             "",
-			Catalogs:            []string{},
-			Category:            "",
-			Description:         "",
-			Developer:           "",
-			InstallerType:       "",
-			InstallerItemHash:   "",
-			InstallerItemSize:   0,
-			InstallerItemLocation: "",
-			UnattendedInstall:   false,
-			Installs:            []string{},
-			InstallCheckScript:  "",
-			UninstallCheckScript: "",
-			PreinstallScript:    "",
-			PostinstallScript:   "",
-		}
-		yamlData, err := yaml.Marshal(&pkgsinfo)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error marshaling YAML: %v\n", err)
+		if flag.NArg() < 1 {
+			fmt.Println("Usage: makepkginfo --new PkginfoName")
+			flag.PrintDefaults()
 			os.Exit(1)
 		}
-		fmt.Println(string(yamlData))
+		pkgsinfoName := flag.Arg(0)
+		pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", pkgsinfoName+".yaml")
+		err := CreateNewPkgsInfo(pkgsinfoPath, pkgsinfoName)
+		if err != nil {
+			fmt.Println("Error creating pkgsinfo:", err)
+			return
+		}
+		fmt.Println("New pkgsinfo created:", pkgsinfoPath)
 		return
 	}
 
@@ -196,18 +294,18 @@ func main() {
 
 	// Build pkgsinfo
 	pkgsinfo := PkgsInfo{
-		Name:                 productName,
-		DisplayName:          displayName,
-		Version:              pkgVersion,
-		Catalogs:             strings.Split(catalogs, ","),
-		Category:             category,
-		Developer:            manufacturer,
-		Description:          description,
-		InstallerType:        "msi",
+		Name:                  productName,
+		DisplayName:           displayName,
+		Version:               pkgVersion,
+		Catalogs:              strings.Split(catalogs, ","),
+		Category:              category,
+		Developer:             manufacturer,
+		Description:           description,
+		InstallerType:         "msi",
 		InstallerItemLocation: filepath.Base(installerItem),
-		InstallerItemSize:    fileSize / 1024, // Size in KB
-		InstallerItemHash:    fileHash,
-		UnattendedInstall:    unattendedInstall,
+		InstallerItemSize:     fileSize / 1024, // Size in KB
+		InstallerItemHash:     fileHash,
+		UnattendedInstall:     unattendedInstall,
 	}
 
 	// Handle scripts
