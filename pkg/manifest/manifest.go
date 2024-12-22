@@ -61,6 +61,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 		manifestContent, err := os.ReadFile(manifestFilePath)
 		if err != nil {
 			logging.Error("Failed to read manifest file", "path", manifestFilePath, "error", err)
+			logging.Warn("Manifest file not found, continuing with the next manifest", "path", manifestFilePath)
 			continue
 		}
 
