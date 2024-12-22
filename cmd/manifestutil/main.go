@@ -73,11 +73,11 @@ func SaveManifest(manifestPath string, manifest Manifest) error {
 func CreateNewManifest(manifestPath, name string) error {
 	newManifest := Manifest{
 		Name:             name,
-		ManagedInstalls:  []string{},
-		ManagedUninstalls: []string{},
-		ManagedUpdates:   []string{},
-		IncludedManifests: []string{},
-		Catalogs:         []string{},
+		ManagedInstalls:  nil,
+		ManagedUninstalls: nil,
+		ManagedUpdates:   nil,
+		IncludedManifests: nil,
+		Catalogs:         nil,
 	}
 	return SaveManifest(manifestPath, newManifest)
 }
