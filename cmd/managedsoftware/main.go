@@ -279,6 +279,8 @@ func prepareDownloadItems(manifestItems []manifest.Item) map[string]string {
 	for _, item := range manifestItems {
 		if item.InstallerLocation != "" {
 			downloadItems[item.Name] = item.InstallerLocation
+		} else {
+			logging.Warn("Installer not found for item", "item", item.Name)
 		}
 	}
 	return downloadItems
