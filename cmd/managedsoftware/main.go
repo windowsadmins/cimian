@@ -196,6 +196,17 @@ func main() {
 	// Retrieve manifest items once here for all modes
 	manifestItems, _ := manifest.AuthenticatedGet(cfg)
 
+	logging.Info("Checking for updates...")
+	updatesAvailable := false
+	for _, item := range manifestItems {
+		if needsUpdate(item, cfg) {
+			logging.Info("Update available for package", "package", item.Name)
+			updatesAvailable = true
+		} else {
+			logging.Info("No update needed for package", "package", item.Name)
+		}
+	}
+
 	if *installOnly {
 		logging.Info("Running in install-only mode")
 
@@ -229,7 +240,7 @@ func main() {
 	}
 
 	// Normal or auto mode (not installOnly or checkOnly)
-	updatesAvailable := checkForUpdates(cfg, verbosity, manifestItems)
+	updatesAvailable = checkForUpdates(cfg, verbosity, manifestItems)
 	if updatesAvailable {
 		downloadItems := prepareDownloadItems(manifestItems)
 		err := download.InstallPendingUpdates(downloadItems, cfg)
@@ -249,7 +260,7 @@ func main() {
 	os.Exit(0)
 }
 
-// checkForUpdates checks if any manifest items need updates.
+// checkForUpdates iterates over the manifest items and logs which ones have an available update.
 func checkForUpdates(cfg *config.Configuration, verbosity int, manifestItems []manifest.Item) bool {
 	logging.Info("Checking for updates...")
 	updatesAvailable := false
@@ -284,7 +295,7 @@ func prepareDownloadItems(manifestItems []manifest.Item) map[string]string {
 	return downloadItems
 }
 
-// needsUpdate checks if the given item needs an update.
+// needsUpdate checks if the given item is old or absent, triggering an installation or update.
 func needsUpdate(item manifest.Item, cfg *config.Configuration) bool {
 	catalogItem := catalog.Item{
 		Name:          item.Name,
