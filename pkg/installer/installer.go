@@ -50,7 +50,7 @@ func InstallPendingPackages(cfg *config.Configuration) error {
 					Location: path,
 				},
 			}
-			output := installItem(item, path, cfg.CachePath, cfg)
+			output := installItem(item, path, cfg.CachePath)
 			logging.Info("Install output", "output", output)
 		}
 		return nil
@@ -95,7 +95,7 @@ func supportsArchitecture(item catalog.Item, systemArch string) bool {
 }
 
 // installItem installs a single catalog item based on the system architecture.
-func installItem(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+func installItem(item catalog.Item, itemURL, cachePath string) string {
 	systemArch := getSystemArchitecture()
 	if !supportsArchitecture(item, systemArch) {
 		logging.Warn("Unsupported architecture for item", "item", item.Name, "architecture", systemArch)
@@ -105,13 +105,13 @@ func installItem(item catalog.Item, itemURL, cachePath string, cfg *config.Confi
 	installerType := strings.ToLower(item.Installer.Type)
 	switch installerType {
 	case "msi":
-		return runMSIInstaller(item, itemURL, cachePath, cfg)
+		return runMSIInstaller(item, itemURL, cachePath)
 	case "exe":
-		return runEXEInstaller(item, itemURL, cachePath, cfg)
+		return runEXEInstaller(item, itemURL, cachePath)
 	case "powershell":
-		return runPS1Installer(item, itemURL, cachePath, cfg)
+		return runPS1Installer(item, itemURL, cachePath)
 	case "nupkg":
-		return installNupkg(item, itemURL, cachePath, cfg)
+		return installNupkg(item, itemURL, cachePath)
 	default:
 		logging.Warn("Unknown installer type", "type", item.Installer.Type)
 		return ""
@@ -119,7 +119,7 @@ func installItem(item catalog.Item, itemURL, cachePath string, cfg *config.Confi
 }
 
 // runMSIInstaller installs an MSI package.
-func runMSIInstaller(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+func runMSIInstaller(item catalog.Item, itemURL, cachePath string) string {
 	msiPath := filepath.Join(cachePath, filepath.Base(itemURL))
 	cmdArgs := []string{"/i", msiPath, "/quiet", "/norestart"}
 	output, err := runCMD(commandMsi, cmdArgs)
@@ -132,7 +132,7 @@ func runMSIInstaller(item catalog.Item, itemURL, cachePath string, cfg *config.C
 }
 
 // runEXEInstaller installs an EXE package.
-func runEXEInstaller(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+func runEXEInstaller(item catalog.Item, itemURL, cachePath string) string {
 	exePath := filepath.Join(cachePath, filepath.Base(itemURL))
 	cmdArgs := append([]string{"/S"}, item.Installer.Arguments...)
 	output, err := runCMD(exePath, cmdArgs)
@@ -145,7 +145,7 @@ func runEXEInstaller(item catalog.Item, itemURL, cachePath string, cfg *config.C
 }
 
 // runPS1Installer executes a PowerShell script.
-func runPS1Installer(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+func runPS1Installer(item catalog.Item, itemURL, cachePath string) string {
 	ps1Path := filepath.Join(cachePath, filepath.Base(itemURL))
 	cmdArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1Path}
 	output, err := runCMD(commandPs1, cmdArgs)
@@ -158,7 +158,7 @@ func runPS1Installer(item catalog.Item, itemURL, cachePath string, cfg *config.C
 }
 
 // installNupkg installs a Nupkg package using Chocolatey.
-func installNupkg(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+func installNupkg(item catalog.Item, itemURL, cachePath string) string {
 	nupkgPath := filepath.Join(cachePath, filepath.Base(itemURL))
 	cmdArgs := []string{"install", nupkgPath, "-y"}
 	output, err := runCMD(commandNupkg, cmdArgs)
@@ -211,7 +211,7 @@ func Install(item catalog.Item, action, urlPackages, cachePath string, CheckOnly
 	itemURL := item.Installer.Location
 	switch action {
 	case "install", "update":
-		return installItem(item, itemURL, cachePath, cfg)
+		return installItem(item, itemURL, cachePath)
 	case "uninstall":
 		return uninstallItem(item, cachePath)
 	default:
