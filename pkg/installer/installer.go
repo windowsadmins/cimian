@@ -14,7 +14,6 @@ import (
 
 	"github.com/windowsadmins/gorilla/pkg/catalog"
 	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/download"
 	"github.com/windowsadmins/gorilla/pkg/logging"
 )
 
@@ -68,31 +67,21 @@ func InstallPendingPackages(cfg *config.Configuration) error {
 
 // runCMD executes a command and its arguments.
 func runCMD(command string, arguments []string) (string, error) {
-	cmd := execCommand(command, arguments...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	cmd := exec.Command(command, arguments...)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
 	cmd.Stderr = &stderr
-
 	err := cmd.Run()
-	output := stdout.String()
 	if err != nil {
-		logging.Warn("Command execution failed", "command", command, "error", err, "stderr", stderr.String())
-		return output, err
+		return "", fmt.Errorf("command execution failed: %v - %s", err, stderr.String())
 	}
-
-	return output, nil
+	return out.String(), nil
 }
 
 // getSystemArchitecture returns the architecture of the system.
 func getSystemArchitecture() string {
-	switch runtime.GOARCH {
-	case "amd64":
-		return "x64"
-	case "arm64":
-		return "arm64"
-	default:
-		return runtime.GOARCH
-	}
+	return runtime.GOARCH
 }
 
 // supportsArchitecture checks if the package supports the given system architecture.
@@ -108,85 +97,77 @@ func supportsArchitecture(item catalog.Item, systemArch string) bool {
 // installItem installs a single catalog item based on the system architecture.
 func installItem(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
 	systemArch := getSystemArchitecture()
-
-	// Check if the package supports the system architecture
 	if !supportsArchitecture(item, systemArch) {
-		msg := fmt.Sprintf("Skipping installation due to architecture mismatch: %s", item.Name)
-		logging.Info(msg, "required_architectures", item.SupportedArch, "system_architecture", systemArch)
-		return msg
+		logging.Warn("Unsupported architecture for item", "item", item.Name, "architecture", systemArch)
+		return ""
 	}
 
-	relPath, fileName := path.Split(item.Installer.Location)
-	absFile := filepath.Join(cachePath, relPath, fileName)
-
-	if !fileExists(absFile) {
-		if err := download.DownloadFile(itemURL, absFile, cfg); err != nil {
-			msg := fmt.Sprintf("Unable to download file: %s", itemURL)
-			logging.Warn(msg, "error", err)
-			return msg
-		}
-	}
-
-	switch strings.ToLower(item.Installer.Type) {
+	installerType := strings.ToLower(item.Installer.Type)
+	switch installerType {
 	case "msi":
-		return runMSIInstaller(absFile, item)
+		return runMSIInstaller(item, itemURL, cachePath, cfg)
 	case "exe":
-		return runEXEInstaller(absFile, item)
-	case "ps1":
-		return runPS1Installer(absFile)
+		return runEXEInstaller(item, itemURL, cachePath, cfg)
+	case "powershell":
+		return runPS1Installer(item, itemURL, cachePath, cfg)
 	case "nupkg":
-		output, err := installNupkg(absFile)
-		if err != nil {
-			logging.Warn("Failed to install Nupkg", "error", err)
-		}
-		return output
+		return installNupkg(item, itemURL, cachePath, cfg)
 	default:
-		msg := fmt.Sprintf("Unsupported installer type: %s", item.Installer.Type)
-		logging.Warn(msg)
-		return msg
+		logging.Warn("Unknown installer type", "type", item.Installer.Type)
+		return ""
 	}
 }
 
 // runMSIInstaller installs an MSI package.
-func runMSIInstaller(absFile string, item catalog.Item) string {
-	installArgs := append([]string{"/i", absFile, "/qn", "/norestart"}, item.Installer.Arguments...)
-	output, err := runCMD(commandMsi, installArgs)
+func runMSIInstaller(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+	msiPath := filepath.Join(cachePath, filepath.Base(itemURL))
+	cmdArgs := []string{"/i", msiPath, "/quiet", "/norestart"}
+	output, err := runCMD(commandMsi, cmdArgs)
 	if err != nil {
-		logging.Warn("MSI installation failed", "file", absFile, "error", err)
+		logging.Error("Failed to install MSI package", "package", item.Name, "error", err)
+		return ""
 	}
+	logging.Info("Successfully installed MSI package", "package", item.Name)
 	return output
 }
 
 // runEXEInstaller installs an EXE package.
-func runEXEInstaller(absFile string, item catalog.Item) string {
-	output, err := runCMD(absFile, item.Installer.Arguments)
+func runEXEInstaller(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+	exePath := filepath.Join(cachePath, filepath.Base(itemURL))
+	cmdArgs := append([]string{"/S"}, item.Installer.Arguments...)
+	output, err := runCMD(exePath, cmdArgs)
 	if err != nil {
-		logging.Warn("EXE installation failed", "file", absFile, "error", err)
+		logging.Error("Failed to install EXE package", "package", item.Name, "error", err)
+		return ""
 	}
+	logging.Info("Successfully installed EXE package", "package", item.Name)
 	return output
 }
 
 // runPS1Installer executes a PowerShell script.
-func runPS1Installer(absFile string) string {
-	psArgs := []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", absFile}
-	output, err := runCMD(commandPs1, psArgs)
+func runPS1Installer(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+	ps1Path := filepath.Join(cachePath, filepath.Base(itemURL))
+	cmdArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1Path}
+	output, err := runCMD(commandPs1, cmdArgs)
 	if err != nil {
-		logging.Warn("PowerShell script execution failed", "file", absFile, "error", err)
+		logging.Error("Failed to execute PowerShell script", "script", item.Name, "error", err)
+		return ""
 	}
+	logging.Info("Successfully executed PowerShell script", "script", item.Name)
 	return output
 }
 
 // installNupkg installs a Nupkg package using Chocolatey.
-func installNupkg(absFile string) (string, error) {
-	id, version, err := extractNupkgMetadata(absFile)
+func installNupkg(item catalog.Item, itemURL, cachePath string, cfg *config.Configuration) string {
+	nupkgPath := filepath.Join(cachePath, filepath.Base(itemURL))
+	cmdArgs := []string{"install", nupkgPath, "-y"}
+	output, err := runCMD(commandNupkg, cmdArgs)
 	if err != nil {
-		return "", err
+		logging.Error("Failed to install Nupkg package", "package", item.Name, "error", err)
+		return ""
 	}
-
-	logging.Info("Installing Nupkg", "id", id, "version", version)
-	nupkgDir := filepath.Dir(absFile)
-	installArgs := []string{"install", id, "--version", version, "-s", nupkgDir, "-f", "-y", "-r"}
-	return runCMD(commandNupkg, installArgs)
+	logging.Info("Successfully installed Nupkg package", "package", item.Name)
+	return output
 }
 
 // extractNupkgMetadata extracts metadata from a Nupkg file.

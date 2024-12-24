@@ -8,7 +8,8 @@ import (
 	registry "golang.org/x/sys/windows/registry"
 )
 
-// checkValues returns true if all of our desired values exist
+// checkValues returns true if the registry subkey contains the critical values
+// needed (DisplayName, DisplayVersion, UninstallString) for identifying software.
 func checkValues(values []string) (valuesExist bool) {
 	var nameExists bool
 	var versionExists bool
@@ -29,74 +30,66 @@ func checkValues(values []string) (valuesExist bool) {
 	return nameExists && versionExists && uninstallExists
 }
 
-func getUninstallKeys() (installedItems map[string]RegistryApplication, checkErr error) {
-	// Initialize the map we will add any values to
-	installedItems = make(map[string]RegistryApplication)
-
-	// Both Uninstall paths (64 & 32 bits apps)
-	regPaths := []string{`Software\Microsoft\Windows\CurrentVersion\Uninstall`,
-		`Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall`}
+// getUninstallKeys iterates through known registry paths to gather installed applications.
+// This function returns a map of application display names to their RegistryApplication info.
+func getUninstallKeys() (map[string]RegistryApplication, error) {
+	installedApps := make(map[string]RegistryApplication)
+	regPaths := []string{
+		`Software\Microsoft\Windows\CurrentVersion\Uninstall`,
+		`Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall`,
+	}
 
 	for _, regPath := range regPaths {
-
-		// Get the Uninstall key from HKLM
-		key, checkErr := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.READ)
-		if checkErr != nil {
-			logging.Warn("Unable to read registry key:", checkErr)
-			return installedItems, checkErr
+		key, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.READ)
+		if err != nil {
+			logging.Warn("Unable to read registry key:", err)
+			continue
 		}
 		defer key.Close()
 
-		// Get all the subkeys under Uninstall
-		subKeys, checkErr := key.ReadSubKeyNames(0)
-		if checkErr != nil {
-			logging.Warn("Unable to read registry sub keys:", checkErr)
-			return installedItems, checkErr
+		subKeys, err := key.ReadSubKeyNames(0)
+		if err != nil {
+			logging.Warn("Unable to read registry sub keys:", err)
+			continue
 		}
 
-		// Get the details of each subkey and add them to a map of `RegistryApplication`
-		for _, item := range subKeys {
-
-			//  installedItem is the struct we will store each application in
-			var installedItem RegistryApplication
-			itemKeyName := regPath + `\` + item
-			itemKey, checkErr := registry.OpenKey(registry.LOCAL_MACHINE, itemKeyName, registry.READ)
-			if checkErr != nil {
-				logging.Warn("Unable to read registry key:", checkErr)
-				return installedItems, checkErr
+		for _, subKey := range subKeys {
+			itemKeyName := regPath + `\` + subKey
+			itemKey, err := registry.OpenKey(registry.LOCAL_MACHINE, itemKeyName, registry.READ)
+			if err != nil {
+				logging.Warn("Unable to read registry key:", err)
+				continue
 			}
 			defer itemKey.Close()
 
-			// Put the names of all the values in a slice
-			itemValues, checkErr := itemKey.ReadValueNames(0)
-			if checkErr != nil {
-				logging.Warn("Unable to read registry value names:", checkErr)
-				return installedItems, checkErr
+			itemValues, err := itemKey.ReadValueNames(0)
+			if err != nil {
+				logging.Warn("Unable to read registry values:", err)
+				continue
 			}
 
-			// If checkValues() returns true, add the values to our struct
 			if checkValues(itemValues) {
-				installedItem.Key = itemKeyName
-				installedItem.Name, _, checkErr = itemKey.GetStringValue("DisplayName")
-				if checkErr != nil {
-					logging.Warn("Unable to read DisplayName", checkErr)
-					return installedItems, checkErr
+				var app RegistryApplication
+				app.Key = itemKeyName
+
+				app.Name, _, err = itemKey.GetStringValue("DisplayName")
+				if err != nil {
+					continue
+				}
+				app.Version, _, err = itemKey.GetStringValue("DisplayVersion")
+				if err != nil {
+					continue
+				}
+				app.Uninstall, _, err = itemKey.GetStringValue("UninstallString")
+				if err != nil {
+					continue
 				}
 
-				installedItem.Version, _, checkErr = itemKey.GetStringValue("DisplayVersion")
-				if checkErr != nil {
-					logging.Warn("Unable to read DisplayVersion", checkErr)
-					return installedItems, checkErr
-				}
-
-				installedItem.Uninstall, _, checkErr = itemKey.GetStringValue("UninstallString")
-				if checkErr != nil {
-					logging.Warn("Unable to read UninstallString", checkErr)
-					return installedItems, checkErr
-				}
-				installedItems[installedItem.Name] = installedItem
+				installedApps[app.Name] = app
 			}
 		}
 	}
-	return installedItems, checkErr
+
+	return installedApps, nil
 }
+

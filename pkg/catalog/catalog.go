@@ -32,10 +32,12 @@ type Item struct {
 
 // InstallerItem holds information about how to install a catalog item
 type InstallerItem struct {
-	Type      string   `yaml:"type"`
-	Location  string   `yaml:"location"`
-	Hash      string   `yaml:"hash"`
-	Arguments []string `yaml:"arguments"`
+	Type        string   `yaml:"type"`
+	Location    string   `yaml:"location"`
+	Hash        string   `yaml:"hash"`
+	Arguments   []string `yaml:"arguments"`
+	ProductCode string   `yaml:"product_code"`   // Added ProductCode field
+	UpgradeCode string   `yaml:"upgrade_code"`   // Added UpgradeCode field
 }
 
 // InstallCheck holds information about how to check the status of a catalog item
@@ -116,4 +118,5 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 	}
 
 	return catalogMap
+
 }
