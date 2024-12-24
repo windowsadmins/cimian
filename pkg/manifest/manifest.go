@@ -28,11 +28,12 @@ type Item struct {
 	SupportedArch     []string `yaml:"supported_architectures"`
 }
 
-// AuthenticatedGet retrieves manifests and downloads catalogs listed within them.
-func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
+// AuthenticatedGet scans manifests for actual packages in their "managed_installs" lists
+func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	var manifestsList []string
 	var manifests []Item
 	var downloadedCatalogs []string
+	var items []Item
 	visitedManifests := make(map[string]bool) // To track visited manifests
 
 	manifestsList = append(manifestsList, cfg.ClientIdentifier) // Start with the client manifest
@@ -95,9 +96,19 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, []string) {
 			downloadedCatalogs = append(downloadedCatalogs, catalog)
 			logging.Info("Downloaded catalog", "catalog", catalog, "path", catalogFilePath)
 		}
+
+		// Collect package items from managed_installs
+		for _, install := range newManifest.Installs {
+			item := Item{
+				Name:              install,
+				InstallerLocation: newManifest.InstallerLocation,
+				Catalogs:          newManifest.Catalogs,
+			}
+			items = append(items, item)
+		}
 	}
 
-	return manifests, downloadedCatalogs
+	return items, nil
 }
 
 // Helper function to parse manifest content

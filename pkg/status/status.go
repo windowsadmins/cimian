@@ -2,16 +2,18 @@ package status
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	version "github.com/hashicorp/go-version"
 	"github.com/windowsadmins/gorilla/pkg/catalog"
 	"github.com/windowsadmins/gorilla/pkg/download"
 	"github.com/windowsadmins/gorilla/pkg/logging"
-	version "github.com/hashicorp/go-version"
+	"golang.org/x/sys/windows/registry"
 )
 
 // RegistryApplication contains attributes for an installed application
@@ -27,7 +29,6 @@ type RegistryApplication struct {
 // WindowsMetadata contains extended metadata retrieved in the `properties.go`
 type WindowsMetadata struct {
 	productName   string
-	companyName   string
 	versionString string
 	versionMajor  int
 	versionMinor  int
@@ -60,9 +61,25 @@ func checkRegistry(catalogItem catalog.Item, installType string) (actionNeeded b
 
 	var installed bool
 	var versionMatch bool
+	// Instead of only matching partial, try both exact and partial matches
 	for _, regItem := range RegistryItems {
-		// Check if the catalog name is in the registry
-		if strings.Contains(regItem.Name, checkReg.Name) {
+		if regItem.Name == checkReg.Name {
+			logging.Info("Exact registry match", "catalogName", checkReg.Name, "registryName", regItem.Name)
+			installed = true
+			logging.Debug("Current installed version:", regItem.Version)
+
+			// Check if the catalog version matches the registry
+			currentVersion, err := version.NewVersion(regItem.Version)
+			if err != nil {
+				logging.Warn("Unable to parse current version", err)
+			}
+			outdated := currentVersion.LessThan(catalogVersion)
+			if !outdated {
+				versionMatch = true
+			}
+			break
+		} else if strings.Contains(regItem.Name, checkReg.Name) {
+			logging.Info("Partial registry match", "catalogName", checkReg.Name, "registryName", regItem.Name)
 			installed = true
 			logging.Debug("Current installed version:", regItem.Version)
 
@@ -77,8 +94,15 @@ func checkRegistry(catalogItem catalog.Item, installType string) (actionNeeded b
 			}
 			break
 		}
-
 	}
+
+	if checkReg.Name == "" && catalogItem.Installer.Type == "msi" && catalogItem.Installer.ProductCode != "" {
+		logging.Debug("Checking registry by product_code:", catalogItem.Installer.ProductCode)
+		installed, versionMatch = checkMsiProductCode(catalogItem.Installer.ProductCode, checkReg.Version)
+		logging.Info("Compare registry vs catalog", "catalogVersion", checkReg.Version, "installed", installed, "versionMatch", versionMatch)
+	}
+
+	logging.Info("Compare registry vs catalog", "catalogVersion", checkReg.Version, "installed", installed, "versionMatch", versionMatch)
 
 	if installType == "update" && !installed {
 		actionNeeded = false
@@ -138,6 +162,7 @@ func checkPath(catalogItem catalog.Item, installType string) (actionNeeded bool,
 	for _, checkFile := range catalogItem.Check.File {
 		path := filepath.Clean(checkFile.Path)
 		logging.Debug("Check file path:", path)
+		logging.Info("File check", "filePath", path)
 		_, err := os.Stat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -159,7 +184,7 @@ func checkPath(catalogItem catalog.Item, installType string) (actionNeeded bool,
 			logging.Warn("Unable to check path:", path, err)
 			break
 
-		} else if err == nil {
+		} else {
 
 			// When doing an uninstall, and the path exists
 			// perform uninstall
@@ -181,9 +206,10 @@ func checkPath(catalogItem catalog.Item, installType string) (actionNeeded bool,
 
 		if checkFile.Version != "" {
 			logging.Debug("Check file version:", checkFile.Version)
+			metadata := GetFileMetadata(path)
+			logging.Info("Comparing file version with catalog version", "fileVersion", metadata.versionString, "catalogVersion", checkFile.Version)
 
 			// Get the file metadata, and check that it has a value
-			metadata := GetFileMetadata(path)
 			if metadata.versionString == "" {
 				break
 			}
@@ -222,23 +248,161 @@ func checkPath(catalogItem catalog.Item, installType string) (actionNeeded bool,
 	return actionNeeded, checkErr
 }
 
-// CheckStatus determines the method for checking status
-func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (actionNeeded bool, checkErr error) {
-
+// CheckStatus determines if a catalogItem requires an install, update, or uninstall action.
+// It checks script, file, or registry data based on the 'Check' field in the catalog item.
+func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool, error) {
+	// Check script if provided
 	if catalogItem.Check.Script != "" {
 		logging.Info("Checking status via script:", catalogItem.DisplayName)
 		return checkScript(catalogItem, cachePath, installType)
+	}
 
-	} else if catalogItem.Check.File != nil {
+	// Check file if present
+	if len(catalogItem.Check.File) > 0 {
 		logging.Info("Checking status via file:", catalogItem.DisplayName)
 		return checkPath(catalogItem, installType)
+	}
 
-	} else if catalogItem.Check.Registry.Version != "" {
+	// Check registry if version is specified
+	if catalogItem.Check.Registry.Version != "" {
 		logging.Info("Checking status via registry:", catalogItem.DisplayName)
 		return checkRegistry(catalogItem, installType)
 	}
 
-	logging.Warn("Not enough data to check the current status:", catalogItem.DisplayName)
-	return
+	// If in managed_installs => install if not installed or older
+	// If in managed_updates => update only if already installed and older
+	// If in managed_uninstalls => remove if installed
 
+	localVersion, err := getLocalInstalledVersion(catalogItem)
+	if err != nil {
+		return true, fmt.Errorf("unable to detect local version: %v", err)
+	}
+
+	actionNeeded := false
+	switch installType {
+	case "install":
+		if localVersion == "" {
+			actionNeeded = true
+		} else if isOlderVersion(localVersion, catalogItem.Version) {
+			actionNeeded = true
+		}
+	case "update":
+		if localVersion != "" && isOlderVersion(localVersion, catalogItem.Version) {
+			actionNeeded = true
+		}
+	case "uninstall":
+		if localVersion != "" {
+			actionNeeded = true
+		}
+	}
+
+	if !actionNeeded {
+		// Use catalogItem.Name if no DisplayName is provided
+		displayName := catalogItem.DisplayName
+		if displayName == "" {
+			displayName = catalogItem.Name
+		}
+		logging.Warn("Not enough data to check the current status:", displayName)
+	}
+	return actionNeeded, nil
+}
+
+// getLocalInstalledVersion attempts to find the installed version (via registry or file metadata).
+// Returns an empty string if the item is not found locally.
+func getLocalInstalledVersion(item catalog.Item) (string, error) {
+	logging.Info("Checking local installed version", "itemName", item.Name)
+	if len(RegistryItems) == 0 {
+		var err error
+		RegistryItems, err = getUninstallKeys()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// In case the name doesn’t match directly, also try partial matching across RegistryItems
+	for _, regApp := range RegistryItems {
+		if regApp.Name == item.Name {
+			logging.Info("Registry match found", "itemName", item.Name, "version", regApp.Version)
+			return regApp.Version, nil
+		} else if strings.Contains(regApp.Name, item.Name) {
+			logging.Info("Partial registry match in getLocalInstalledVersion", "itemName", item.Name, "registryEntry", regApp.Name)
+			return regApp.Version, nil
+		}
+	}
+
+	if item.Installer.Type == "msi" && item.Installer.ProductCode != "" {
+		if ver := findMsiVersion(item.Installer.ProductCode); ver != "" {
+			logging.Info("MSI product code match found", "itemName", item.Name, "version", ver)
+			return ver, nil
+		}
+	}
+
+	// Fall back to file-based path check if provided
+	for _, fc := range item.Check.File {
+		if fc.Path != "" {
+			meta := GetFileMetadata(fc.Path)
+			if meta.versionString != "" {
+				logging.Info("File-based version found", "filePath", fc.Path, "version", meta.versionString)
+				return meta.versionString, nil
+			}
+		}
+	}
+
+	return "", nil
+}
+
+// isOlderVersion compares two version strings (simple example).
+func isOlderVersion(local, remote string) bool {
+	vLocal, errL := version.NewVersion(local)
+	vRemote, errR := version.NewVersion(remote)
+	if errL != nil || errR != nil {
+		return local < remote
+	}
+	return vLocal.LessThan(vRemote)
+}
+
+func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
+	// This function queries the MSI registry for productCode and compares its version
+	installedVersionStr := findMsiVersion(productCode)
+	if installedVersionStr == "" {
+		return false, false
+	}
+
+	installedVersion, err := version.NewVersion(installedVersionStr)
+	if err != nil {
+		return false, false
+	}
+
+	checkVer, err := version.NewVersion(checkVersion)
+	if err != nil {
+		return false, false
+	}
+
+	versionMatch := !installedVersion.LessThan(checkVer)
+	return true, versionMatch
+}
+
+// findMsiVersion retrieves the installed version of the MSI package using the productCode.
+func findMsiVersion(productCode string) string {
+	regPath := fmt.Sprintf("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s", productCode)
+	versionStr, err := getRegistryValue(regPath, "DisplayVersion")
+	if err != nil {
+		return ""
+	}
+	return versionStr
+}
+
+// getRegistryValue retrieves a string value from the specified registry key.
+func getRegistryValue(keyPath, valueName string) (string, error) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, keyPath, registry.QUERY_VALUE)
+	if err != nil {
+		return "", err
+	}
+	defer k.Close()
+
+	val, _, err := k.GetStringValue(valueName)
+	if err != nil {
+		return "", err
+	}
+	return val, nil
 }
