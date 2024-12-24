@@ -2,7 +2,10 @@ package status
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -269,6 +272,15 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return checkRegistry(catalogItem, installType)
 	}
 
+	// Check the installs array
+	needed, err := checkInstalls(catalogItem, installType)
+	if err != nil {
+		return true, err
+	}
+	if needed {
+		return true, nil
+	}
+
 	// If in managed_installs => install if not installed or older
 	// If in managed_updates => update only if already installed and older
 	// If in managed_uninstalls => remove if installed
@@ -351,11 +363,114 @@ func getLocalInstalledVersion(item catalog.Item) (string, error) {
 	return "", nil
 }
 
-// isOlderVersion compares two version strings (simple example).
+// checkInstalls iterates through the 'installs' array in the catalog Item
+// and returns true if we need to install/update.
+func checkInstalls(item catalog.Item, installType string) (bool, error) {
+	if len(item.Installs) == 0 {
+		// If no installs array, no action from this function
+		return false, nil
+	}
+
+	var actionNeeded bool
+
+	for _, install := range item.Installs {
+		// For now we only handle files. Extend as needed.
+		if strings.ToLower(install.Type) == "file" {
+			// Does the file exist?
+			fi, err := os.Stat(install.Path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// File missing => if installType is 'install' or 'update' => we do it
+					if installType == "install" || installType == "update" {
+						actionNeeded = true
+						break
+					}
+					// If it's an uninstall, missing file is no action needed
+					continue
+				} else {
+					return false, fmt.Errorf("error checking file: %s: %v", install.Path, err)
+				}
+			} else {
+				// File exists
+				if installType == "uninstall" {
+					// we want to remove it
+					actionNeeded = true
+					break
+				}
+
+				// If we have an md5checksum, verify
+				if install.MD5Checksum != "" {
+					match, err := verifyMD5(install.Path, install.MD5Checksum)
+					if err != nil {
+						return false, fmt.Errorf("failed md5 check: %v", err)
+					}
+					if !match {
+						// mismatch => we need to re-install or update
+						actionNeeded = true
+						break
+					}
+				}
+
+				// If we have a version, compare
+				if install.Version != "" {
+					fileVersion, err := getFileVersion(install.Path)
+					if err != nil {
+						// If we can't get a version, we consider that a mismatch => install
+						actionNeeded = true
+						break
+					}
+					// Compare semantic or simple string
+					if isOlderVersion(fileVersion, install.Version) {
+						actionNeeded = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return actionNeeded, nil
+}
+
+// verifyMD5 returns true if the file's md5 matches the expected string.
+func verifyMD5(filePath, expected string) (bool, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	hasher := md5.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return false, err
+	}
+
+	computed := hex.EncodeToString(hasher.Sum(nil))
+	// compare in lowercase
+	return strings.EqualFold(computed, expected), nil
+}
+
+// getFileVersion can be as simple as reading file metadata or
+// just returning an empty string if we don't track versions.
+func getFileVersion(filePath string) (string, error) {
+	// For EXEs, you can use the same approach as GetFileMetadata from your code.
+	// Example:
+	metadata := GetFileMetadata(filePath)
+	if metadata.versionString == "" {
+		// or parse resources, or custom logic
+		return "", nil
+	}
+	return metadata.versionString, nil
+}
+
+// isOlderVersion compares two version strings (similar to code you already have).
 func isOlderVersion(local, remote string) bool {
+	// reuse your existing version comparison logic, e.g.
+	// 'github.com/hashicorp/go-version' or fallback to simple string compare
 	vLocal, errL := version.NewVersion(local)
 	vRemote, errR := version.NewVersion(remote)
 	if errL != nil || errR != nil {
+		// fallback to naive string
 		return local < remote
 	}
 	return vLocal.LessThan(vRemote)
