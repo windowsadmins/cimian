@@ -20,8 +20,9 @@ type Item struct {
 	Name          string        `yaml:"name"`
 	Dependencies  []string      `yaml:"dependencies"`
 	DisplayName   string        `yaml:"display_name"`
-	Check         InstallCheck  `yaml:"check"`
 	Installer     InstallerItem `yaml:"installer"`
+	Check         InstallCheck  `yaml:"check"`
+	Installs      []InstallItem `yaml:"installs"`
 	Uninstaller   InstallerItem `yaml:"uninstaller"`
 	Version       string        `yaml:"version"`
 	BlockingApps  []string      `yaml:"blocking_apps"`
@@ -30,14 +31,21 @@ type Item struct {
 	SupportedArch []string      `yaml:"supported_architectures"`
 }
 
+type InstallItem struct {
+	Type        string `yaml:"type"`
+	Path        string `yaml:"path"`
+	Version     string `yaml:"version"`
+	MD5Checksum string `yaml:"md5checksum"`
+	ProductCode string `yaml:"product_code"`
+	UpgradeCode string `yaml:"upgrade_code"`
+}
+
 // InstallerItem holds information about how to install a catalog item
 type InstallerItem struct {
-	Type        string   `yaml:"type"`
-	Location    string   `yaml:"location"`
-	Hash        string   `yaml:"hash"`
-	Arguments   []string `yaml:"arguments"`
-	ProductCode string   `yaml:"product_code"`   // Added ProductCode field
-	UpgradeCode string   `yaml:"upgrade_code"`   // Added UpgradeCode field
+	Type      string   `yaml:"type"`
+	Location  string   `yaml:"location"`
+	Hash      string   `yaml:"hash"`
+	Arguments []string `yaml:"arguments"`
 }
 
 // InstallCheck holds information about how to check the status of a catalog item
