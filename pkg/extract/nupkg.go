@@ -23,6 +23,12 @@ type Nuspec struct {
 	} `xml:"metadata"`
 }
 
+// parsePackageName extracts the package name from the file name
+func parsePackageName(fileName string) string {
+	ext := filepath.Ext(fileName)
+	return strings.TrimSuffix(fileName, ext)
+}
+
 // parse .nupkg => .nuspec
 func NupkgMetadata(nupkgPath string) (name, version, dev, desc string) {
 	r, err := zip.OpenReader(nupkgPath)
@@ -46,7 +52,7 @@ func NupkgMetadata(nupkgPath string) (name, version, dev, desc string) {
 		return parsePackageName(filepath.Base(nupkgPath)), "", "", ""
 	}
 	defer rc.Close()
-	var doc nuspec
+	var doc Nuspec
 	if err := xml.NewDecoder(rc).Decode(&doc); err != nil {
 		return parsePackageName(filepath.Base(nupkgPath)), "", "", ""
 	}
