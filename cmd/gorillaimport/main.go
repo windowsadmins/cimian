@@ -3,11 +3,7 @@
 package main
 
 import (
-	"archive/zip"
 	"bytes"
-	"crypto/sha256"
-	"encoding/json"
-	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
@@ -17,45 +13,52 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
-	"unsafe"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/version"
+	"github.com/windowsadmins/gorilla/pkg/extract"
+	"github.com/windowsadmins/gorilla/pkg/utils"
 )
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
-	Name                 string     `yaml:"name"`
-	DisplayName          string     `yaml:"display_name,omitempty"`
-	Version              string     `yaml:"version"`
-	Description          string     `yaml:"description,omitempty"`
-	Catalogs             []string   `yaml:"catalogs"`
-	Category             string     `yaml:"category,omitempty"`
-	Developer            string     `yaml:"developer,omitempty"`
-	UnattendedInstall    bool       `yaml:"unattended_install"`
-	UnattendedUninstall  bool       `yaml:"unattended_uninstall"`
-	Installer            *Installer `yaml:"installer"`
-	Uninstaller          *Installer `yaml:"uninstaller,omitempty"`
-	SupportedArch        []string   `yaml:"supported_architectures"`
-	ProductCode          string     `yaml:"product_code,omitempty"`
-	UpgradeCode          string     `yaml:"upgrade_code,omitempty"`
-	PreinstallScript     string     `yaml:"preinstall_script,omitempty"`
-	PostinstallScript    string     `yaml:"postinstall_script,omitempty"`
-	PreuninstallScript   string     `yaml:"preuninstall_script,omitempty"`
-	PostuninstallScript  string     `yaml:"postuninstall_script,omitempty"`
-	InstallCheckScript   string     `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript string     `yaml:"uninstallcheck_script,omitempty"`
+	Name                 string        `yaml:"name"`
+	DisplayName          string        `yaml:"display_name,omitempty"`
+	Version              string        `yaml:"version"`
+	Description          string        `yaml:"description,omitempty"`
+	Catalogs             []string      `yaml:"catalogs"`
+	Category             string        `yaml:"category,omitempty"`
+	Developer            string        `yaml:"developer,omitempty"`
+	UnattendedInstall    bool          `yaml:"unattended_install"`
+	UnattendedUninstall  bool          `yaml:"unattended_uninstall"`
+	Installer            *Installer    `yaml:"installer"`
+	Installs             []InstallItem `yaml:"installs,omitempty"`
+	Uninstaller          *Installer    `yaml:"uninstaller,omitempty"`
+	SupportedArch        []string      `yaml:"supported_architectures"`
+	ProductCode          string        `yaml:"product_code,omitempty"`
+	UpgradeCode          string        `yaml:"upgrade_code,omitempty"`
+	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
+	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
+	PreuninstallScript   string        `yaml:"preuninstall_script,omitempty"`
+	PostuninstallScript  string        `yaml:"postuninstall_script,omitempty"`
+	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
+	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
 }
 
 // Installer represents the structure of the installer and uninstaller in pkginfo.
 type Installer struct {
 	Location  string   `yaml:"location"`
 	Hash      string   `yaml:"hash"`
-	Arguments []string `yaml:"arguments,omitempty"`
 	Type      string   `yaml:"type"`
+	Arguments []string `yaml:"arguments,omitempty"`
+}
+
+type InstallItem struct {
+	Type        string `yaml:"type"` // "file"
+	Path        string `yaml:"path"`
+	MD5Checksum string `yaml:"md5checksum,omitempty"`
+	Version     string `yaml:"version,omitempty"`
 }
 
 // Metadata holds the extracted metadata from installer packages.
@@ -84,24 +87,58 @@ type ScriptPaths struct {
 	UninstallCheck string
 }
 
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ", ") }
+func (m *multiFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
 func main() {
-	// Parse command-line flags.
-	configFlag := flag.Bool("config", false, "Run interactive configuration setup.")
-	archFlag := flag.String("arch", "", "Specify the architecture (e.g., x86_64, arm64)")
-	repoPath := flag.String("repo_path", "", "Path to the Gorilla repo.")
-	installerFlag := flag.String("installer", "", "Path to the installer .exe or .msi file.")
-	uninstallerFlag := flag.String("uninstaller", "", "Path to the uninstaller .exe or .msi file.")
-	installScriptFlag := flag.String("installscript", "", "Path to the install script (.bat or .ps1).")
-	preuninstallScriptFlag := flag.String("preuninstallscript", "", "Path to the preuninstall script.")
-	postuninstallScriptFlag := flag.String("postuninstallscript", "", "Path to the postuninstall script.")
-	postinstallScriptFlag := flag.String("postinstallscript", "", "Path to the post-install script.")
-	installCheckScriptFlag := flag.String("installcheckscript", "", "Path to the install check script.")
-	uninstallCheckScriptFlag := flag.String("uninstallcheckscript", "", "Path to the uninstall check script.")
-	showVersion := flag.Bool("version", false, "Print the version and exit.")
+	var (
+		archFlag              string
+		repoPath              string
+		uninstallerFlag       string
+		installCheckScript    string
+		uninstallCheckScript  string
+		preinstallScript      string
+		postinstallScript     string
+		category              string
+		developer             string
+		nameOverride          string
+		displayNameOverride   string
+		descriptionOverride   string
+		catalogs              string
+		versionOverride       string
+		unattendedInstallFlag bool
+	)
+	var filePaths multiFlag
+
+	flag.StringVar(&archFlag, "arch", "x64", "Architecture e.g. x64, arm64")
+	flag.StringVar(&repoPath, "repo_path", "", "Gorilla repo path")
+	flag.StringVar(&uninstallerFlag, "uninstaller", "", "Uninstaller .exe/.msi (if any)")
+	flag.StringVar(&installCheckScript, "installcheckscript", "", "Install check script path")
+	flag.StringVar(&uninstallCheckScript, "uninstallcheckscript", "", "Uninstall check script path")
+	flag.StringVar(&preinstallScript, "preinstallscript", "", "Preinstall script path")
+	flag.StringVar(&postinstallScript, "postinstallscript", "", "Postinstall script path")
+
+	flag.StringVar(&category, "category", "", "Category override")
+	flag.StringVar(&developer, "developer", "", "Developer override")
+	flag.StringVar(&nameOverride, "name", "", "Name override")
+	flag.StringVar(&displayNameOverride, "displayname", "", "Display Name override")
+	flag.StringVar(&descriptionOverride, "description", "", "Description override")
+	flag.StringVar(&catalogs, "catalogs", "Production", "Comma-separated catalogs")
+	flag.StringVar(&versionOverride, "version", "", "Version override")
+	flag.BoolVar(&unattendedInstallFlag, "unattended_install", false, "Set 'unattended_install: true'")
+
+	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags)")
+
+	showVersion := flag.Bool("version", false, "Print version and exit.")
 	flag.Parse()
 
 	if *showVersion {
-		version.Print()
+		fmt.Println("gorillaimport 1.0.0 (example)")
 		return
 	}
 
@@ -149,9 +186,11 @@ func main() {
 
 	// Perform the import.
 	importSuccess, err := gorillaImport(
-		packagePath, conf,
+		packagePath,
+		conf,
 		scripts,
 		*uninstallerFlag,
+		filePaths,
 	)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -237,7 +276,7 @@ func configureGorillaImport() error {
 	// Construct the default repo path using the current user's home directory.
 	defaultRepoPath := filepath.Join(usr.HomeDir, "DevOps", "Gorilla", "deployment")
 	defaultCloudProvider := "none"
-	defaultCatalog := "Upcoming"
+	defaultCatalog := "Development"
 	defaultArch := "x64"
 
 	fmt.Printf("Enter Repo Path [%s]: ", defaultRepoPath)
@@ -303,36 +342,184 @@ func configureGorillaImport() error {
 	return nil
 }
 
+// auto-detect basic installer metadata
+func autoDetectInstaller(path string) (iType, name, version, dev, desc string) {
+	ext := strings.ToLower(filepath.Ext(path))
+
+	switch ext {
+	case ".msi":
+		iType = "msi"
+		n, v, d, s := extract.MsiMetadata(path)
+		if n == "" {
+			n = parseNameFromFile(path)
+		}
+		return iType, n, v, d, s
+
+	case ".exe":
+		iType = "exe"
+		n, v, d, s := extract.ExeMetadata(path)
+		if n == "" {
+			n = parseNameFromFile(path)
+		}
+		return iType, n, v, d, s
+
+	case ".nupkg":
+		iType = "nupkg"
+		n, v, d, s := extract.NupkgMetadata(path)
+		if n == "" {
+			n = parseNameFromFile(path)
+		}
+		return iType, n, v, d, s
+
+	default:
+		return "unknown", parseNameFromFile(path), "1.0", "", ""
+	}
+}
+
+// parseNameFromFile is a fallback
+func parseNameFromFile(path string) string {
+	base := filepath.Base(path)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// advanced auto detection for installs from the installers
+func autoBuildInstalls(installerPath, iType, version string) []InstallItem {
+	switch iType {
+	case "msi":
+		// parse MSI File table or fallback
+		// for now, just do 1 item referencing the MSI itself:
+		sum, _ := utils.FileSHA256(installerPath)
+		return []InstallItem{{
+			Type:        "file",
+			Path:        installerPath,
+			MD5Checksum: "", // optional
+			Version:     version,
+		}}
+	case "exe":
+		// we only know about the EXE
+		sum, _ := utils.FileSHA256(installerPath)
+		return []InstallItem{{
+			Type:    "file",
+			Path:    installerPath,
+			Version: version,
+			// if you want MD5:
+		}}
+	case "nupkg":
+		// parse .nupkg contents or fallback to 1 item
+		sum, _ := utils.FileSHA256(installerPath)
+		return []InstallItem{{
+			Type: "file",
+			Path: installerPath,
+		}}
+	}
+	return nil
+}
+
+// merging -f
+func buildInstallsArray(paths []string) []InstallItem {
+	var arr []InstallItem
+	for _, p := range paths {
+		abs, _ := filepath.Abs(p)
+		fi, err := os.Stat(abs)
+		if err != nil || fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "Skipping -f path: '%s'\n", p)
+			continue
+		}
+		md5v, _ := fileMd5(abs)
+		var ver string
+		if strings.EqualFold(filepath.Ext(abs), ".exe") && runtime.GOOS == "windows" {
+			// parse version resource
+			ver = "1.2.3.4" // placeholder
+		}
+		arr = append(arr, InstallItem{
+			Type:        "file",
+			Path:        abs,
+			MD5Checksum: md5v,
+			Version:     ver,
+		})
+	}
+	return arr
+}
+
+func sanitize(s string) string {
+	// remove spaces, special chars, etc.
+	return strings.ReplaceAll(s, " ", "_")
+}
+
+func copyFile(src, dst string) (int64, error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer out.Close()
+
+	n, err := io.Copy(out, in)
+	if err != nil {
+		return 0, err
+	}
+	return n, out.Sync()
+}
+
+func readFileOrEmpty(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // extractInstallerMetadata extracts metadata from the installer package.
 func extractInstallerMetadata(packagePath string, conf *config.Configuration) (Metadata, error) {
 	ext := strings.ToLower(filepath.Ext(packagePath))
 	var metadata Metadata
-	var err error
 
 	switch ext {
 	case ".nupkg":
-		metadata, err = extractNuGetMetadata(packagePath)
+		// Calls the pkg/extract function directly:
+		name, ver, dev, desc := extract.NupkgMetadata(packagePath)
+		metadata.Title = name
+		metadata.ID = name
+		metadata.Version = ver
+		metadata.Developer = dev
+		metadata.Description = desc
+
 	case ".msi":
-		metadata, err = extractMSIMetadata(packagePath)
+		name, ver, dev, desc := extract.MsiMetadata(packagePath)
+		metadata.Title = name
+		metadata.ID = name
+		metadata.Version = ver
+		metadata.Developer = dev
+		metadata.Description = desc
+
 	case ".exe":
-		metadata, err = extractExeMetadata(packagePath)
+		name, ver, dev, desc := extract.ExeMetadata(packagePath)
+		metadata.Title = name
+		metadata.ID = name
+		metadata.Version = ver
+		metadata.Developer = dev
+		metadata.Description = desc
+
 	default:
+		// allow .bat, .ps1, etc. to have no metadata
 		if ext == ".bat" || ext == ".ps1" {
-			// No metadata extraction available
-			metadata = Metadata{}
-			err = nil
+			metadata = Metadata{} // basically empty
 		} else {
-			err = fmt.Errorf("unsupported installer type: %s", ext)
+			return Metadata{}, fmt.Errorf("unsupported installer type: %s", ext)
 		}
 	}
 
-	if err != nil {
-		return Metadata{}, err
-	}
-
+	// Prompt for user overrides:
 	metadata = promptForAllMetadata(packagePath, metadata, conf)
 
-	// Update SupportedArch from single architecture to slice
+	// Ensure the architecture array is set:
 	metadata.SupportedArch = []string{metadata.Architecture}
 
 	return metadata, nil
@@ -422,290 +609,6 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	return m
 }
 
-// extractNuGetMetadata extracts metadata from a .nupkg file.
-type nuspec struct {
-	XMLName  xml.Name `xml:"package"`
-	Metadata struct {
-		ID          string `xml:"id"`
-		Version     string `xml:"version"`
-		Title       string `xml:"title"`
-		Description string `xml:"description"`
-		Authors     string `xml:"authors"`
-		Owners      string `xml:"owners"`
-		Tags        string `xml:"tags"`
-	} `xml:"metadata"`
-}
-
-func extractNuGetMetadata(nupkgPath string) (Metadata, error) {
-	reader, err := zip.OpenReader(nupkgPath)
-	if err != nil {
-		return Metadata{}, fmt.Errorf("failed to open nupkg as zip: %v", err)
-	}
-	defer reader.Close()
-
-	var nuspecFile *zip.File
-	for _, f := range reader.File {
-		if filepath.Ext(f.Name) == ".nuspec" {
-			nuspecFile = f
-			break
-		}
-	}
-	if nuspecFile == nil {
-		return Metadata{}, fmt.Errorf("no .nuspec file found inside .nupkg")
-	}
-
-	rc, err := nuspecFile.Open()
-	if err != nil {
-		return Metadata{}, fmt.Errorf("failed to open .nuspec file: %v", err)
-	}
-	defer rc.Close()
-
-	var doc nuspec
-	if err := xml.NewDecoder(rc).Decode(&doc); err != nil {
-		return Metadata{}, fmt.Errorf("failed to parse .nuspec XML: %v", err)
-	}
-
-	var metadata Metadata
-	// If the .nuspec doesn't have a <title>, fall back to <id>
-	if doc.Metadata.Title != "" {
-		metadata.Title = doc.Metadata.Title
-	} else {
-		metadata.Title = doc.Metadata.ID
-	}
-	metadata.ID = doc.Metadata.ID
-	metadata.Version = doc.Metadata.Version
-	metadata.Developer = doc.Metadata.Authors
-	metadata.Description = doc.Metadata.Description
-	metadata.Tags = doc.Metadata.Tags
-
-	return metadata, nil
-}
-
-// extractMSIMetadata extracts metadata from a .msi file using PowerShell.
-func extractMSIMetadata(msiFilePath string) (Metadata, error) {
-	if runtime.GOOS != "windows" {
-		return Metadata{}, fmt.Errorf("MSI metadata extraction is only supported on Windows")
-	}
-
-	msiFilePathEscaped := strings.ReplaceAll(msiFilePath, `"`, `\"`)
-
-	psScript := fmt.Sprintf(`
-$WindowsInstaller = New-Object -ComObject WindowsInstaller.Installer
-$Database = $WindowsInstaller.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $WindowsInstaller, @("%s", 0))
-$View = $Database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $Database, @('SELECT * FROM Property'))
-$View.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $View, $null)
-
-$properties = @{} 
-while ($Record = $View.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $View, $null)) {
-    $property = $Record.StringData(1)
-    $value = $Record.StringData(2)
-    $properties[$property] = $value
-}
-
-$properties | ConvertTo-Json -Compress`, msiFilePathEscaped)
-
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return Metadata{}, fmt.Errorf("failed to execute PowerShell script: %v", err)
-	}
-
-	var properties map[string]string
-	if err := json.Unmarshal(output, &properties); err != nil {
-		return Metadata{}, fmt.Errorf("failed to parse JSON output: %v", err)
-	}
-
-	productName := properties["ProductName"]
-	developer := properties["Manufacturer"]
-	description := properties["Comments"]
-	productCode := properties["ProductCode"]
-	upgradeCode := properties["UpgradeCode"]
-	version := properties["ProductVersion"]
-
-	metadata := Metadata{
-		Developer:   developer,
-		Description: description,
-		ProductCode: productCode,
-		UpgradeCode: upgradeCode,
-		Version:     version,
-	}
-
-	// If ProductName is available, use it as Title and ID.
-	// Otherwise, leave them empty so the user is prompted for a friendly name.
-	if strings.TrimSpace(productName) != "" {
-		metadata.Title = productName
-		metadata.ID = productName
-	}
-
-	return metadata, nil
-}
-
-// VSFixedFileInfo holds version info from the resource.
-type VSFixedFileInfo struct {
-	Signature        uint32
-	StrucVersion     uint32
-	FileVersionMS    uint32
-	FileVersionLS    uint32
-	ProductVersionMS uint32
-	ProductVersionLS uint32
-	FileFlagsMask    uint32
-	FileFlags        uint32
-	FileOS           uint32
-	FileType         uint32
-	FileSubtype      uint32
-	FileDateMS       uint32
-	FileDateLS       uint32
-}
-
-var (
-	versionDLL                  = syscall.MustLoadDLL("version.dll")
-	procGetFileVersionInfoSizeW = versionDLL.MustFindProc("GetFileVersionInfoSizeW")
-	procGetFileVersionInfoW     = versionDLL.MustFindProc("GetFileVersionInfoW")
-	procVerQueryValueW          = versionDLL.MustFindProc("VerQueryValueW")
-)
-
-func getFileVersionInfoSize(filename string) (uint32, error) {
-	p, err := syscall.UTF16PtrFromString(filename)
-	if err != nil {
-		return 0, err
-	}
-	r0, _, e1 := syscall.Syscall(procGetFileVersionInfoSizeW.Addr(), 2,
-		uintptr(unsafe.Pointer(p)), 0, 0)
-	size := uint32(r0)
-	if size == 0 {
-		if e1 != 0 {
-			return 0, error(e1)
-		}
-		return 0, fmt.Errorf("GetFileVersionInfoSizeW failed for '%s'", filename)
-	}
-	return size, nil
-}
-
-func getFileVersionInfo(filename string, size uint32) ([]byte, error) {
-	info := make([]byte, size)
-	p, err := syscall.UTF16PtrFromString(filename)
-	if err != nil {
-		return nil, err
-	}
-	r0, _, e1 := syscall.Syscall6(procGetFileVersionInfoW.Addr(), 4,
-		uintptr(unsafe.Pointer(p)),
-		0,
-		uintptr(size),
-		uintptr(unsafe.Pointer(&info[0])),
-		0, 0)
-	if r0 == 0 {
-		if e1 != 0 {
-			return nil, error(e1)
-		}
-		return nil, fmt.Errorf("GetFileVersionInfoW failed for '%s'", filename)
-	}
-	return info, nil
-}
-
-func verQueryValue(block []byte, subBlock string) (unsafe.Pointer, uint32, error) {
-	pSubBlock, err := syscall.UTF16PtrFromString(subBlock)
-	if err != nil {
-		return nil, 0, err
-	}
-	var buf unsafe.Pointer
-	var size uint32
-	r0, _, e1 := syscall.Syscall6(procVerQueryValueW.Addr(), 4,
-		uintptr(unsafe.Pointer(&block[0])),
-		uintptr(unsafe.Pointer(pSubBlock)),
-		uintptr(unsafe.Pointer(&buf)),
-		uintptr(unsafe.Pointer(&size)),
-		0, 0)
-	if r0 == 0 {
-		if e1 != 0 {
-			return nil, 0, error(e1)
-		}
-		return nil, 0, fmt.Errorf("VerQueryValueW failed for subBlock '%s'", subBlock)
-	}
-	return buf, size, nil
-}
-
-func extractExeMetadata(exePath string) (Metadata, error) {
-	if runtime.GOOS != "windows" {
-		return Metadata{}, fmt.Errorf(".exe metadata extraction is only supported on Windows")
-	}
-
-	size, err := getFileVersionInfoSize(exePath)
-	if err != nil {
-		return Metadata{}, err
-	}
-
-	verInfo, err := getFileVersionInfo(exePath, size)
-	if err != nil {
-		return Metadata{}, err
-	}
-
-	fixedInfoPtr, fixedInfoLen, err := verQueryValue(verInfo, `\`)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if fixedInfoLen == 0 {
-		return Metadata{}, fmt.Errorf("no VS_FIXEDFILEINFO found")
-	}
-	fixedInfo := (*VSFixedFileInfo)(fixedInfoPtr)
-
-	major := fixedInfo.FileVersionMS >> 16
-	minor := fixedInfo.FileVersionMS & 0xFFFF
-	build := fixedInfo.FileVersionLS >> 16
-	revision := fixedInfo.FileVersionLS & 0xFFFF
-	versionStr := fmt.Sprintf("%d.%d.%d.%d", major, minor, build, revision)
-
-	langPtr, langLen, err := verQueryValue(verInfo, `\VarFileInfo\Translation`)
-	if err != nil || langLen == 0 {
-		return Metadata{Version: versionStr}, nil
-	}
-
-	type LangAndCodePage struct {
-		Language uint16
-		CodePage uint16
-	}
-
-	langData := (*LangAndCodePage)(langPtr)
-	language := fmt.Sprintf("%04x", langData.Language)
-	codepage := fmt.Sprintf("%04x", langData.CodePage)
-
-	queryString := func(name string) string {
-		subBlock := fmt.Sprintf(`\StringFileInfo\%s%s\%s`, language, codepage, name)
-		valPtr, valLen, err := verQueryValue(verInfo, subBlock)
-		if err != nil || valLen == 0 {
-			return ""
-		}
-		return syscall.UTF16ToString((*[1 << 20]uint16)(valPtr)[:valLen])
-	}
-
-	companyName := strings.TrimSpace(queryString("CompanyName"))
-	productName := strings.TrimSpace(queryString("ProductName"))
-	fileDescription := strings.TrimSpace(queryString("FileDescription"))
-
-	return Metadata{
-		Title:       strings.TrimSpace(fileDescription),
-		ID:          strings.TrimSpace(productName),
-		Developer:   strings.TrimSpace(companyName),
-		Version:     versionStr,
-		Description: strings.TrimSpace(fileDescription),
-	}, nil
-}
-
-func calculateSHA256(packagePath string) (string, error) {
-	file, err := os.Open(packagePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%x", hash.Sum(nil)), nil
-}
-
 func copyFile(src, dst string) (int64, error) {
 	srcFile, err := os.Open(src)
 	if err != nil {
@@ -751,7 +654,7 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 		return nil, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
 	}
 
-	uninstallerHash, err := calculateSHA256(uninstallerPath)
+	uninstallerHash, err := utils.FileSHA256(uninstallerPath)
 	if err != nil {
 		return nil, fmt.Errorf("error calculating uninstaller hash: %v", err)
 	}
@@ -825,11 +728,49 @@ func getInput(prompt, defaultVal string) string {
 	return input
 }
 
+func buildInstallsArray(paths []string) []InstallItem {
+	var arr []InstallItem
+	for _, p := range paths {
+		abs, _ := filepath.Abs(p)
+		st, err := os.Stat(abs)
+		if err != nil || st.IsDir() {
+			fmt.Fprintf(os.Stderr, "Skipping -f path: '%s' (not found or directory)\n", p)
+			continue
+		}
+		md5val, _ := fileMd5(abs)
+
+		// If it's an EXE on Windows, optionally parse version:
+		var ver string
+		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
+			ver = getExeVersion(abs)
+		}
+
+		arr = append(arr, InstallItem{
+			Type:        "file",
+			Path:        abs,
+			MD5Checksum: md5val,
+			Version:     ver,
+		})
+	}
+	return arr
+}
+
+// For EXE version resource.
+// You can reuse your 'extract.ExeMetadata' if you prefer:
+func getExeVersion(exePath string) string {
+	// Since ExeMetadata returns (name, version, dev, desc),
+	// just pick off 'version':
+	_, ver, _, _ := extract.ExeMetadata(exePath)
+
+	return ver // empty string if no version
+}
+
 func gorillaImport(
 	packagePath string,
 	conf *config.Configuration,
 	scripts ScriptPaths,
 	uninstallerPath string,
+	filePaths []string,
 ) (bool, error) {
 
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
@@ -904,7 +845,7 @@ func gorillaImport(
 	}
 
 	installerType := strings.TrimPrefix(strings.ToLower(filepath.Ext(packagePath)), ".")
-	fileHash, err := calculateSHA256(packagePath)
+	fileHash, err := utils.FileSHA256(packagePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to calculate file hash: %v", err)
 	}
@@ -965,6 +906,21 @@ func gorillaImport(
 			InstallCheckScript:   installCheckScriptContent,
 			UninstallCheckScript: uninstallCheckScriptContent,
 		}
+
+		// Reference the main installer itself in the 'installs:' array:
+		mainInstallerMD5, _ := fileMd5(packagePath)
+		autoInstalls := []InstallItem{{
+			Type:        "file",
+			Path:        packagePath,
+			MD5Checksum: mainInstallerMD5,
+			Version:     pkgsInfo.Version,
+		}}
+
+		// Also gather user-supplied -f items:
+		userInstalls := buildInstallsArray(filePaths)
+
+		// Merge them:
+		pkgsInfo.Installs = append(autoInstalls, userInstalls...)
 
 		if strings.TrimSpace(metadata.Title) != "" {
 			pkgsInfo.DisplayName = metadata.Title
