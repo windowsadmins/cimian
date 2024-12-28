@@ -42,10 +42,11 @@ type InstallItem struct {
 
 // InstallerItem holds information about how to install a catalog item
 type InstallerItem struct {
-	Type      string   `yaml:"type"`
-	Location  string   `yaml:"location"`
-	Hash      string   `yaml:"hash"`
-	Arguments []string `yaml:"arguments"`
+	Type        string   `yaml:"type"`
+	Location    string   `yaml:"location"`
+	Hash        string   `yaml:"hash"`
+	Arguments   []string `yaml:"arguments"`
+	ProductCode string   `yaml:"product_code,omitempty"`
 }
 
 // InstallCheck holds information about how to check the status of a catalog item
