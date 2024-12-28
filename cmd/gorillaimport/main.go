@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -44,6 +43,11 @@ type PkgsInfo struct {
 	PostuninstallScript  string        `yaml:"postuninstall_script,omitempty"`
 	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
 	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
+
+	// Added for closer alignment with makepkginfo:
+	InstallerItemHash     string `yaml:"installer_item_hash,omitempty"`
+	InstallerItemSize     int64  `yaml:"installer_item_size,omitempty"`
+	InstallerItemLocation string `yaml:"installer_item_location,omitempty"`
 }
 
 // Installer represents the structure of the installer and uninstaller in pkginfo.
@@ -55,29 +59,24 @@ type Installer struct {
 }
 
 type InstallItem struct {
-	Type        string `yaml:"type"` // "file"
-	Path        string `yaml:"path"`
-	MD5Checksum string `yaml:"md5checksum,omitempty"`
-	Version     string `yaml:"version,omitempty"`
+	Type        SingleQuotedString `yaml:"type"`
+	Path        SingleQuotedString `yaml:"path"`
+	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
+	Version     SingleQuotedString `yaml:"version,omitempty"`
 }
 
-// Metadata holds the extracted metadata from installer packages.
-type Metadata struct {
-	Title         string `xml:"title"`
-	ID            string `xml:"id"`
-	Version       string `xml:"version"`
-	Developer     string `xml:"manufacturer"`
-	Category      string `xml:"category"`
-	Description   string `xml:"description"`
-	Tags          string `xml:"tags,omitempty"`
-	Readme        string `xml:"readme,omitempty"`
-	ProductCode   string
-	UpgradeCode   string
-	Architecture  string
-	SupportedArch []string
+// SingleQuotedString type for YAML
+type SingleQuotedString string
+
+func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
+	node := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Style: yaml.SingleQuotedStyle,
+		Value: string(s),
+	}
+	return node, nil
 }
 
-// ScriptPaths holds paths to various scripts.
 type ScriptPaths struct {
 	Preinstall     string
 	Postinstall    string
@@ -95,15 +94,37 @@ func (m *multiFlag) Set(value string) error {
 	return nil
 }
 
+// Flag variables
+var (
+	configFlag               *string
+	archFlag                 *string
+	installerFlag            *string
+	uninstallerFlag          *string
+	installScriptFlag        *string
+	postinstallScriptFlag    *string
+	preuninstallScriptFlag   *string
+	postuninstallScriptFlag  *string
+	installCheckScriptFlag   *string
+	uninstallCheckScriptFlag *string
+)
+
+func init() {
+	// Initialize flags
+	configFlag = flag.String("config", "", "Path to config file")
+	archFlag = flag.String("arch", "", "Architecture")
+	installerFlag = flag.String("installer", "", "Installer path")
+	uninstallerFlag = flag.String("uninstaller", "", "Uninstaller path")
+	installScriptFlag = flag.String("install-script", "", "Install script")
+	postinstallScriptFlag = flag.String("postinstall-script", "", "Post-install script")
+	preuninstallScriptFlag = flag.String("preuninstall-script", "", "Pre-uninstall script")
+	postuninstallScriptFlag = flag.String("postuninstall-script", "", "Post-uninstall script")
+	installCheckScriptFlag = flag.String("install-check", "", "Install check script")
+	uninstallCheckScriptFlag = flag.String("uninstall-check", "", "Uninstall check script")
+}
+
 func main() {
 	var (
-		archFlag              string
 		repoPath              string
-		uninstallerFlag       string
-		installCheckScript    string
-		uninstallCheckScript  string
-		preinstallScript      string
-		postinstallScript     string
 		category              string
 		developer             string
 		nameOverride          string
@@ -115,14 +136,7 @@ func main() {
 	)
 	var filePaths multiFlag
 
-	flag.StringVar(&archFlag, "arch", "x64", "Architecture e.g. x64, arm64")
 	flag.StringVar(&repoPath, "repo_path", "", "Gorilla repo path")
-	flag.StringVar(&uninstallerFlag, "uninstaller", "", "Uninstaller .exe/.msi (if any)")
-	flag.StringVar(&installCheckScript, "installcheckscript", "", "Install check script path")
-	flag.StringVar(&uninstallCheckScript, "uninstallcheckscript", "", "Uninstall check script path")
-	flag.StringVar(&preinstallScript, "preinstallscript", "", "Preinstall script path")
-	flag.StringVar(&postinstallScript, "postinstallscript", "", "Postinstall script path")
-
 	flag.StringVar(&category, "category", "", "Category override")
 	flag.StringVar(&developer, "developer", "", "Developer override")
 	flag.StringVar(&nameOverride, "name", "", "Name override")
@@ -150,7 +164,7 @@ func main() {
 	}
 
 	// Run interactive configuration setup if --config is provided.
-	if *configFlag {
+	if *configFlag != "" {
 		if err := configureGorillaImport(); err != nil {
 			fmt.Printf("Failed to save config: %v\n", err)
 			os.Exit(1)
@@ -160,8 +174,8 @@ func main() {
 	}
 
 	// Override config values with flags if provided.
-	if *repoPath != "" {
-		conf.RepoPath = *repoPath
+	if repoPath != "" {
+		conf.RepoPath = repoPath
 	}
 	if *archFlag != "" {
 		conf.DefaultArch = *archFlag
@@ -197,7 +211,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// If import was not successful or canceled, exit without further actions.
+	// If import was not successful or canceled, exit.
 	if !importSuccess {
 		os.Exit(0)
 	}
@@ -234,7 +248,7 @@ func main() {
 	fmt.Println("Gorilla import completed successfully.")
 }
 
-// Instead of config.GetConfigPath(), define your config path here:
+// getConfigPath returns the path for the config file.
 func getConfigPath() string {
 	return `C:\ProgramData\ManagedInstalls\Config.yaml`
 }
@@ -247,7 +261,6 @@ func loadOrCreateConfig() (*config.Configuration, error) {
 		configPath := getConfigPath()
 		configDir := filepath.Dir(configPath)
 		if _, statErr := os.Stat(configDir); os.IsNotExist(statErr) {
-
 			// Create the config directory
 			if err := os.MkdirAll(configDir, 0755); err != nil {
 				return nil, fmt.Errorf("failed to create config directory: %v", err)
@@ -342,429 +355,21 @@ func configureGorillaImport() error {
 	return nil
 }
 
-// auto-detect basic installer metadata
-func autoDetectInstaller(path string) (iType, name, version, dev, desc string) {
-	ext := strings.ToLower(filepath.Ext(path))
-
-	switch ext {
-	case ".msi":
-		iType = "msi"
-		n, v, d, s := extract.MsiMetadata(path)
-		if n == "" {
-			n = parseNameFromFile(path)
-		}
-		return iType, n, v, d, s
-
-	case ".exe":
-		iType = "exe"
-		n, v, d, s := extract.ExeMetadata(path)
-		if n == "" {
-			n = parseNameFromFile(path)
-		}
-		return iType, n, v, d, s
-
-	case ".nupkg":
-		iType = "nupkg"
-		n, v, d, s := extract.NupkgMetadata(path)
-		if n == "" {
-			n = parseNameFromFile(path)
-		}
-		return iType, n, v, d, s
-
-	default:
-		return "unknown", parseNameFromFile(path), "1.0", "", ""
-	}
-}
-
-// parseNameFromFile is a fallback
-func parseNameFromFile(path string) string {
-	base := filepath.Base(path)
-	return strings.TrimSuffix(base, filepath.Ext(base))
-}
-
-// advanced auto detection for installs from the installers
-func autoBuildInstalls(installerPath, iType, version string) []InstallItem {
-	switch iType {
-	case "msi":
-		// parse MSI File table or fallback
-		// for now, just do 1 item referencing the MSI itself:
-		sum, _ := utils.FileSHA256(installerPath)
-		return []InstallItem{{
-			Type:        "file",
-			Path:        installerPath,
-			MD5Checksum: "", // optional
-			Version:     version,
-		}}
-	case "exe":
-		// we only know about the EXE
-		sum, _ := utils.FileSHA256(installerPath)
-		return []InstallItem{{
-			Type:    "file",
-			Path:    installerPath,
-			Version: version,
-			// if you want MD5:
-		}}
-	case "nupkg":
-		// parse .nupkg contents or fallback to 1 item
-		sum, _ := utils.FileSHA256(installerPath)
-		return []InstallItem{{
-			Type: "file",
-			Path: installerPath,
-		}}
-	}
-	return nil
-}
-
-// merging -f
-func buildInstallsArray(paths []string) []InstallItem {
-	var arr []InstallItem
-	for _, p := range paths {
-		abs, _ := filepath.Abs(p)
-		fi, err := os.Stat(abs)
-		if err != nil || fi.IsDir() {
-			fmt.Fprintf(os.Stderr, "Skipping -f path: '%s'\n", p)
-			continue
-		}
-		md5v, _ := fileMd5(abs)
-		var ver string
-		if strings.EqualFold(filepath.Ext(abs), ".exe") && runtime.GOOS == "windows" {
-			// parse version resource
-			ver = "1.2.3.4" // placeholder
-		}
-		arr = append(arr, InstallItem{
-			Type:        "file",
-			Path:        abs,
-			MD5Checksum: md5v,
-			Version:     ver,
-		})
-	}
-	return arr
-}
-
-func sanitize(s string) string {
-	// remove spaces, special chars, etc.
-	return strings.ReplaceAll(s, " ", "_")
-}
-
-func copyFile(src, dst string) (int64, error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	defer out.Close()
-
-	n, err := io.Copy(out, in)
-	if err != nil {
-		return 0, err
-	}
-	return n, out.Sync()
-}
-
-func readFileOrEmpty(path string) (string, error) {
-	if path == "" {
-		return "", nil
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-// extractInstallerMetadata extracts metadata from the installer package.
-func extractInstallerMetadata(packagePath string, conf *config.Configuration) (Metadata, error) {
-	ext := strings.ToLower(filepath.Ext(packagePath))
-	var metadata Metadata
-
-	switch ext {
-	case ".nupkg":
-		// Calls the pkg/extract function directly:
-		name, ver, dev, desc := extract.NupkgMetadata(packagePath)
-		metadata.Title = name
-		metadata.ID = name
-		metadata.Version = ver
-		metadata.Developer = dev
-		metadata.Description = desc
-
-	case ".msi":
-		name, ver, dev, desc := extract.MsiMetadata(packagePath)
-		metadata.Title = name
-		metadata.ID = name
-		metadata.Version = ver
-		metadata.Developer = dev
-		metadata.Description = desc
-
-	case ".exe":
-		name, ver, dev, desc := extract.ExeMetadata(packagePath)
-		metadata.Title = name
-		metadata.ID = name
-		metadata.Version = ver
-		metadata.Developer = dev
-		metadata.Description = desc
-
-	default:
-		// allow .bat, .ps1, etc. to have no metadata
-		if ext == ".bat" || ext == ".ps1" {
-			metadata = Metadata{} // basically empty
-		} else {
-			return Metadata{}, fmt.Errorf("unsupported installer type: %s", ext)
-		}
-	}
-
-	// Prompt for user overrides:
-	metadata = promptForAllMetadata(packagePath, metadata, conf)
-
-	// Ensure the architecture array is set:
-	metadata.SupportedArch = []string{metadata.Architecture}
-
-	return metadata, nil
-}
-
-func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configuration) Metadata {
-	// Determine defaults
-	defaultID := m.ID
-	if defaultID == "" {
-		defaultID = parsePackageName(filepath.Base(packagePath))
-	}
-
-	defaultVersion := m.Version
-	if defaultVersion == "" {
-		defaultVersion = "1.0.0"
-	}
-
-	// Developer, Description, and Category can remain empty if not provided
-	defaultDeveloper := m.Developer
-	defaultDescription := m.Description
-	defaultCategory := m.Category
-
-	fmt.Printf("Identifier [%s]: ", defaultID)
-	var input string
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.ID = defaultID
-	} else {
-		m.ID = input
-	}
-
-	// We do NOT prompt for Display Name. We'll set it equal to Name later.
-
-	fmt.Printf("Version [%s]: ", defaultVersion)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Version = defaultVersion
-	} else {
-		m.Version = input
-	}
-
-	fmt.Printf("Developer [%s]: ", defaultDeveloper)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Developer = defaultDeveloper
-	} else {
-		m.Developer = input
-	}
-
-	fmt.Printf("Description [%s]: ", defaultDescription)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Description = defaultDescription
-	} else {
-		m.Description = input
-	}
-
-	fmt.Printf("Category [%s]: ", defaultCategory)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Category = defaultCategory
-	} else {
-		m.Category = input
-	}
-
-	// Prompt for architecture
-	defaultArch := conf.DefaultArch
-	fmt.Printf("Architecture(s) [%s]: ", defaultArch)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Architecture = defaultArch
-	} else {
-		m.Architecture = input
-	}
-
-	return m
-}
-
-func copyFile(src, dst string) (int64, error) {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return 0, err
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return 0, err
-	}
-	defer dstFile.Close()
-
-	nBytes, err := io.Copy(dstFile, srcFile)
-	if err != nil {
-		return 0, err
-	}
-
-	return nBytes, dstFile.Sync()
-}
-
+// getInstallerPath tries the --installer flag first, then a positional argument, then interactive.
 func getInstallerPath(installerFlag string) string {
 	if installerFlag != "" {
 		return installerFlag
 	}
-
 	if flag.NArg() > 0 {
 		return flag.Arg(0)
 	}
-
 	fmt.Print("path to the installer file: ")
 	var path string
 	fmt.Scanln(&path)
 	return path
 }
 
-func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string) (*Installer, error) {
-	if uninstallerPath == "" {
-		return nil, nil
-	}
-
-	if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
-	}
-
-	uninstallerHash, err := utils.FileSHA256(uninstallerPath)
-	if err != nil {
-		return nil, fmt.Errorf("error calculating uninstaller hash: %v", err)
-	}
-
-	uninstallerFilename := filepath.Base(uninstallerPath)
-	uninstallerDest := filepath.Join(pkgsFolderPath, uninstallerFilename)
-
-	if _, err := copyFile(uninstallerPath, uninstallerDest); err != nil {
-		return nil, fmt.Errorf("failed to copy uninstaller: %v", err)
-	}
-
-	return &Installer{
-		Location: filepath.Join("/", installerSubPath, uninstallerFilename),
-		Hash:     uninstallerHash,
-		Type:     strings.TrimPrefix(filepath.Ext(uninstallerPath), "."),
-	}, nil
-}
-
-func promptInstallerItemPath() (string, error) {
-	fmt.Print("Repo location (default: /apps): ")
-	var path string
-	fmt.Scanln(&path)
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = "/apps"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	path = strings.TrimRight(path, "/")
-	return path, nil
-}
-
-func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
-	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-	fileContent, err := os.ReadFile(allCatalogPath)
-	if err != nil {
-		// Try running makecatalogs once if All.yaml is missing
-		runMakeCatalogs(false)
-		fileContent, err = os.ReadFile(allCatalogPath)
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to read All.yaml even after makecatalogs: %v", err)
-		}
-	}
-
-	var allPackages []PkgsInfo
-	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-	}
-
-	cleanedProductCode := strings.TrimSpace(strings.ToLower(productCode))
-	cleanedUpgradeCode := strings.TrimSpace(strings.ToLower(upgradeCode))
-
-	for _, item := range allPackages {
-		if strings.TrimSpace(strings.ToLower(item.ProductCode)) == cleanedProductCode &&
-			strings.TrimSpace(strings.ToLower(item.UpgradeCode)) == cleanedUpgradeCode {
-			return &item, item.Installer != nil && item.Installer.Hash == currentFileHash, nil
-		}
-	}
-	return nil, false, nil
-}
-
-func getInput(prompt, defaultVal string) string {
-	fmt.Printf("%s [%s]: ", prompt, defaultVal)
-	var input string
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return defaultVal
-	}
-	return input
-}
-
-func buildInstallsArray(paths []string) []InstallItem {
-	var arr []InstallItem
-	for _, p := range paths {
-		abs, _ := filepath.Abs(p)
-		st, err := os.Stat(abs)
-		if err != nil || st.IsDir() {
-			fmt.Fprintf(os.Stderr, "Skipping -f path: '%s' (not found or directory)\n", p)
-			continue
-		}
-		md5val, _ := fileMd5(abs)
-
-		// If it's an EXE on Windows, optionally parse version:
-		var ver string
-		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
-			ver = getExeVersion(abs)
-		}
-
-		arr = append(arr, InstallItem{
-			Type:        "file",
-			Path:        abs,
-			MD5Checksum: md5val,
-			Version:     ver,
-		})
-	}
-	return arr
-}
-
-// For EXE version resource.
-// You can reuse your 'extract.ExeMetadata' if you prefer:
-func getExeVersion(exePath string) string {
-	// Since ExeMetadata returns (name, version, dev, desc),
-	// just pick off 'version':
-	_, ver, _, _ := extract.ExeMetadata(exePath)
-
-	return ver // empty string if no version
-}
-
+// gorillaImport handles the main logic of ingesting an installer into the Gorilla repo.
 func gorillaImport(
 	packagePath string,
 	conf *config.Configuration,
@@ -776,79 +381,61 @@ func gorillaImport(
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return false, fmt.Errorf("package '%s' does not exist", packagePath)
 	}
-
 	fmt.Printf("Processing package: %s\n", packagePath)
 
-	// Extract metadata
+	// Extract basic metadata
 	metadata, err := extractInstallerMetadata(packagePath, conf)
 	if err != nil {
 		return false, fmt.Errorf("metadata extraction failed: %v", err)
 	}
-
 	if metadata.ID == "" {
 		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
-	// Read and process script contents
-	processScript := func(scriptPath string) (string, error) {
-		if scriptPath == "" {
-			return "", nil
-		}
-		content, err := readScriptContent(scriptPath)
-		if err != nil {
-			return "", err
-		}
-		ext := strings.ToLower(filepath.Ext(scriptPath))
-		if ext == ".bat" {
-			wrappedContent := generateWrapperScript(content, "bat")
-			wrappedContent = strings.TrimSpace(wrappedContent)
-			return wrappedContent, nil
-		}
-		// For .ps1 or other scripts, return as-is
-		return content, nil
-	}
-
-	preinstallScriptContent, err := processScript(scripts.Preinstall)
+	// Prepare scripts
+	preinstallScriptContent, err := loadScriptContent(scripts.Preinstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to process preinstall script: %v", err)
 	}
-
-	postinstallScriptContent, err := processScript(scripts.Postinstall)
+	postinstallScriptContent, err := loadScriptContent(scripts.Postinstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to process postinstall script: %v", err)
 	}
-
-	preuninstallScriptContent, err := processScript(scripts.Preuninstall)
+	preuninstallScriptContent, err := loadScriptContent(scripts.Preuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to process preuninstall script: %v", err)
 	}
-
-	postuninstallScriptContent, err := processScript(scripts.Postuninstall)
+	postuninstallScriptContent, err := loadScriptContent(scripts.Postuninstall)
 	if err != nil {
 		return false, fmt.Errorf("failed to process postuninstall script: %v", err)
 	}
-
-	installCheckScriptContent, err := processScript(scripts.InstallCheck)
+	installCheckScriptContent, err := loadScriptContent(scripts.InstallCheck)
 	if err != nil {
-		return false, fmt.Errorf("failed to process install check script: %v", err)
+		return false, fmt.Errorf("failed to process install-check script: %v", err)
+	}
+	uninstallCheckScriptContent, err := loadScriptContent(scripts.UninstallCheck)
+	if err != nil {
+		return false, fmt.Errorf("failed to process uninstall-check script: %v", err)
 	}
 
-	uninstallCheckScriptContent, err := processScript(scripts.UninstallCheck)
-	if err != nil {
-		return false, fmt.Errorf("failed to process uninstall check script: %v", err)
-	}
-
-	// Process uninstaller
+	// Process uninstaller if provided
 	uninstaller, err := processUninstaller(uninstallerPath, filepath.Join(conf.RepoPath, "pkgs"), "apps")
 	if err != nil {
 		return false, fmt.Errorf("uninstaller processing failed: %v", err)
 	}
 
-	installerType := strings.TrimPrefix(strings.ToLower(filepath.Ext(packagePath)), ".")
+	// We'll compute a SHA256 for the main installer
 	fileHash, err := utils.FileSHA256(packagePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to calculate file hash: %v", err)
 	}
+
+	// Also compute the file size (in KB) for optional alignment with makepkginfo
+	stat, err := os.Stat(packagePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat installer: %v", err)
+	}
+	fileSizeKB := stat.Size() / 1024
 
 	installerItemPath, err := promptInstallerItemPath()
 	if err != nil {
@@ -865,7 +452,6 @@ func gorillaImport(
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
 	}
 
-	// Sanitize name and version for filenames:
 	nameForFilename := strings.ReplaceAll(metadata.ID, " ", "")
 	versionForFilename := strings.ReplaceAll(metadata.Version, " ", "")
 
@@ -877,23 +463,22 @@ func gorillaImport(
 			archTag = "-arm64-"
 		}
 
-		// Copy the installer file to the repo's /pkgs folder with sanitized filename
 		installerFilename := nameForFilename + archTag + versionForFilename + filepath.Ext(packagePath)
 		installerDest := filepath.Join(installerFolderPath, installerFilename)
 		if _, err := copyFile(packagePath, installerDest); err != nil {
-			// Handle error
+			return false, fmt.Errorf("failed to copy installer to repo: %v", err)
 		}
 
 		pkgsInfo := PkgsInfo{
 			Name:                 metadata.ID,
-			DisplayName:          "", // Will set after this if needed
+			DisplayName:          metadata.Title, // fallback
 			Version:              metadata.Version,
 			Description:          metadata.Description,
 			Category:             metadata.Category,
 			Developer:            metadata.Developer,
 			Catalogs:             []string{conf.DefaultCatalog},
 			SupportedArch:        []string{arch},
-			Installer:            &Installer{Location: filepath.Join(installerItemPath, installerFilename), Hash: fileHash, Type: installerType},
+			Installer:            &Installer{Location: filepath.Join(installerItemPath, installerFilename), Hash: fileHash, Type: metadata.InstallerType},
 			Uninstaller:          uninstaller,
 			UnattendedInstall:    true,
 			UnattendedUninstall:  true,
@@ -905,26 +490,26 @@ func gorillaImport(
 			PostuninstallScript:  postuninstallScriptContent,
 			InstallCheckScript:   installCheckScriptContent,
 			UninstallCheckScript: uninstallCheckScriptContent,
+
+			// Fields added to align with makepkginfo
+			InstallerItemHash:     fileHash,
+			InstallerItemSize:     fileSizeKB,
+			InstallerItemLocation: installerFilename,
 		}
 
-		// Reference the main installer itself in the 'installs:' array:
-		mainInstallerMD5, _ := fileMd5(packagePath)
-		autoInstalls := []InstallItem{{
-			Type:        "file",
-			Path:        packagePath,
-			MD5Checksum: mainInstallerMD5,
-			Version:     pkgsInfo.Version,
-		}}
-
-		// Also gather user-supplied -f items:
+		// Build an InstallItem array referencing the main installer plus user-supplied -f files
+		autoInstalls := []InstallItem{
+			{
+				Type:        SingleQuotedString("file"),
+				Path:        SingleQuotedString(packagePath),
+				MD5Checksum: SingleQuotedString(""), // or keep empty; or call utils.FileMD5 if you prefer
+				Version:     SingleQuotedString(pkgsInfo.Version),
+			},
+		}
 		userInstalls := buildInstallsArray(filePaths)
-
-		// Merge them:
 		pkgsInfo.Installs = append(autoInstalls, userInstalls...)
 
-		if strings.TrimSpace(metadata.Title) != "" {
-			pkgsInfo.DisplayName = metadata.Title
-		} else {
+		if strings.TrimSpace(pkgsInfo.DisplayName) == "" {
 			pkgsInfo.DisplayName = pkgsInfo.Name
 		}
 
@@ -964,211 +549,352 @@ func gorillaImport(
 			return false, nil
 		}
 
-		err = createPkgsInfo(
-			packagePath,
-			pkginfoFolderPath,
-			pkgsInfo.Name,
-			pkgsInfo.DisplayName,
-			pkgsInfo.Version,
-			pkgsInfo.Description,
-			pkgsInfo.Catalogs,
-			pkgsInfo.Category,
-			pkgsInfo.Developer,
-			pkgsInfo.SupportedArch,
-			installerItemPath,
-			pkgsInfo.ProductCode,
-			pkgsInfo.UpgradeCode,
-			fileHash,
-			pkgsInfo.UnattendedInstall,
-			pkgsInfo.UnattendedUninstall,
-			pkgsInfo.PreinstallScript,
-			pkgsInfo.PostinstallScript,
-			pkgsInfo.PreuninstallScript,
-			pkgsInfo.PostuninstallScript,
-			pkgsInfo.InstallCheckScript,
-			pkgsInfo.UninstallCheckScript,
-			pkgsInfo.Uninstaller,
-			nameForFilename,
-			versionForFilename,
-			archTag,
-		)
+		err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, nameForFilename, versionForFilename, archTag)
 		if err != nil {
 			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
-		}
-
-		outputPath := filepath.Join(pkginfoFolderPath, nameForFilename+archTag+versionForFilename+".yaml")
-		absOutputPath, err := filepath.Abs(outputPath)
-		if err != nil {
-			return true, fmt.Errorf("failed to get absolute path for pkginfo: %v", err)
-		}
-		fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
-
-		if conf.OpenImportedYaml {
-			openFileInEditor(absOutputPath)
 		}
 	}
 
 	return true, nil
 }
 
-func createPkgsInfo(
-	filePath string,
-	outputDir string,
-	name string,
-	displayName string,
-	version string,
-	description string,
-	catalogs []string,
-	category string,
-	developer string,
-	supportedArch []string,
-	installerSubPath string,
-	productCode string,
-	upgradeCode string,
-	fileHash string,
-	unattendedInstall bool,
-	unattendedUninstall bool,
-	preinstallScript string,
-	postinstallScript string,
-	preuninstallScript string,
-	postuninstallScript string,
-	installCheckScript string,
-	uninstallCheckScript string,
-	uninstaller *Installer,
-	sanitizedName string,
-	sanitizedVersion string,
-	arch string,
-) error {
-	installerType := strings.TrimPrefix(filepath.Ext(filePath), ".")
-	installerFilename := sanitizedName + arch + sanitizedVersion + filepath.Ext(filePath)
-	installerLocation := installerSubPath + "/" + installerFilename
+// Metadata holds the extracted metadata from installer packages.
+type Metadata struct {
+	Title         string
+	ID            string
+	Version       string
+	Developer     string
+	Category      string
+	Description   string
+	ProductCode   string
+	UpgradeCode   string
+	Architecture  string
+	SupportedArch []string
 
-	pkgsInfo := PkgsInfo{
-		Name:                 name,
-		DisplayName:          displayName,
-		Version:              version,
-		Developer:            developer,
-		Category:             category,
-		Description:          description,
-		Catalogs:             catalogs,
-		SupportedArch:        supportedArch,
-		Installer:            &Installer{Location: installerLocation, Hash: fileHash, Type: installerType},
-		Uninstaller:          uninstaller,
-		UnattendedInstall:    unattendedInstall,
-		UnattendedUninstall:  unattendedUninstall,
-		ProductCode:          strings.TrimSpace(productCode),
-		UpgradeCode:          strings.TrimSpace(upgradeCode),
-		PreinstallScript:     preinstallScript,
-		PostinstallScript:    postinstallScript,
-		PreuninstallScript:   preuninstallScript,
-		PostuninstallScript:  postuninstallScript,
-		InstallCheckScript:   installCheckScript,
-		UninstallCheckScript: uninstallCheckScript,
-	}
-
-	// If DisplayName is empty, set it to Name
-	if pkgsInfo.DisplayName == "" {
-		pkgsInfo.DisplayName = pkgsInfo.Name
-	}
-
-	outputPath := filepath.Join(outputDir, sanitizedName+arch+sanitizedVersion+".yaml")
-
-	pkgsInfoContent, err := encodeWithSelectiveBlockScalars(pkgsInfo)
-	if err != nil {
-		return fmt.Errorf("failed to encode pkginfo: %v", err)
-	}
-
-	if err := os.WriteFile(outputPath, pkgsInfoContent, 0644); err != nil {
-		return fmt.Errorf("failed to write pkginfo to file: %v", err)
-	}
-
-	return nil
+	// new for clarity
+	InstallerType string
 }
 
-func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2)
+// extractInstallerMetadata extracts metadata from the installer package.
+func extractInstallerMetadata(packagePath string, conf *config.Configuration) (Metadata, error) {
+	ext := strings.ToLower(filepath.Ext(packagePath))
+	var metadata Metadata
 
-	if err := encoder.Encode(&pkgsInfo); err != nil {
-		return nil, fmt.Errorf("failed to encode pkginfo: %v", err)
-	}
-	encoder.Close()
+	switch ext {
+	case ".nupkg":
+		name, ver, dev, desc := extract.NupkgMetadata(packagePath)
+		metadata.Title = name
+		metadata.ID = name
+		metadata.Version = ver
+		metadata.Developer = dev
+		metadata.Description = desc
+		metadata.InstallerType = "nupkg"
 
-	node := &yaml.Node{}
-	decoder := yaml.NewDecoder(&buf)
-	if err := decoder.Decode(node); err != nil {
-		return nil, fmt.Errorf("failed to decode encoded pkginfo: %v", err)
-	}
+	case ".msi":
+		name, ver, dev, desc := extract.MsiMetadata(packagePath)
+		metadata.Title = name
+		metadata.ID = name
+		metadata.Version = ver
+		metadata.Developer = dev
+		metadata.Description = desc
+		metadata.InstallerType = "msi"
 
-	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
-		node = node.Content[0]
-	}
-
-	scriptFields := map[string]bool{
-		"preinstall_script":     true,
-		"postinstall_script":    true,
-		"preuninstall_script":   true,
-		"postuninstall_script":  true,
-		"installcheck_script":   true,
-		"uninstallcheck_script": true,
-	}
-
-	// Iterate over the mapping nodes to set Style
-	for i := 0; i < len(node.Content); i += 2 {
-		key := node.Content[i].Value
-		if scriptFields[key] && node.Content[i+1].Kind == yaml.ScalarNode && node.Content[i+1].Value != "" {
-			// Normalize line breaks to Unix style
-			node.Content[i+1].Value = strings.ReplaceAll(node.Content[i+1].Value, "\r\n", "\n")
-			node.Content[i+1].Value = strings.ReplaceAll(node.Content[i+1].Value, "\r", "\n")
-			node.Content[i+1].Value = strings.TrimRight(node.Content[i+1].Value, "\n")
-			node.Content[i+1].Style = yaml.LiteralStyle
+	case ".exe":
+		versionString, err := extract.ExeMetadata(packagePath)
+		metadata.Title = parsePackageName(filepath.Base(packagePath))
+		metadata.ID = metadata.Title
+		metadata.Version = versionString
+		if err != nil {
+			metadata.Version = ""
 		}
+		metadata.Developer = ""
+		metadata.Description = ""
+		metadata.InstallerType = "exe"
+
+	default:
+		// allow .bat, .ps1, etc. to have no metadata
+		metadata.InstallerType = "unknown"
+		metadata.Title = parsePackageName(filepath.Base(packagePath))
+		metadata.ID = metadata.Title
+		metadata.Version = "1.0.0"
 	}
 
-	finalBuf := &bytes.Buffer{}
-	finalEncoder := yaml.NewEncoder(finalBuf)
-	finalEncoder.SetIndent(2)
-	if err := finalEncoder.Encode(node); err != nil {
-		return nil, fmt.Errorf("failed to re-encode pkginfo with block scalars: %v", err)
-	}
-	finalEncoder.Close()
+	// Prompt for user overrides
+	metadata = promptForAllMetadata(packagePath, metadata, conf)
 
-	return finalBuf.Bytes(), nil
+	// Ensure the architecture array is set:
+	if metadata.Architecture == "" {
+		metadata.Architecture = conf.DefaultArch
+	}
+	metadata.SupportedArch = []string{metadata.Architecture}
+
+	return metadata, nil
 }
 
-func generateWrapperScript(batchContent, scriptType string) string {
-	if scriptType == "bat" {
-		// Trim leading/trailing whitespace and replace CRLF with LF
-		trimmedContent := strings.TrimSpace(batchContent)
-		trimmedContent = strings.ReplaceAll(trimmedContent, "\r\n", "\n")
-
-		// Return the PowerShell wrapper with actual line breaks
-		return `$batchScriptContent = @'
-` + trimmedContent + `
-'@
-
-$batchFile = "$env:TEMP\\temp_script.bat"
-Set-Content -Path $batchFile -Value $batchScriptContent -Encoding UTF8
-try {
-    & cmd.exe /c $batchFile
-} finally {
-    Remove-Item $batchFile -ErrorAction SilentlyContinue
-}`
+func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configuration) Metadata {
+	// Determine defaults
+	defaultID := m.ID
+	if defaultID == "" {
+		defaultID = parsePackageName(filepath.Base(packagePath))
 	}
-	// For .ps1 or other script types, return the content as-is
-	return batchContent
+	defaultVersion := m.Version
+	if defaultVersion == "" {
+		defaultVersion = "1.0.0"
+	}
+	defaultDeveloper := m.Developer
+	defaultDescription := m.Description
+	defaultCategory := m.Category
+	defaultArch := conf.DefaultArch
+
+	fmt.Printf("Identifier [%s]: ", defaultID)
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.ID = defaultID
+	} else {
+		m.ID = input
+	}
+	fmt.Printf("Version [%s]: ", defaultVersion)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Version = defaultVersion
+	} else {
+		m.Version = input
+	}
+	fmt.Printf("Developer [%s]: ", defaultDeveloper)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Developer = defaultDeveloper
+	} else {
+		m.Developer = input
+	}
+	fmt.Printf("Description [%s]: ", defaultDescription)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Description = defaultDescription
+	} else {
+		m.Description = input
+	}
+	fmt.Printf("Category [%s]: ", defaultCategory)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Category = defaultCategory
+	} else {
+		m.Category = input
+	}
+
+	fmt.Printf("Architecture(s) [%s]: ", defaultArch)
+	input = ""
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		m.Architecture = defaultArch
+	} else {
+		m.Architecture = input
+	}
+
+	return m
 }
 
 func parsePackageName(filename string) string {
-	base := strings.TrimSuffix(filename, filepath.Ext(filename))
-	parts := strings.Split(base, "-")
-	if len(parts) > 1 {
-		return strings.Join(parts[:len(parts)-1], "-")
-	}
-	return base
+	return strings.TrimSuffix(filename, filepath.Ext(filename))
 }
 
+func promptInstallerItemPath() (string, error) {
+	fmt.Print("Repo location (default: /apps): ")
+	var path string
+	fmt.Scanln(&path)
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "/apps"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	path = strings.TrimRight(path, "/")
+	return path, nil
+}
+
+// loadScriptContent reads the script file's contents if provided, or returns empty
+func loadScriptContent(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// processUninstaller copies the uninstaller to the repo if provided.
+func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string) (*Installer, error) {
+	if uninstallerPath == "" {
+		return nil, nil
+	}
+
+	if _, err := os.Stat(uninstallerPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("uninstaller '%s' does not exist", uninstallerPath)
+	}
+
+	uninstallerHash, err := utils.FileSHA256(uninstallerPath)
+	if err != nil {
+		return nil, fmt.Errorf("error calculating uninstaller hash: %v", err)
+	}
+
+	uninstallerFilename := filepath.Base(uninstallerPath)
+	uninstallerDest := filepath.Join(pkgsFolderPath, uninstallerFilename)
+
+	if _, err := copyFile(uninstallerPath, uninstallerDest); err != nil {
+		return nil, fmt.Errorf("failed to copy uninstaller: %v", err)
+	}
+
+	return &Installer{
+		Location: filepath.Join("/", installerSubPath, uninstallerFilename),
+		Hash:     uninstallerHash,
+		Type:     strings.TrimPrefix(filepath.Ext(uninstallerPath), "."),
+	}, nil
+}
+
+// findMatchingItemInAllCatalog looks for an existing item in All.yaml
+func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
+	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+
+	// Try reading All.yaml; if missing, run makecatalogs once
+	fileContent, err := os.ReadFile(allCatalogPath)
+	if err != nil {
+		if runErr := runMakeCatalogs(false); runErr != nil {
+			return nil, false, fmt.Errorf("failed to run makecatalogs: %v", runErr)
+		}
+		// Attempt to read All.yaml again
+		fileContent, err = os.ReadFile(allCatalogPath)
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to read All.yaml after makecatalogs: %v", err)
+		}
+	}
+
+	var allPackages []PkgsInfo
+	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+	}
+
+	cleanedProductCode := strings.TrimSpace(strings.ToLower(productCode))
+	cleanedUpgradeCode := strings.TrimSpace(strings.ToLower(upgradeCode))
+	cleanedCurrentHash := strings.TrimSpace(strings.ToLower(currentFileHash))
+
+	// Iterate over all pkgs in All.yaml to find a match
+	for _, item := range allPackages {
+		itemProductCode := strings.TrimSpace(strings.ToLower(item.ProductCode))
+		itemUpgradeCode := strings.TrimSpace(strings.ToLower(item.UpgradeCode))
+
+		// First, check product & upgrade codes
+		if itemProductCode == cleanedProductCode && itemUpgradeCode == cleanedUpgradeCode {
+			// If we also care about matching the currentFileHash, do so here
+			if item.Installer != nil && cleanedCurrentHash != "" {
+				itemHash := strings.TrimSpace(strings.ToLower(item.Installer.Hash))
+				if itemHash == cleanedCurrentHash {
+					// Perfect match: product code, upgrade code, and hash all match
+					return &item, true, nil
+				}
+			}
+
+			// If we get here, codes match but hash does not
+			// You can return a partial match, or keep looking. Typically:
+			return &item, false, nil
+		}
+	}
+
+	// No match found at all
+	return nil, false, nil
+}
+
+func copyFile(src, dst string) (int64, error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return 0, err
+	}
+	defer out.Close()
+
+	n, err := io.Copy(out, in)
+	if err != nil {
+		return 0, err
+	}
+	return n, out.Sync()
+}
+
+// buildInstallsArray processes user-supplied -f paths into InstallItem structs.
+func buildInstallsArray(paths []string) []InstallItem {
+	var arr []InstallItem
+	for _, p := range paths {
+		abs, _ := filepath.Abs(p)
+		fi, err := os.Stat(abs)
+		if err != nil || fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "Skipping -f path: '%s'\n", p)
+			continue
+		}
+		md5v, _ := utils.FileMD5(abs)
+		ver := ""
+		if strings.EqualFold(filepath.Ext(abs), ".exe") && runtime.GOOS == "windows" {
+			version, _ := extract.ExeMetadata(abs)
+			ver = version
+		}
+		arr = append(arr, InstallItem{
+			Type:        SingleQuotedString("file"),
+			Path:        SingleQuotedString(abs),
+			MD5Checksum: SingleQuotedString(md5v),
+			Version:     SingleQuotedString(ver),
+		})
+	}
+	return arr
+}
+
+func getInput(prompt, defaultVal string) string {
+	fmt.Printf("%s [%s]: ", prompt, defaultVal)
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultVal
+	}
+	return input
+}
+
+// runMakeCatalogs runs the makecatalogs.exe if present.
+func runMakeCatalogs(silent bool) error {
+	makeCatalogsBinary := `C:\Program Files\Gorilla\makecatalogs.exe`
+	if _, err := os.Stat(makeCatalogsBinary); os.IsNotExist(err) {
+		return fmt.Errorf("makecatalogs binary not found at %s", makeCatalogsBinary)
+	}
+	args := []string{}
+	if silent {
+		args = append(args, "-silent")
+	}
+	cmd := exec.Command(makeCatalogsBinary, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	fmt.Printf("Running makecatalogs from: %s\n", makeCatalogsBinary)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("makecatalogs execution failed: %v", err)
+	}
+	fmt.Println("makecatalogs completed successfully.")
+	return nil
+}
+
+// uploadToCloud is a convenience function for AWS/Azure sync
 func uploadToCloud(conf *config.Configuration) error {
 	localPkgsPath := filepath.Join(conf.RepoPath, "pkgs")
 	localIconsPath := filepath.Join(conf.RepoPath, "icons")
@@ -1212,31 +938,7 @@ func uploadToCloud(conf *config.Configuration) error {
 	return nil
 }
 
-func runMakeCatalogs(silent bool) error {
-	makeCatalogsBinary := `C:\Program Files\Gorilla\makecatalogs.exe`
-
-	if _, err := os.Stat(makeCatalogsBinary); os.IsNotExist(err) {
-		return fmt.Errorf("makecatalogs binary not found at %s", makeCatalogsBinary)
-	}
-
-	args := []string{}
-	if silent {
-		args = append(args, "-silent")
-	}
-
-	cmd := exec.Command(makeCatalogsBinary, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	fmt.Printf("Running makecatalogs from: %s\n", makeCatalogsBinary)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("makecatalogs execution failed: %v", err)
-	}
-
-	fmt.Println("makecatalogs completed successfully.")
-	return nil
-}
-
+// syncToCloud is used to sync a single directory to S3/Azure
 func syncToCloud(conf *config.Configuration, source, destinationSubPath string) error {
 	var destination string
 	if conf.CloudProvider == "aws" {
@@ -1267,24 +969,34 @@ func syncToCloud(conf *config.Configuration, source, destinationSubPath string) 
 	return nil
 }
 
-func readScriptContent(scriptPath string) (string, error) {
-	if scriptPath == "" {
-		return "", nil
-	}
-
-	content, err := os.ReadFile(scriptPath)
+// writePkgInfoFile encodes the final pkgsinfo struct and writes it to disk.
+func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, sanitizedVersion, archTag string) error {
+	outputPath := filepath.Join(outputDir, sanitizedName+archTag+sanitizedVersion+".yaml")
+	yamlData, err := yaml.Marshal(&pkgsInfo)
 	if err != nil {
-		return "", fmt.Errorf("error reading script file: %v", err)
+		return fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
-
-	return string(content), nil
+	if err := os.WriteFile(outputPath, yamlData, 0644); err != nil {
+		return fmt.Errorf("failed to write pkginfo to file: %v", err)
+	}
+	absOutputPath, err := filepath.Abs(outputPath)
+	if err == nil {
+		fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
+	}
+	if pkgsInfo.InstallerItemHash != "" {
+		if openErr := maybeOpenFile(absOutputPath); openErr != nil {
+			fmt.Printf("Warning: could not open pkginfo in an editor: %v\n", openErr)
+		}
+	}
+	return nil
 }
 
-func openFileInEditor(filePath string) {
+// maybeOpenFile optionally opens the YAML in VSCode or Notepad if OpenImportedYaml is set.
+func maybeOpenFile(filePath string) error {
+	// In this snippet, you’d check conf.OpenImportedYaml. If you need it, adjust accordingly.
 	codeCmd, err := exec.LookPath("code.cmd")
 	if err != nil {
-		exec.Command("notepad.exe", filePath).Start()
-	} else {
-		exec.Command(codeCmd, filePath).Start()
+		return exec.Command("notepad.exe", filePath).Start()
 	}
+	return exec.Command(codeCmd, filePath).Start()
 }

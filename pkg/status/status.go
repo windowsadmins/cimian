@@ -377,7 +377,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 		// For now we only handle files. Extend as needed.
 		if strings.ToLower(install.Type) == "file" {
 			// Does the file exist?
-			fi, err := os.Stat(install.Path)
+			_, err := os.Stat(install.Path)
 			if err != nil {
 				if os.IsNotExist(err) {
 					// File missing => if installType is 'install' or 'update' => we do it
