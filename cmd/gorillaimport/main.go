@@ -148,10 +148,10 @@ func main() {
 
 	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags)")
 
-	showVersion := flag.Bool("version", false, "Print version and exit.")
+	showGorillaImportVersion := flag.Bool("gorillaimport_version", false, "Print gorillaimport version and exit.")
 	flag.Parse()
 
-	if *showVersion {
+	if *showGorillaImportVersion {
 		fmt.Println("gorillaimport 1.0.0 (example)")
 		return
 	}

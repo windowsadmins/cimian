@@ -215,11 +215,11 @@ func main() {
 	flag.BoolVar(&unattendedUninstall, "unattended_uninstall", false, "Set 'unattended_uninstall: true'")
 	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags allowed)")
 
-	showVersion := flag.Bool("version", false, "Print the version and exit.")
+	showMakePkgInfoVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
 
 	// Handle --version flag
-	if *showVersion {
+	if *showMakePkgInfoVersion {
 		version.Print()
 		return
 	}
