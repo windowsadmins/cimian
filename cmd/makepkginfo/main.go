@@ -19,15 +19,6 @@ import (
 	"github.com/windowsadmins/gorilla/pkg/version"
 )
 
-// Struct for "installs" array
-type InstallItem struct {
-	Type           SingleQuotedString `yaml:"type"`
-	Path           SingleQuotedString `yaml:"path"`
-	MD5Checksum    SingleQuotedString `yaml:"md5checksum,omitempty"`
-	SHA256Checksum SingleQuotedString `yaml:"sha256checksum,omitempty"`
-	Version        SingleQuotedString `yaml:"version,omitempty"`
-}
-
 // SingleQuotedString forces single quotes in YAML output.
 type SingleQuotedString string
 
@@ -40,29 +31,46 @@ func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
 	return node, nil
 }
 
+// InstallItem struct for "installs" array
+type InstallItem struct {
+	Type           SingleQuotedString `yaml:"type"`
+	Path           SingleQuotedString `yaml:"path"`
+	MD5Checksum    SingleQuotedString `yaml:"md5checksum,omitempty"`
+	SHA256Checksum SingleQuotedString `yaml:"sha256checksum,omitempty"`
+	Version        SingleQuotedString `yaml:"version,omitempty"`
+}
+
+// Installer is our new struct to hold location, hash, size, etc.
+// This parallels gorillaimport's "Installer" struct.
+type Installer struct {
+	Location string `yaml:"location,omitempty"`
+	Hash     string `yaml:"hash,omitempty"`
+	Type     string `yaml:"type,omitempty"`
+	Size     int64  `yaml:"size,omitempty"`
+}
+
 // PkgsInfo represents the package information
 type PkgsInfo struct {
-	Name                  string        `yaml:"name"`
-	DisplayName           string        `yaml:"display_name,omitempty"`
-	Version               string        `yaml:"version"`
-	Catalogs              []string      `yaml:"catalogs,omitempty"`
-	Category              string        `yaml:"category,omitempty"`
-	Description           string        `yaml:"description,omitempty"`
-	Developer             string        `yaml:"developer,omitempty"`
-	InstallerType         string        `yaml:"installer_type,omitempty"`
-	InstallerItemHash     string        `yaml:"installer_item_hash,omitempty"`
-	InstallerItemSize     int64         `yaml:"installer_item_size,omitempty"`
-	InstallerItemLocation string        `yaml:"installer_item_location,omitempty"`
-	UnattendedInstall     bool          `yaml:"unattended_install,omitempty"`
-	Installs              []InstallItem `yaml:"installs,omitempty"`
-	InstallCheckScript    string        `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript  string        `yaml:"uninstallcheck_script,omitempty"`
-	PreinstallScript      string        `yaml:"preinstall_script,omitempty"`
-	PostinstallScript     string        `yaml:"postinstall_script,omitempty"`
+	Name                 string        `yaml:"name"`
+	DisplayName          string        `yaml:"display_name,omitempty"`
+	Version              string        `yaml:"version"`
+	Catalogs             []string      `yaml:"catalogs,omitempty"`
+	Category             string        `yaml:"category,omitempty"`
+	Description          string        `yaml:"description,omitempty"`
+	Developer            string        `yaml:"developer,omitempty"`
+	InstallerType        string        `yaml:"installer_type,omitempty"` // leftover if needed
+	UnattendedInstall    bool          `yaml:"unattended_install,omitempty"`
+	Installs             []InstallItem `yaml:"installs,omitempty"`
+	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
+	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
+	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
+	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
+
+	// Instead of top-level installer_item_* fields, we embed an Installer struct
+	Installer *Installer `yaml:"installer,omitempty"`
 }
 
 // NoQuoteString ensures empty strings appear without quotes.
-// (Kept from your original code; used if needed.)
 type NoQuoteString string
 
 func (s NoQuoteString) MarshalYAML() (interface{}, error) {
@@ -73,7 +81,7 @@ func (s NoQuoteString) MarshalYAML() (interface{}, error) {
 	return node, nil
 }
 
-// wrapperPkgsInfo preserves field order and removes quotes for empty strings
+// wrapperPkgsInfo is from your original code, might or might not need revision
 type wrapperPkgsInfo struct {
 	Name                 NoQuoteString `yaml:"name"`
 	DisplayName          NoQuoteString `yaml:"display_name"`
@@ -108,7 +116,7 @@ func LoadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
-// Function to calculate file size and hash
+// getFileInfo calculates file size and SHA256
 func getFileInfo(pkgPath string) (int64, string, error) {
 	fi, err := os.Stat(pkgPath)
 	if err != nil {
@@ -121,7 +129,7 @@ func getFileInfo(pkgPath string) (int64, string, error) {
 	return fi.Size(), hash, nil
 }
 
-// SavePkgsInfo saves a pkgsinfo back to its YAML file.
+// SavePkgsInfo for writing YAML
 func SavePkgsInfo(pkgsinfoPath string, pkgsinfo PkgsInfo) error {
 	data, err := yaml.Marshal(pkgsinfo)
 	if err != nil {
@@ -130,7 +138,7 @@ func SavePkgsInfo(pkgsinfoPath string, pkgsinfo PkgsInfo) error {
 	return os.WriteFile(pkgsinfoPath, data, 0644)
 }
 
-// CreateNewPkgsInfo creates a new pkgsinfo file.
+// CreateNewPkgsInfo can remain mostly unchanged, or updated to embed new Installer struct if needed
 func CreateNewPkgsInfo(pkgsinfoPath, name string) error {
 	newPkgsInfo := PkgsInfo{
 		Name:              name,
@@ -139,32 +147,26 @@ func CreateNewPkgsInfo(pkgsinfoPath, name string) error {
 		UnattendedInstall: true,
 	}
 
-	// Copy fields to wrapperPkgsInfo
+	// For your minimal new file
 	wrapped := wrapperPkgsInfo{
-		Name:                 NoQuoteString(newPkgsInfo.Name),
-		DisplayName:          "",
-		Version:              NoQuoteString(newPkgsInfo.Version),
-		Catalogs:             newPkgsInfo.Catalogs,
-		Category:             "",
-		Description:          "",
-		Developer:            "",
-		UnattendedInstall:    newPkgsInfo.UnattendedInstall,
-		InstallCheckScript:   "",
-		UninstallCheckScript: "",
-		PreinstallScript:     "",
-		PostinstallScript:    "",
+		Name:              NoQuoteString(newPkgsInfo.Name),
+		DisplayName:       "",
+		Version:           NoQuoteString(newPkgsInfo.Version),
+		Catalogs:          newPkgsInfo.Catalogs,
+		Category:          "",
+		Description:       "",
+		Developer:         "",
+		UnattendedInstall: newPkgsInfo.UnattendedInstall,
 	}
 
 	data, err := yaml.Marshal(&wrapped)
 	if err != nil {
 		return err
 	}
-
 	return os.WriteFile(pkgsinfoPath, data, 0644)
 }
 
-// getFileVersion retrieves version information from executable files on Windows systems.
-// Returns an empty string and nil error on non-Windows platforms.
+// getFileVersion for .exe
 func getFileVersion(path string) (string, error) {
 	if runtime.GOOS != "windows" {
 		return "", nil
@@ -173,31 +175,27 @@ func getFileVersion(path string) (string, error) {
 	return version, err
 }
 
-// Main function
+// main is our entry point
 func main() {
-	// Declare versionString
-	var versionString string
-
-	// Command-line flags
 	var (
-		// script flags
 		installCheckScript   string
 		uninstallCheckScript string
 		preinstallScript     string
 		postinstallScript    string
 
-		// basic fields
 		catalogs            string
 		category            string
 		developer           string
-		name                string
+		pkgName             string
 		displayName         string
 		description         string
+		versionString       string
 		unattendedInstall   bool
 		unattendedUninstall bool
 		newPkg              bool
 	)
-	// Add a multi-flag for `-f`
+
+	// Multi-flag for -f
 	var filePaths multiStringSlice
 
 	flag.StringVar(&installCheckScript, "installcheck_script", "", "Path to install check script")
@@ -207,18 +205,19 @@ func main() {
 	flag.StringVar(&catalogs, "catalogs", "Development", "Comma-separated list of catalogs")
 	flag.StringVar(&category, "category", "", "Category")
 	flag.StringVar(&developer, "developer", "", "Developer")
-	flag.StringVar(&name, "name", "", "Name override for the package")
+	flag.StringVar(&pkgName, "name", "", "Name override for the package")
 	flag.StringVar(&displayName, "displayname", "", "Display name override")
 	flag.StringVar(&description, "description", "", "Description")
 	flag.StringVar(&versionString, "version", "", "Version override")
 	flag.BoolVar(&unattendedInstall, "unattended_install", false, "Set 'unattended_install: true'")
 	flag.BoolVar(&unattendedUninstall, "unattended_uninstall", false, "Set 'unattended_uninstall: true'")
+	flag.BoolVar(&newPkg, "new", false, "Create a new pkginfo stub")
 	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags allowed)")
 
-	showMakePkgInfoVersion := flag.Bool("version", false, "Print the version and exit.")
+	showMakePkgInfoVersion := flag.Bool("makepkginfo_version", false, "Print the version and exit.")
 	flag.Parse()
 
-	// Handle --version flag
+	// Handle --version
 	if *showMakePkgInfoVersion {
 		version.Print()
 		return
@@ -231,7 +230,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Handle --new
+	// Handle --new stub
 	if newPkg {
 		if flag.NArg() < 1 {
 			fmt.Println("Usage: makepkginfo --new PkginfoName")
@@ -249,35 +248,30 @@ func main() {
 		return
 	}
 
-	// If we are not creating a new pkg, we expect at least one argument, e.g. the MSI path
-	if flag.NArg() < 1 {
-		// If the user only wants to do `-f` checks but no MSI, that's also valid
-		// so we won't forcibly exit if there's no MSI. But let's see if they gave us one.
-		if len(filePaths) == 0 {
-			fmt.Println("Usage: makepkginfo [options] /path/to/installer.msi -f path1 -f path2 ...")
-			flag.PrintDefaults()
-			os.Exit(1)
-		}
+	// If not creating a new pkg, we expect at least 1 argument => the installer path
+	if flag.NArg() < 1 && len(filePaths) == 0 {
+		fmt.Println("Usage: makepkginfo [options] /path/to/installer.msi -f path1 -f path2 ...")
+		flag.PrintDefaults()
+		os.Exit(1)
 	}
 
-	installerPath := flag.Arg(0)
-	installerPath = strings.TrimSuffix(installerPath, "/")
+	installerPath := ""
+	if flag.NArg() > 0 {
+		installerPath = flag.Arg(0)
+		installerPath = strings.TrimSuffix(installerPath, "/")
+	}
 
-	// gather installer metadata
+	// gather metadata
 	autoInstalls, metaName, metaVersion, metaDeveloper, metaDesc, installerType := gatherInstallerInfo(installerPath)
 
-	// if user provided `--name`, override metaName
+	// override from flags
 	finalName := metaName
-	if name != "" {
-		finalName = name
+	if pkgName != "" {
+		finalName = pkgName
 	}
-
-	// if user provided --developer, override
 	if developer != "" {
 		metaDeveloper = developer
 	}
-
-	// if user provided version, override
 	finalVersion := metaVersion
 	if versionString != "" {
 		finalVersion = versionString
@@ -285,12 +279,11 @@ func main() {
 	if finalVersion == "" {
 		finalVersion = time.Now().Format("2006.01.02")
 	}
-
 	if description != "" {
 		metaDesc = description
 	}
 
-	// build the base PkgsInfo
+	// Build PkgsInfo
 	pkginfo := PkgsInfo{
 		Name:              finalName,
 		DisplayName:       displayName,
@@ -301,18 +294,23 @@ func main() {
 		Description:       metaDesc,
 		InstallerType:     installerType,
 		UnattendedInstall: unattendedInstall,
-		Installs:          autoInstalls, // from auto-detect
+		Installs:          autoInstalls,
 	}
 
-	// gather size + hash for the main installer
-	size, hash, _ := getFileInfo(installerPath)
-	pkginfo.InstallerItemSize = size / 1024
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting file info for %s: %v\n", installerPath, err)
-		os.Exit(1)
+	// If we have an installer path, gather size + hash and store in Installer
+	if installerPath != "" {
+		sizeBytes, hashVal, _ := getFileInfo(installerPath)
+		// In KB
+		sizeKB := sizeBytes / 1024
+
+		// We'll store an `Installer` object
+		pkginfo.Installer = &Installer{
+			Location: filepath.Base(installerPath), // or full path, depending on your usage
+			Hash:     hashVal,
+			Type:     installerType,
+			Size:     sizeKB,
+		}
 	}
-	pkginfo.InstallerItemHash = hash
-	pkginfo.InstallerItemLocation = filepath.Base(installerPath)
 
 	// read scripts if specified
 	if s, err := readFileOrEmpty(installCheckScript); err == nil {
@@ -328,11 +326,11 @@ func main() {
 		pkginfo.PostinstallScript = s
 	}
 
-	// also add the user-specified -f files
+	// also process user-specified -f items
 	userInstalls := buildInstallsArray(filePaths)
 	pkginfo.Installs = append(pkginfo.Installs, userInstalls...)
 
-	// Output final YAML
+	// Output final YAML to stdout
 	yamlData, err := yaml.Marshal(&pkginfo)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error marshaling YAML: %v\n", err)
@@ -340,79 +338,33 @@ func main() {
 	}
 	fmt.Println(string(yamlData))
 
-	if len(filePaths) > 0 {
-		// Process the -f file array
-		for _, fpath := range filePaths {
-			fullpath, _ := filepath.Abs(fpath)
-			fi, err := os.Stat(fullpath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: skipping -f %s, error: %v\n", fpath, err)
-				continue
-			}
-
-			if fi.IsDir() {
-				fmt.Fprintf(os.Stderr, "Skipping directory for now: %s\n", fpath)
-				continue
-			}
-
-			md5sum, err := utils.FileMD5(fullpath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: cannot compute MD5 for %s: %v\n", fpath, err)
-			}
-
-			fversion, _ := getFileVersion(fullpath)
-
-			_, hash, err := getFileInfo(fullpath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: unable to get file info for %s: %v\n", fullpath, err)
-				continue
-			}
-
-			pkginfo.Installs = append(pkginfo.Installs, InstallItem{
-				Type:           SingleQuotedString("file"),
-				Path:           SingleQuotedString(fullpath),
-				MD5Checksum:    SingleQuotedString(md5sum),
-				SHA256Checksum: SingleQuotedString(hash),
-				Version:        SingleQuotedString(fversion),
-			})
-		}
-
-		// Re-marshal with updated installs
-		yamlData, err = yaml.Marshal(&pkginfo)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error marshaling YAML: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	fmt.Println(string(yamlData))
+	// If you want to do more advanced usage, like writing the file, you can do so here.
 }
 
-// multiStringSlice is a custom flag.Value to allow multiple -f flags
+// multiStringSlice is your existing custom flag type
 type multiStringSlice []string
 
 func (m *multiStringSlice) String() string {
 	return strings.Join(*m, ", ")
 }
-
 func (m *multiStringSlice) Set(value string) error {
 	*m = append(*m, value)
 	return nil
 }
 
-// gatherInstallerInfo inspects the file extension (.msi, .exe, or .nupkg)
-// and returns a slice of InstallItem plus metadata from the file.
+// gatherInstallerInfo is the same as before, but remove references to top-level "installer_item_*"
 func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVersion, metaDeveloper, metaDesc, iType string) {
+	if path == "" {
+		// If no installer at all, return empty
+		return nil, "NoName", "", "", "", ""
+	}
 	ext := strings.ToLower(filepath.Ext(path))
 
 	switch ext {
 	case ".msi":
 		iType = "msi"
-		// Call the extract package to parse .msi metadata:
 		metaName, metaVersion, metaDeveloper, metaDesc = extract.MsiMetadata(path)
-
-		// For "auto installs," either parse the MSI file table or just
-		// add the MSI itself. For now, just add the MSI itself:
+		// Just add the MSI itself as an "installs" entry
 		_, hash, err := getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
@@ -420,7 +372,7 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
-			MD5Checksum: SingleQuotedString(hash), // using SHA-256 as a stand-in
+			MD5Checksum: SingleQuotedString(hash),
 			Version:     SingleQuotedString(metaVersion),
 		}}
 
@@ -438,7 +390,6 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 			metaDeveloper = ""
 			metaDesc = ""
 		}
-
 		_, hash, err := getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
@@ -455,7 +406,6 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 		nm, ver, dev, desc := extract.NupkgMetadata(path)
 		metaName, metaVersion, metaDeveloper, metaDesc = nm, ver, dev, desc
 
-		// Optionally parse .nupkg contents, or just add the .nupkg file:
 		_, hash, err := getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
@@ -467,7 +417,6 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 		}}
 
 	default:
-		// fallback for unrecognized extensions
 		iType = "unknown"
 		metaName = parsePackageName(filepath.Base(path))
 		_, hash, _ := getFileInfo(path)
@@ -477,12 +426,10 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 			MD5Checksum: SingleQuotedString(hash),
 		}}
 	}
-
 	return
 }
 
-// readFileOrEmpty reads the entire contents of a file path or returns
-// an empty string if the path is blank.
+// readFileOrEmpty is the same as before
 func readFileOrEmpty(path string) (string, error) {
 	if path == "" {
 		return "", nil
@@ -494,13 +441,12 @@ func readFileOrEmpty(path string) (string, error) {
 	return string(b), nil
 }
 
-// parsePackageName is a fallback for metadata if none is available.
+// parsePackageName is the same
 func parsePackageName(filename string) string {
 	return strings.TrimSuffix(filename, filepath.Ext(filename))
 }
 
-// buildInstallsArray processes a list of extra file paths (e.g. from -f flags)
-// and returns InstallItem objects for each file, including MD5 and optional .exe version.
+// buildInstallsArray to handle -f items
 func buildInstallsArray(paths []string) []InstallItem {
 	var installs []InstallItem
 	for _, f := range paths {
@@ -510,14 +456,10 @@ func buildInstallsArray(paths []string) []InstallItem {
 			fmt.Fprintf(os.Stderr, "Skipping '%s' in -f, not found or directory.\n", f)
 			continue
 		}
-
-		// Use MD5 for the “installs” array:
 		md5val, _ := utils.FileMD5(abs)
 
-		// If it’s an .exe on Windows, optionally parse version from extract.ExeMetadata:
 		var ver string
 		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
-			// Remove reference to extract.ExeMetadata
 			v, err := getFileVersion(abs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error getting file version for %s: %v\n", abs, err)
@@ -525,7 +467,6 @@ func buildInstallsArray(paths []string) []InstallItem {
 				ver = v
 			}
 		}
-
 		_, hash, err := getFileInfo(abs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: unable to get file info for %s: %v\n", abs, err)
