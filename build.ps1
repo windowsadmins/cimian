@@ -23,25 +23,30 @@ function Write-Log {
 
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     switch ($Level) {
-        "INFO" { Write-Host "[$timestamp] [INFO] $Message" -ForegroundColor Cyan }
+        "INFO"    { Write-Host "[$timestamp] [INFO] $Message" -ForegroundColor Cyan }
         "SUCCESS" { Write-Host "[$timestamp] [SUCCESS] $Message" -ForegroundColor Green }
         "WARNING" { Write-Host "[$timestamp] [WARNING] $Message" -ForegroundColor Yellow }
-        "ERROR" { Write-Host "[$timestamp] [ERROR] $Message" -ForegroundColor Red }
+        "ERROR"   { Write-Host "[$timestamp] [ERROR] $Message" -ForegroundColor Red }
     }
 }
 
-# Refresh environment variables
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-            [System.Environment]::GetEnvironmentVariable("Path", "User")
+# Merge existing PATH with Machine + User PATH
+Write-Host "Merging environment variables for PATH..." -ForegroundColor Green
 
-Write-Host "Environment variables reloaded for PATH." -ForegroundColor Green
+$machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+$userPath    = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+
+$env:Path    = "$env:Path;$machinePath;$userPath"
+
+Write-Host "Environment variables merged into PATH." -ForegroundColor Green
 
 # Function to check if a command exists
 function Test-Command {
     param (
         [string]$Command
     )
-    return (Get-Command $Command -ErrorAction SilentlyContinue) -ne $null
+    # Compare with $null on the left
+    return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
 # Function to find the WiX Toolset bin directory
@@ -54,7 +59,7 @@ function Find-WiXBinPath {
 
     foreach ($path in $possiblePaths) {
         $found = Get-ChildItem -Path $path -ErrorAction SilentlyContinue
-        if ($found) {
+        if ($null -ne $found) {
             return $found[0].Directory.FullName
         }
     }
@@ -62,7 +67,7 @@ function Find-WiXBinPath {
 }
 
 # Function to retry an action with delay
-function Retry-Action {
+function Invoke-Retry {
     param (
         [scriptblock]$Action,
         [int]$MaxAttempts = 5,
@@ -113,7 +118,7 @@ else {
 }
 
 # Function to ensure Chocolatey is installed
-function Ensure-Chocolatey {
+function Install-Chocolatey {
     Write-Log "Checking if Chocolatey is installed..." "INFO"
 
     if (-not (Test-Command "choco")) {
@@ -125,6 +130,15 @@ function Ensure-Chocolatey {
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
             Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
             Write-Log "Chocolatey installed successfully." "SUCCESS"
+
+            $chocoBinPath = "C:\ProgramData\chocolatey\bin"
+            if (Test-Path $chocoBinPath) {
+                $env:Path = "$chocoBinPath;$env:Path"
+                Write-Log "Added '$chocoBinPath' to PATH to ensure 'choco' is recognized in this session." "INFO"
+            }
+            else {
+                Write-Log "'$chocoBinPath' does not exist; cannot add to PATH." "WARNING"
+            }
         }
         catch {
             Write-Log "Failed to install Chocolatey. Error: $_" "ERROR"
@@ -137,7 +151,7 @@ function Ensure-Chocolatey {
 }
 
 # Step 1: Ensure Chocolatey is installed
-Ensure-Chocolatey
+Install-Chocolatey
 
 # Step 2: Install required tools via Chocolatey
 Write-Log "Checking and installing required tools..." "INFO"
@@ -150,7 +164,7 @@ $tools = @(
 )
 
 foreach ($tool in $tools) {
-    $toolName = $tool.Name
+    $toolName    = $tool.Name
     $toolCommand = $tool.Command
 
     Write-Log "Checking if $toolName is already installed..." "INFO"
@@ -173,16 +187,53 @@ foreach ($tool in $tools) {
 
 Write-Log "Required tools check and installation completed." "SUCCESS"
 
+# Force environment reload via Chocolatey's refreshenv
+if ($env:ChocolateyInstall -and (Test-Path "$env:ChocolateyInstall\helpers\refreshenv.cmd")) {
+    Write-Log "Forcibly reloading environment with refreshenv.cmd..." "INFO"
+    & "$env:ChocolateyInstall\helpers\refreshenv.cmd"
+}
+
+# Check if 'go' is now recognized
+if (-not (Test-Command "go")) {
+    Write-Log "Go still not recognized; appending common install paths manually..." "WARNING"
+
+    $possibleGoPaths = @(
+        "C:\Program Files\Go\bin",
+        "C:\Go\bin",
+        "C:\ProgramData\chocolatey\bin",
+        "C:\ProgramData\chocolatey\lib\go\bin"
+    )
+
+    foreach ($p in $possibleGoPaths) {
+        if (Test-Path (Join-Path $p "go.exe")) {
+            $env:Path = "$p;$env:Path"
+            Write-Log "Added '$p' to PATH. Checking 'go' again..." "INFO"
+            if (Test-Command "go") {
+                Write-Log "'go' is now recognized." "SUCCESS"
+                break
+            }
+        }
+    }
+}
+
+if (-not (Test-Command "go")) {
+    Write-Log "Go is still not recognized. Installation may have failed or PATH is wonky." "ERROR"
+    exit 1
+}
+else {
+    Write-Log "Go is recognized in this session." "SUCCESS"
+}
 
 # Step 1.1: Refresh Environment Variables to Update PATH
 Write-Log "Refreshing environment variables to include newly installed tools..." "INFO"
 
-# Retrieve the updated PATH from the system and user environment variables
+# Merge the newly discovered PATH entries from machine & user
 $machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
-$userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
-$env:PATH = "$machinePath;$userPath"
+$userPath    = [System.Environment]::GetEnvironmentVariable("PATH", "User")
 
-Write-Log "Environment variables refreshed." "SUCCESS"
+$env:PATH    = "$env:PATH;$machinePath;$userPath"
+
+Write-Log "Environment variables merged into PATH." "SUCCESS"
 
 # Step 2: Ensure Go is available
 Write-Log "Verifying Go installation..." "INFO"
@@ -196,11 +247,11 @@ Write-Log "Go is available." "SUCCESS"
 Write-Log "Locating WiX Toolset binaries..." "INFO"
 $wixBinPath = Find-WiXBinPath
 
-if ($wixBinPath) {
+if ($null -ne $wixBinPath) {
     Write-Log "WiX Toolset bin directory found at $wixBinPath" "INFO"
     # Check if WiX bin path is already in PATH to prevent duplication
     $wixPathNormalized = [System.IO.Path]::GetFullPath($wixBinPath).TrimEnd('\')
-    $pathEntries = $env:PATH -split ";" | ForEach-Object { $_.Trim() }
+    $pathEntries       = $env:PATH -split ";" | ForEach-Object { $_.Trim() }
     if (-not ($pathEntries -contains $wixPathNormalized)) {
         $env:PATH = "$wixBinPath;$env:PATH"
         Write-Log "Added WiX Toolset bin directory to PATH." "SUCCESS"
@@ -224,16 +275,16 @@ Write-Log "WiX Toolset is available." "SUCCESS"
 
 # Step 5: Set Up Go Environment Variables
 Write-Log "Setting up Go environment variables..." "INFO"
- 
+
 Write-Log "Go environment variables set." "SUCCESS"
 
 # Step 6: Prepare Release Version
 function Set-Version {
-    $fullVersion = Get-Date -Format "yyyy.MM.dd"
+    $fullVersion     = Get-Date -Format "yyyy.MM.dd"
     $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
 
-    $env:RELEASE_VERSION = $fullVersion
-    $env:SEMANTIC_VERSION = $semanticVersion
+    $env:RELEASE_VERSION   = $fullVersion
+    $env:SEMANTIC_VERSION  = $semanticVersion
 
     Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
     Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
@@ -248,7 +299,6 @@ go mod tidy
 go mod download
 
 Write-Log "Go modules tidied and downloaded." "SUCCESS"
-
 
 # Step 8: Build All Binaries
 Write-Log "Building all binaries..." "INFO"
@@ -297,7 +347,7 @@ foreach ($dir in $binaryDirs) {
     catch {
         Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
         exit 1
-    }    
+    }
 }
 
 Write-Log "All binaries built." "SUCCESS"
@@ -318,7 +368,7 @@ $compressAction = {
     Compress-Archive -Path "release\*" -DestinationPath "release.zip" -Force
 }
 
-$compressSuccess = Retry-Action -Action $compressAction -MaxAttempts 5 -DelaySeconds 2
+$compressSuccess = Invoke-Retry -Action $compressAction -MaxAttempts 5 -DelaySeconds 2
 
 if ($compressSuccess) {
     Write-Log "Compressed binaries into release.zip." "SUCCESS"
@@ -332,9 +382,9 @@ else {
 Write-Log "Building MSI package with WiX..." "INFO"
 
 # Define WiX Toolset Path
-$wixToolsetPath = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
-$candlePath = Join-Path $wixToolsetPath "candle.exe"
-$lightPath = Join-Path $wixToolsetPath "light.exe"
+$wixToolsetPath   = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+$candlePath       = Join-Path $wixToolsetPath "candle.exe"
+$lightPath        = Join-Path $wixToolsetPath "light.exe"
 $wixUtilExtension = Join-Path $wixToolsetPath "WixUtilExtension.dll"
 
 # Validate WiX Toolset path
@@ -404,8 +454,8 @@ Write-Log "Preparing IntuneWin package..." "INFO"
 
 # Define variables for IntuneWin conversion
 $setupFolder = "release"
-$setupFile = "release\Gorilla-$env:RELEASE_VERSION.msi"
-$outputFolder = "release"
+$setupFile   = "release\Gorilla-$env:RELEASE_VERSION.msi"
+$outputFolder= "release"
 
 # Check if the setup file exists before attempting conversion
 if (-not (Test-Path $setupFile)) {
@@ -442,7 +492,7 @@ Write-Log "Verification complete." "SUCCESS"
 Write-Log "Build and packaging process completed successfully." "SUCCESS"
 
 # Step 14: Clean Up Temporary Files
-function Clean-UpFiles {
+function Remove-TempFiles {
     param ([string[]]$Files)
 
     foreach ($file in $Files) {
@@ -461,8 +511,8 @@ function Clean-UpFiles {
     }
 }
 
-# Use Clean-UpFiles for cleanup
+# Use Remove-TempFiles for cleanup
 Write-Log "Cleaning up temporary files..." "INFO"
 $temporaryFiles = @("release.zip", "build\msi.msi", "build\msi.wixobj", "build\msi.wixpdb")
-Clean-UpFiles -Files $temporaryFiles
+Remove-TempFiles -Files $temporaryFiles
 Write-Log "Temporary files cleanup completed." "SUCCESS"
