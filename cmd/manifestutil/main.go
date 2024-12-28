@@ -6,8 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"path/filepath"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 
@@ -16,12 +16,12 @@ import (
 
 // Manifest represents the structure of the manifest YAML files.
 type Manifest struct {
-	Name             string   `yaml:"name"`
-	ManagedInstalls  []string `yaml:"managed_installs"`
+	Name              string   `yaml:"name"`
+	ManagedInstalls   []string `yaml:"managed_installs"`
 	ManagedUninstalls []string `yaml:"managed_uninstalls"`
-	ManagedUpdates   []string `yaml:"managed_updates"`
+	ManagedUpdates    []string `yaml:"managed_updates"`
 	IncludedManifests []string `yaml:"included_manifests"`
-	Catalogs         []string `yaml:"catalogs"`
+	Catalogs          []string `yaml:"catalogs"`
 }
 
 // Config represents the configuration structure
@@ -92,12 +92,12 @@ func SaveManifest(manifestPath string, manifest Manifest) error {
 // CreateNewManifest creates a new manifest file.
 func CreateNewManifest(manifestPath, name string) error {
 	newManifest := Manifest{
-		Name:             name,
-		ManagedInstalls:  nil,
+		Name:              name,
+		ManagedInstalls:   nil,
 		ManagedUninstalls: nil,
-		ManagedUpdates:   nil,
+		ManagedUpdates:    nil,
 		IncludedManifests: nil,
-		Catalogs:         nil,
+		Catalogs:          nil,
 	}
 	return SaveManifest(manifestPath, newManifest)
 }
@@ -149,18 +149,18 @@ func main() {
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
 	removePackage := flag.String("remove-pkg", "", "Package to remove from manifest")
 
-	showVersion := flag.Bool("version", false, "Print the version and exit.")
+	showManifestUtilVersion := flag.Bool("version", false, "Print the version and exit.")
 
 	flag.Parse()
 
 	// Handle --version flag
-	if *showVersion {
+	if *showManifestUtilVersion {
 		version.Print()
 		return
 	}
 
 	config, err := LoadConfig(`C:\ProgramData\ManagedInstalls\Config.yaml`)
-	if (err != nil) {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}

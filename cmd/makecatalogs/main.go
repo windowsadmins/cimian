@@ -30,7 +30,7 @@ type PkgsInfo struct {
 	Notes               string   `yaml:"notes,omitempty"`
 	InstallerLocation   string   `yaml:"installer_item_location,omitempty"`
 	UninstallerLocation string   `yaml:"uninstaller_item_location,omitempty"`
-	FilePath string
+	FilePath            string
 }
 
 // loadConfig loads the configuration using config.LoadConfig without any parameters.
@@ -206,14 +206,14 @@ func main() {
 		"Skip checking that installer/uninstaller items exist.")
 	forceFlag := flag.Bool("force", false,
 		"Allow missing installer/uninstaller items (not recommended).")
-	versionFlag := flag.Bool("version", false,
-		"Print the version of Gorilla and exit.")
+	showMakeCatalogVersion := flag.Bool("makecatalog_version", false,
+		"Print makecatalogs version and exit.")
 	silentFlag := flag.Bool("silent", false,
 		"Suppress output for a silent run.")
 	flag.Parse()
 
 	// Handle version request
-	if *versionFlag {
+	if *showMakeCatalogVersion {
 		version.Print()
 		os.Exit(0)
 	}
