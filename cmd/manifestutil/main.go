@@ -149,7 +149,7 @@ func main() {
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
 	removePackage := flag.String("remove-pkg", "", "Package to remove from manifest")
 
-	showManifestUtilVersion := flag.Bool("version", false, "Print the version and exit.")
+	showManifestUtilVersion := flag.Bool("manifestutil_version", false, "Print the version and exit.")
 
 	flag.Parse()
 
