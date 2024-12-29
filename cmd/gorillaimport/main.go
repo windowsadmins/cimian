@@ -501,6 +501,7 @@ func gorillaImport(
 			Category:      metadata.Category,
 			Developer:     metadata.Developer,
 			Catalogs:      []string{conf.DefaultCatalog},
+			Installs:      []InstallItem{},
 			SupportedArch: []string{arch},
 			Installer: &Installer{
 				Location: filepath.Join(installerItemPath, installerFilename),
@@ -547,6 +548,18 @@ func gorillaImport(
 		// Merge with user -f items
 		userInstalls := buildInstallsArray(filePaths)
 		pkgsInfo.Installs = append(autoInstalls, userInstalls...)
+
+		// if we have .nupkg enumerations in metadata.Installs, append them:
+		if len(metadata.Installs) > 0 {
+			pkgsInfo.Installs = append(pkgsInfo.Installs, metadata.Installs...)
+			fmt.Printf("Appended %d .nupkg file(s) to final pkgsInfo.Installs.\n", len(metadata.Installs))
+		}
+
+		// Then proceed with printing info, asking "Import this item? (y/n)", etc.
+		err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, nameForFilename, versionForFilename, archTag)
+		if err != nil {
+			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
+		}
 
 		// If display name is empty, use Name
 		if strings.TrimSpace(pkgsInfo.DisplayName) == "" {
@@ -611,6 +624,7 @@ type Metadata struct {
 	Architecture  string
 	SupportedArch []string
 	InstallerType string
+	Installs      []InstallItem
 }
 
 // extractInstallerMetadata for the main installer
@@ -627,6 +641,20 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.Developer = dev
 		metadata.Description = desc
 		metadata.InstallerType = "nupkg"
+
+		// Build the file-level installs from inside the .nupkg
+		nupkgInstalls := extract.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
+		nupkgLocalInstalls := []InstallItem{}
+		for _, item := range nupkgInstalls {
+			nupkgLocalInstalls = append(nupkgLocalInstalls, InstallItem{
+				Type:        SingleQuotedString(item.Type),
+				Path:        SingleQuotedString(item.Path),
+				MD5Checksum: SingleQuotedString(item.MD5Checksum),
+				Version:     SingleQuotedString(item.Version),
+			})
+		}
+		metadata.Installs = nupkgLocalInstalls
+		fmt.Printf("Found %d relevant file(s) in .nupkg => stored in metadata.Installs.\n", len(nupkgLocalInstalls))
 
 	case ".msi":
 		name, ver, dev, desc := extract.MsiMetadata(packagePath)
