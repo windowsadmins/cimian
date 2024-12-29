@@ -440,6 +440,7 @@ func gorillaImport(
 	}
 	fmt.Printf("Processing package: %s\n", packagePath)
 
+	// Extract metadata (name, version, etc.)
 	metadata, err := extractInstallerMetadata(packagePath, conf)
 	if err != nil {
 		return false, fmt.Errorf("metadata extraction failed: %v", err)
@@ -456,12 +457,13 @@ func gorillaImport(
 	installCheckScriptContent, _ := loadScriptContent(scripts.InstallCheck)
 	uninstallCheckScriptContent, _ := loadScriptContent(scripts.UninstallCheck)
 
+	// If there's an uninstaller
 	uninstaller, err := processUninstaller(uninstallerPath, filepath.Join(conf.RepoPath, "pkgs"), "apps")
 	if err != nil {
 		return false, fmt.Errorf("uninstaller processing failed: %v", err)
 	}
 
-	// Hash + size
+	// We'll gather some info, but wait to copy the installer until user confirms.
 	fileHash, err := utils.FileSHA256(packagePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to calculate file hash: %v", err)
@@ -472,159 +474,128 @@ func gorillaImport(
 	}
 	fileSizeKB := stat.Size() / 1024
 
-	// Prompt where to place in the repo (subfolders)
-	installerItemPath, err := promptInstallerItemPath()
-	if err != nil {
-		return false, fmt.Errorf("error processing installer item path: %v", err)
+	// The final PkgsInfo struct
+	pkgsInfo := PkgsInfo{
+		Name:          metadata.ID,
+		DisplayName:   metadata.Title,
+		Version:       metadata.Version,
+		Description:   metadata.Description,
+		Category:      metadata.Category,
+		Developer:     metadata.Developer,
+		Catalogs:      []string{conf.DefaultCatalog},
+		Installs:      []InstallItem{}, // we append below
+		SupportedArch: metadata.SupportedArch,
+		Installer: &Installer{
+			// We'll set `Location` after user confirms, once we copy the file.
+			Hash: fileHash,
+			Type: metadata.InstallerType,
+			Size: fileSizeKB,
+		},
+		Uninstaller:          uninstaller,
+		UnattendedInstall:    true,
+		UnattendedUninstall:  true,
+		ProductCode:          strings.TrimSpace(metadata.ProductCode),
+		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
+		PreinstallScript:     preinstallScriptContent,
+		PostinstallScript:    postinstallScriptContent,
+		PreuninstallScript:   preuninstallScriptContent,
+		PostuninstallScript:  postuninstallScriptContent,
+		InstallCheckScript:   installCheckScriptContent,
+		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
-	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", installerItemPath)
-	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", installerItemPath)
+	// If .exe => fallback
+	autoInstalls := []InstallItem{}
+	if metadata.InstallerType == "exe" {
+		fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
+		fmt.Printf("Overriding .exe path with fallback: %s\n", fallbackExe)
+		autoInstalls = append(autoInstalls, InstallItem{
+			Type:        SingleQuotedString("file"),
+			Path:        SingleQuotedString(fallbackExe),
+			MD5Checksum: SingleQuotedString(""),
+			Version:     SingleQuotedString(pkgsInfo.Version),
+		})
+	}
+
+	// If .bat => guess
+	if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
+		guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
+		if guessedPath != "" && len(autoInstalls) > 0 {
+			autoInstalls[0].Path = SingleQuotedString(guessedPath)
+		}
+	}
+
+	// Merge user-provided -f items
+	userInstalls := buildInstallsArray(filePaths)
+
+	// Also append any .nupkg enumerations from metadata.Installs
+	finalInstalls := append(autoInstalls, userInstalls...)
+	if len(metadata.Installs) > 0 {
+		finalInstalls = append(finalInstalls, metadata.Installs...)
+		fmt.Printf("Appended %d .nupkg item(s) to final installs.\n", len(metadata.Installs))
+	}
+
+	// For gorillapkg items, remove version. Example: path has "C:\\Program Files\\Gorilla"
+	for i := range finalInstalls {
+		pathStr := strings.ToLower(string(finalInstalls[i].Path))
+		if strings.Contains(pathStr, `\program files\gorilla\`) {
+			// blank out the version
+			finalInstalls[i].Version = SingleQuotedString("")
+		}
+	}
+
+	pkgsInfo.Installs = finalInstalls
+
+	// Show final details BEFORE copying or writing
+	fmt.Println("\nPkginfo details (BEFORE copying to pkgs/pkgsinfo):")
+	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
+	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
+	fmt.Printf("    Version: %s\n", pkgsInfo.Version)
+	fmt.Printf("    Description: %s\n", pkgsInfo.Description)
+	fmt.Printf("    Category: %s\n", pkgsInfo.Category)
+	fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
+	fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
+	fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
+	fmt.Printf("    Installer Type: %s\n", pkgsInfo.Installer.Type)
+	fmt.Println()
+
+	// Confirm
+	confirm := getInput("Import this item? (y/n): ", "n")
+	if strings.ToLower(confirm) != "y" {
+		fmt.Println("Import canceled.")
+		return false, nil
+	}
+
+	// The user said yes => Now we do:
+	// 1) Copy the file to pkgs/...
+	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", "/apps")
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
 	}
+	archTag := ""
+	if len(pkgsInfo.SupportedArch) > 0 && pkgsInfo.SupportedArch[0] == "x64" {
+		archTag = "-x64-"
+	}
+	installerFilename := pkgsInfo.Name + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
+	installerDest := filepath.Join(installerFolderPath, installerFilename)
+
+	_, err = copyFile(packagePath, installerDest)
+	if err != nil {
+		return false, fmt.Errorf("failed to copy installer after confirmation: %v", err)
+	}
+	// Update pkgsInfo.Installer.Location to reflect the new path
+	pkgsInfo.Installer.Location = filepath.Join("/apps", installerFilename)
+
+	// 2) Write pkginfo to pkgsinfo/...
+	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", "/apps")
 	if err := os.MkdirAll(pkginfoFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
 	}
-
-	// Build filenames
-	nameForFilename := strings.ReplaceAll(metadata.ID, " ", "")
-	versionForFilename := strings.ReplaceAll(metadata.Version, " ", "")
-
-	for _, arch := range metadata.SupportedArch {
-		var archTag string
-		if arch == "x64" {
-			archTag = "-x64-"
-		} else if arch == "arm64" {
-			archTag = "-arm64-"
-		}
-
-		// Copy the installer into pkgs...
-		installerFilename := nameForFilename + archTag + versionForFilename + filepath.Ext(packagePath)
-		installerDest := filepath.Join(installerFolderPath, installerFilename)
-		if _, err := copyFile(packagePath, installerDest); err != nil {
-			return false, fmt.Errorf("failed to copy installer: %v", err)
-		}
-
-		// Build the final PkgsInfo
-		pkgsInfo := PkgsInfo{
-			Name:          metadata.ID,
-			DisplayName:   metadata.Title,
-			Version:       metadata.Version,
-			Description:   metadata.Description,
-			Category:      metadata.Category,
-			Developer:     metadata.Developer,
-			Catalogs:      []string{conf.DefaultCatalog},
-			Installs:      []InstallItem{},
-			SupportedArch: []string{arch},
-			Installer: &Installer{
-				Location: filepath.Join(installerItemPath, installerFilename),
-				Hash:     fileHash,
-				Type:     metadata.InstallerType,
-				Size:     fileSizeKB,
-			},
-			Uninstaller:          uninstaller,
-			UnattendedInstall:    true,
-			UnattendedUninstall:  true,
-			ProductCode:          strings.TrimSpace(metadata.ProductCode),
-			UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
-			PreinstallScript:     preinstallScriptContent,
-			PostinstallScript:    postinstallScriptContent,
-			PreuninstallScript:   preuninstallScriptContent,
-			PostuninstallScript:  postuninstallScriptContent,
-			InstallCheckScript:   installCheckScriptContent,
-			UninstallCheckScript: uninstallCheckScriptContent,
-		}
-
-		// Build any "autoInstalls" for .exe fallback, etc.
-		autoInstalls := []InstallItem{}
-		if metadata.InstallerType == "exe" {
-			fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
-			fmt.Printf("Overriding .exe path with fallback: %s\n", fallbackExe)
-
-			autoInstalls = append(autoInstalls, InstallItem{
-				Type:        SingleQuotedString("file"),
-				Path:        SingleQuotedString(fallbackExe),
-				MD5Checksum: SingleQuotedString(""), // forced empty MD5
-				Version:     SingleQuotedString(pkgsInfo.Version),
-			})
-		}
-
-		// If we have a .bat or .cmd preinstall, guess `--INSTALLDIR=`
-		if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
-			guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
-			if guessedPath != "" && len(autoInstalls) > 0 {
-				// Replace the fallback path if we found a real path
-				autoInstalls[0].Path = SingleQuotedString(guessedPath)
-			}
-		}
-
-		// Merge user-provided -f items
-		userInstalls := buildInstallsArray(filePaths)
-		pkgsInfo.Installs = append(autoInstalls, userInstalls...)
-
-		// If we have .nupkg enumerations (i.e. from BuildGorillaPkgInstalls), append them
-		if len(metadata.Installs) > 0 {
-			pkgsInfo.Installs = append(pkgsInfo.Installs, metadata.Installs...)
-			fmt.Printf("Appended %d .nupkg file(s) to final pkgsInfo.Installs.\n",
-				len(metadata.Installs))
-		}
-
-		// Write an initial pkginfo so user can see details in the prompts
-		err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, nameForFilename, versionForFilename, archTag)
-		if err != nil {
-			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
-		}
-
-		// If display name is empty, use Name
-		if strings.TrimSpace(pkgsInfo.DisplayName) == "" {
-			pkgsInfo.DisplayName = pkgsInfo.Name
-		}
-
-		// (Optional) check for existing packages with same product/upgrade code
-		existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, "")
-		if err != nil {
-			return false, fmt.Errorf("error checking existing packages: %v", err)
-		}
-		if exists && existingPkg != nil {
-			fmt.Println("This item is similar to an existing item in the repo:")
-			fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
-				existingPkg.Name, existingPkg.Version, existingPkg.Description)
-			answer := getInput("Use existing item as a template? [y/N]: ", "N")
-			if strings.ToLower(answer) == "y" {
-				pkgsInfo.Name = existingPkg.Name
-				pkgsInfo.DisplayName = existingPkg.DisplayName
-				pkgsInfo.Category = existingPkg.Category
-				pkgsInfo.Developer = existingPkg.Developer
-				pkgsInfo.SupportedArch = existingPkg.SupportedArch
-				pkgsInfo.Catalogs = existingPkg.Catalogs
-			}
-		}
-
-		// Show final details
-		fmt.Println("\nPkginfo details:")
-		fmt.Printf("    Name: %s\n", pkgsInfo.Name)
-		fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
-		fmt.Printf("    Version: %s\n", pkgsInfo.Version)
-		fmt.Printf("    Description: %s\n", pkgsInfo.Description)
-		fmt.Printf("    Category: %s\n", pkgsInfo.Category)
-		fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
-		fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
-		fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
-		fmt.Println()
-
-		confirm := getInput("Import this item? (y/n): ", "n")
-		if strings.ToLower(confirm) != "y" {
-			fmt.Println("Import canceled.")
-			return false, nil
-		}
-
-		// Write the final pkginfo (possibly updated after template usage)
-		err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, nameForFilename, versionForFilename, archTag)
-		if err != nil {
-			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
-		}
+	err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, pkgsInfo.Name, pkgsInfo.Version, archTag)
+	if err != nil {
+		return false, fmt.Errorf("failed to write final pkginfo: %v", err)
 	}
+
 	return true, nil
 }
 
