@@ -159,7 +159,6 @@ Write-Log "Checking and installing required tools..." "INFO"
 $tools = @(
     @{ Name = "nuget.commandline"; Command = "nuget" },
     @{ Name = "intunewinapputil"; Command = "intunewinapputil" },
-    @{ Name = "wixtoolset"; Command = "candle.exe" },
     @{ Name = "go"; Command = "go" }
 )
 
@@ -183,6 +182,16 @@ foreach ($tool in $tools) {
         Write-Log "Failed to install $toolName. Error: $_" "ERROR"
         exit 1
     }
+}
+
+Write-Log "Checking if WiX is installed..." "INFO"
+$wixBin = Find-WiXBinPath
+if ($wixBin) {
+    Write-Log "WiX is already installed: $wixBin" "SUCCESS"
+} else {
+    Write-Log "WiX is not installed. Installing via Chocolatey..." "INFO"
+    choco install wixtoolset --yes --no-progress --force | Out-Null
+    Write-Log "WiX installed successfully." "SUCCESS"
 }
 
 Write-Log "Required tools check and installation completed." "SUCCESS"
