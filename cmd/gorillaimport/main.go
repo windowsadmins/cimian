@@ -59,7 +59,7 @@ type Installer struct {
 type InstallItem struct {
 	Type        SingleQuotedString `yaml:"type"`
 	Path        SingleQuotedString `yaml:"path"`
-	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
+	MD5Checksum SingleQuotedString `yaml:"md5checksum"`
 	Version     SingleQuotedString `yaml:"version,omitempty"`
 }
 
@@ -486,6 +486,7 @@ func gorillaImport(
 			archTag = "-arm64-"
 		}
 
+		// Copy the installer into pkgs...
 		installerFilename := nameForFilename + archTag + versionForFilename + filepath.Ext(packagePath)
 		installerDest := filepath.Join(installerFolderPath, installerFilename)
 		if _, err := copyFile(packagePath, installerDest); err != nil {
@@ -520,56 +521,30 @@ func gorillaImport(
 			UninstallCheckScript: uninstallCheckScriptContent,
 		}
 
-		// reference the main installer in `installs:`
-		md5sum, _ := utils.FileMD5(packagePath)
-		autoInstalls := []InstallItem{
-			{
-				Type:        SingleQuotedString("file"),
-				Path:        SingleQuotedString(packagePath),
-				MD5Checksum: SingleQuotedString(md5sum),
-				Version:     SingleQuotedString(pkgsInfo.Version),
-			},
-		}
+		autoInstalls := []InstallItem{}
 
-		for _, userPath := range installsArray {
-			abs, _ := filepath.Abs(userPath)
-			md5v, _ := utils.FileMD5(abs)
-			ver := ""
-			if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
-				version, _ := extract.ExeMetadata(abs)
-				ver = version
-			}
-			autoInstalls = append(autoInstalls, InstallItem{
-				Type:        SingleQuotedString("file"),
-				Path:        SingleQuotedString(abs),
-				MD5Checksum: SingleQuotedString(md5v),
-				Version:     SingleQuotedString(ver),
-			})
-		}
-
-		// If this is an .exe, we override with a fallback.
 		if metadata.InstallerType == "exe" {
 			fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
 			fmt.Printf("Overriding .exe path with fallback: %s\n", fallbackExe)
+
 			autoInstalls = append(autoInstalls, InstallItem{
-				Type:    SingleQuotedString("file"),
-				Path:    SingleQuotedString(fallbackExe),
-				Version: SingleQuotedString(pkgsInfo.Version),
+				Type:        SingleQuotedString("file"),
+				Path:        SingleQuotedString(fallbackExe),
+				MD5Checksum: SingleQuotedString(""), // forced empty MD5
+				Version:     SingleQuotedString(pkgsInfo.Version),
 			})
 		}
 
-		// if we have a .bat preinstall, guess `--INSTALLDIR=`
-		// If found, that guess overrides the fallback above.
+		// If we have a .bat preinstall, guess `--INSTALLDIR=`
 		if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
 			guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
-			if guessedPath != "" {
+			if guessedPath != "" && len(autoInstalls) > 0 {
+				// Replace the fallback path if we found a real path
 				autoInstalls[0].Path = SingleQuotedString(guessedPath)
-			} else {
-				fmt.Println("No --INSTALLDIR= or --INSTALLLOCATION= found in .bat script, using fallback or default.")
 			}
 		}
 
-		// merge with user -f items
+		// Merge with user -f items
 		userInstalls := buildInstallsArray(filePaths)
 		pkgsInfo.Installs = append(autoInstalls, userInstalls...)
 
@@ -619,6 +594,7 @@ func gorillaImport(
 			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
 		}
 	}
+
 	return true, nil
 }
 
