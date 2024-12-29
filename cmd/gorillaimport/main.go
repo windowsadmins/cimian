@@ -106,6 +106,7 @@ var (
 	postuninstallScriptFlag  *string
 	installCheckScriptFlag   *string
 	uninstallCheckScriptFlag *string
+	installsArray            multiFlag
 )
 
 // init sets up the flags
@@ -115,12 +116,17 @@ func init() {
 	archFlag = flag.String("arch", "", "Architecture")
 	installerFlag = flag.String("installer", "", "Installer path")
 	uninstallerFlag = flag.String("uninstaller", "", "Uninstaller path")
+
 	installScriptFlag = flag.String("install-script", "", "Install script")
 	postinstallScriptFlag = flag.String("postinstall-script", "", "Post-install script")
 	preuninstallScriptFlag = flag.String("preuninstall-script", "", "Pre-uninstall script")
 	postuninstallScriptFlag = flag.String("postuninstall-script", "", "Post-uninstall script")
-	installCheckScriptFlag = flag.String("install-check", "", "Install check script")
-	uninstallCheckScriptFlag = flag.String("uninstall-check", "", "Uninstall check script")
+
+	installCheckScriptFlag = flag.String("install-check-script", "", "Path to install check script")
+	uninstallCheckScriptFlag = flag.String("uninstall-check-script", "", "Path to uninstall check script")
+
+	flag.Var(&installsArray, "i", "Add an installed path to final 'installs' array (multiple -i flags).") // Long: --installs-array
+	flag.Var(&installsArray, "installs-array", "(alternative long form) Add an installed path to 'installs' array.")
 }
 
 func main() {
@@ -525,17 +531,41 @@ func gorillaImport(
 			},
 		}
 
+		for _, userPath := range installsArray {
+			abs, _ := filepath.Abs(userPath)
+			md5v, _ := utils.FileMD5(abs)
+			ver := ""
+			if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
+				version, _ := extract.ExeMetadata(abs)
+				ver = version
+			}
+			autoInstalls = append(autoInstalls, InstallItem{
+				Type:        SingleQuotedString("file"),
+				Path:        SingleQuotedString(abs),
+				MD5Checksum: SingleQuotedString(md5v),
+				Version:     SingleQuotedString(ver),
+			})
+		}
+
+		// If this is an .exe, we override with a fallback.
+		if metadata.InstallerType == "exe" {
+			fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
+			fmt.Printf("Overriding .exe path with fallback: %s\n", fallbackExe)
+			autoInstalls = append(autoInstalls, InstallItem{
+				Type:    SingleQuotedString("file"),
+				Path:    SingleQuotedString(fallbackExe),
+				Version: SingleQuotedString(pkgsInfo.Version),
+			})
+		}
+
 		// if we have a .bat preinstall, guess `--INSTALLDIR=`
+		// If found, that guess overrides the fallback above.
 		if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
 			guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
 			if guessedPath != "" {
-				autoInstalls = append(autoInstalls, InstallItem{
-					Type:    SingleQuotedString("file"),
-					Path:    SingleQuotedString(guessedPath),
-					Version: SingleQuotedString(pkgsInfo.Version),
-				})
+				autoInstalls[0].Path = SingleQuotedString(guessedPath)
 			} else {
-				fmt.Println("No --INSTALLDIR= or --INSTALLLOCATION= found in .bat script.")
+				fmt.Println("No --INSTALLDIR= or --INSTALLLOCATION= found in .bat script, using fallback or default.")
 			}
 		}
 
