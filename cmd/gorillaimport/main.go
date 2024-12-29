@@ -30,12 +30,12 @@ type PkgsInfo struct {
 	Catalogs             []string      `yaml:"catalogs"`
 	Category             string        `yaml:"category,omitempty"`
 	Developer            string        `yaml:"developer,omitempty"`
+	Installs             []InstallItem `yaml:"installs,omitempty"`
+	SupportedArch        []string      `yaml:"supported_architectures"`
 	UnattendedInstall    bool          `yaml:"unattended_install"`
 	UnattendedUninstall  bool          `yaml:"unattended_uninstall"`
 	Installer            *Installer    `yaml:"installer"`
-	Installs             []InstallItem `yaml:"installs,omitempty"`
 	Uninstaller          *Installer    `yaml:"uninstaller,omitempty"`
-	SupportedArch        []string      `yaml:"supported_architectures"`
 	ProductCode          string        `yaml:"product_code,omitempty"`
 	UpgradeCode          string        `yaml:"upgrade_code,omitempty"`
 	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
