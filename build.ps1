@@ -176,7 +176,7 @@ foreach ($tool in $tools) {
 
     Write-Log "$toolName is not installed. Installing via Chocolatey..." "INFO"
     try {
-        choco install $toolName --no-progress --yes | Out-Null
+        choco install $toolName --no-progress --yes --force | Out-Null
         Write-Log "$toolName installed successfully." "SUCCESS"
     }
     catch {
