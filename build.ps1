@@ -30,16 +30,6 @@ function Write-Log {
     }
 }
 
-# Merge existing PATH with Machine + User PATH
-Write-Host "Merging environment variables for PATH..." -ForegroundColor Green
-
-$machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
-$userPath    = [System.Environment]::GetEnvironmentVariable("PATH", "User")
-
-$env:Path    = "$env:Path;$machinePath;$userPath"
-
-Write-Host "Environment variables merged into PATH." -ForegroundColor Green
-
 # Function to check if a command exists
 function Test-Command {
     param (
@@ -232,17 +222,6 @@ if (-not (Test-Command "go")) {
 else {
     Write-Log "Go is recognized in this session." "SUCCESS"
 }
-
-# Step 1.1: Refresh Environment Variables to Update PATH
-Write-Log "Refreshing environment variables to include newly installed tools..." "INFO"
-
-# Merge the newly discovered PATH entries from machine & user
-$machinePath = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
-$userPath    = [System.Environment]::GetEnvironmentVariable("PATH", "User")
-
-$env:PATH    = "$env:PATH;$machinePath;$userPath"
-
-Write-Log "Environment variables merged into PATH." "SUCCESS"
 
 # Step 2: Ensure Go is available
 Write-Log "Verifying Go installation..." "INFO"
