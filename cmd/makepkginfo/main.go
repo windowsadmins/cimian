@@ -33,11 +33,10 @@ func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
 
 // InstallItem struct for "installs" array
 type InstallItem struct {
-	Type           SingleQuotedString `yaml:"type"`
-	Path           SingleQuotedString `yaml:"path"`
-	MD5Checksum    SingleQuotedString `yaml:"md5checksum,omitempty"`
-	SHA256Checksum SingleQuotedString `yaml:"sha256checksum,omitempty"`
-	Version        SingleQuotedString `yaml:"version,omitempty"`
+	Type        SingleQuotedString `yaml:"type"`
+	Path        SingleQuotedString `yaml:"path"`
+	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
+	Version     SingleQuotedString `yaml:"version,omitempty"`
 }
 
 // Installer is our new struct to hold location, hash, size, etc.
@@ -328,6 +327,21 @@ func main() {
 
 	// also process user-specified -f items
 	userInstalls := buildInstallsArray(filePaths)
+	alreadyHasValidVersion := (pkginfo.Version != "" && pkginfo.Version != "1.0.0")
+
+	for i := range userInstalls {
+		fileVersion := string(userInstalls[i].Version)
+
+		// Always remove the per-file version from the final YAML
+		userInstalls[i].Version = ""
+
+		// If top-level version is still default/blank, adopt the first real .exe version found
+		if !alreadyHasValidVersion && fileVersion != "" && fileVersion != "1.0.0" {
+			pkginfo.Version = fileVersion
+			alreadyHasValidVersion = true
+		}
+	}
+
 	pkginfo.Installs = append(pkginfo.Installs, userInstalls...)
 
 	// Output final YAML to stdout
@@ -456,29 +470,27 @@ func buildInstallsArray(paths []string) []InstallItem {
 			fmt.Fprintf(os.Stderr, "Skipping '%s' in -f, not found or directory.\n", f)
 			continue
 		}
+
+		// Only MD5 is stored
 		md5val, _ := utils.FileMD5(abs)
 
-		var ver string
+		// If the file is an .exe on Windows, we can set 'version' from ExeMetadata
+		var fileVersion string
 		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
 			v, err := getFileVersion(abs)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error getting file version for %s: %v\n", abs, err)
 			} else {
-				ver = v
+				fileVersion = v
 			}
 		}
-		_, hash, err := getFileInfo(abs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: unable to get file info for %s: %v\n", abs, err)
-			continue
-		}
 
+		// Add only one InstallItem with MD5 and optional version
 		installs = append(installs, InstallItem{
-			Type:           SingleQuotedString("file"),
-			Path:           SingleQuotedString(abs),
-			MD5Checksum:    SingleQuotedString(md5val),
-			SHA256Checksum: SingleQuotedString(hash),
-			Version:        SingleQuotedString(ver),
+			Type:        SingleQuotedString("file"),
+			Path:        SingleQuotedString(abs),
+			MD5Checksum: SingleQuotedString(md5val),
+			Version:     SingleQuotedString(fileVersion),
 		})
 	}
 	return installs
