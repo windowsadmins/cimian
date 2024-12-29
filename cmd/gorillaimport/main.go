@@ -413,6 +413,19 @@ func GuessInstallDirFromBat(batPath string) string {
 	return ""
 }
 
+func convertExtractItems(ei []extract.InstallItem) []InstallItem {
+	converted := make([]InstallItem, 0, len(ei))
+	for _, item := range ei {
+		converted = append(converted, InstallItem{
+			Type:        SingleQuotedString(item.Type),
+			Path:        SingleQuotedString(item.Path),
+			MD5Checksum: SingleQuotedString(item.MD5Checksum),
+			Version:     SingleQuotedString(item.Version),
+		})
+	}
+	return converted
+}
+
 // gorillaImport ingests an installer, writes pkgsinfo, etc.
 func gorillaImport(
 	packagePath string,
@@ -493,6 +506,7 @@ func gorillaImport(
 			return false, fmt.Errorf("failed to copy installer: %v", err)
 		}
 
+		// Build the final PkgsInfo
 		pkgsInfo := PkgsInfo{
 			Name:          metadata.ID,
 			DisplayName:   metadata.Title,
@@ -522,8 +536,8 @@ func gorillaImport(
 			UninstallCheckScript: uninstallCheckScriptContent,
 		}
 
+		// Build any "autoInstalls" for .exe fallback, etc.
 		autoInstalls := []InstallItem{}
-
 		if metadata.InstallerType == "exe" {
 			fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
 			fmt.Printf("Overriding .exe path with fallback: %s\n", fallbackExe)
@@ -536,7 +550,7 @@ func gorillaImport(
 			})
 		}
 
-		// If we have a .bat preinstall, guess `--INSTALLDIR=`
+		// If we have a .bat or .cmd preinstall, guess `--INSTALLDIR=`
 		if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
 			guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
 			if guessedPath != "" && len(autoInstalls) > 0 {
@@ -545,17 +559,18 @@ func gorillaImport(
 			}
 		}
 
-		// Merge with user -f items
+		// Merge user-provided -f items
 		userInstalls := buildInstallsArray(filePaths)
 		pkgsInfo.Installs = append(autoInstalls, userInstalls...)
 
-		// if we have .nupkg enumerations in metadata.Installs, append them:
+		// If we have .nupkg enumerations (i.e. from BuildGorillaPkgInstalls), append them
 		if len(metadata.Installs) > 0 {
 			pkgsInfo.Installs = append(pkgsInfo.Installs, metadata.Installs...)
-			fmt.Printf("Appended %d .nupkg file(s) to final pkgsInfo.Installs.\n", len(metadata.Installs))
+			fmt.Printf("Appended %d .nupkg file(s) to final pkgsInfo.Installs.\n",
+				len(metadata.Installs))
 		}
 
-		// Then proceed with printing info, asking "Import this item? (y/n)", etc.
+		// Write an initial pkginfo so user can see details in the prompts
 		err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, nameForFilename, versionForFilename, archTag)
 		if err != nil {
 			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
@@ -566,14 +581,15 @@ func gorillaImport(
 			pkgsInfo.DisplayName = pkgsInfo.Name
 		}
 
-		// Optionally see if there's an existing pkg with same product/upgrade code
+		// (Optional) check for existing packages with same product/upgrade code
 		existingPkg, exists, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.ProductCode, pkgsInfo.UpgradeCode, "")
 		if err != nil {
 			return false, fmt.Errorf("error checking existing packages: %v", err)
 		}
 		if exists && existingPkg != nil {
 			fmt.Println("This item is similar to an existing item in the repo:")
-			fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n", existingPkg.Name, existingPkg.Version, existingPkg.Description)
+			fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
+				existingPkg.Name, existingPkg.Version, existingPkg.Description)
 			answer := getInput("Use existing item as a template? [y/N]: ", "N")
 			if strings.ToLower(answer) == "y" {
 				pkgsInfo.Name = existingPkg.Name
@@ -585,6 +601,7 @@ func gorillaImport(
 			}
 		}
 
+		// Show final details
 		fmt.Println("\nPkginfo details:")
 		fmt.Printf("    Name: %s\n", pkgsInfo.Name)
 		fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
@@ -602,12 +619,12 @@ func gorillaImport(
 			return false, nil
 		}
 
+		// Write the final pkginfo (possibly updated after template usage)
 		err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, nameForFilename, versionForFilename, archTag)
 		if err != nil {
 			return false, fmt.Errorf("failed to generate pkginfo: %v", err)
 		}
 	}
-
 	return true, nil
 }
 
@@ -635,26 +652,33 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 	switch ext {
 	case ".nupkg":
 		name, ver, dev, desc := extract.NupkgMetadata(packagePath)
-		metadata.Title = name
-		metadata.ID = name
+
+		// Truncate domain-based name => last segment
+		truncated := extract.TruncateDomain(name)
+
+		metadata.Title = truncated
+		metadata.ID = truncated
 		metadata.Version = ver
 		metadata.Developer = dev
 		metadata.Description = desc
 		metadata.InstallerType = "nupkg"
 
-		// Build the file-level installs from inside the .nupkg
-		nupkgInstalls := extract.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
-		nupkgLocalInstalls := []InstallItem{}
-		for _, item := range nupkgInstalls {
-			nupkgLocalInstalls = append(nupkgLocalInstalls, InstallItem{
-				Type:        SingleQuotedString(item.Type),
-				Path:        SingleQuotedString(item.Path),
-				MD5Checksum: SingleQuotedString(item.MD5Checksum),
-				Version:     SingleQuotedString(item.Version),
-			})
+		// Try gorillapkg paths
+		gorillaItems, err := extract.BuildGorillaPkgInstalls(packagePath, metadata.ID, metadata.Version)
+		if err != nil {
+			fmt.Printf("Warning: BuildGorillaPkgInstalls failed: %v\n", err)
 		}
-		metadata.Installs = nupkgLocalInstalls
-		fmt.Printf("Found %d relevant file(s) in .nupkg => stored in metadata.Installs.\n", len(nupkgLocalInstalls))
+
+		if len(gorillaItems) > 0 {
+			// Great, we have "C:\\Program Files\\Gorilla..." style items
+			metadata.Installs = convertExtractItems(gorillaItems)
+			fmt.Printf("Using %d gorillapkg items.\n", len(gorillaItems))
+		} else {
+			// Not a gorillapkg-based .nupkg => fallback to standard chocolatey style
+			chocoItems := extract.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
+			metadata.Installs = convertExtractItems(chocoItems)
+			fmt.Printf("No gorillapkg items found; using %d chocolatey items.\n", len(chocoItems))
+		}
 
 	case ".msi":
 		name, ver, dev, desc := extract.MsiMetadata(packagePath)
