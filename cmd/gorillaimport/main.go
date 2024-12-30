@@ -455,6 +455,23 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 	return converted
 }
 
+// promptInstallerItemPath asks user "Repo location (default: /apps):"
+// then returns e.g. "/apps" or "/utilities" etc.
+func promptInstallerItemPath() (string, error) {
+	fmt.Print("Repo location (default: /apps): ")
+	var path string
+	fmt.Scanln(&path)
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = "/apps"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	path = strings.TrimRight(path, "/")
+	return path, nil
+}
+
 // gorillaImport ingests an installer, writes pkgsinfo, etc.
 func gorillaImport(
 	packagePath string,
@@ -568,6 +585,12 @@ func gorillaImport(
 		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
+	// Prompt user for where to store in repo
+	repoSubPath, err := promptInstallerItemPath()
+	if err != nil {
+		return false, fmt.Errorf("error reading user subdirectory input: %v", err)
+	}
+
 	// Step 9: If .exe => fallback
 	autoInstalls := []InstallItem{}
 	if metadata.InstallerType == "exe" {
@@ -628,8 +651,8 @@ func gorillaImport(
 		return false, nil
 	}
 
-	// Step 15: Copy the actual file to pkgs
-	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", "/apps")
+	// Step 15: Build the actual final folder within pkgs, using user-chosen subpath
+	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
 	}
@@ -645,10 +668,10 @@ func gorillaImport(
 	if err != nil {
 		return false, fmt.Errorf("failed to copy installer after confirmation: %v", err)
 	}
-	pkgsInfo.Installer.Location = filepath.Join("/apps", installerFilename)
+	pkgsInfo.Installer.Location = filepath.Join(repoSubPath, installerFilename)
 
-	// Step 16: Write final pkgsinfo
-	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", "/apps")
+	// Step 16: Build the final folder for pkgsinfo, using the same subpath
+	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", repoSubPath)
 	if err := os.MkdirAll(pkginfoFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
 	}
