@@ -559,7 +559,7 @@ func gorillaImport(
 	// Step 8: Build final PkgsInfo
 	pkgsInfo := PkgsInfo{
 		Name:          metadata.ID,
-		DisplayName:   metadata.Title,
+		DisplayName:   metadata.ID,
 		Version:       metadata.Version,
 		Description:   metadata.Description,
 		Category:      metadata.Category,
