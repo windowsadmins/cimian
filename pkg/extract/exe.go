@@ -1,9 +1,12 @@
+// pkg/extract/exe.go
+
 package extract
 
 import (
 	"fmt"
 	"runtime"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -131,4 +134,70 @@ func verQueryValue(block []byte, subBlock string) (unsafe.Pointer, uint32, error
 		return nil, 0, fmt.Errorf("VerQueryValueW failed for subBlock %s", subBlock)
 	}
 	return buf, size, nil
+}
+
+// ExtractExeDeveloper attempts to retrieve the CompanyName
+// from StringFileInfo in the .exe version resource.
+func ExtractExeDeveloper(exePath string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return "", nil
+	}
+
+	size, err := getFileVersionInfoSize(exePath)
+	if err != nil || size == 0 {
+		return "", err
+	}
+
+	info, err := getFileVersionInfo(exePath, size)
+	if err != nil {
+		return "", err
+	}
+
+	// Grab the translation array
+	type translation struct {
+		Language uint16
+		CodePage uint16
+	}
+	ptr, blockSize, err := verQueryValue(info, `\VarFileInfo\Translation`)
+	if err != nil || blockSize == 0 {
+		// fallback to default 040904B0 if no translation found
+		return queryCompanyName(info, 0x0409, 0x04B0)
+	}
+
+	// parse the bytes into an array of translations
+	numTranslations := blockSize / 4 // each translation is 4 bytes (Language + CodePage)
+	transSlice := (*[1 << 28]translation)(ptr)[:numTranslations:numTranslations]
+
+	// Try each translation, returning the first non-empty CompanyName
+	for _, t := range transSlice {
+		if dev, _ := queryCompanyName(info, t.Language, t.CodePage); dev != "" {
+			return dev, nil
+		}
+	}
+
+	// If none gave a dev name, final fallback to default 040904B0
+	dev, _ := queryCompanyName(info, 0x0409, 0x04B0)
+	return dev, nil
+}
+
+// queryCompanyName attempts to query CompanyName for a given Language/CodePage
+func queryCompanyName(block []byte, lang, codepage uint16) (string, error) {
+	subBlock := fmt.Sprintf(`\StringFileInfo\%04x%04x\CompanyName`, lang, codepage)
+	ptr, size, err := verQueryValue(block, subBlock)
+	if err != nil || size == 0 {
+		return "", err
+	}
+	// ptr is a pointer to a UTF-16 string
+	raw := unsafe.Slice((*uint16)(ptr), size)
+	return utf16PtrToString(raw), nil
+}
+
+// utf16PtrToString converts a raw UTF-16 slice to Go string
+func utf16PtrToString(u16 []uint16) string {
+	// find null terminator
+	n := 0
+	for n < len(u16) && u16[n] != 0 {
+		n++
+	}
+	return string(utf16.Decode(u16[:n]))
 }
