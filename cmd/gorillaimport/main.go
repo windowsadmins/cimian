@@ -927,7 +927,6 @@ func runMakeCatalogs(silent bool) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("makecatalogs execution failed: %v", err)
 	}
-	fmt.Println("makecatalogs completed successfully.")
 	return nil
 }
 
