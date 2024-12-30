@@ -129,6 +129,35 @@ func init() {
 	flag.Var(&installsArray, "installs-array", "(alternative long form) Add an installed path to 'installs' array.")
 }
 
+func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
+	// For Gorilla, your `All.yaml` is at:
+	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+
+	// read All.yaml
+	fileContent, err := os.ReadFile(allCatalogPath)
+	if err != nil {
+		// if this fails, you could run `runMakeCatalogs(false)` or just return
+		return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
+	}
+
+	var allPackages []PkgsInfo
+	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+	}
+
+	// Compare item.Name (or product code, or both)
+	// In Munki, we compare on `name`; you might want to do the same or use `ProductCode`
+	newNameLower := strings.TrimSpace(strings.ToLower(newItemName))
+	for _, item := range allPackages {
+		existingNameLower := strings.TrimSpace(strings.ToLower(item.Name))
+		if existingNameLower == newNameLower {
+			// Found a match with same Name
+			return &item, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 func main() {
 	var (
 		repoPath              string
@@ -504,6 +533,29 @@ func gorillaImport(
 		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
+	// Right after you fill out pkgsInfo, do:
+	existingPkg, found, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.Name)
+	if err != nil {
+		fmt.Printf("Warning: could not check existing items: %v\n", err)
+	} else if found && existingPkg != nil {
+		fmt.Println("This item has the same Name as an existing item in the repo:")
+		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
+			existingPkg.Name, existingPkg.Version, existingPkg.Description)
+
+		// Ask user if they want to re-use some fields from the existing item
+		answer := getInput("Use existing item as a template? [y/N]: ", "N")
+		if strings.ToLower(answer) == "y" {
+			// Copy fields from existingPkg => pkgsInfo as desired:
+			pkgsInfo.Name = existingPkg.Name
+			pkgsInfo.DisplayName = existingPkg.DisplayName
+			pkgsInfo.Category = existingPkg.Category
+			pkgsInfo.Developer = existingPkg.Developer
+			pkgsInfo.SupportedArch = existingPkg.SupportedArch
+			pkgsInfo.Catalogs = existingPkg.Catalogs
+			// etc.
+		}
+	}
+
 	// If .exe => fallback
 	autoInstalls := []InstallItem{}
 	if metadata.InstallerType == "exe" {
@@ -765,21 +817,6 @@ func parsePackageName(filename string) string {
 	return strings.TrimSuffix(filename, filepath.Ext(filename))
 }
 
-func promptInstallerItemPath() (string, error) {
-	fmt.Print("Repo location (default: /apps): ")
-	var path string
-	fmt.Scanln(&path)
-	path = strings.TrimSpace(path)
-	if path == "" {
-		path = "/apps"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	path = strings.TrimRight(path, "/")
-	return path, nil
-}
-
 // loadScriptContent reads script or returns empty
 func loadScriptContent(path string) (string, error) {
 	if path == "" {
@@ -814,45 +851,6 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 		Hash:     uninstallerHash,
 		Type:     strings.TrimPrefix(filepath.Ext(uninstallerPath), "."),
 	}, nil
-}
-
-// findMatchingItemInAllCatalog tries to see if there's an existing item with same product/upgrade code
-func findMatchingItemInAllCatalog(repoPath, productCode, upgradeCode, currentFileHash string) (*PkgsInfo, bool, error) {
-	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-	fileContent, err := os.ReadFile(allCatalogPath)
-	if err != nil {
-		if runErr := runMakeCatalogs(false); runErr != nil {
-			return nil, false, fmt.Errorf("failed to run makecatalogs: %v", runErr)
-		}
-		// read again
-		fileContent, err = os.ReadFile(allCatalogPath)
-		if err != nil {
-			return nil, false, fmt.Errorf("failed to read All.yaml after makecatalogs: %v", err)
-		}
-	}
-
-	var allPackages []PkgsInfo
-	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-	}
-
-	cleanedPC := strings.TrimSpace(strings.ToLower(productCode))
-	cleanedUC := strings.TrimSpace(strings.ToLower(upgradeCode))
-	cleanedHash := strings.TrimSpace(strings.ToLower(currentFileHash))
-
-	for _, item := range allPackages {
-		pc := strings.TrimSpace(strings.ToLower(item.ProductCode))
-		uc := strings.TrimSpace(strings.ToLower(item.UpgradeCode))
-		if pc == cleanedPC && uc == cleanedUC {
-			if item.Installer != nil && cleanedHash != "" {
-				if strings.TrimSpace(strings.ToLower(item.Installer.Hash)) == cleanedHash {
-					return &item, true, nil
-				}
-			}
-			return &item, false, nil
-		}
-	}
-	return nil, false, nil
 }
 
 // copyFile from src to dst
