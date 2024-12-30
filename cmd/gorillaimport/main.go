@@ -745,13 +745,21 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 
 	case ".exe":
 		versionString, err := extract.ExeMetadata(packagePath)
+		devName, devErr := extract.ExtractExeDeveloper(packagePath)
+
 		metadata.Title = parsePackageName(filepath.Base(packagePath))
 		metadata.ID = metadata.Title
 		metadata.Version = versionString
 		if err != nil {
 			metadata.Version = ""
 		}
-		metadata.Developer = ""
+
+		if devErr == nil && devName != "" {
+			metadata.Developer = devName
+		} else {
+			metadata.Developer = ""
+		}
+
 		metadata.Description = ""
 		metadata.InstallerType = "exe"
 
