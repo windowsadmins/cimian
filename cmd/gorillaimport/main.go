@@ -464,21 +464,57 @@ func gorillaImport(
 	filePaths []string,
 ) (bool, error) {
 
+	// Step 1: Basic file existence check
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return false, fmt.Errorf("package '%s' does not exist", packagePath)
 	}
 	fmt.Printf("Processing package: %s\n", packagePath)
 
-	// Extract metadata (name, version, etc.)
+	// Step 2: Extract minimal metadata (name, version, developer, etc.)
 	metadata, err := extractInstallerMetadata(packagePath, conf)
 	if err != nil {
 		return false, fmt.Errorf("metadata extraction failed: %v", err)
 	}
-	if metadata.ID == "" {
+	if strings.TrimSpace(metadata.ID) == "" {
+		// fallback if ID is empty
 		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
-	// Read script contents
+	// Step 3: Immediately check for an existing item in All.yaml
+	existingPkg, found, err := findMatchingItemInAllCatalog(conf.RepoPath, metadata.ID)
+	if err != nil {
+		fmt.Printf("Warning: could not check existing items: %v\n", err)
+	} else if found && existingPkg != nil {
+		fmt.Println("This item has the same Name as an existing item in the repo:")
+		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
+			existingPkg.Name, existingPkg.Version, existingPkg.Description)
+
+		// Ask user if they want to reuse fields from the existing item
+		answer := getInput("Use existing item as a template? [y/N]: ", "N")
+		if strings.EqualFold(answer, "y") {
+			// Overwrite these metadata fields
+			metadata.ID = existingPkg.Name
+			metadata.Title = existingPkg.DisplayName
+			metadata.Version = existingPkg.Version
+			metadata.Developer = existingPkg.Developer
+			metadata.Description = existingPkg.Description
+			metadata.Category = existingPkg.Category
+
+			// Reuse entire array of SupportedArch
+			metadata.SupportedArch = existingPkg.SupportedArch
+
+			// If the old item had multiple catalogs, you can pick the first
+			// or do something else. For simplicity, just pick the first:
+			if len(existingPkg.Catalogs) > 0 {
+				conf.DefaultCatalog = existingPkg.Catalogs[0]
+			}
+		}
+	}
+
+	// Step 4: Now do the normal interactive prompt for final overrides
+	metadata = promptForAllMetadata(packagePath, metadata, conf)
+
+	// Step 5: Gather script contents
 	preinstallScriptContent, _ := loadScriptContent(scripts.Preinstall)
 	postinstallScriptContent, _ := loadScriptContent(scripts.Postinstall)
 	preuninstallScriptContent, _ := loadScriptContent(scripts.Preuninstall)
@@ -486,13 +522,13 @@ func gorillaImport(
 	installCheckScriptContent, _ := loadScriptContent(scripts.InstallCheck)
 	uninstallCheckScriptContent, _ := loadScriptContent(scripts.UninstallCheck)
 
-	// If there's an uninstaller
+	// Step 6: If there's an uninstaller
 	uninstaller, err := processUninstaller(uninstallerPath, filepath.Join(conf.RepoPath, "pkgs"), "apps")
 	if err != nil {
 		return false, fmt.Errorf("uninstaller processing failed: %v", err)
 	}
 
-	// We'll gather some info, but wait to copy the installer until user confirms.
+	// Step 7: File hash + size
 	fileHash, err := utils.FileSHA256(packagePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to calculate file hash: %v", err)
@@ -503,7 +539,7 @@ func gorillaImport(
 	}
 	fileSizeKB := stat.Size() / 1024
 
-	// The final PkgsInfo struct
+	// Step 8: Build final PkgsInfo
 	pkgsInfo := PkgsInfo{
 		Name:          metadata.ID,
 		DisplayName:   metadata.Title,
@@ -512,10 +548,9 @@ func gorillaImport(
 		Category:      metadata.Category,
 		Developer:     metadata.Developer,
 		Catalogs:      []string{conf.DefaultCatalog},
-		Installs:      []InstallItem{}, // we append below
+		Installs:      []InstallItem{},
 		SupportedArch: metadata.SupportedArch,
 		Installer: &Installer{
-			// We'll set `Location` after user confirms, once we copy the file.
 			Hash: fileHash,
 			Type: metadata.InstallerType,
 			Size: fileSizeKB,
@@ -533,30 +568,7 @@ func gorillaImport(
 		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
-	// Right after you fill out pkgsInfo, do:
-	existingPkg, found, err := findMatchingItemInAllCatalog(conf.RepoPath, pkgsInfo.Name)
-	if err != nil {
-		fmt.Printf("Warning: could not check existing items: %v\n", err)
-	} else if found && existingPkg != nil {
-		fmt.Println("This item has the same Name as an existing item in the repo:")
-		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
-			existingPkg.Name, existingPkg.Version, existingPkg.Description)
-
-		// Ask user if they want to re-use some fields from the existing item
-		answer := getInput("Use existing item as a template? [y/N]: ", "N")
-		if strings.ToLower(answer) == "y" {
-			// Copy fields from existingPkg => pkgsInfo as desired:
-			pkgsInfo.Name = existingPkg.Name
-			pkgsInfo.DisplayName = existingPkg.DisplayName
-			pkgsInfo.Category = existingPkg.Category
-			pkgsInfo.Developer = existingPkg.Developer
-			pkgsInfo.SupportedArch = existingPkg.SupportedArch
-			pkgsInfo.Catalogs = existingPkg.Catalogs
-			// etc.
-		}
-	}
-
-	// If .exe => fallback
+	// Step 9: If .exe => fallback
 	autoInstalls := []InstallItem{}
 	if metadata.InstallerType == "exe" {
 		fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
@@ -569,7 +581,7 @@ func gorillaImport(
 		})
 	}
 
-	// If .bat => guess
+	// Step 10: If preinstall is .bat or .cmd, guess
 	if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
 		guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
 		if guessedPath != "" && len(autoInstalls) > 0 {
@@ -577,29 +589,27 @@ func gorillaImport(
 		}
 	}
 
-	// Merge user-provided -f items
+	// Step 11: Merge user-provided -f items
 	userInstalls := buildInstallsArray(filePaths)
 
-	// Also append any .nupkg enumerations from metadata.Installs
+	// Step 12: Also append .nupkg enumerations if present
 	finalInstalls := append(autoInstalls, userInstalls...)
 	if len(metadata.Installs) > 0 {
 		finalInstalls = append(finalInstalls, metadata.Installs...)
 		fmt.Printf("Appended %d .nupkg item(s) to final installs.\n", len(metadata.Installs))
 	}
 
-	// For gorillapkg items, remove version. Example: path has "C:\\Program Files\\Gorilla"
+	// If we see \Program Files\Gorilla\ in the path, remove version
 	for i := range finalInstalls {
-		pathStr := strings.ToLower(string(finalInstalls[i].Path))
-		if strings.Contains(pathStr, `\program files\gorilla\`) {
-			// blank out the version
+		lowerPath := strings.ToLower(string(finalInstalls[i].Path))
+		if strings.Contains(lowerPath, `\program files\gorilla\`) {
 			finalInstalls[i].Version = SingleQuotedString("")
 		}
 	}
-
 	pkgsInfo.Installs = finalInstalls
 
-	// Show final details BEFORE copying or writing
-	fmt.Println("\nPkginfo details (BEFORE copying to pkgs/pkgsinfo):")
+	// Step 13: Show final details
+	fmt.Println("\nPkginfo details:")
 	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
 	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
 	fmt.Printf("    Version: %s\n", pkgsInfo.Version)
@@ -611,19 +621,19 @@ func gorillaImport(
 	fmt.Printf("    Installer Type: %s\n", pkgsInfo.Installer.Type)
 	fmt.Println()
 
-	// Confirm
+	// Step 14: Confirm
 	confirm := getInput("Import this item? (y/n): ", "n")
-	if strings.ToLower(confirm) != "y" {
+	if !strings.EqualFold(confirm, "y") {
 		fmt.Println("Import canceled.")
 		return false, nil
 	}
 
-	// The user said yes => Now we do:
-	// 1) Copy the file to pkgs/...
+	// Step 15: Copy the actual file to pkgs
 	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", "/apps")
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
 	}
+
 	archTag := ""
 	if len(pkgsInfo.SupportedArch) > 0 && pkgsInfo.SupportedArch[0] == "x64" {
 		archTag = "-x64-"
@@ -635,10 +645,9 @@ func gorillaImport(
 	if err != nil {
 		return false, fmt.Errorf("failed to copy installer after confirmation: %v", err)
 	}
-	// Update pkgsInfo.Installer.Location to reflect the new path
 	pkgsInfo.Installer.Location = filepath.Join("/apps", installerFilename)
 
-	// 2) Write pkginfo to pkgsinfo/...
+	// Step 16: Write final pkgsinfo
 	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", "/apps")
 	if err := os.MkdirAll(pkginfoFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
@@ -730,9 +739,6 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.ID = metadata.Title
 		metadata.Version = "1.0.0"
 	}
-
-	// Prompt user for overrides
-	metadata = promptForAllMetadata(packagePath, metadata, conf)
 
 	// Ensure architecture is set
 	if metadata.Architecture == "" {
