@@ -1,5 +1,8 @@
 // cmd/gorillaimport/main.go
 
+//go:build windows
+// +build windows
+
 package main
 
 import (
@@ -159,6 +162,9 @@ func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInf
 }
 
 func main() {
+
+	utils.PatchWindowsArgs()
+
 	var (
 		repoPath              string
 		category              string
