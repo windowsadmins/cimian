@@ -111,69 +111,76 @@ type Metadata struct {
 //  5. a special boolean configRequested if user typed --config
 //
 // Returns (packagePath, filePaths, otherFlags, configRequested).
-func parseCustomArgs(args []string) (string, []string, map[string]string, bool) {
+func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool) {
 	var packagePath string
-	var filePaths []string
-	filePaths = make([]string, 0)
+	filePaths := []string{}
 	otherFlags := make(map[string]string)
 	configRequested := false
+	helpRequested := false
 
 	skipNext := false
 	for i := 1; i < len(args); i++ {
 		if skipNext {
-			// We skip this arg because it was consumed as the value for a previous flag
 			skipNext = false
 			continue
 		}
-
 		arg := args[i]
 
-		// Special case: check if user typed --config
+		// Check --help / -h
+		if arg == "--help" || arg == "-h" {
+			helpRequested = true
+			continue
+		}
+
+		// Check --config
 		if arg == "--config" {
 			configRequested = true
 			continue
 		}
 
 		switch {
-		// Check for -i or --installs-array
+		// -i or --installs-array => next token is file path
 		case arg == "-i" || arg == "--installs-array":
-			// The next token is the path
 			if i+1 < len(args) {
 				filePaths = append(filePaths, args[i+1])
 				skipNext = true
 			}
 
-		// If it looks like -flag=someValue
+		// If this is something like -arch=x64 or --arch=x64
 		case strings.HasPrefix(arg, "-") && strings.Contains(arg, "="):
-			// e.g. "-arch=x64" => key="arch", val="x64"
-			parts := strings.SplitN(arg[1:], "=", 2)
-			key := parts[0]
+			// Split on the first '='
+			parts := strings.SplitN(arg, "=", 2)
+			// The first part might be "-arch" or "--arch"; strip leading '-'
+			key := strings.TrimLeft(parts[0], "-")
 			val := parts[1]
 			otherFlags[key] = val
 
-		// If it’s simply -flag (no '=') or --flag (no '=')
+		// Otherwise, check if the next arg belongs to this flag
 		case strings.HasPrefix(arg, "-"):
-			// If the next arg is not another dash, treat that as this flag's value
+			// Maybe user typed: -arch x64 (no '=')
+			// If the next arg doesn't start with '-', treat it as this flag's value
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				otherFlags[strings.TrimPrefix(arg, "-")] = args[i+1]
+				key := strings.TrimLeft(arg, "-")
+				otherFlags[key] = args[i+1]
 				skipNext = true
 			} else {
-				// otherwise it’s a boolean flag => "true"
-				otherFlags[strings.TrimPrefix(arg, "-")] = "true"
+				// It's a standalone boolean flag
+				key := strings.TrimLeft(arg, "-")
+				otherFlags[key] = "true"
 			}
 
-		// Otherwise => if we have no packagePath yet, assume this is it
+		// First non-flag => packagePath (main installer path)
 		default:
 			if packagePath == "" {
 				packagePath = arg
 			} else {
-				// If we have more than one non-flag argument,
-				// either store them or ignore them
+				// If there's more than one leftover argument,
+				// do what you wish: ignore or store them.
 			}
 		}
 	}
 
-	return packagePath, filePaths, otherFlags, configRequested
+	return packagePath, filePaths, otherFlags, configRequested, helpRequested
 }
 
 func main() {
@@ -185,7 +192,12 @@ func main() {
 	//   - -i or --installs-array => user filePaths
 	//   - everything else => otherFlags
 	//   - and check if user typed --config
-	packagePath, filePaths, otherFlags, configRequested := parseCustomArgs(os.Args)
+	packagePath, filePaths, otherFlags, configRequested, helpRequested := parseCustomArgs(os.Args)
+
+	// If user typed --help or -h
+	if helpRequested {
+		showUsageAndExit()
+	}
 
 	// If user typed --config, do that, then exit
 	if configRequested {
@@ -1056,4 +1068,32 @@ func maybeOpenFile(filePath string) error {
 		return exec.Command("notepad.exe", filePath).Start()
 	}
 	return exec.Command(codeCmd, filePath).Start()
+}
+
+func showUsageAndExit() {
+	fmt.Println(`Usage: gorillaimport.exe [options] <installerPath>
+
+Manual argument parsing is used, so the first non-flag argument is assumed 
+to be the main installer path. Example:
+
+  gorillaimport.exe "C:\Path With Spaces\SomeInstaller.exe" -i "C:\Also With Spaces\someFile.txt"
+
+Options:
+  -i, --installs-array <path>   Add a path to final 'installs' array (multiple OK)
+  --repo_path=<path>            Override the Gorilla repo path
+  --arch=<arch>                 Override architecture (e.g. x64)
+  --uninstaller=<path>          Specify an optional uninstaller
+  --install-check-script=<path> ...
+  --uninstall-check-script=<path> ...
+  --preinstall-script=<path>    ...
+  --postinstall-script=<path>   ...
+  --preuninstall-script=<path>  ...
+  --postuninstall-script=<path> ...
+  --config                      Run interactive configuration setup and exit
+  -h, --help                    Show this usage and exit
+
+If you specify both an installer path and one or more -i/--installs-array 
+flags, the final PkgsInfo will incorporate your user-provided filePaths 
+(and skip the .exe fallback).`)
+	os.Exit(0)
 }
