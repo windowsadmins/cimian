@@ -6,7 +6,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -88,201 +87,195 @@ type ScriptPaths struct {
 	UninstallCheck string
 }
 
-// multiFlag for repeated -f arguments
-type multiFlag []string
-
-func (m *multiFlag) String() string { return strings.Join(*m, ", ") }
-func (m *multiFlag) Set(value string) error {
-	*m = append(*m, value)
-	return nil
+// Metadata as in your code
+type Metadata struct {
+	Title         string
+	ID            string
+	Version       string
+	Developer     string
+	Category      string
+	Description   string
+	ProductCode   string
+	UpgradeCode   string
+	Architecture  string
+	SupportedArch []string
+	InstallerType string
+	Installs      []InstallItem
 }
 
-// Global flags
-var (
-	configBool               *bool
-	archFlag                 *string
-	installerFlag            *string
-	uninstallerFlag          *string
-	installScriptFlag        *string
-	postinstallScriptFlag    *string
-	preuninstallScriptFlag   *string
-	postuninstallScriptFlag  *string
-	installCheckScriptFlag   *string
-	uninstallCheckScriptFlag *string
-	installsArray            multiFlag
-)
+// parseCustomArgs manually parses os.Args for:
+//  1. The first non-flag => packagePath
+//  2. -i or --installs-array => appended to filePaths
+//  3. key=value flags => stored in otherFlags["key"] = "value"
+//  4. single flags => stored in otherFlags["flag"] = "true" (boolean style)
+//  5. a special boolean configRequested if user typed --config
+//
+// Returns (packagePath, filePaths, otherFlags, configRequested).
+func parseCustomArgs(args []string) (string, []string, map[string]string, bool) {
+	var packagePath string
+	var filePaths []string
+	filePaths = make([]string, 0)
+	otherFlags := make(map[string]string)
+	configRequested := false
 
-// init sets up the flags
-func init() {
-	configBool = flag.Bool("config", false, "Run interactive configuration setup")
+	skipNext := false
+	for i := 1; i < len(args); i++ {
+		if skipNext {
+			// We skip this arg because it was consumed as the value for a previous flag
+			skipNext = false
+			continue
+		}
 
-	archFlag = flag.String("arch", "", "Architecture")
-	installerFlag = flag.String("installer", "", "Installer path")
-	uninstallerFlag = flag.String("uninstaller", "", "Uninstaller path")
+		arg := args[i]
 
-	installScriptFlag = flag.String("install-script", "", "Install script")
-	postinstallScriptFlag = flag.String("postinstall-script", "", "Post-install script")
-	preuninstallScriptFlag = flag.String("preuninstall-script", "", "Pre-uninstall script")
-	postuninstallScriptFlag = flag.String("postuninstall-script", "", "Post-uninstall script")
+		// Special case: check if user typed --config
+		if arg == "--config" {
+			configRequested = true
+			continue
+		}
 
-	installCheckScriptFlag = flag.String("install-check-script", "", "Path to install check script")
-	uninstallCheckScriptFlag = flag.String("uninstall-check-script", "", "Path to uninstall check script")
+		switch {
+		// Check for -i or --installs-array
+		case arg == "-i" || arg == "--installs-array":
+			// The next token is the path
+			if i+1 < len(args) {
+				filePaths = append(filePaths, args[i+1])
+				skipNext = true
+			}
 
-	flag.Var(&installsArray, "i", "Add an installed path to final 'installs' array (multiple -i flags).") // Long: --installs-array
-	flag.Var(&installsArray, "installs-array", "(alternative long form) Add an installed path to 'installs' array.")
-}
+		// If it looks like -flag=someValue
+		case strings.HasPrefix(arg, "-") && strings.Contains(arg, "="):
+			// e.g. "-arch=x64" => key="arch", val="x64"
+			parts := strings.SplitN(arg[1:], "=", 2)
+			key := parts[0]
+			val := parts[1]
+			otherFlags[key] = val
 
-func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
-	// For Gorilla, your `All.yaml` is at:
-	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+		// If it’s simply -flag (no '=') or --flag (no '=')
+		case strings.HasPrefix(arg, "-"):
+			// If the next arg is not another dash, treat that as this flag's value
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				otherFlags[strings.TrimPrefix(arg, "-")] = args[i+1]
+				skipNext = true
+			} else {
+				// otherwise it’s a boolean flag => "true"
+				otherFlags[strings.TrimPrefix(arg, "-")] = "true"
+			}
 
-	// read All.yaml
-	fileContent, err := os.ReadFile(allCatalogPath)
-	if err != nil {
-		// if this fails, you could run `runMakeCatalogs(false)` or just return
-		return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
-	}
-
-	var allPackages []PkgsInfo
-	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
-	}
-
-	// Compare item.Name (or product code, or both)
-	// In Munki, we compare on `name`; you might want to do the same or use `ProductCode`
-	newNameLower := strings.TrimSpace(strings.ToLower(newItemName))
-	for _, item := range allPackages {
-		existingNameLower := strings.TrimSpace(strings.ToLower(item.Name))
-		if existingNameLower == newNameLower {
-			// Found a match with same Name
-			return &item, true, nil
+		// Otherwise => if we have no packagePath yet, assume this is it
+		default:
+			if packagePath == "" {
+				packagePath = arg
+			} else {
+				// If we have more than one non-flag argument,
+				// either store them or ignore them
+			}
 		}
 	}
-	return nil, false, nil
+
+	return packagePath, filePaths, otherFlags, configRequested
 }
 
 func main() {
-
+	// 1) Patch Windows args so spaces are preserved:
 	utils.PatchWindowsArgs()
 
-	var (
-		repoPath              string
-		category              string
-		developer             string
-		nameOverride          string
-		displayNameOverride   string
-		descriptionOverride   string
-		catalogs              string
-		versionOverride       string
-		unattendedInstallFlag bool
-	)
-	var filePaths multiFlag
+	// 2) Manually parse arguments for:
+	//   - The first non-flag => main installer path
+	//   - -i or --installs-array => user filePaths
+	//   - everything else => otherFlags
+	//   - and check if user typed --config
+	packagePath, filePaths, otherFlags, configRequested := parseCustomArgs(os.Args)
 
-	flag.StringVar(&repoPath, "repo_path", "", "Gorilla repo path")
-	flag.StringVar(&category, "category", "", "Category override")
-	flag.StringVar(&developer, "developer", "", "Developer override")
-	flag.StringVar(&nameOverride, "name", "", "Name override")
-	flag.StringVar(&displayNameOverride, "displayname", "", "Display Name override")
-	flag.StringVar(&descriptionOverride, "description", "", "Description override")
-	flag.StringVar(&catalogs, "catalogs", "Production", "Comma-separated catalogs")
-	flag.StringVar(&versionOverride, "version", "", "Version override")
-	flag.BoolVar(&unattendedInstallFlag, "unattended_install", false, "Set 'unattended_install: true'")
-
-	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags)")
-
-	showGorillaImportVersion := flag.Bool("gorillaimport_version", false, "Print gorillaimport version and exit.")
-	flag.Parse()
-
-	if *showGorillaImportVersion {
-		fmt.Println("gorillaimport 1.0.0 (example)")
-		return
-	}
-
-	// Attempt to load configuration, or create directories if missing.
-	conf, err := loadOrCreateConfig()
-	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
-		os.Exit(1)
-	}
-
-	// If --config with no argument => run interactive setup
-	if *configBool {
-		if err := configureGorillaImport(); err != nil {
-			fmt.Printf("Failed to save config: %v\n", err)
+	// If user typed --config, do that, then exit
+	if configRequested {
+		conf, err := loadOrCreateConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		if err := configureGorillaImport(conf); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to save config: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("Configuration saved successfully.")
 		return
 	}
 
-	// Override config with any explicit flags
-	if repoPath != "" {
-		conf.RepoPath = repoPath
-	}
-	if *archFlag != "" {
-		conf.DefaultArch = *archFlag
-	}
-
-	// Figure out the main installer path
-	packagePath := getInstallerPath(*installerFlag)
 	if packagePath == "" {
-		fmt.Println("Error: No installer provided.")
-		os.Exit(1)
-	}
-
-	// Gather script paths
-	scripts := ScriptPaths{
-		Preinstall:     *installScriptFlag,
-		Postinstall:    *postinstallScriptFlag,
-		Preuninstall:   *preuninstallScriptFlag,
-		Postuninstall:  *postuninstallScriptFlag,
-		InstallCheck:   *installCheckScriptFlag,
-		UninstallCheck: *uninstallCheckScriptFlag,
-	}
-
-	// Do the import
-	importSuccess, err := gorillaImport(
-		packagePath,
-		conf,
-		scripts,
-		*uninstallerFlag,
-		filePaths,
-	)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !importSuccess {
-		os.Exit(0)
-	}
-
-	// Optionally upload to the cloud
-	if conf.CloudProvider != "none" {
-		if err := uploadToCloud(conf); err != nil {
-			fmt.Printf("Error uploading to cloud: %v\n", err)
+		packagePath = getInstallerPathInteractive()
+		if packagePath == "" {
+			fmt.Fprintln(os.Stderr, "No installer path provided; exiting.")
 			os.Exit(1)
 		}
 	}
 
-	// Always run makecatalogs
-	if err := runMakeCatalogs(true); err != nil {
-		fmt.Printf("makecatalogs error: %v\n", err)
+	fmt.Printf("DEBUG: packagePath=%q, #filePaths=%d\n", packagePath, len(filePaths))
+
+	// 3) Load config
+	conf, err := loadOrCreateConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
 
-	// If using AWS/Azure, sync icons/pkgs
-	if conf.CloudProvider == "aws" || conf.CloudProvider == "azure" {
-		fmt.Println("Starting upload for icons")
-		err = syncToCloud(conf, filepath.Join(conf.RepoPath, "icons"), "icons")
-		if err != nil {
-			fmt.Printf("Error syncing icons directory to %s: %v\n", conf.CloudProvider, err)
-		}
+	// 4) If user typed -arch=..., override conf.DefaultArch
+	if val, ok := otherFlags["arch"]; ok && val != "" {
+		conf.DefaultArch = val
+		fmt.Println("DEBUG: Overriding conf.DefaultArch =", val)
+	}
+	// If user typed -repo_path=..., override conf.RepoPath
+	if val, ok := otherFlags["repo_path"]; ok && val != "" {
+		conf.RepoPath = val
+		fmt.Println("DEBUG: Overriding conf.RepoPath =", val)
+	}
 
+	// 5) Build script paths from e.g. -preinstall-script=..., etc.
+	scripts := ScriptPaths{
+		Preinstall:     otherFlags["preinstall-script"],
+		Postinstall:    otherFlags["postinstall-script"],
+		Preuninstall:   otherFlags["preuninstall-script"],
+		Postuninstall:  otherFlags["postuninstall-script"],
+		InstallCheck:   otherFlags["install-check-script"],
+		UninstallCheck: otherFlags["uninstall-check-script"],
+	}
+	// If user typed e.g. -uninstaller="C:\some\path"
+	uninstallerPath := otherFlags["uninstaller"]
+
+	// 6) Do the gorillaImport
+	success, err := gorillaImport(
+		packagePath, // the main installer
+		conf,        // loaded config
+		scripts,     // your script paths
+		uninstallerPath,
+		filePaths, // the array from -i flags
+	)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error in gorillaImport:", err)
+		os.Exit(1)
+	}
+	if !success {
+		os.Exit(0) // user canceled
+	}
+
+	// 7) upload to cloud if set
+	if conf.CloudProvider != "none" {
+		if err := uploadToCloud(conf); err != nil {
+			fmt.Fprintln(os.Stderr, "Error uploading to cloud:", err)
+		}
+	}
+
+	// 8) Always run makecatalogs
+	if err := runMakeCatalogs(true); err != nil {
+		fmt.Fprintln(os.Stderr, "makecatalogs error:", err)
+	}
+
+	// 9) If AWS/Azure => optionally sync pkgs or icons
+	if conf.CloudProvider == "aws" || conf.CloudProvider == "azure" {
 		fmt.Println("Starting upload for pkgs")
 		err = syncToCloud(conf, filepath.Join(conf.RepoPath, "pkgs"), "pkgs")
 		if err != nil {
-			fmt.Printf("Error syncing pkgs directory to %s: %v\n", conf.CloudProvider, err)
+			fmt.Fprintf(os.Stderr, "Error syncing pkgs to %s: %v\n", conf.CloudProvider, err)
 		}
 	}
 
@@ -294,32 +287,32 @@ func getConfigPath() string {
 	return `C:\ProgramData\ManagedInstalls\Config.yaml`
 }
 
-// loadOrCreateConfig loads config or tries to create directories if missing
+// loadOrCreateConfig loads or prompts. Similar to your existing code.
 func loadOrCreateConfig() (*config.Configuration, error) {
 	conf, err := config.LoadConfig()
 	if err != nil {
 		configPath := getConfigPath()
 		configDir := filepath.Dir(configPath)
 		if _, statErr := os.Stat(configDir); os.IsNotExist(statErr) {
-			// Create the config directory
-			if err := os.MkdirAll(configDir, 0755); err != nil {
-				return nil, fmt.Errorf("failed to create config directory: %v", err)
+			if err2 := os.MkdirAll(configDir, 0755); err2 != nil {
+				return nil, fmt.Errorf("failed to create config directory: %v", err2)
 			}
-			// Try again
 			conf, err = config.LoadConfig()
 			if err != nil {
-				return nil, fmt.Errorf("failed to load config after creating directories: %v", err)
+				return nil, fmt.Errorf("failed to load config after creating dirs: %v", err)
 			}
 		} else {
-			return nil, fmt.Errorf("failed to load config: %v", err)
+			return nil, err
 		}
 	}
 	return conf, nil
 }
 
 // configureGorillaImport is the interactive wizard for config
-func configureGorillaImport() error {
-	conf := config.GetDefaultConfig()
+func configureGorillaImport(conf *config.Configuration) error {
+	// conf is already loaded.
+	// Instead of creating a new conf or calling config.GetDefaultConfig(),
+	// just use the one passed in.
 
 	usr, err := user.Current()
 	if err != nil {
@@ -393,18 +386,42 @@ func configureGorillaImport() error {
 	return nil
 }
 
-// getInstallerPath tries --installer first, then position 0, then interactive
-func getInstallerPath(installerFlag string) string {
-	if installerFlag != "" {
-		return installerFlag
+func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
+	// For Gorilla, your `All.yaml` is at:
+	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
+
+	// read All.yaml
+	fileContent, err := os.ReadFile(allCatalogPath)
+	if err != nil {
+		// if this fails, you could run `runMakeCatalogs(false)` or just return
+		return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
 	}
-	if flag.NArg() > 0 {
-		return flag.Arg(0)
+
+	var allPackages []PkgsInfo
+	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
 	}
+
+	// Compare item.Name (or product code, or both)
+	// In Munki, we compare on `name`; you might want to do the same or use `ProductCode`
+	newNameLower := strings.TrimSpace(strings.ToLower(newItemName))
+	for _, item := range allPackages {
+		existingNameLower := strings.TrimSpace(strings.ToLower(item.Name))
+		if existingNameLower == newNameLower {
+			// Found a match with same Name
+			return &item, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// getInstallerPathInteractive prompts the user for an installer path if none
+// was passed on the command line. This ensures the function is used.
+func getInstallerPathInteractive() string {
 	fmt.Print("path to the installer file: ")
 	var path string
 	fmt.Scanln(&path)
-	return path
+	return strings.TrimSpace(path)
 }
 
 // A more robust pattern for capturing lines like:
@@ -487,57 +504,49 @@ func gorillaImport(
 	filePaths []string,
 ) (bool, error) {
 
-	// Step 1: Basic file existence check
+	fmt.Println("DEBUG: gorillaImport: packagePath=", packagePath, " len(filePaths)=", len(filePaths))
+
+	// Step 1: check file
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
 		return false, fmt.Errorf("package '%s' does not exist", packagePath)
 	}
-	fmt.Printf("Processing package: %s\n", packagePath)
 
-	// Step 2: Extract minimal metadata (name, version, developer, etc.)
+	// Step 2: extract metadata
 	metadata, err := extractInstallerMetadata(packagePath, conf)
 	if err != nil {
 		return false, fmt.Errorf("metadata extraction failed: %v", err)
 	}
 	if strings.TrimSpace(metadata.ID) == "" {
-		// fallback if ID is empty
 		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
-	// Step 3: Immediately check for an existing item in All.yaml
+	// Step 3: see if item already in All.yaml
 	existingPkg, found, err := findMatchingItemInAllCatalog(conf.RepoPath, metadata.ID)
 	if err != nil {
-		fmt.Printf("Warning: could not check existing items: %v\n", err)
+		fmt.Println("Warning: could not check existing items:", err)
 	} else if found && existingPkg != nil {
 		fmt.Println("This item has the same Name as an existing item in the repo:")
 		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
 			existingPkg.Name, existingPkg.Version, existingPkg.Description)
-
-		// Ask user if they want to reuse fields from the existing item
-		answer := getInput("Use existing item as a template? [y/N]: ", "N")
-		if strings.EqualFold(answer, "y") {
-			// Overwrite these metadata fields
+		ans := getInput("Use existing item as a template? [y/N]: ", "N")
+		if strings.EqualFold(ans, "y") {
 			metadata.ID = existingPkg.Name
 			metadata.Title = existingPkg.DisplayName
 			metadata.Version = existingPkg.Version
 			metadata.Developer = existingPkg.Developer
 			metadata.Description = existingPkg.Description
 			metadata.Category = existingPkg.Category
-
-			// Reuse entire array of SupportedArch
 			metadata.SupportedArch = existingPkg.SupportedArch
-
-			// If the old item had multiple catalogs, you can pick the first
-			// or do something else. For simplicity, just pick the first:
 			if len(existingPkg.Catalogs) > 0 {
 				conf.DefaultCatalog = existingPkg.Catalogs[0]
 			}
 		}
 	}
 
-	// Step 4: Now do the normal interactive prompt for final overrides
+	// Step 4: let user override some fields
 	metadata = promptForAllMetadata(packagePath, metadata, conf)
 
-	// Step 5: Gather script contents
+	// Step 5: gather script contents
 	preinstallScriptContent, _ := loadScriptContent(scripts.Preinstall)
 	postinstallScriptContent, _ := loadScriptContent(scripts.Postinstall)
 	preuninstallScriptContent, _ := loadScriptContent(scripts.Preuninstall)
@@ -545,13 +554,14 @@ func gorillaImport(
 	installCheckScriptContent, _ := loadScriptContent(scripts.InstallCheck)
 	uninstallCheckScriptContent, _ := loadScriptContent(scripts.UninstallCheck)
 
-	// Step 6: If there's an uninstaller
-	uninstaller, err := processUninstaller(uninstallerPath, filepath.Join(conf.RepoPath, "pkgs"), "apps")
+	// Step 6: handle uninstaller if any
+	uninstaller, err := processUninstaller(uninstallerPath,
+		filepath.Join(conf.RepoPath, "pkgs"), "apps")
 	if err != nil {
 		return false, fmt.Errorf("uninstaller processing failed: %v", err)
 	}
 
-	// Step 7: File hash + size
+	// Step 7: file hash + size
 	fileHash, err := utils.FileSHA256(packagePath)
 	if err != nil {
 		return false, fmt.Errorf("failed to calculate file hash: %v", err)
@@ -562,7 +572,7 @@ func gorillaImport(
 	}
 	fileSizeKB := stat.Size() / 1024
 
-	// Step 8: Build final PkgsInfo
+	// Step 8: build PkgsInfo
 	pkgsInfo := PkgsInfo{
 		Name:          metadata.ID,
 		DisplayName:   metadata.ID,
@@ -571,16 +581,18 @@ func gorillaImport(
 		Category:      metadata.Category,
 		Developer:     metadata.Developer,
 		Catalogs:      []string{conf.DefaultCatalog},
-		Installs:      []InstallItem{},
 		SupportedArch: metadata.SupportedArch,
+		Installs:      []InstallItem{},
+
 		Installer: &Installer{
 			Hash: fileHash,
 			Type: metadata.InstallerType,
 			Size: fileSizeKB,
 		},
-		Uninstaller:          uninstaller,
-		UnattendedInstall:    true,
-		UnattendedUninstall:  true,
+		Uninstaller:         uninstaller,
+		UnattendedInstall:   true,
+		UnattendedUninstall: true,
+
 		ProductCode:          strings.TrimSpace(metadata.ProductCode),
 		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
 		PreinstallScript:     preinstallScriptContent,
@@ -591,53 +603,35 @@ func gorillaImport(
 		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
-	// Prompt user for where to store in repo
+	// Step 9: prompt user for subdir
 	repoSubPath, err := promptInstallerItemPath()
 	if err != nil {
-		return false, fmt.Errorf("error reading user subdirectory input: %v", err)
+		return false, err
 	}
 
-	// Step 9: If .exe => fallback
-	autoInstalls := []InstallItem{}
-	if metadata.InstallerType == "exe" {
-		fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`, pkgsInfo.Name, pkgsInfo.Name)
-		fmt.Printf("Overriding .exe path with fallback: %s\n", fallbackExe)
-		autoInstalls = append(autoInstalls, InstallItem{
-			Type:        SingleQuotedString("file"),
-			Path:        SingleQuotedString(fallbackExe),
-			MD5Checksum: SingleQuotedString(""),
-			Version:     SingleQuotedString(pkgsInfo.Version),
-		})
+	// Step 10: decide final installs
+	var finalInstalls []InstallItem
+	if len(filePaths) > 0 {
+		// user-provided -i => skip fallback
+		finalInstalls = buildInstallsArray(filePaths)
+	} else if metadata.InstallerType == "exe" {
+		fallbackExe := fmt.Sprintf(`C:\Program Files\%s\%s.exe`,
+			pkgsInfo.Name, pkgsInfo.Name)
+		fmt.Println("Using fallback .exe =>", fallbackExe)
+		finalInstalls = []InstallItem{{
+			Type:    SingleQuotedString("file"),
+			Path:    SingleQuotedString(fallbackExe),
+			Version: SingleQuotedString(pkgsInfo.Version),
+		}}
 	}
 
-	// Step 10: If preinstall is .bat or .cmd, guess
-	if ext := strings.ToLower(filepath.Ext(scripts.Preinstall)); ext == ".bat" || ext == ".cmd" {
-		guessedPath := GuessInstallDirFromBat(scripts.Preinstall)
-		if guessedPath != "" && len(autoInstalls) > 0 {
-			autoInstalls[0].Path = SingleQuotedString(guessedPath)
-		}
-	}
-
-	// Step 11: Merge user-provided -f items
-	userInstalls := buildInstallsArray(filePaths)
-
-	// Step 12: Also append .nupkg enumerations if present
-	finalInstalls := append(autoInstalls, userInstalls...)
+	// If there's e.g. nupkg-based installs
 	if len(metadata.Installs) > 0 {
 		finalInstalls = append(finalInstalls, metadata.Installs...)
-		fmt.Printf("Appended %d .nupkg item(s) to final installs.\n", len(metadata.Installs))
-	}
-
-	// If we see \Program Files\Gorilla\ in the path, remove version
-	for i := range finalInstalls {
-		lowerPath := strings.ToLower(string(finalInstalls[i].Path))
-		if strings.Contains(lowerPath, `\program files\gorilla\`) {
-			finalInstalls[i].Version = SingleQuotedString("")
-		}
 	}
 	pkgsInfo.Installs = finalInstalls
 
-	// Step 13: Show final details
+	// Step 11: show final details
 	fmt.Println("\nPkginfo details:")
 	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
 	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
@@ -650,19 +644,17 @@ func gorillaImport(
 	fmt.Printf("    Installer Type: %s\n", pkgsInfo.Installer.Type)
 	fmt.Println()
 
-	// Step 14: Confirm
 	confirm := getInput("Import this item? (y/n): ", "n")
 	if !strings.EqualFold(confirm, "y") {
 		fmt.Println("Import canceled.")
 		return false, nil
 	}
 
-	// Step 15: Build the actual final folder within pkgs, using user-chosen subpath
+	// Step 12: copy installer to pkgs subdir
 	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
 	}
-
 	archTag := ""
 	if len(pkgsInfo.SupportedArch) > 0 && pkgsInfo.SupportedArch[0] == "x64" {
 		archTag = "-x64-"
@@ -670,39 +662,24 @@ func gorillaImport(
 	installerFilename := pkgsInfo.Name + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
 	installerDest := filepath.Join(installerFolderPath, installerFilename)
 
-	_, err = copyFile(packagePath, installerDest)
-	if err != nil {
-		return false, fmt.Errorf("failed to copy installer after confirmation: %v", err)
+	if _, err := copyFile(packagePath, installerDest); err != nil {
+		return false, fmt.Errorf("failed to copy installer: %v", err)
 	}
 	pkgsInfo.Installer.Location = filepath.Join(repoSubPath, installerFilename)
 
-	// Step 16: Build the final folder for pkgsinfo, using the same subpath
+	// Step 13: write pkginfo to pkgsinfo subdir
 	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", repoSubPath)
 	if err := os.MkdirAll(pkginfoFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
 	}
-	err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo, pkgsInfo.Name, pkgsInfo.Version, archTag)
+
+	err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo,
+		pkgsInfo.Name, pkgsInfo.Version, archTag)
 	if err != nil {
 		return false, fmt.Errorf("failed to write final pkginfo: %v", err)
 	}
 
 	return true, nil
-}
-
-// Metadata as in your code
-type Metadata struct {
-	Title         string
-	ID            string
-	Version       string
-	Developer     string
-	Category      string
-	Description   string
-	ProductCode   string
-	UpgradeCode   string
-	Architecture  string
-	SupportedArch []string
-	InstallerType string
-	Installs      []InstallItem
 }
 
 // extractInstallerMetadata for the main installer
@@ -914,21 +891,22 @@ func copyFile(src, dst string) (int64, error) {
 	return n, out.Sync()
 }
 
-// buildInstallsArray processes -f items
+// buildInstallsArray processes -i items
 func buildInstallsArray(paths []string) []InstallItem {
 	var arr []InstallItem
 	for _, p := range paths {
 		abs, _ := filepath.Abs(p)
 		fi, err := os.Stat(abs)
 		if err != nil || fi.IsDir() {
-			fmt.Fprintf(os.Stderr, "Skipping -f path: '%s'\n", p)
+			fmt.Fprintf(os.Stderr, "Skipping -i path: '%s'\n", p)
 			continue
 		}
 		md5v, _ := utils.FileMD5(abs)
-		ver := ""
-		if strings.EqualFold(filepath.Ext(abs), ".exe") && runtime.GOOS == "windows" {
-			version, _ := extract.ExeMetadata(abs)
-			ver = version
+		var ver string
+		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
+			if exev, err := extract.ExeMetadata(abs); err == nil {
+				ver = exev
+			}
 		}
 		arr = append(arr, InstallItem{
 			Type:        SingleQuotedString("file"),
