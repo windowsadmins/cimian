@@ -730,13 +730,15 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		}
 
 	case ".msi":
-		name, ver, dev, desc := extract.MsiMetadata(packagePath)
+		name, ver, dev, desc, prodCode, upgCode := extract.MsiMetadata(packagePath)
 		metadata.Title = name
 		metadata.ID = name
 		metadata.Version = ver
 		metadata.Developer = dev
 		metadata.Description = desc
 		metadata.InstallerType = "msi"
+		metadata.ProductCode = prodCode
+		metadata.UpgradeCode = upgCode
 
 	case ".exe":
 		versionString, err := extract.ExeMetadata(packagePath)
