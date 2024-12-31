@@ -111,12 +111,13 @@ type Metadata struct {
 //  5. a special boolean configRequested if user typed --config
 //
 // Returns (packagePath, filePaths, otherFlags, configRequested).
-func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool) {
+func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool, bool) {
 	var packagePath string
 	filePaths := []string{}
 	otherFlags := make(map[string]string)
 	configRequested := false
 	helpRequested := false
+	configAuto := false
 
 	skipNext := false
 	for i := 1; i < len(args); i++ {
@@ -126,12 +127,18 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 		}
 		arg := args[i]
 
-		// Check --help / -h
+		// Check --help or -h
 		if arg == "--help" || arg == "-h" {
 			helpRequested = true
 			continue
 		}
-
+		// Check --config-auto
+		if arg == "--config-auto" {
+			// This signals we want non-interactive config
+			configRequested = true
+			configAuto = true
+			continue
+		}
 		// Check --config
 		if arg == "--config" {
 			configRequested = true
@@ -173,14 +180,11 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 		default:
 			if packagePath == "" {
 				packagePath = arg
-			} else {
-				// If there's more than one leftover argument,
-				// do what you wish: ignore or store them.
 			}
 		}
 	}
 
-	return packagePath, filePaths, otherFlags, configRequested, helpRequested
+	return packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto
 }
 
 func main() {
@@ -191,29 +195,49 @@ func main() {
 	//   - The first non-flag => main installer path
 	//   - -i or --installs-array => user filePaths
 	//   - everything else => otherFlags
-	//   - and check if user typed --config
-	packagePath, filePaths, otherFlags, configRequested, helpRequested := parseCustomArgs(os.Args)
+	//   - and check if user typed --config / --help / --config-auto
+	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto := parseCustomArgs(os.Args)
 
 	// If user typed --help or -h
 	if helpRequested {
 		showUsageAndExit()
 	}
 
-	// If user typed --config, do that, then exit
+	// If user typed --config (with optional --config-auto)
 	if configRequested {
 		conf, err := loadOrCreateConfig()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 			os.Exit(1)
 		}
-		if err := configureGorillaImport(conf); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to save config: %v\n", err)
-			os.Exit(1)
+
+		// If user typed --config or --config-auto
+		if configRequested {
+			// If user also typed --config-auto, we *still* do interactive first
+			// (i.e., `--config` overrides `--config-auto` if both are set).
+			if !configAuto {
+				// interactive config
+				if err := configureGorillaImport(conf); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to save config (interactive): %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println("Configuration saved successfully.")
+			} else {
+				// non-interactive
+				if err := configureGorillaImportNonInteractive(conf); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to save config (auto): %v\n", err)
+					os.Exit(1)
+				}
+			}
+			// Either path => exit
+			return
 		}
-		fmt.Println("Configuration saved successfully.")
+
+		// In either case, we exit after config
 		return
 	}
 
+	// If packagePath was empty, prompt user:
 	if packagePath == "" {
 		packagePath = getInstallerPathInteractive()
 		if packagePath == "" {
@@ -394,6 +418,47 @@ func configureGorillaImport(conf *config.Configuration) error {
 	}
 	if err := config.SaveConfig(conf); err != nil {
 		return err
+	}
+	return nil
+}
+
+func configureGorillaImportNonInteractive(conf *config.Configuration) error {
+	// Only fill in defaults if they're currently empty/zero:
+
+	// If no RepoPath yet, fill from the user’s profile
+	if conf.RepoPath == "" {
+		userProfile := os.Getenv("USERPROFILE")
+		if userProfile == "" {
+			usr, err := user.Current()
+			if err != nil {
+				return fmt.Errorf("cannot determine user profile: %v", err)
+			}
+			userProfile = usr.HomeDir
+		}
+		conf.RepoPath = filepath.Join(userProfile, "DevOps", "Gorilla", "deployment")
+	}
+	if conf.CloudProvider == "" {
+		conf.CloudProvider = "none"
+	}
+	if conf.DefaultCatalog == "" {
+		conf.DefaultCatalog = "Development"
+	}
+	if conf.DefaultArch == "" {
+		conf.DefaultArch = "x64"
+	}
+	if !conf.OpenImportedYaml {
+		conf.OpenImportedYaml = true
+	}
+
+	configPath := getConfigPath()
+	configDir := filepath.Dir(configPath)
+	if _, err := os.Stat(configDir); os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(configDir, 0755); mkErr != nil {
+			return fmt.Errorf("failed to create config directory: %v", mkErr)
+		}
+	}
+	if err := config.SaveConfig(conf); err != nil {
+		return fmt.Errorf("failed to save non-interactive config: %v", err)
 	}
 	return nil
 }
