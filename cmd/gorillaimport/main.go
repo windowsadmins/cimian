@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -102,6 +103,7 @@ type Metadata struct {
 	SupportedArch []string
 	InstallerType string
 	Installs      []InstallItem
+	Catalogs      []string
 }
 
 // parseCustomArgs manually parses os.Args for:
@@ -247,8 +249,6 @@ func main() {
 		}
 	}
 
-	fmt.Printf("DEBUG: packagePath=%q, #filePaths=%d\n", packagePath, len(filePaths))
-
 	// 3) Load config
 	conf, err := loadOrCreateConfig()
 	if err != nil {
@@ -259,12 +259,10 @@ func main() {
 	// 4) If user typed -arch=..., override conf.DefaultArch
 	if val, ok := otherFlags["arch"]; ok && val != "" {
 		conf.DefaultArch = val
-		fmt.Println("DEBUG: Overriding conf.DefaultArch =", val)
 	}
 	// If user typed -repo_path=..., override conf.RepoPath
 	if val, ok := otherFlags["repo_path"]; ok && val != "" {
 		conf.RepoPath = val
-		fmt.Println("DEBUG: Overriding conf.RepoPath =", val)
 	}
 
 	// 5) Build script paths from e.g. -preinstall-script=..., etc.
@@ -556,15 +554,13 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 	return converted
 }
 
-// promptInstallerItemPath asks user "Repo location (default: /apps):"
-// then returns e.g. "/apps" or "/utilities" etc.
 func promptInstallerItemPath() (string, error) {
-	fmt.Print("Repo location (default: /apps): ")
+	fmt.Print("Location in repo [/]: ")
 	var path string
 	fmt.Scanln(&path)
 	path = strings.TrimSpace(path)
 	if path == "" {
-		path = "/apps"
+		path = "/"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -581,8 +577,6 @@ func gorillaImport(
 	uninstallerPath string,
 	filePaths []string,
 ) (bool, error) {
-
-	fmt.Println("DEBUG: gorillaImport: packagePath=", packagePath, " len(filePaths)=", len(filePaths))
 
 	// Step 1: check file
 	if _, err := os.Stat(packagePath); os.IsNotExist(err) {
@@ -658,8 +652,8 @@ func gorillaImport(
 		Description:   metadata.Description,
 		Category:      metadata.Category,
 		Developer:     metadata.Developer,
-		Catalogs:      []string{conf.DefaultCatalog},
 		SupportedArch: metadata.SupportedArch,
+		Catalogs:      metadata.Catalogs,
 		Installs:      []InstallItem{},
 
 		Installer: &Installer{
@@ -841,7 +835,26 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 	return metadata, nil
 }
 
+// readLineWithDefault prints e.g. `prompt [defaultVal]: `, reads a full line,
+// and if the user typed nothing, returns defaultVal.
+func readLineWithDefault(r *bufio.Reader, prompt, defaultVal string) string {
+	fmt.Printf("%s [%s]: ", prompt, defaultVal)
+	line, err := r.ReadString('\n')
+	if err != nil {
+		// any read error, fallback
+		return defaultVal
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultVal
+	}
+	return line
+}
+
 func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configuration) Metadata {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Pre-define fallback strings
 	defaultID := m.ID
 	if defaultID == "" {
 		defaultID = parsePackageName(filepath.Base(packagePath))
@@ -855,60 +868,33 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	defaultCategory := m.Category
 	defaultArch := conf.DefaultArch
 
-	fmt.Printf("Identifier [%s]: ", defaultID)
-	var input string
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.ID = defaultID
-	} else {
-		m.ID = input
+	// read each field
+	m.ID = readLineWithDefault(reader, "Identifier", defaultID)
+	m.Version = readLineWithDefault(reader, "Version", defaultVersion)
+	m.Developer = readLineWithDefault(reader, "Developer", defaultDeveloper)
+	m.Description = readLineWithDefault(reader, "Description", defaultDescription)
+	m.Category = readLineWithDefault(reader, "Category", defaultCategory)
+	m.Architecture = readLineWithDefault(reader, "Architecture(s)", defaultArch)
+
+	// For catalogs
+	fallbackCatalogs := []string{conf.DefaultCatalog}
+	if len(fallbackCatalogs) == 0 {
+		fallbackCatalogs = []string{"Development"}
 	}
-	fmt.Printf("Version [%s]: ", defaultVersion)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Version = defaultVersion
+	fallbackCatalogsStr := strings.Join(fallbackCatalogs, ",")
+	typedCatalogs := readLineWithDefault(reader, "Catalogs", fallbackCatalogsStr)
+	if typedCatalogs == fallbackCatalogsStr {
+		// user pressed Enter
+		m.Catalogs = fallbackCatalogs
 	} else {
-		m.Version = input
+		// user typed something => parse
+		parts := strings.Split(typedCatalogs, ",")
+		for i := range parts {
+			parts[i] = strings.TrimSpace(parts[i])
+		}
+		m.Catalogs = parts
 	}
-	fmt.Printf("Developer [%s]: ", defaultDeveloper)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Developer = defaultDeveloper
-	} else {
-		m.Developer = input
-	}
-	fmt.Printf("Description [%s]: ", defaultDescription)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Description = defaultDescription
-	} else {
-		m.Description = input
-	}
-	fmt.Printf("Category [%s]: ", defaultCategory)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Category = defaultCategory
-	} else {
-		m.Category = input
-	}
-	fmt.Printf("Architecture(s) [%s]: ", defaultArch)
-	input = ""
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-	if input == "" {
-		m.Architecture = defaultArch
-	} else {
-		m.Architecture = input
-	}
+
 	return m
 }
 
