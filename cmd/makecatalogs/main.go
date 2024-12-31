@@ -163,7 +163,7 @@ func buildCatalogs(pkgs []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) 
 
 // writeCatalogs writes out each named catalog to <repo>/catalogs/<name>.yaml
 // removing stale catalogs not in the new set.
-func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo) error {
+func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool) error {
 	catDir := filepath.Join(repoPath, "catalogs")
 	if err := os.MkdirAll(catDir, 0755); err != nil {
 		return fmt.Errorf("failed to create catalogs directory: %v", err)
@@ -180,7 +180,9 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo) error {
 		if _, ok := catalogs[base]; !ok {
 			toRemove := filepath.Join(catDir, name)
 			if rmErr := os.Remove(toRemove); rmErr == nil {
-				fmt.Printf("Removed stale catalog %s\n", toRemove)
+				if !silent {
+					fmt.Printf("Removed stale catalog %s\n", toRemove)
+				}
 			}
 		}
 	}
@@ -197,7 +199,9 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo) error {
 			return fmt.Errorf("yaml encode error for %s: %v", outPath, e2)
 		}
 		file.Close()
-		fmt.Printf("Wrote catalog %s (%d items)\n", catName, len(items))
+		if !silent {
+			fmt.Printf("Wrote catalog %s (%d items)\n", catName, len(items))
+		}
 	}
 
 	return nil
@@ -230,7 +234,9 @@ func main() {
 		repo = conf.RepoPath
 	}
 
-	fmt.Printf("Scanning %s for .yaml pkginfo...\n", repo)
+	if !*silentFlag {
+		fmt.Printf("Scanning %s for .yaml pkginfo...\n", repo)
+	}
 	items, err := scanRepo(repo)
 	// ----------------------------------------------------------------------------
 	// main: orchestrates scanning, verifying, building, writing
@@ -257,7 +263,7 @@ func main() {
 	}
 
 	// Write them
-	if err := writeCatalogs(repo, catMap); err != nil {
+	if err := writeCatalogs(repo, catMap, *silentFlag); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing catalogs: %v\n", err)
 		os.Exit(1)
 	}
