@@ -64,9 +64,9 @@ type PkgsInfo struct {
 	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
 	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
 	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
-
-	// Instead of top-level installer_item_* fields, we embed an Installer struct
-	Installer *Installer `yaml:"installer,omitempty"`
+	Installer            *Installer    `yaml:"installer,omitempty"`
+	ProductCode          string        `yaml:"product_code,omitempty"`
+	UpgradeCode          string        `yaml:"upgrade_code,omitempty"`
 }
 
 // NoQuoteString ensures empty strings appear without quotes.
@@ -261,7 +261,7 @@ func main() {
 	}
 
 	// gather metadata
-	autoInstalls, metaName, metaVersion, metaDeveloper, metaDesc, installerType := gatherInstallerInfo(installerPath)
+	autoInstalls, metaName, metaVersion, metaDeveloper, metaDesc, installerType, prodCode, upgrCode := gatherInstallerInfo(installerPath)
 
 	// override from flags
 	finalName := metaName
@@ -294,6 +294,8 @@ func main() {
 		InstallerType:     installerType,
 		UnattendedInstall: unattendedInstall,
 		Installs:          autoInstalls,
+		ProductCode:       prodCode,
+		UpgradeCode:       upgrCode,
 	}
 
 	// If we have an installer path, gather size + hash and store in Installer
@@ -366,23 +368,32 @@ func (m *multiStringSlice) Set(value string) error {
 	return nil
 }
 
-// gatherInstallerInfo is the same as before, but remove references to top-level "installer_item_*"
-func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVersion, metaDeveloper, metaDesc, iType string) {
+// gatherInstallerInfo now returns 8 items to accommodate productCode & upgradeCode
+func gatherInstallerInfo(path string) (
+	installs []InstallItem,
+	metaName, metaVersion, metaDeveloper, metaDesc, iType string,
+	productCode, upgradeCode string,
+) {
 	if path == "" {
-		// If no installer at all, return empty
-		return nil, "NoName", "", "", "", ""
+		// If no installer at all, return empty placeholders
+		return nil, "NoName", "", "", "", "", "", ""
 	}
+
 	ext := strings.ToLower(filepath.Ext(path))
 
 	switch ext {
 	case ".msi":
 		iType = "msi"
-		metaName, metaVersion, metaDeveloper, metaDesc = extract.MsiMetadata(path)
-		// Just add the MSI itself as an "installs" entry
+		// MsiMetadata should now return 6 fields: (name, ver, dev, desc, productCode, upgradeCode)
+		metaName, metaVersion, metaDeveloper, metaDesc, productCode, upgradeCode =
+			extract.MsiMetadata(path)
+
+		// Same logic as before
 		_, hash, err := getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
 		}
+
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
@@ -404,10 +415,14 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 			metaDeveloper = ""
 			metaDesc = ""
 		}
+		productCode = "" // MSI fields not applicable
+		upgradeCode = "" // MSI fields not applicable
+
 		_, hash, err := getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
 		}
+
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
@@ -419,11 +434,14 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 		iType = "nupkg"
 		nm, ver, dev, desc := extract.NupkgMetadata(path)
 		metaName, metaVersion, metaDeveloper, metaDesc = nm, ver, dev, desc
+		productCode = ""
+		upgradeCode = ""
 
 		_, hash, err := getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
 		}
+
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
@@ -433,6 +451,12 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 	default:
 		iType = "unknown"
 		metaName = parsePackageName(filepath.Base(path))
+		metaVersion = ""
+		metaDeveloper = ""
+		metaDesc = ""
+		productCode = ""
+		upgradeCode = ""
+
 		_, hash, _ := getFileInfo(path)
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
@@ -440,6 +464,7 @@ func gatherInstallerInfo(path string) (installs []InstallItem, metaName, metaVer
 			MD5Checksum: SingleQuotedString(hash),
 		}}
 	}
+
 	return
 }
 

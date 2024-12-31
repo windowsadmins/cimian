@@ -10,38 +10,59 @@ import (
 	"strings"
 )
 
-// parse .msi with PowerShell or advanced approach
-func MsiMetadata(msiPath string) (productName, productVersion, developer, description string) {
+// MsiMetadata now returns 6 values: name, version, developer, description, productCode, upgradeCode.
+func MsiMetadata(msiPath string) (productName, productVersion, developer, description, productCode, upgradeCode string) {
 	if runtime.GOOS != "windows" {
-		return "UnknownMSI", "", "", ""
+		return "UnknownMSI", "", "", "", "", ""
 	}
-	out, err := exec.Command("powershell", "-Command", fmt.Sprintf(`
+
+	// PowerShell script now also retrieves ProductCode & UpgradeCode
+	psCommand := fmt.Sprintf(`
 $msi = "%s"
 $WindowsInstaller = New-Object -ComObject WindowsInstaller.Installer
-$db = $WindowsInstaller.GetType().InvokeMember('OpenDatabase','InvokeMethod',$null,$WindowsInstaller,@($msi,0))
-$view = $db.GetType().InvokeMember('OpenView','InvokeMethod',$null,$db,@('SELECT * FROM Property'))
-$view.GetType().InvokeMember('Execute','InvokeMethod',$null,$view,$null)
+$db = $WindowsInstaller.OpenDatabase($msi,0)
+$view = $db.OpenView('SELECT * FROM Property')
+$view.Execute()
+
 $pairs = @{}
-while($rec = $view.GetType().InvokeMember('Fetch','InvokeMethod',$null,$view,$null)) {
-  $prop = $rec.StringData(1)
-  $val = $rec.StringData(2)
-  $pairs[$prop] = $val
+while($rec = $view.Fetch()) {
+    $prop = $rec.StringData(1)
+    $val = $rec.StringData(2)
+    $pairs[$prop] = $val
 }
-$pairs | ConvertTo-Json -Compress
-`, msiPath)).Output()
+$props = [PSCustomObject]@{
+  ProductName   = $pairs["ProductName"]
+  ProductVersion= $pairs["ProductVersion"]
+  Manufacturer  = $pairs["Manufacturer"]
+  Comments      = $pairs["Comments"]
+  ProductCode   = $pairs["ProductCode"]
+  UpgradeCode   = $pairs["UpgradeCode"]
+}
+$props | ConvertTo-Json -Compress
+`, msiPath)
+
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCommand).Output()
 	if err != nil {
-		return "UnknownMSI", "", "", ""
+		// If we fail to run PowerShell, set minimal defaults
+		return "UnknownMSI", "", "", "", "", ""
 	}
+
 	var props map[string]string
 	if e := json.Unmarshal(out, &props); e != nil {
-		return "UnknownMSI", "", "", ""
+		return "UnknownMSI", "", "", "", "", ""
 	}
+
+	// Extract or fallback
 	productName = strings.TrimSpace(props["ProductName"])
 	productVersion = strings.TrimSpace(props["ProductVersion"])
 	developer = strings.TrimSpace(props["Manufacturer"])
 	description = strings.TrimSpace(props["Comments"])
+	productCode = strings.TrimSpace(props["ProductCode"])
+	upgradeCode = strings.TrimSpace(props["UpgradeCode"])
+
+	// Set a default name if none
 	if productName == "" {
 		productName = "UnknownMSI"
 	}
-	return productName, productVersion, developer, description
+	return productName, productVersion, developer, description, productCode, upgradeCode
 }
