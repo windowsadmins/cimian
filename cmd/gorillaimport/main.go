@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -1103,24 +1104,86 @@ func syncToCloud(conf *config.Configuration, source, destinationSubPath string) 
 	return nil
 }
 
+func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
+	// We'll encode pkgsInfo -> YAML, then decode into a yaml.Node,
+	// set the literal style for certain fields, and re-encode.
+
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+
+	if err := encoder.Encode(&pkgsInfo); err != nil {
+		return nil, fmt.Errorf("failed to encode pkginfo: %v", err)
+	}
+	encoder.Close()
+
+	// Decode into a root node
+	node := &yaml.Node{}
+	decoder := yaml.NewDecoder(&buf)
+	if err := decoder.Decode(node); err != nil {
+		return nil, fmt.Errorf("failed to decode re-encoded pkginfo: %v", err)
+	}
+
+	// The document node's actual content is usually node.Content[0]
+	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		node = node.Content[0]
+	}
+
+	// Define which fields need literal block style
+	scriptFields := map[string]bool{
+		"preinstall_script":     true,
+		"postinstall_script":    true,
+		"preuninstall_script":   true,
+		"postuninstall_script":  true,
+		"installcheck_script":   true,
+		"uninstallcheck_script": true,
+	}
+
+	// Iterate over top-level YAML mappings and set the style for any script fields
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		if scriptFields[key] && i+1 < len(node.Content) {
+			valNode := node.Content[i+1]
+			if valNode.Kind == yaml.ScalarNode && valNode.Value != "" {
+				// Normalize line breaks to Unix style
+				valNode.Value = strings.ReplaceAll(valNode.Value, "\r\n", "\n")
+				valNode.Value = strings.ReplaceAll(valNode.Value, "\r", "\n")
+				// Trim trailing newlines
+				valNode.Value = strings.TrimRight(valNode.Value, "\n")
+				// Use literal style for multi-line
+				valNode.Style = yaml.LiteralStyle
+			}
+		}
+	}
+
+	// Re-encode the modified node
+	finalBuf := &bytes.Buffer{}
+	finalEncoder := yaml.NewEncoder(finalBuf)
+	finalEncoder.SetIndent(2)
+	if err := finalEncoder.Encode(node); err != nil {
+		return nil, fmt.Errorf("failed to re-encode pkginfo with block scalars: %v", err)
+	}
+	finalEncoder.Close()
+
+	return finalBuf.Bytes(), nil
+}
+
 // writePkgInfoFile writes the final YAML
 func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, sanitizedVersion, archTag string) error {
 	outputPath := filepath.Join(outputDir, sanitizedName+archTag+sanitizedVersion+".yaml")
-	yamlData, err := yaml.Marshal(&pkgsInfo)
+	yamlData, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
-		return fmt.Errorf("failed to encode pkginfo: %v", err)
+		return fmt.Errorf("failed to encode pkginfo with block scalars: %v", err)
 	}
 	if err := os.WriteFile(outputPath, yamlData, 0644); err != nil {
 		return fmt.Errorf("failed to write pkginfo to file: %v", err)
 	}
+
 	absOutputPath, err := filepath.Abs(outputPath)
 	if err == nil {
 		fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
 	}
 
-	// If you want to open the file automatically if conf.OpenImportedYaml is true,
-	// you'll need to pass conf or track it.
-	// For demonstration, let's always open. Or skip if you only open on conf condition.
 	if err := maybeOpenFile(absOutputPath); err != nil {
 		fmt.Printf("Warning: could not open pkginfo in an editor: %v\n", err)
 	}
