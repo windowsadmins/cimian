@@ -1,5 +1,8 @@
 // pkg/extract/exe.go
 
+//go:build windows
+// +build windows
+
 package extract
 
 import (
