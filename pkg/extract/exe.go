@@ -8,6 +8,7 @@ package extract
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"syscall"
 	"unicode/utf16"
 	"unsafe"
@@ -161,26 +162,51 @@ func ExtractExeDeveloper(exePath string) (string, error) {
 		Language uint16
 		CodePage uint16
 	}
+
 	ptr, blockSize, err := verQueryValue(info, `\VarFileInfo\Translation`)
 	if err != nil || blockSize == 0 {
-		// fallback to default 040904B0 if no translation found
-		return queryCompanyName(info, 0x0409, 0x04B0)
+		// fallback to default 0409/04B0 if no translation found
+		devName, _ := queryCompanyName(info, 0x0409, 0x04B0)
+		devName = strings.TrimSpace(devName)
+		devName = strings.Trim(devName, "'")
+		// Capitalize first letter, lowercase the rest
+		if len(devName) > 1 {
+			devName = strings.ToUpper(devName[:1]) + strings.ToLower(devName[1:])
+		} else if len(devName) == 1 {
+			devName = strings.ToUpper(devName)
+		}
+		return devName, nil
 	}
 
 	// parse the bytes into an array of translations
-	numTranslations := blockSize / 4 // each translation is 4 bytes (Language + CodePage)
+	numTranslations := blockSize / 4
 	transSlice := (*[1 << 28]translation)(ptr)[:numTranslations:numTranslations]
 
-	// Try each translation, returning the first non-empty CompanyName
+	// Try each translation
 	for _, t := range transSlice {
-		if dev, _ := queryCompanyName(info, t.Language, t.CodePage); dev != "" {
-			return dev, nil
+		if devName, _ := queryCompanyName(info, t.Language, t.CodePage); devName != "" {
+			devName = strings.TrimSpace(devName)
+			devName = strings.Trim(devName, "'")
+			// Capitalize first letter, lowercase the rest
+			if len(devName) > 1 {
+				devName = strings.ToUpper(devName[:1]) + strings.ToLower(devName[1:])
+			} else if len(devName) == 1 {
+				devName = strings.ToUpper(devName)
+			}
+			return devName, nil
 		}
 	}
 
-	// If none gave a dev name, final fallback to default 040904B0
-	dev, _ := queryCompanyName(info, 0x0409, 0x04B0)
-	return dev, nil
+	// final fallback
+	devName, _ := queryCompanyName(info, 0x0409, 0x04B0)
+	devName = strings.TrimSpace(devName)
+	devName = strings.Trim(devName, "'")
+	if len(devName) > 1 {
+		devName = strings.ToUpper(devName[:1]) + strings.ToLower(devName[1:])
+	} else if len(devName) == 1 {
+		devName = strings.ToUpper(devName)
+	}
+	return devName, nil
 }
 
 // queryCompanyName attempts to query CompanyName for a given Language/CodePage
