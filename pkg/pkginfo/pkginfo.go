@@ -198,7 +198,7 @@ func ExtractPackageInfo(path string, defaultArch string) (Metadata, error) {
 		meta.InstallerType = "nupkg"
 
 	case ".msi":
-		name, ver, dev, desc := extract.MsiMetadata(path)
+		name, ver, dev, desc, _, _ := extract.MsiMetadata(path)
 		meta.Title = name
 		meta.ID = name
 		meta.Version = ver
