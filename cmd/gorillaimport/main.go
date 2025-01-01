@@ -30,10 +30,10 @@ type PkgsInfo struct {
 	Name                 string        `yaml:"name"`
 	DisplayName          string        `yaml:"display_name,omitempty"`
 	Version              string        `yaml:"version"`
-	Description          string        `yaml:"description,omitempty"`
+	Description          string        `yaml:"description"`
 	Catalogs             []string      `yaml:"catalogs"`
-	Category             string        `yaml:"category,omitempty"`
-	Developer            string        `yaml:"developer,omitempty"`
+	Category             string        `yaml:"category"`
+	Developer            string        `yaml:"developer"`
 	Installs             []InstallItem `yaml:"installs,omitempty"`
 	SupportedArch        []string      `yaml:"supported_architectures"`
 	UnattendedInstall    bool          `yaml:"unattended_install"`
