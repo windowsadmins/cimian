@@ -962,21 +962,32 @@ func buildInstallsArray(paths []string) []InstallItem {
 	var arr []InstallItem
 	for _, p := range paths {
 		abs, _ := filepath.Abs(p)
+
+		// 1) Check file existence on the real path
 		fi, err := os.Stat(abs)
 		if err != nil || fi.IsDir() {
 			fmt.Fprintf(os.Stderr, "Skipping -i path: '%s'\n", p)
 			continue
 		}
+
+		// 2) Compute MD5 on the real path
 		md5v, _ := utils.FileMD5(abs)
+
+		// 3) Optionally get file version from the real path
 		var ver string
 		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
 			if exev, err := extract.ExeMetadata(abs); err == nil {
 				ver = exev
 			}
 		}
+
+		// 4) Rewrite to %USERPROFILE% AFTER checks
+		finalPath := replacePathUserProfile(abs)
+
+		// 5) Build the final InstallItem
 		arr = append(arr, InstallItem{
 			Type:        SingleQuotedString("file"),
-			Path:        SingleQuotedString(abs),
+			Path:        SingleQuotedString(finalPath),
 			MD5Checksum: SingleQuotedString(md5v),
 			Version:     SingleQuotedString(ver),
 		})
@@ -1152,6 +1163,22 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	finalEncoder.Close()
 
 	return finalBuf.Bytes(), nil
+}
+
+func replacePathUserProfile(p string) string {
+	if runtime.GOOS != "windows" {
+		return p
+	}
+	userProfile := os.Getenv("USERPROFILE")
+	if userProfile == "" {
+		return p
+	}
+	lowerP := strings.ToLower(p)
+	lowerUserProfile := strings.ToLower(userProfile)
+	if strings.HasPrefix(lowerP, lowerUserProfile) {
+		return `C:\Users\%USERPROFILE%` + p[len(userProfile):]
+	}
+	return p
 }
 
 // writePkgInfoFile writes the final YAML
