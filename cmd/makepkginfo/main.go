@@ -485,21 +485,39 @@ func parsePackageName(filename string) string {
 	return strings.TrimSuffix(filename, filepath.Ext(filename))
 }
 
+func replacePathUserProfile(p string) string {
+	if runtime.GOOS != "windows" {
+		return p
+	}
+	userProfile := os.Getenv("USERPROFILE")
+	if userProfile == "" {
+		return p
+	}
+	lowerP := strings.ToLower(p)
+	lowerUserProfile := strings.ToLower(userProfile)
+	if strings.HasPrefix(lowerP, lowerUserProfile) {
+		return `C:\Users\%USERPROFILE%` + p[len(userProfile):]
+	}
+	return p
+}
+
 // buildInstallsArray to handle -f items
 func buildInstallsArray(paths []string) []InstallItem {
 	var installs []InstallItem
 	for _, f := range paths {
 		abs, _ := filepath.Abs(f)
+
+		// 1) Stat the real path
 		st, err := os.Stat(abs)
 		if err != nil || st.IsDir() {
 			fmt.Fprintf(os.Stderr, "Skipping '%s' in -f, not found or directory.\n", f)
 			continue
 		}
 
-		// Only MD5 is stored
+		// 2) Calculate MD5 on the real path
 		md5val, _ := utils.FileMD5(abs)
 
-		// If the file is an .exe on Windows, we can set 'version' from ExeMetadata
+		// 3) If .exe, grab file version from the real path
 		var fileVersion string
 		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
 			v, err := getFileVersion(abs)
@@ -510,10 +528,13 @@ func buildInstallsArray(paths []string) []InstallItem {
 			}
 		}
 
-		// Add only one InstallItem with MD5 and optional version
+		// 4) Rewrite final path AFTER checks
+		finalPath := replacePathUserProfile(abs)
+
+		// 5) Append to the final installs array
 		installs = append(installs, InstallItem{
 			Type:        SingleQuotedString("file"),
-			Path:        SingleQuotedString(abs),
+			Path:        SingleQuotedString(finalPath),
 			MD5Checksum: SingleQuotedString(md5val),
 			Version:     SingleQuotedString(fileVersion),
 		})
