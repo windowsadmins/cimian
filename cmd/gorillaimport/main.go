@@ -27,27 +27,27 @@ import (
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
-	Name                 string        `yaml:"name"`
-	DisplayName          string        `yaml:"display_name,omitempty"`
-	Version              string        `yaml:"version"`
-	Description          string        `yaml:"description"`
-	Catalogs             []string      `yaml:"catalogs"`
-	Category             string        `yaml:"category"`
-	Developer            string        `yaml:"developer"`
-	Installs             []InstallItem `yaml:"installs,omitempty"`
-	SupportedArch        []string      `yaml:"supported_architectures"`
-	UnattendedInstall    bool          `yaml:"unattended_install"`
-	UnattendedUninstall  bool          `yaml:"unattended_uninstall"`
-	Installer            *Installer    `yaml:"installer"`
-	Uninstaller          *Installer    `yaml:"uninstaller,omitempty"`
-	ProductCode          string        `yaml:"product_code,omitempty"`
-	UpgradeCode          string        `yaml:"upgrade_code,omitempty"`
-	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
-	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
-	PreuninstallScript   string        `yaml:"preuninstall_script,omitempty"`
-	PostuninstallScript  string        `yaml:"postuninstall_script,omitempty"`
-	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
+	Name                 string             `yaml:"name"`
+	DisplayName          string             `yaml:"display_name,omitempty"`
+	Version              string             `yaml:"version"`
+	Description          NoQuoteEmptyString `yaml:"description"`
+	Category             NoQuoteEmptyString `yaml:"category"`
+	Developer            NoQuoteEmptyString `yaml:"developer"`
+	Catalogs             []string           `yaml:"catalogs"`
+	Installs             []InstallItem      `yaml:"installs,omitempty"`
+	SupportedArch        []string           `yaml:"supported_architectures"`
+	UnattendedInstall    bool               `yaml:"unattended_install"`
+	UnattendedUninstall  bool               `yaml:"unattended_uninstall"`
+	Installer            *Installer         `yaml:"installer"`
+	Uninstaller          *Installer         `yaml:"uninstaller,omitempty"`
+	ProductCode          string             `yaml:"product_code,omitempty"`
+	UpgradeCode          string             `yaml:"upgrade_code,omitempty"`
+	PreinstallScript     string             `yaml:"preinstall_script,omitempty"`
+	PostinstallScript    string             `yaml:"postinstall_script,omitempty"`
+	PreuninstallScript   string             `yaml:"preuninstall_script,omitempty"`
+	PostuninstallScript  string             `yaml:"postuninstall_script,omitempty"`
+	InstallCheckScript   string             `yaml:"installcheck_script,omitempty"`
+	UninstallCheckScript string             `yaml:"uninstallcheck_script,omitempty"`
 }
 
 // Installer represents the structure of the installer/uninstaller in pkginfo.
@@ -605,9 +605,9 @@ func gorillaImport(
 			metadata.ID = existingPkg.Name
 			metadata.Title = existingPkg.DisplayName
 			metadata.Version = existingPkg.Version
-			metadata.Developer = existingPkg.Developer
-			metadata.Description = existingPkg.Description
-			metadata.Category = existingPkg.Category
+			metadata.Developer = string(existingPkg.Developer)
+			metadata.Description = string(existingPkg.Description)
+			metadata.Category = string(existingPkg.Category)
 			metadata.SupportedArch = existingPkg.SupportedArch
 			if len(existingPkg.Catalogs) > 0 {
 				conf.DefaultCatalog = existingPkg.Catalogs[0]
@@ -649,9 +649,9 @@ func gorillaImport(
 		Name:          metadata.ID,
 		DisplayName:   metadata.ID,
 		Version:       metadata.Version,
-		Description:   metadata.Description,
-		Category:      metadata.Category,
-		Developer:     metadata.Developer,
+		Description:   NoQuoteEmptyString(metadata.Description),
+		Category:      NoQuoteEmptyString(metadata.Category),
+		Developer:     NoQuoteEmptyString(metadata.Developer),
 		SupportedArch: metadata.SupportedArch,
 		Catalogs:      metadata.Catalogs,
 		Installs:      []InstallItem{},
@@ -1102,31 +1102,28 @@ func syncToCloud(conf *config.Configuration, source, destinationSubPath string) 
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
-	// We'll encode pkgsInfo -> YAML, then decode into a yaml.Node,
-	// set the literal style for certain fields, and re-encode.
-
+	// Encode pkgsInfo -> YAML (in memory)
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
 	encoder.SetIndent(2)
-
 	if err := encoder.Encode(&pkgsInfo); err != nil {
 		return nil, fmt.Errorf("failed to encode pkginfo: %v", err)
 	}
 	encoder.Close()
 
-	// Decode into a root node
+	// Decode into a yaml.Node so we can tweak styles
 	node := &yaml.Node{}
 	decoder := yaml.NewDecoder(&buf)
 	if err := decoder.Decode(node); err != nil {
 		return nil, fmt.Errorf("failed to decode re-encoded pkginfo: %v", err)
 	}
 
-	// The document node's actual content is usually node.Content[0]
+	// Usually node.Content[0] is the root mapping
 	if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
 		node = node.Content[0]
 	}
 
-	// Define which fields need literal block style
+	// We’ll keep your existing scriptFields
 	scriptFields := map[string]bool{
 		"preinstall_script":     true,
 		"postinstall_script":    true,
@@ -1136,19 +1133,36 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 		"uninstallcheck_script": true,
 	}
 
-	// Iterate over top-level YAML mappings and set the style for any script fields
+	// Fields to always force plain/unquoted
+	forcePlainUnquoted := map[string]bool{
+		"description": true,
+		"developer":   true,
+		"category":    true,
+	}
+
+	// Iterate top-level mappings (key/value pairs)
 	for i := 0; i < len(node.Content); i += 2 {
-		key := node.Content[i].Value
-		if scriptFields[key] && i+1 < len(node.Content) {
-			valNode := node.Content[i+1]
-			if valNode.Kind == yaml.ScalarNode && valNode.Value != "" {
-				// Normalize line breaks to Unix style
-				valNode.Value = strings.ReplaceAll(valNode.Value, "\r\n", "\n")
-				valNode.Value = strings.ReplaceAll(valNode.Value, "\r", "\n")
-				// Trim trailing newlines
-				valNode.Value = strings.TrimRight(valNode.Value, "\n")
-				// Use literal style for multi-line
-				valNode.Style = yaml.LiteralStyle
+		keyNode := node.Content[i]
+		valNode := node.Content[i+1]
+
+		// (A) For script fields, literal block style if multiline
+		if scriptFields[keyNode.Value] && valNode.Kind == yaml.ScalarNode && valNode.Value != "" {
+			valNode.Value = strings.ReplaceAll(valNode.Value, "\r\n", "\n")
+			valNode.Value = strings.ReplaceAll(valNode.Value, "\r", "\n")
+			valNode.Value = strings.TrimRight(valNode.Value, "\n")
+			valNode.Style = yaml.LiteralStyle
+			continue
+		}
+
+		// (B) For fields we want unquoted:
+		if forcePlainUnquoted[keyNode.Value] && valNode.Kind == yaml.ScalarNode {
+			// Force plain style => no quotes
+			valNode.Style = 0
+
+			// If it's literally `""`, strip them => set Value = ""
+			trimmed := strings.TrimSpace(valNode.Value)
+			if trimmed == `""` {
+				valNode.Value = ""
 			}
 		}
 	}
@@ -1162,7 +1176,21 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	}
 	finalEncoder.Close()
 
-	return finalBuf.Bytes(), nil
+	// 1) Convert to string
+	yamlStr := finalBuf.String()
+
+	// 2) Forcefully remove quotes for empty description/developer/category
+	//    "description: \"\"" => "description:"
+	replacer := strings.NewReplacer(
+		`description: ""`, `description:`,
+		`developer: ""`, `developer:`,
+		`category: ""`, `category:`,
+	)
+	yamlStr = replacer.Replace(yamlStr)
+
+	// 3) Return the final bytes
+	return []byte(yamlStr), nil
+
 }
 
 func replacePathUserProfile(p string) string {
@@ -1202,6 +1230,30 @@ func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, saniti
 	}
 
 	return nil
+}
+
+// NoQuoteEmptyString is a custom type for YAML fields that, if empty,
+// appear as key: (with nothing after the colon). Otherwise, plain text (no quotes).
+type NoQuoteEmptyString string
+
+func (s NoQuoteEmptyString) MarshalYAML() (interface{}, error) {
+	// If empty, return a node with an empty value & default (plain) style = 0
+	if len(s) == 0 {
+		return &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: "",
+			Style: 0, // <-- instead of yaml.PlainStyle
+		}, nil
+	}
+
+	// If non-empty, still use plain style so there's no quotes.
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Value: string(s),
+		Style: 0, // 0 => plain style
+	}, nil
 }
 
 // maybeOpenFile tries code.cmd or notepad
