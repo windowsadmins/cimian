@@ -306,7 +306,7 @@ func main() {
 
 		// We'll store an `Installer` object
 		pkginfo.Installer = &Installer{
-			Location: filepath.Base(installerPath), // or full path, depending on your usage
+			Location: normalizeInstallerLocation(filepath.Base(installerPath)), // or full path, depending on your usage
 			Hash:     hashVal,
 			Type:     installerType,
 			Size:     sizeKB,
@@ -540,4 +540,8 @@ func buildInstallsArray(paths []string) []InstallItem {
 		})
 	}
 	return installs
+}
+
+func normalizeInstallerLocation(location string) string {
+	return strings.ReplaceAll(location, `\`, `/`)
 }
