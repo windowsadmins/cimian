@@ -241,3 +241,7 @@ func ExtractPackageInfo(path string, defaultArch string) (Metadata, error) {
 func parsePackageName(filename string) string {
 	return strings.TrimSuffix(filename, filepath.Ext(filename))
 }
+
+func NormalizeInstallerLocation(location string) string {
+	return strings.ReplaceAll(location, `\`, "/")
+}
