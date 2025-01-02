@@ -737,7 +737,7 @@ func gorillaImport(
 	if _, err := copyFile(packagePath, installerDest); err != nil {
 		return false, fmt.Errorf("failed to copy installer: %v", err)
 	}
-	pkgsInfo.Installer.Location = filepath.Join(repoSubPath, installerFilename)
+	pkgsInfo.Installer.Location = normalizeInstallerLocation(filepath.Join(repoSubPath, installerFilename))
 
 	// Step 13: write pkginfo to pkgsinfo subdir
 	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", repoSubPath)
@@ -932,7 +932,7 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 		return nil, fmt.Errorf("failed to copy uninstaller: %v", err)
 	}
 	return &Installer{
-		Location: filepath.Join("/", installerSubPath, uninstallerFilename),
+		Location: normalizeInstallerLocation(filepath.Join("/", installerSubPath, uninstallerFilename)),
 		Hash:     uninstallerHash,
 		Type:     strings.TrimPrefix(filepath.Ext(uninstallerPath), "."),
 	}, nil
@@ -1291,4 +1291,8 @@ If you specify both an installer path and one or more -i/--installs-array
 flags, the final PkgsInfo will incorporate your user-provided filePaths 
 (and skip the .exe fallback).`)
 	os.Exit(0)
+}
+
+func normalizeInstallerLocation(location string) string {
+	return strings.ReplaceAll(location, `\`, `/`)
 }
