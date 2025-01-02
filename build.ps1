@@ -324,17 +324,40 @@ foreach ($dir in $binaryDirs) {
         "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision " +
         "-X main.version=$env:RELEASE_VERSION"
 
-    # Build command with error handling
-    try {
-        go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Build failed for $binaryName with exit code $LASTEXITCODE."
+    # Check if this cmd/<binaryName> folder is a separate module (has its own go.mod)
+    $submoduleGoMod = Join-Path $dir.FullName "go.mod"
+    if (Test-Path $submoduleGoMod) {
+        Write-Log "Detected submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
+        Push-Location $dir.FullName
+        try {
+            go mod tidy
+            go mod download
+            go build -v -o "../../bin/$binaryName.exe" -ldflags="$ldflags" .
+            if ($LASTEXITCODE -ne 0) {
+                throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
+            }
+            Write-Log "$binaryName (submodule) built successfully." "SUCCESS"
         }
-        Write-Log "$binaryName built successfully." "SUCCESS"
+        catch {
+            Write-Log "Failed to build submodule $binaryName. Error: $_" "ERROR"
+            Pop-Location
+            exit 1
+        }
+        Pop-Location
     }
-    catch {
-        Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
-        exit 1
+    else {
+        Write-Log "Building $binaryName from main module..." "INFO"
+        try {
+            go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
+            if ($LASTEXITCODE -ne 0) {
+                throw "Build failed for $binaryName with exit code $LASTEXITCODE."
+            }
+            Write-Log "$binaryName built successfully." "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
+            exit 1
+        }
     }
 }
 
