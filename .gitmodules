@@ -1,0 +1,3 @@
+[submodule "cmd/gorillapkg"]
+	path = cmd/gorillapkg
+	url = https://github.com/windowsadmins/gorilla-pkg
