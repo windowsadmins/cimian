@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/windowsadmins/gorilla/pkg/catalog"
@@ -33,6 +34,7 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 			validUninstallItem := (item.Uninstaller.Type != "" && item.Uninstaller.Location != "")
 
 			if validInstallItem || validUninstallItem {
+				// Don't modify the location here, return it as-is
 				return item, nil
 			}
 		}
@@ -127,7 +129,7 @@ func supportsArchitecture(item catalog.Item, systemArch string) bool {
 }
 
 // Installs prepares and then installs an array of items based on system architecture.
-func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, urlPackages, cachePath string, CheckOnly bool, cfg *config.Configuration) {
+func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _, cachePath string, CheckOnly bool, cfg *config.Configuration) {
 	systemArch := getSystemArchitecture()
 	logging.Info("System architecture detected", "architecture", systemArch)
 
@@ -139,6 +141,14 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 			logging.Error("Processing Error", "error", err)
 			logging.Warn("Processing warning: failed to process install item", "error", err)
 			continue
+		}
+
+		// Ensure the URL is properly constructed
+		if validItem.Installer.Location != "" {
+			if validItem.Installer.Location[0] == '/' {
+				validItem.Installer.Location = cfg.SoftwareRepoURL + validItem.Installer.Location
+			}
+			logging.Debug("Package download URL", "url", validItem.Installer.Location)
 		}
 
 		// Check if the package supports the system architecture
@@ -163,17 +173,17 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, ur
 					continue
 				}
 
-				installerInstall(validDependency, "install", urlPackages, cachePath, CheckOnly, cfg)
+				installerInstall(validDependency, "install", "", cachePath, CheckOnly, cfg)
 			}
 		}
 
 		// Install the item
-		installerInstall(validItem, "install", urlPackages, cachePath, CheckOnly, cfg)
+		installerInstall(validItem, "install", "", cachePath, CheckOnly, cfg)
 	}
 }
 
 // Uninstalls prepares and then uninstalls an array of items
-func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item, urlPackages, cachePath string, CheckOnly bool, cfg *config.Configuration) {
+func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item, _, cachePath string, CheckOnly bool, cfg *config.Configuration) {
 	// Iterate through the uninstalls array and uninstall the item
 	for _, item := range uninstalls {
 		// Get the first valid item from our catalogs
@@ -184,23 +194,29 @@ func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item
 			continue
 		}
 		// Uninstall the item
-		installerInstall(validItem, "uninstall", urlPackages, cachePath, CheckOnly, cfg)
+		installerInstall(validItem, "uninstall", "", cachePath, CheckOnly, cfg)
 	}
 }
 
 // Updates prepares and then updates an array of items
-func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, urlPackages, cachePath string, CheckOnly bool, cfg *config.Configuration) {
-	// Iterate through the updates array and update the item **if it is already installed**
+func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, _, cachePath string, CheckOnly bool, cfg *config.Configuration) {
+	// Iterate through the updates array
 	for _, item := range updates {
-		// Get the first valid item from our catalogs
 		validItem, err := firstItem(item, catalogsMap)
 		if err != nil {
 			logging.Error("Processing Error", "error", err)
-			logging.Warn("Processing warning: failed to process update item", "error", err)
 			continue
 		}
-		// Update the item
-		installerInstall(validItem, "update", urlPackages, cachePath, CheckOnly, cfg)
+
+		// Construct proper URL for the installer
+		if validItem.Installer.Location != "" {
+			if strings.HasPrefix(validItem.Installer.Location, "/") {
+				validItem.Installer.Location = cfg.SoftwareRepoURL + "/pkgs" + validItem.Installer.Location
+			}
+			logging.Debug("Package installer URL", "url", validItem.Installer.Location)
+		}
+
+		installerInstall(validItem, "update", "", cachePath, CheckOnly, cfg)
 	}
 }
 
