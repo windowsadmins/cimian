@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/md5"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -174,6 +175,16 @@ func getFileVersion(path string) (string, error) {
 	return version, err
 }
 
+// calculateMD5 calculates the MD5 checksum of a file
+func calculateMD5(filePath string) (string, error) {
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	hash := md5.Sum(file)
+	return fmt.Sprintf("%x", hash), nil
+}
+
 // main is our entry point
 func main() {
 	var (
@@ -300,8 +311,10 @@ func main() {
 
 	// If we have an installer path, gather size + hash and store in Installer
 	if installerPath != "" {
-		sizeBytes, hashVal, _ := getFileInfo(installerPath)
-		// In KB
+		sizeBytes, hashVal, errFileInfo := getFileInfo(installerPath)
+		if errFileInfo != nil {
+			fmt.Fprintf(os.Stderr, "Warning: can't read installer info: %v\n", errFileInfo)
+		}
 		sizeKB := sizeBytes / 1024
 
 		// We'll store an `Installer` object
@@ -374,6 +387,7 @@ func gatherInstallerInfo(path string) (
 	metaName, metaVersion, metaDeveloper, metaDesc, iType string,
 	productCode, upgradeCode string,
 ) {
+	var err error
 	if path == "" {
 		// If no installer at all, return empty placeholders
 		return nil, "NoName", "", "", "", "", "", ""
@@ -389,15 +403,20 @@ func gatherInstallerInfo(path string) (
 			extract.MsiMetadata(path)
 
 		// Same logic as before
-		_, hash, err := getFileInfo(path)
+		_, _, err = getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
+		}
+
+		md5Val, _ := calculateMD5(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error calculating MD5: %v\n", err)
 		}
 
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
-			MD5Checksum: SingleQuotedString(hash),
+			MD5Checksum: SingleQuotedString(md5Val),
 			Version:     SingleQuotedString(metaVersion),
 		}}
 
@@ -418,15 +437,20 @@ func gatherInstallerInfo(path string) (
 		productCode = "" // MSI fields not applicable
 		upgradeCode = "" // MSI fields not applicable
 
-		_, hash, err := getFileInfo(path)
+		_, _, err = getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
+		}
+
+		md5Val, err := calculateMD5(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error calculating MD5: %v\n", err)
 		}
 
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
-			MD5Checksum: SingleQuotedString(hash),
+			MD5Checksum: SingleQuotedString(md5Val),
 			Version:     SingleQuotedString(metaVersion),
 		}}
 
@@ -437,15 +461,21 @@ func gatherInstallerInfo(path string) (
 		productCode = ""
 		upgradeCode = ""
 
-		_, hash, err := getFileInfo(path)
+		_, _, err = getFileInfo(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
+		}
+
+		md5Val, err := calculateMD5(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error calculating MD5: %v\n", err)
 		}
 
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
-			MD5Checksum: SingleQuotedString(hash),
+			MD5Checksum: SingleQuotedString(md5Val),
+			Version:     SingleQuotedString(metaVersion),
 		}}
 
 	default:
@@ -457,11 +487,13 @@ func gatherInstallerInfo(path string) (
 		productCode = ""
 		upgradeCode = ""
 
-		_, hash, _ := getFileInfo(path)
+		// Remove unneeded call entirely since we don't use its results
+		md5Val, _ := calculateMD5(path)
+
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
-			MD5Checksum: SingleQuotedString(hash),
+			MD5Checksum: SingleQuotedString(md5Val),
 		}}
 	}
 
@@ -515,7 +547,11 @@ func buildInstallsArray(paths []string) []InstallItem {
 		}
 
 		// 2) Calculate MD5 on the real path
-		md5val, _ := utils.FileMD5(abs)
+		md5val, err := calculateMD5(abs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error calculating MD5 for %s: %v\n", abs, err)
+			continue
+		}
 
 		// 3) If .exe, grab file version from the real path
 		var fileVersion string
