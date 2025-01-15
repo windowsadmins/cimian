@@ -1,3 +1,5 @@
+// pkg/manifest/manifest.go
+
 package manifest
 
 import (
@@ -12,18 +14,38 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type InstallDetail struct {
+	Type        string `yaml:"type,omitempty"`
+	Path        string `yaml:"path,omitempty"`
+	MD5Checksum string `yaml:"md5checksum,omitempty"`
+	Version     string `yaml:"version,omitempty"`
+}
+
 // Item is your manifest-based object.
 type Item struct {
 	Name              string   `yaml:"name"`
 	Version           string   `yaml:"version"`
-	InstallerLocation string   `yaml:"installer_location"`
-	Includes          []string `yaml:"included_manifests"`
-	Installs          []string `yaml:"managed_installs"`
-	Uninstalls        []string `yaml:"managed_uninstalls"`
-	Updates           []string `yaml:"managed_updates"`
-	OptionalInstalls  []string `yaml:"optional_installs"`
-	Catalogs          []string `yaml:"catalogs"`
-	SupportedArch     []string `yaml:"supported_architectures"`
+	InstallerLocation string   `yaml:"installer_location,omitempty"`
+	Includes          []string `yaml:"included_manifests,omitempty"`
+
+	// Old arrays for referencing packages by name:
+	ManagedInstalls   []string `yaml:"managed_installs,omitempty"`
+	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty"`
+	ManagedUpdates    []string `yaml:"managed_updates,omitempty"`
+	OptionalInstalls  []string `yaml:"optional_installs,omitempty"`
+
+	// The catalogs (Development, etc.)
+	Catalogs      []string `yaml:"catalogs,omitempty"`
+	SupportedArch []string `yaml:"supported_architectures,omitempty"`
+
+	// New fields for your scripts:
+	InstallCheckScript   string `yaml:"installcheck_script,omitempty"`
+	UninstallCheckScript string `yaml:"uninstallcheck_script,omitempty"`
+	PreinstallScript     string `yaml:"preinstall_script,omitempty"`
+	PreuninstallScript   string `yaml:"preuninstall_script,omitempty"`
+
+	// The new “installs” array for file checks:
+	Installs []InstallDetail `yaml:"installs,omitempty"`
 }
 
 // CatalogEntry (adjust to match your real catalog fields).
@@ -126,7 +148,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 	// (NEW) Merge: for each manifest’s "managed_installs", see if there’s a matching catalog item
 	for _, man := range allManifests {
-		for _, pkgName := range man.Installs {
+		for _, pkgName := range man.ManagedInstalls {
 			lowerName := strings.ToLower(pkgName)
 			catEntry, found := catalogEntries[lowerName]
 			if !found {
