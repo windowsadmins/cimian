@@ -1,5 +1,3 @@
-// pkg/download/download.go
-
 package download
 
 import (
@@ -20,42 +18,52 @@ import (
 )
 
 const (
-	DefaultCachePath    = `C:\ProgramData\ManagedInstalls\Cache`
-	ManifestBasePath    = `C:\ProgramData\ManagedInstalls\manifests`
-	CatalogBasePath     = `C:\ProgramData\ManagedInstalls\catalogs`
 	CacheExpirationDays = 30
 	Timeout             = 10 * time.Second
 )
 
-// DownloadFile downloads the specified URL to a destination file, ensuring the folder structure matches the server truth.
+// DownloadFile replaces any hardcoded paths with your config paths and ensures packages go to cfg.CachePath.
 func DownloadFile(url, dest string, cfg *config.Configuration) error {
 	if url == "" {
 		return fmt.Errorf("invalid parameters: url cannot be empty")
 	}
 
-	// Determine the base directory for manifests, catalogs, or cache
-	var basePath string
-	var subPath string
+	// Default paths if config is empty
+	catalogsPath := cfg.CatalogsPath
+	if catalogsPath == "" {
+		catalogsPath = `C:\ProgramData\ManagedInstalls\catalogs`
+	}
+	cachePath := cfg.CachePath
+	if cachePath == "" {
+		cachePath = `C:\ProgramData\ManagedInstalls\Cache`
+	}
+	const defaultManifestsPath = `C:\ProgramData\ManagedInstalls\manifests`
 
-	switch {
-	case strings.Contains(url, "/manifests/"):
-		basePath = ManifestBasePath
-		subPath = strings.SplitN(url, "/manifests/", 2)[1] // Preserve only the part after "/manifests/"
-	case strings.Contains(url, "/catalogs/"):
-		basePath = CatalogBasePath
-		subPath = strings.SplitN(url, "/catalogs/", 2)[1] // Preserve only the part after "/catalogs/"
-	default:
-		basePath = DefaultCachePath
-		subPath = filepath.Base(url) // For packages, use only the filename
+	isManifest := strings.Contains(url, "/manifests/")
+	isCatalog := strings.Contains(url, "/catalogs/")
+	isPackage := !isManifest && !isCatalog
+
+	// Insert /pkgs if it's a package URL but missing
+	if isPackage && strings.HasPrefix(url, cfg.SoftwareRepoURL) && !strings.Contains(url, "/pkgs/") {
+		url = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + strings.TrimPrefix(url, cfg.SoftwareRepoURL)
 	}
 
-	// Construct the final destination path
-	dest = filepath.Join(basePath, subPath)
+	var basePath, subPath string
+	switch {
+	case isManifest:
+		basePath = defaultManifestsPath
+		subPath = strings.SplitN(url, "/manifests/", 2)[1]
+	case isCatalog:
+		basePath = catalogsPath
+		subPath = strings.SplitN(url, "/catalogs/", 2)[1]
+	default:
+		basePath = cachePath
+		subPath = filepath.Base(url)
+	}
 
-	// Log the resolved destination path
+	dest = filepath.Join(basePath, subPath)
 	logging.Debug("Resolved download destination", "url", url, "destination", dest)
 
-	// Ensure the full directory structure exists
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return fmt.Errorf("failed to create directory structure: %v", err)
 	}
@@ -64,20 +72,17 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 	return retry.Retry(configRetry, func() error {
 		logging.Info("Starting download", "url", url, "destination", dest)
 
-		// Overwrite manifest or catalog files directly
 		out, err := os.Create(dest)
 		if err != nil {
 			return fmt.Errorf("failed to open destination file: %v", err)
 		}
 		defer out.Close()
 
-		// Prepare the HTTP request
 		req, err := utils.NewAuthenticatedRequest("GET", url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to prepare HTTP request: %v", err)
 		}
 
-		// Perform the download
 		client := &http.Client{Timeout: Timeout}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -85,54 +90,18 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 		}
 		defer resp.Body.Close()
 
-		// Verify successful response
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
 		}
 
-		// Write downloaded data to file
-		_, err = io.Copy(out, resp.Body)
-		if err != nil {
+		if _, err = io.Copy(out, resp.Body); err != nil {
 			return fmt.Errorf("failed to write downloaded data: %v", err)
 		}
 
+		logging.Debug("File saved", "file", dest)
 		logging.Info("Download completed successfully", "file", dest)
 		return nil
 	})
-}
-
-// cleanFolder removes all existing files and folders in the given path.
-func cleanFolder(path string) error {
-	// Ensure the base path exists; if not, create it
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.MkdirAll(path, 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %v", err)
-		}
-		return nil // Nothing to clean; path is newly created
-	}
-
-	// Walk the directory and clean contents without removing the base path
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return fmt.Errorf("failed to list directory contents: %v", err)
-	}
-
-	for _, entry := range entries {
-		entryPath := filepath.Join(path, entry.Name())
-
-		// Remove file or directory
-		if entry.IsDir() {
-			if err := os.RemoveAll(entryPath); err != nil {
-				return fmt.Errorf("failed to remove directory: %v", err)
-			}
-		} else {
-			if err := os.Remove(entryPath); err != nil {
-				return fmt.Errorf("failed to remove file: %v", err)
-			}
-		}
-	}
-
-	return nil
 }
 
 // Verify checks if the given file matches the expected hash.
@@ -141,57 +110,33 @@ func Verify(file string, expectedHash string) bool {
 	return strings.EqualFold(actualHash, expectedHash)
 }
 
-// isValidCache verifies the cached file against its hash file.
-func isValidCache(filePath, hashFilePath string) bool {
-	expectedHash, err := os.ReadFile(hashFilePath)
-	if err != nil {
-		logging.Warn("Failed to read hash file", "file", hashFilePath, "error", err)
-		return false
-	}
-
-	actualHash := calculateHash(filePath)
-	if !strings.EqualFold(strings.TrimSpace(string(expectedHash)), actualHash) {
-		logging.Warn("Hash mismatch for cached file", "file", filePath)
-		return false
-	}
-
-	fileInfo, err := os.Stat(filePath)
-	if err != nil || fileInfo.Size() == 0 {
-		logging.Warn("Failed to retrieve file info or file size invalid", "file", filePath)
-		return false
-	}
-
-	if time.Since(fileInfo.ModTime()).Hours() > 24*CacheExpirationDays {
-		logging.Warn("Cached file is expired", "file", filePath)
-		return false
-	}
-
-	return true
-}
-
 // InstallPendingUpdates downloads files based on a map of file names and URLs.
 func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configuration) error {
 	logging.Info("Starting pending downloads...")
 
-	for name, url := range downloadItems {
-		destPath := filepath.Join(cfg.CachePath, filepath.Base(url))
+	if err := os.MkdirAll(cfg.CachePath, 0755); err != nil {
+		return fmt.Errorf("failed to create cache directory: %v", err)
+	}
 
-		logging.Info("Downloading", "name", name, "url", url, "destination", destPath)
-		if err := DownloadFile(url, destPath, cfg); err != nil {
-			logging.Warn("Failed to download", "name", name, "error", err)
+	for name, url := range downloadItems {
+		if url == "" {
+			logging.Warn("Empty URL for package", "package", name)
+			continue
+		}
+		if strings.HasPrefix(url, "/") {
+			url = cfg.SoftwareRepoURL + "/pkgs" + url
+		}
+		targetFile := filepath.Join(cfg.CachePath, filepath.Base(url))
+		logging.Debug("Processing download item", "name", name, "url", url, "destination", targetFile)
+
+		if err := DownloadFile(url, targetFile, cfg); err != nil {
+			logging.Error("Failed to download", "name", name, "error", err)
 			return fmt.Errorf("failed to download %s: %v", name, err)
 		}
-		logging.Info("Successfully downloaded", "name", name)
+		logging.Info("Successfully downloaded", "name", name, "target", targetFile)
 	}
 
 	return nil
-}
-
-// Helper functions
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 func calculateHash(path string) string {
@@ -205,23 +150,5 @@ func calculateHash(path string) string {
 	if _, err := io.Copy(hasher, file); err != nil {
 		return ""
 	}
-
 	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func copyFile(src, dest string) error {
-	input, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	output, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-
-	_, err = io.Copy(output, input)
-	return err
 }
