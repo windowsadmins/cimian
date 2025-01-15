@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/windowsadmins/gorilla/pkg/catalog"
 	"github.com/windowsadmins/gorilla/pkg/config"
@@ -66,13 +67,26 @@ func InstallPendingPackages(cfg *config.Configuration) error {
 	return nil
 }
 
+// Windows constants from Win32 API
+const CREATE_NO_WINDOW = 0x08000000
+
 // runCMD executes a command and its arguments.
 func runCMD(command string, arguments []string) (string, error) {
 	cmd := exec.Command(command, arguments...)
+
+	// Hide window & disable any GUI popups on Windows
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: CREATE_NO_WINDOW, // same as syscall.CREATE_NO_WINDOW
+		}
+	}
+
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
+
 	err := cmd.Run()
 	if err != nil {
 		return "", fmt.Errorf("command execution failed: %v - %s", err, stderr.String())
@@ -192,7 +206,13 @@ func runMSIInstaller(item catalog.Item, itemURL, cachePath string) (string, erro
 // runEXEInstaller installs an EXE package.
 func runEXEInstaller(item catalog.Item, itemURL, cachePath string) (string, error) {
 	exePath := filepath.Join(cachePath, filepath.Base(itemURL))
-	cmdArgs := append([]string{"/S"}, item.Installer.Arguments...)
+
+	// Force silent argument by default (e.g. NSIS: /S).
+	// Then append item.Installer.Arguments if your catalog might define extra flags:
+	baseSilentArgs := []string{"/S"}
+
+	// Merge user-specified arguments
+	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
 
 	output, err := runCMD(exePath, cmdArgs)
 	if err != nil {
