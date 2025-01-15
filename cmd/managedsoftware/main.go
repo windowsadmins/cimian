@@ -210,7 +210,7 @@ func main() {
 	if *installOnly {
 		logging.Info("Running in install-only mode")
 
-		downloadItems := prepareDownloadItems(manifestItems)
+		downloadItems := prepareDownloadItems(manifestItems, cfg)
 		err := download.InstallPendingUpdates(downloadItems, cfg)
 		if err != nil {
 			logging.Error("Failed to install pending updates", "error", err)
@@ -242,7 +242,7 @@ func main() {
 	// Normal or auto mode (not installOnly or checkOnly)
 	updatesAvailable = checkForUpdates(cfg, verbosity, manifestItems)
 	if updatesAvailable {
-		downloadItems := prepareDownloadItems(manifestItems)
+		downloadItems := prepareDownloadItems(manifestItems, cfg)
 		err := download.InstallPendingUpdates(downloadItems, cfg)
 		if err != nil {
 			log.Fatalf("Failed to install pending updates: %v", err)
@@ -256,6 +256,9 @@ func main() {
 	} else {
 		logging.Info("Software updates completed")
 	}
+
+	// Clear out cache after finishing
+	clearCacheFolder(cachePath)
 
 	os.Exit(0)
 }
@@ -284,14 +287,16 @@ func checkForUpdates(cfg *config.Configuration, verbosity int, manifestItems []m
 	return updatesAvailable
 }
 
-// prepareDownloadItems maps manifest items to their installer URLs.
-func prepareDownloadItems(manifestItems []manifest.Item) map[string]string {
+// prepareDownloadItems only returns items that actually need an update.
+func prepareDownloadItems(manifestItems []manifest.Item, cfg *config.Configuration) map[string]string {
 	downloadItems := make(map[string]string)
 	for _, item := range manifestItems {
-		if item.InstallerLocation != "" {
-			downloadItems[item.Name] = item.InstallerLocation
-		} else {
-			logging.Warn("Installer not found for item", "item", item.Name)
+		if needsUpdate(item, cfg) {
+			if item.InstallerLocation != "" {
+				downloadItems[item.Name] = item.InstallerLocation
+			} else {
+				logging.Warn("Installer not found for item", "item", item.Name)
+			}
 		}
 	}
 	return downloadItems
@@ -368,4 +373,23 @@ func getIdleSeconds() int {
 func isUserActive() bool {
 	idleSeconds := getIdleSeconds()
 	return idleSeconds < 300
+}
+
+func clearCacheFolder(cachePath string) {
+	// If you prefer to delete each item inside rather than remove the folder itself:
+	dirEntries, err := os.ReadDir(cachePath)
+	if err != nil {
+		logging.Warn("Failed to read cache directory", "path", cachePath, "error", err)
+		return
+	}
+	for _, entry := range dirEntries {
+		entryPath := filepath.Join(cachePath, entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			logging.Warn("Failed to remove cached item", "path", entryPath, "error", err)
+		} else {
+			logging.Debug("Removed cached item", "path", entryPath)
+		}
+	}
+
+	logging.Info("Cache folder emptied after run", "cachePath", cachePath)
 }
