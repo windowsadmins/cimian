@@ -29,7 +29,6 @@ type Configuration struct {
 	OpenImportedYaml bool     `yaml:"OpenImportedYaml"`
 	RepoPath         string   `yaml:"RepoPath"`
 	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
-	URLPkgsInfo      string   `yaml:"URLPkgsInfo"`
 	Verbose          bool     `yaml:"Verbose"`
 }
 
