@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 )
@@ -79,7 +78,7 @@ func newLogger(cfg *config.Configuration) (*Logger, error) {
 	}
 
 	multiWriter := io.MultiWriter(os.Stdout, file)
-	logger := log.New(multiWriter, "", log.Ldate|log.Ltime|log.LUTC)
+	logger := log.New(multiWriter, "", 0)
 
 	// Determine log level based on configuration.
 	var level LogLevel
@@ -168,10 +167,10 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 		logLine = fmt.Sprintf("%s %s", logLine, kvPairs)
 	}
 
-	// Append timestamp in UTC if debugging.
-	if l.logLevel >= LevelDebug {
-		logLine = fmt.Sprintf("%s (timestamp=%s)", logLine, time.Now().UTC().Format(time.RFC3339Nano))
-	}
+	// // Append timestamp in UTC if debugging.
+	// if l.logLevel >= LevelDebug {
+	// 	logLine = fmt.Sprintf("%s (timestamp=%s)", logLine, time.Now().UTC().Format(time.RFC3339Nano))
+	// }
 
 	l.logger.Println(logLine)
 
