@@ -79,9 +79,9 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 		processedManifests[manifestItem.Name] = true
 
 		// Process managed arrays only
-		addValidItems(manifestItem.Installs, &installs)
-		addValidItems(manifestItem.Uninstalls, &uninstalls)
-		addValidItems(manifestItem.Updates, &updates)
+		addValidItems(manifestItem.ManagedInstalls, &installs)
+		addValidItems(manifestItem.ManagedUninstalls, &uninstalls)
+		addValidItems(manifestItem.ManagedUpdates, &updates)
 		addValidItems(manifestItem.OptionalInstalls, &installs)
 
 		// Recursively process included manifests
