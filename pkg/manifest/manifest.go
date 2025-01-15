@@ -1,5 +1,3 @@
-//pkg/manifest/manifest.go
-
 package manifest
 
 import (
@@ -14,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Item represents a single object from the manifest
+// Item is your manifest-based object.
 type Item struct {
 	Name              string   `yaml:"name"`
 	Version           string   `yaml:"version"`
@@ -28,105 +26,144 @@ type Item struct {
 	SupportedArch     []string `yaml:"supported_architectures"`
 }
 
-// AuthenticatedGet scans manifests for actual packages in their "managed_installs" lists
+// CatalogEntry (adjust to match your real catalog fields).
+// For example, each item in Development.yaml is shaped like:
+//   - name: Git
+//     installer:
+//     location: /apps/dev/Git-x64-2.47.1.1.exe
+//     ...
+type CatalogEntry struct {
+	Name          string   `yaml:"name"`
+	Version       string   `yaml:"version"`
+	SupportedArch []string `yaml:"supported_architectures"`
+	Installer     struct {
+		Location string `yaml:"location"`
+		Hash     string `yaml:"hash"`
+		Type     string `yaml:"type"`
+		Size     int64  `yaml:"size"`
+	} `yaml:"installer"`
+	// e.g. category, developer, etc. if needed
+}
+
+// AuthenticatedGet loads the main manifest (plus nested ones), downloads any catalogs
+// they reference, then merges catalog data with each "managed_installs" item.
 func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
-	var manifestsList []string
-	var manifests []Item
-	var downloadedCatalogs []string
+	var allManifests []Item
 	var items []Item
-	visitedManifests := make(map[string]bool) // To track visited manifests
 
-	manifestsList = append(manifestsList, cfg.ClientIdentifier) // Start with the client manifest
+	// Track which manifests we've processed
+	visitedManifests := make(map[string]bool)
 
-	for manifestsProcessed := 0; manifestsProcessed < len(manifestsList); manifestsProcessed++ {
-		currentManifest := manifestsList[manifestsProcessed]
+	// Start with just the client’s manifest name
+	manifestsToProcess := []string{cfg.ClientIdentifier}
 
-		// Skip already visited manifests
-		if visitedManifests[currentManifest] {
+	// (NEW) We'll keep a global map of "pkgname (lowercased)" -> CatalogEntry
+	catalogEntries := make(map[string]CatalogEntry)
+
+	for i := 0; i < len(manifestsToProcess); i++ {
+		mName := manifestsToProcess[i]
+		if visitedManifests[mName] {
 			continue
 		}
-
-		visitedManifests[currentManifest] = true
-
-		// Construct manifest URL and file path
-		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), currentManifest)
-		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, currentManifest+".yaml")
+		visitedManifests[mName] = true
 
 		// Download the manifest
+		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), mName)
+		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, mName+".yaml")
+
 		if err := download.DownloadFile(manifestURL, manifestFilePath, cfg); err != nil {
 			logging.Warn("Failed to download manifest", "url", manifestURL, "error", err)
 			continue
 		}
 
-		// Parse the manifest file
-		manifestContent, err := os.ReadFile(manifestFilePath)
+		manBytes, err := os.ReadFile(manifestFilePath)
 		if err != nil {
 			logging.Error("Failed to read manifest file", "path", manifestFilePath, "error", err)
-			logging.Warn("Manifest file not found, continuing with the next manifest", "path", manifestFilePath)
 			continue
 		}
 
-		newManifest := parseManifest(manifestContent, manifestFilePath)
+		var man Item
+		if err := yaml.Unmarshal(manBytes, &man); err != nil {
+			logging.Error("Failed to parse manifest", "path", manifestFilePath, "error", err)
+			continue
+		}
+		allManifests = append(allManifests, man)
+		logging.Info("Processed manifest", "name", man.Name)
 
-		// Add to manifests list
-		manifests = append(manifests, newManifest)
-		logging.Info("Processed manifest", "name", newManifest.Name)
-
-		// Process included manifests recursively
-		for _, include := range newManifest.Includes {
-			if !visitedManifests[include] {
-				logging.Info("Including nested manifest", "parent", currentManifest, "nested", include)
-				manifestsList = append(manifestsList, include)
+		// Enqueue any "included_manifests"
+		for _, inc := range man.Includes {
+			if !visitedManifests[inc] {
+				logging.Info("Including nested manifest", "parent", mName, "nested", inc)
+				manifestsToProcess = append(manifestsToProcess, inc)
 			}
 		}
 
-		// Process catalogs
-		for _, catalog := range newManifest.Catalogs {
-			if contains(downloadedCatalogs, catalog) {
-				continue
+		// For each "catalog" in this manifest, download (if not done before) + parse
+		for _, catName := range man.Catalogs {
+			catPath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catName+".yaml")
+			if _, err := os.Stat(catPath); os.IsNotExist(err) {
+				// Download the catalog if not already present
+				catURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catName)
+				if err := download.DownloadFile(catURL, catPath, cfg); err != nil {
+					logging.Warn("Failed to download catalog", "url", catURL, "error", err)
+					continue
+				}
+				logging.Info("Downloaded catalog", "catalog", catName, "path", catPath)
 			}
 
-			catalogURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catalog)
-			catalogFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalog+".yaml")
-
-			if err := download.DownloadFile(catalogURL, catalogFilePath, cfg); err != nil {
-				logging.Warn("Failed to download catalog", "url", catalogURL, "error", err)
+			// (NEW) Now parse that catalog file and store its items in our global map
+			cEntries, err := parseCatalogFile(catPath)
+			if err != nil {
+				logging.Error("Failed to parse catalog", "catalog", catName, "error", err)
 				continue
 			}
-
-			downloadedCatalogs = append(downloadedCatalogs, catalog)
-			logging.Info("Downloaded catalog", "catalog", catalog, "path", catalogFilePath)
+			for _, ce := range cEntries {
+				lowerName := strings.ToLower(ce.Name)
+				catalogEntries[lowerName] = ce
+			}
 		}
+	}
 
-		// Collect package items from managed_installs
-		for _, install := range newManifest.Installs {
-			item := Item{
-				Name:              install,
-				InstallerLocation: newManifest.InstallerLocation,
-				Catalogs:          newManifest.Catalogs,
+	// (NEW) Merge: for each manifest’s "managed_installs", see if there’s a matching catalog item
+	for _, man := range allManifests {
+		for _, pkgName := range man.Installs {
+			lowerName := strings.ToLower(pkgName)
+			catEntry, found := catalogEntries[lowerName]
+			if !found {
+				// No data in the catalogs for this pkg
+				logging.Warn("No catalog entry found for package", "package", pkgName)
+				items = append(items, Item{
+					Name:     pkgName,
+					Catalogs: man.Catalogs,
+				})
+				continue
 			}
-			items = append(items, item)
+			// We have a match in the catalogs
+			mergedItem := Item{
+				Name:              catEntry.Name,
+				Version:           catEntry.Version,
+				Catalogs:          man.Catalogs,
+				InstallerLocation: catEntry.Installer.Location,
+				SupportedArch:     catEntry.SupportedArch,
+			}
+			items = append(items, mergedItem)
+			logging.Debug("Merged package from manifest+catalog", "pkg", mergedItem.Name, "installer_location", mergedItem.InstallerLocation)
 		}
 	}
 
 	return items, nil
 }
 
-// Helper function to parse manifest content
-func parseManifest(yamlContent []byte, source string) Item {
-	var manifest Item
-	if err := yaml.Unmarshal(yamlContent, &manifest); err != nil {
-		logging.Error("Failed to parse manifest", "source", source, "error", err)
+// parseCatalogFile reads a local .yaml and returns a list of CatalogEntry objects.
+func parseCatalogFile(path string) ([]CatalogEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read catalog file: %w", err)
 	}
-	return manifest
-}
 
-// Helper function to check for duplicates
-func contains(slice []string, item string) bool {
-	for _, v := range slice {
-		if v == item {
-			return true
-		}
+	var entries []CatalogEntry
+	if err := yaml.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal catalog: %w", err)
 	}
-	return false
+	return entries, nil
 }
