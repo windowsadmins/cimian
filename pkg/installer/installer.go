@@ -149,12 +149,11 @@ func installItem(item catalog.Item, itemURL, cachePath string) error {
 	// 2) Decide runner:
 	installerType := strings.ToLower(item.Installer.Type)
 
-	// **A) If user gave a postinstall_script that is a .bat, skip direct EXE**
-	// **(Meaning: run the .bat instead).**
+	// (A) If user gave a postinstall_script that is a .bat, skip direct EXE
 	if installerType == "exe" && strings.HasSuffix(strings.ToLower(item.PostScript), ".bat") {
 		logging.Info("Detected .bat postinstall_script, will run the .bat instead of EXE",
 			"item", item.Name)
-		//  The .bat script presumably calls the .exe with correct silent args.
+		// The .bat script presumably calls the .exe with correct silent args.
 		output, err := runBatInstaller(item, itemURL, cachePath)
 		if err != nil {
 			logging.Error("Failed to install from .bat script", "package", item.Name, "error", err)
@@ -175,7 +174,6 @@ func installItem(item catalog.Item, itemURL, cachePath string) error {
 		return nil
 
 	case "exe":
-		// Normal .exe approach if no .bat
 		output, err := runEXEInstaller(item, itemURL, cachePath)
 		if err != nil {
 			return err
@@ -221,12 +219,9 @@ func runMSIInstaller(item catalog.Item, itemURL, cachePath string) (string, erro
 }
 
 func runBatInstaller(item catalog.Item, _ string, cachePath string) (string, error) {
-	// 1) Download the .exe as usual, because the .bat will call it
-	// Actually download it (if not already cached)
-	// That’s your normal code you do in runEXEInstaller or something:
-	// e.g. if needed, or if the caller already downloaded, skip.
+	// 1) Possibly ensure EXE is downloaded, skip if already done
 
-	// 2) Write the postinstall_script out to a file in the cache
+	// 2) Write the postinstall_script to a .bat file in the cache
 	batPath := filepath.Join(cachePath, "tmp_postinstall.bat")
 	err := os.WriteFile(batPath, []byte(item.PostScript), 0755)
 	if err != nil {
@@ -234,10 +229,7 @@ func runBatInstaller(item catalog.Item, _ string, cachePath string) (string, err
 	}
 
 	// 3) Actually run the .bat
-	//   => so if the .bat has logic that calls <exePath> --silent, etc.
 	cmd := exec.Command("cmd.exe", "/c", batPath)
-
-	// OPTIONAL: Hide window on Windows
 	hideConsoleWindow(cmd)
 
 	var out bytes.Buffer
@@ -250,7 +242,7 @@ func runBatInstaller(item catalog.Item, _ string, cachePath string) (string, err
 		return "", fmt.Errorf("command execution failed: %v - %s", err, stderr.String())
 	}
 
-	// optionally remove the .bat afterwards:
+	// Optionally remove the .bat afterwards
 	os.Remove(batPath)
 
 	return out.String(), nil
@@ -267,12 +259,11 @@ func hideConsoleWindow(cmd *exec.Cmd) {
 // runEXEInstaller installs an EXE package.
 func runEXEInstaller(item catalog.Item, itemURL, cachePath string) (string, error) {
 	exePath := filepath.Join(cachePath, filepath.Base(itemURL))
-	baseSilentArgs := []string{"/S"}
+	baseSilentArgs := []string{"/S"} // Example: Silent arg for typical Inno/NSIS installers
 	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
 
 	output, err := runCMD(exePath, cmdArgs)
 	if err != nil {
-		// This logs more detail, e.g. “stderr: The system cannot find the path specified…”
 		logging.Error("Failed to install EXE package", "package", item.Name, "error", err)
 		return output, err
 	}
@@ -351,16 +342,19 @@ func Install(item catalog.Item, action, urlPackages, cachePath string, checkOnly
 
 	switch action {
 	case "install", "update":
-		output, err := installItem(item, item.Installer.Location, cachePath)
+		// installItem(...) returns error (not string)
+		err := installItem(item, item.Installer.Location, cachePath)
 		if err != nil {
-			// We log error here too, but return it
 			logging.Error("Installation failed", "item", item.Name, "error", err)
-			return output, err
+			// returning empty string + err here
+			return "", err
 		}
 		logging.Info("Installed item successfully", "item", item.Name)
-		return output, nil
+		// return a success message or an empty string
+		return "Install succeeded", nil
 
 	case "uninstall":
+		// uninstallItem(...) returns (string, error)
 		output, err := uninstallItem(item, cachePath)
 		if err != nil {
 			logging.Error("Uninstall failed", "item", item.Name, "error", err)
@@ -372,7 +366,7 @@ func Install(item catalog.Item, action, urlPackages, cachePath string, checkOnly
 	default:
 		msg := fmt.Sprintf("Unsupported action: %s", action)
 		logging.Warn(msg)
-		return msg, fmt.Errorf(msg)
+		return msg, fmt.Errorf("%s", msg)
 	}
 }
 
@@ -409,7 +403,7 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 	output, err := runCMD(commandMsi, uninstallArgs)
 	if err != nil {
 		logging.Warn("MSI uninstallation failed", "file", absFile, "error", err)
-		return output, err // Return any partial output plus an error
+		return output, err
 	}
 	return output, nil
 }
