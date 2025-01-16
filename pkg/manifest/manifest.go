@@ -123,15 +123,13 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		// For each "catalog" in this manifest, download (if not done before) + parse
 		for _, catName := range man.Catalogs {
 			catPath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catName+".yaml")
-			if _, err := os.Stat(catPath); os.IsNotExist(err) {
-				// Download the catalog if not already present
-				catURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catName)
-				if err := download.DownloadFile(catURL, catPath, cfg); err != nil {
-					logging.Warn("Failed to download catalog", "url", catURL, "error", err)
-					continue
-				}
-				logging.Info("Downloaded catalog", "catalog", catName, "path", catPath)
+			// Always re-download the catalog on every run:
+			catURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catName)
+			if err := download.DownloadFile(catURL, catPath, cfg); err != nil {
+				logging.Warn("Failed to download catalog", "url", catURL, "error", err)
+				continue
 			}
+			logging.Info("Downloaded catalog", "catalog", catName, "path", catPath)
 
 			// (NEW) Now parse that catalog file and store its items in our global map
 			cEntries, err := parseCatalogFile(catPath)
