@@ -220,7 +220,8 @@ func main() {
 
 	logging.Info("Software updates completed")
 
-	// 9) Clear cache folder is now handled per-item during installation
+	// 9) If you want to do a final, full cleanup, call it here:
+	clearCacheFolder(cfg.CachePath)
 
 	os.Exit(0)
 }
@@ -352,10 +353,6 @@ func fileNeedsUpdate(d manifest.InstallDetail) bool {
 			logging.Debug("MD5 checksum mismatch => update needed", "file", d.Path)
 			return true
 		}
-		if !match {
-			logging.Debug("MD5 checksum mismatch => update needed", "file", d.Path)
-			return true
-		}
 	}
 	// Check version if provided
 	if d.Version != "" {
@@ -390,10 +387,10 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 	return results
 }
 
-// downloadAndInstallPerItem handles downloading and installing each catalog item individually.
-// It ensures cache clearing is per-item and only upon successful installation.
+// downloadAndInstallPerItem handles downloading & installing each catalog item individually.
+// It calls installOneCatalogItem(...) so we can reuse your custom logic.
 func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) error {
-	for _, cItem := range items { // <--- so 'continue' is valid
+	for _, cItem := range items { // <--- valid 'continue' usage inside this for loop
 		if cItem.Installer.Location == "" {
 			logging.Warn("No installer location found for item", "item", cItem.Name)
 			continue
@@ -412,66 +409,43 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 		logging.Info("Downloading item", "name", cItem.Name, "url", fullURL, "destination", destFile)
 		if err := download.DownloadFile(fullURL, destFile, cfg); err != nil {
 			logging.Error("Failed to download item", "name", cItem.Name, "error", err)
-			// Here 'continue' is valid because we are in a for loop
 			continue
 		}
 		logging.Info("Downloaded item successfully", "name", cItem.Name, "file", destFile)
 
-		// Perform the install
-		installedOutput, installErr := installer.Install(cItem, "install", destFile, cfg.CachePath, cfg.CheckOnly, cfg)
-		if installErr != nil {
-			logging.Error("Installation command failed", "item", cItem.Name, "error", installErr)
-			// 'continue' is still valid
+		// Perform the install using your custom function
+		if err := installOneCatalogItem(cItem, destFile, cfg); err != nil {
+			logging.Error("Installation command failed", "item", cItem.Name, "error", err)
 			continue
 		}
-
-		// If we get here => success
-		logging.Info("Install output", "item", cItem.Name, "output", installedOutput)
-		logging.Info("Installed item successfully", "item", cItem.Name)
-
-		// Remove from cache
-		if rmErr := os.Remove(destFile); rmErr != nil {
-			logging.Warn("Failed to remove file from cache after success", "file", destFile, "error", rmErr)
-		} else {
-			logging.Debug("Removed item from cache after success", "file", destFile)
-		}
 	}
-
 	return nil
 }
 
 // installOneCatalogItem installs a single catalog item using the installer package.
 // It normalizes the architecture and handles installation output for error detection.
 func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Configuration) error {
-	// Normalize architecture to ensure compatibility
 	normalizeArchitecture(&cItem)
 	sysArch := getSystemArchitecture()
 	logging.Debug("Detected system architecture", "sysArch", sysArch)
 	logging.Debug("Supported architectures for item", "item", cItem.Name, "supported_arch", cItem.SupportedArch)
 
-	action := "install"
-	// downloadAndInstallPerItem or wherever
-	installedOutput, installErr := installer.Install(cItem, action, localFile, cfg.CachePath, cfg.CheckOnly, cfg)
+	// Actually install
+	installedOutput, installErr := installer.Install(cItem, "install", localFile, cfg.CachePath, cfg.CheckOnly, cfg)
 	if installErr != nil {
 		// DO NOT say "Installed item successfully" because it failed
-		logging.Error("Installation command failed", "item", cItem.Name, "error", installErr)
-		// Possibly skip removing from cache so we can re-try
-		continue
+		return installErr
 	}
 
 	// If we get here => success
 	logging.Info("Install output", "item", cItem.Name, "output", installedOutput)
 	logging.Info("Installed item successfully", "item", cItem.Name)
 
-	// Now it’s truly successful => remove from cache
-	if rmErr := os.Remove(destFile); rmErr != nil {
-		logging.Warn("Failed to remove file from cache after success", "file", destFile, "error", rmErr)
-	} else {
-		logging.Debug("Removed item from cache after success", "file", destFile)
-	}
+	// If you want to remove it from cache here, do so:
+	// os.Remove(localFile)
 
-	// Detect architecture mismatch from installer output
-	if strings.Contains(strings.ToLower(output), "unsupported architecture") {
+	// Check for architecture mismatch in the output
+	if strings.Contains(strings.ToLower(installedOutput), "unsupported architecture") {
 		return fmt.Errorf("architecture mismatch for item %s", cItem.Name)
 	}
 	return nil
@@ -512,26 +486,6 @@ func getSystemArchitecture() string {
 	default:
 		return arch
 	}
-}
-
-// runPowerShellInline executes a PowerShell script and returns its exit code.
-func runPowerShellInline(script string) (int, error) {
-	psExe := "powershell.exe"
-	cmdArgs := []string{
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", script,
-	}
-	cmd := exec.Command(psExe, cmdArgs...)
-	err := cmd.Run()
-	if err == nil {
-		return 0, nil
-	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return exitErr.ExitCode(), nil
-	}
-	return -1, err
 }
 
 // adminCheck verifies if the current process has administrative privileges.
@@ -580,7 +534,6 @@ func isUserActive() bool {
 }
 
 // clearCacheFolder removes all items in the cache directory.
-// Note: This function is now handled per-item during installation.
 func clearCacheFolder(cachePath string) {
 	dirEntries, err := os.ReadDir(cachePath)
 	if err != nil {
@@ -596,4 +549,24 @@ func clearCacheFolder(cachePath string) {
 		}
 	}
 	logging.Info("Cache folder emptied after run", "cachePath", cachePath)
+}
+
+// runPowerShellInline executes a PowerShell script and returns its exit code.
+func runPowerShellInline(script string) (int, error) {
+	psExe := "powershell.exe"
+	cmdArgs := []string{
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", script,
+	}
+	cmd := exec.Command(psExe, cmdArgs...)
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode(), nil
+	}
+	return -1, err
 }
