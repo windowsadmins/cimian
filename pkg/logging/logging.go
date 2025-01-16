@@ -1,4 +1,3 @@
-// pkg/logging/logging.go
 package logging
 
 import (
@@ -8,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/windowsadmins/gorilla/pkg/config"
 )
@@ -66,8 +66,7 @@ func Init(cfg *config.Configuration) error {
 // newLogger creates a new Logger instance based on the configuration.
 func newLogger(cfg *config.Configuration) (*Logger, error) {
 	logDir := filepath.Join(`C:\ProgramData\ManagedInstalls`, `Logs`)
-	err := os.MkdirAll(logDir, 0755)
-	if err != nil {
+	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
 
@@ -110,7 +109,7 @@ func newLogger(cfg *config.Configuration) (*Logger, error) {
 	}, nil
 }
 
-// Close closes the log file if it's open.
+// CloseLogger closes the log file if it's open.
 func CloseLogger() {
 	if instance == nil {
 		return
@@ -119,8 +118,7 @@ func CloseLogger() {
 	defer instance.mu.Unlock()
 
 	if instance.logFile != nil {
-		err := instance.logFile.Close()
-		if err != nil {
+		if err := instance.logFile.Close(); err != nil {
 			fmt.Printf("Failed to close log file: %v\n", err)
 		}
 		instance.logFile = nil
@@ -138,48 +136,43 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 		return
 	}
 
+	// If the message's level is higher (less severe) than the configured level, skip it.
 	if level > l.logLevel {
-		// Skip logging if the message level is higher than the configured log level.
 		return
 	}
 
-	// Ensure even number of keyValues.
-	if len(keyValues)%2 != 0 {
-		keyValues = append(keyValues, "MISSING_VALUE")
-	}
+	// Build a timestamp prefix like "[2025-01-15 09:28:54] INFO"
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	prefix := fmt.Sprintf("[%s] %-5s", ts, level.String())
 
-	kvPairs := ""
-	for i := 0; i < len(keyValues); i += 2 {
-		key, ok := keyValues[i].(string)
-		if !ok {
-			key = fmt.Sprintf("NON_STRING_KEY_%d", i)
+	// If not debug, we won't print the keyValues. If debug, we parse them.
+	var kvPairs string
+	if level == LevelDebug && len(keyValues) > 0 {
+		// Ensure even number of keyValues.
+		if len(keyValues)%2 != 0 {
+			keyValues = append(keyValues, "MISSING_VALUE")
 		}
-		value := keyValues[i+1]
-		kvPairs += fmt.Sprintf("%s=%v ", key, value)
+		for i := 0; i < len(keyValues); i += 2 {
+			key, _ := keyValues[i].(string)
+			val := keyValues[i+1]
+			kvPairs += fmt.Sprintf(" %s=%v", key, val)
+		}
 	}
 
-	if len(kvPairs) > 0 {
-		kvPairs = kvPairs[:len(kvPairs)-1] // Remove trailing space.
+	// Construct final log line
+	logLine := prefix
+	if message != "" {
+		logLine += " " + message
 	}
-
-	logLine := fmt.Sprintf("%s: %s", level.String(), message)
 	if kvPairs != "" {
-		logLine = fmt.Sprintf("%s %s", logLine, kvPairs)
+		logLine += kvPairs
 	}
-
-	// // Append timestamp in UTC if debugging.
-	// if l.logLevel >= LevelDebug {
-	// 	logLine = fmt.Sprintf("%s (timestamp=%s)", logLine, time.Now().UTC().Format(time.RFC3339Nano))
-	// }
 
 	l.logger.Println(logLine)
 
-	// Force flush to disk to avoid losing logs on crash.
+	// Force flush to disk (in case of crash)
 	if l.logFile != nil {
-		err := l.logFile.Sync()
-		if err != nil {
-			fmt.Printf("Failed to sync log file: %v\n", err)
-		}
+		_ = l.logFile.Sync()
 	}
 }
 
@@ -221,14 +214,12 @@ func Error(message string, keyValues ...interface{}) {
 
 // ReInit allows re-initializing the logger (e.g., after configuration reload).
 // It closes the existing logger and creates a new one.
-// Note: Use with caution to ensure thread safety.
 func ReInit(cfg *config.Configuration) error {
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
 
 	if instance.logFile != nil {
-		err := instance.logFile.Close()
-		if err != nil {
+		if err := instance.logFile.Close(); err != nil {
 			return fmt.Errorf("failed to close existing log file: %w", err)
 		}
 		instance.logFile = nil
