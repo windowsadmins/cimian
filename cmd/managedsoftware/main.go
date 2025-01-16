@@ -393,16 +393,18 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 // downloadAndInstallPerItem handles downloading and installing each catalog item individually.
 // It ensures cache clearing is per-item and only upon successful installation.
 func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) error {
-	for _, cItem := range items {
+	for _, cItem := range items { // <--- so 'continue' is valid
 		if cItem.Installer.Location == "" {
 			logging.Warn("No installer location found for item", "item", cItem.Name)
 			continue
 		}
+
 		// Build the full URL
 		fullURL := cItem.Installer.Location
 		if strings.HasPrefix(fullURL, "/") {
 			fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + fullURL
 		}
+
 		// Destination file path in cache
 		destFile := filepath.Join(cfg.CachePath, filepath.Base(cItem.Installer.Location))
 
@@ -410,27 +412,31 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 		logging.Info("Downloading item", "name", cItem.Name, "url", fullURL, "destination", destFile)
 		if err := download.DownloadFile(fullURL, destFile, cfg); err != nil {
 			logging.Error("Failed to download item", "name", cItem.Name, "error", err)
-			// Do not remove from cache; allow for retry or manual intervention
+			// Here 'continue' is valid because we are in a for loop
 			continue
 		}
 		logging.Info("Downloaded item successfully", "name", cItem.Name, "file", destFile)
 
-		// Install the item
-		err := installOneCatalogItem(cItem, destFile, cfg)
-		if err != nil {
-			// Installation failed; log and retain the file in cache for potential retries
-			logging.Warn("Installation failed; skipping cache removal", "item", cItem.Name, "error", err)
+		// Perform the install
+		installedOutput, installErr := installer.Install(cItem, "install", destFile, cfg.CachePath, cfg.CheckOnly, cfg)
+		if installErr != nil {
+			logging.Error("Installation command failed", "item", cItem.Name, "error", installErr)
+			// 'continue' is still valid
 			continue
 		}
+
+		// If we get here => success
+		logging.Info("Install output", "item", cItem.Name, "output", installedOutput)
 		logging.Info("Installed item successfully", "item", cItem.Name)
 
-		// Remove the installer from cache upon successful installation
+		// Remove from cache
 		if rmErr := os.Remove(destFile); rmErr != nil {
 			logging.Warn("Failed to remove file from cache after success", "file", destFile, "error", rmErr)
 		} else {
 			logging.Debug("Removed item from cache after success", "file", destFile)
 		}
 	}
+
 	return nil
 }
 
@@ -444,8 +450,25 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 	logging.Debug("Supported architectures for item", "item", cItem.Name, "supported_arch", cItem.SupportedArch)
 
 	action := "install"
-	output := installer.Install(cItem, action, localFile, cfg.CachePath, cfg.CheckOnly, cfg)
-	logging.Info("Install output", "item", cItem.Name, "output", output)
+	// downloadAndInstallPerItem or wherever
+	installedOutput, installErr := installer.Install(cItem, action, localFile, cfg.CachePath, cfg.CheckOnly, cfg)
+	if installErr != nil {
+		// DO NOT say "Installed item successfully" because it failed
+		logging.Error("Installation command failed", "item", cItem.Name, "error", installErr)
+		// Possibly skip removing from cache so we can re-try
+		continue
+	}
+
+	// If we get here => success
+	logging.Info("Install output", "item", cItem.Name, "output", installedOutput)
+	logging.Info("Installed item successfully", "item", cItem.Name)
+
+	// Now it’s truly successful => remove from cache
+	if rmErr := os.Remove(destFile); rmErr != nil {
+		logging.Warn("Failed to remove file from cache after success", "file", destFile, "error", rmErr)
+	} else {
+		logging.Debug("Removed item from cache after success", "file", destFile)
+	}
 
 	// Detect architecture mismatch from installer output
 	if strings.Contains(strings.ToLower(output), "unsupported architecture") {
