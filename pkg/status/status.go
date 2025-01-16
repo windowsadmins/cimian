@@ -96,36 +96,42 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return true, fmt.Errorf("unable to detect local version: %v", err)
 	}
 
-	actionNeeded := false
+	// If localVersion is "", that means “not installed at all”
+	// => for “install” or “update,” we do want to proceed installing if it’s empty
+	// => for “uninstall,” we only do it if localVersion != ""
 	switch installType {
 	case "install":
 		if localVersion == "" {
-			// Not installed => install
-			actionNeeded = true
-		} else if isOlderVersion(localVersion, catalogItem.Version) {
-			actionNeeded = true
+			// Not installed => need install
+			return true, nil
 		}
+		// If we do have localVersion, check if it’s older
+		if isOlderVersion(localVersion, catalogItem.Version) {
+			return true, nil
+		}
+		// Otherwise same or newer => no action
+		return false, nil
+
 	case "update":
-		// Only update if item is installed and older
-		if localVersion != "" && isOlderVersion(localVersion, catalogItem.Version) {
-			actionNeeded = true
+		if localVersion == "" {
+			// Not installed => no update
+			return false, nil
 		}
+		// If installed but older => do update
+		if isOlderVersion(localVersion, catalogItem.Version) {
+			return true, nil
+		}
+		// Otherwise no action
+		return false, nil
+
 	case "uninstall":
-		// Uninstall if item is installed
-		if localVersion != "" {
-			actionNeeded = true
-		}
-	}
+		// Uninstall only if localVersion != ""
+		return (localVersion != ""), nil
 
-	if !actionNeeded {
-		displayName := catalogItem.DisplayName
-		if displayName == "" {
-			displayName = catalogItem.Name
-		}
-		logging.Warn("Not enough data to check the current status:", displayName)
+	default:
+		// fallback
+		return false, nil
 	}
-
-	return actionNeeded, nil
 }
 
 // getLocalInstalledVersion attempts to find the installed version from registry or file metadata.
