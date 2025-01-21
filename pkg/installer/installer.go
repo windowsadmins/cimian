@@ -24,337 +24,27 @@ var (
 	commandPs1   = filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
 )
 
-// fileExists checks if a file exists on the filesystem.
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-// InstallPendingPackages walks through the cache directory and installs pending packages.
-func InstallPendingPackages(cfg *config.Configuration) error {
-	logging.Info("Starting pending installations...")
-
-	err := filepath.Walk(cfg.CachePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			logging.Error("Error accessing path", "path", path, "error", err)
-			return err
-		}
-
-		if !info.IsDir() {
-			logging.Info("Processing pending package", "file", path)
-			item := catalog.Item{
-				Name: info.Name(),
-				Installer: catalog.InstallerItem{
-					Type:     "msi",
-					Location: path,
-				},
-			}
-			if err := installItem(item, path, cfg.CachePath); err != nil {
-				logging.Error("Failed to install package", "file", path, "error", err)
-				return err
-			}
-			logging.Info("Successfully installed package", "file", path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		logging.Error("Error processing cache directory", "error", err)
-		return err
-	}
-
-	logging.Info("Pending installations completed successfully.")
-	return nil
-}
-
-// Windows constants from Win32 API
-const CREATE_NO_WINDOW = 0x08000000
-
-// runCMD executes a command and its arguments.
-func runCMD(command string, arguments []string) (string, error) {
-	cmd := exec.Command(command, arguments...)
-
-	// Hide window on Windows
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			HideWindow: true,
-		}
-	}
-
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		// Capture BOTH error (which has exit status) and stderr
-		combinedErr := fmt.Errorf("command execution failed: %w | stderr: %s", err, stderr.String())
-		return out.String(), combinedErr
-	}
-	return out.String(), nil
-}
-
-// getSystemArchitecture returns a unified architecture string
-func getSystemArchitecture() string {
-	arch := runtime.GOARCH
-	switch arch {
-	case "amd64", "x86_64":
-		return "x64"
-	case "386":
-		return "x86"
-	default:
-		return arch
-	}
-}
-
-// unifyArch normalizes common synonyms to “x64”, “x86”, etc.
-func unifyArch(arch string) string {
-	lower := strings.ToLower(arch)
-	if lower == "amd64" || lower == "x86_64" {
-		return "x64"
-	}
-	if lower == "386" {
-		return "x86"
-	}
-	return lower
-}
-
-func supportsArchitecture(item catalog.Item, systemArch string) bool {
-	// Normalize systemArch up front
-	systemArch = unifyArch(systemArch)
-
-	for _, arch := range item.SupportedArch {
-		if unifyArch(arch) == systemArch {
-			return true
-		}
-	}
-	return false
-}
-
-// installItem does the real installation logic.
-func installItem(item catalog.Item, itemURL, cachePath string) error {
-	// 1) Check architecture
-	sysArch := getSystemArchitecture()
-	if !supportsArchitecture(item, sysArch) {
-		logging.Warn("Unsupported architecture for item",
-			"item", item.Name,
-			"supported_arch", item.SupportedArch,
-			"system_arch", sysArch,
-		)
-		return fmt.Errorf("cannot install %s (system_arch=%s not in supported_arch=%v)",
-			item.Name, sysArch, item.SupportedArch)
-	}
-
-	// 2) Decide runner:
-	installerType := strings.ToLower(item.Installer.Type)
-
-	// (A) If user gave a postinstall_script that is a .bat, skip direct EXE
-	if installerType == "exe" && strings.HasSuffix(strings.ToLower(item.PostScript), ".bat") {
-		logging.Info("Detected .bat postinstall_script, will run the .bat instead of EXE",
-			"item", item.Name)
-		// The .bat script presumably calls the .exe with correct silent args.
-		output, err := runBatInstaller(item, itemURL, cachePath)
-		if err != nil {
-			logging.Error("Failed to install from .bat script", "package", item.Name, "error", err)
-			return err
-		}
-		logging.Debug("BAT-based EXE install output", "output", output)
-		return nil
-	}
-
-	// (B) Otherwise do normal logic:
-	switch installerType {
-	case "msi":
-		output, err := runMSIInstaller(item, itemURL, cachePath)
-		if err != nil {
-			return err
-		}
-		logging.Debug("MSI install output", "output", output)
-		return nil
-
-	case "exe":
-		output, err := runEXEInstaller(item, itemURL, cachePath)
-		if err != nil {
-			return err
-		}
-		logging.Debug("EXE install output", "output", output)
-		return nil
-
-	case "powershell":
-		output, err := runPS1Installer(item, itemURL, cachePath)
-		if err != nil {
-			return err
-		}
-		logging.Debug("PS1 install output", "output", output)
-		return nil
-
-	case "nupkg":
-		output, err := installNupkg(item, itemURL, cachePath)
-		if err != nil {
-			return err
-		}
-		logging.Debug("Nupkg install output", "output", output)
-		return nil
-
-	default:
-		logging.Warn("Unknown installer type", "type", item.Installer.Type)
-		return fmt.Errorf("unknown installer type: %s", item.Installer.Type)
-	}
-}
-
-// runMSIInstaller installs an MSI package.
-func runMSIInstaller(item catalog.Item, itemURL, cachePath string) (string, error) {
-	msiPath := filepath.Join(cachePath, filepath.Base(itemURL))
-	cmdArgs := []string{"/i", msiPath, "/quiet", "/norestart"}
-
-	output, err := runCMD(commandMsi, cmdArgs)
-	if err != nil {
-		logging.Error("Failed to install MSI package", "package", item.Name, "error", err)
-		return output, err
-	}
-
-	logging.Info("Successfully installed MSI package", "package", item.Name)
-	return output, nil
-}
-
-func runBatInstaller(item catalog.Item, _ string, cachePath string) (string, error) {
-	// 1) Possibly ensure EXE is downloaded, skip if already done
-
-	// 2) Write the postinstall_script to a .bat file in the cache
-	batPath := filepath.Join(cachePath, "tmp_postinstall.bat")
-	err := os.WriteFile(batPath, []byte(item.PostScript), 0755)
-	if err != nil {
-		return "", fmt.Errorf("failed to write .bat postinstall script: %v", err)
-	}
-
-	// 3) Actually run the .bat
-	cmd := exec.Command("cmd.exe", "/c", batPath)
-	hideConsoleWindow(cmd)
-
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("command execution failed: %v - %s", err, stderr.String())
-	}
-
-	// Optionally remove the .bat afterwards
-	os.Remove(batPath)
-
-	return out.String(), nil
-}
-
-func hideConsoleWindow(cmd *exec.Cmd) {
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			HideWindow: true,
-		}
-	}
-}
-
-// runEXEInstaller installs an EXE package.
-func runEXEInstaller(item catalog.Item, itemURL, cachePath string) (string, error) {
-	exePath := filepath.Join(cachePath, filepath.Base(itemURL))
-	baseSilentArgs := []string{"/S"} // Example: Silent arg for typical Inno/NSIS installers
-	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
-
-	output, err := runCMD(exePath, cmdArgs)
-	if err != nil {
-		logging.Error("Failed to install EXE package", "package", item.Name, "error", err)
-		return output, err
-	}
-	logging.Info("Successfully installed EXE package", "package", item.Name)
-	return output, nil
-}
-
-// runPS1Installer executes a PowerShell script.
-func runPS1Installer(item catalog.Item, itemURL, cachePath string) (string, error) {
-	ps1Path := filepath.Join(cachePath, filepath.Base(itemURL))
-	cmdArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1Path}
-
-	output, err := runCMD(commandPs1, cmdArgs)
-	if err != nil {
-		logging.Error("Failed to execute PowerShell script", "script", item.Name, "error", err)
-		return "", err
-	}
-
-	logging.Info("Successfully executed PowerShell script", "script", item.Name)
-	return output, nil
-}
-
-// installNupkg installs a Nupkg package using Chocolatey.
-func installNupkg(item catalog.Item, itemURL, cachePath string) (string, error) {
-	nupkgPath := filepath.Join(cachePath, filepath.Base(itemURL))
-	cmdArgs := []string{"install", nupkgPath, "-y"}
-
-	output, err := runCMD(commandNupkg, cmdArgs)
-	if err != nil {
-		logging.Error("Failed to install Nupkg package", "package", item.Name, "error", err)
-		return "", err
-	}
-
-	logging.Info("Successfully installed Nupkg package", "package", item.Name)
-	return output, nil
-}
-
-// extractNupkgMetadata extracts metadata from a Nupkg file.
-func extractNupkgMetadata(nupkgPath string) (string, string, error) {
-	r, err := zip.OpenReader(nupkgPath)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to open nupkg: %w", err)
-	}
-	defer r.Close()
-
-	for _, f := range r.File {
-		if strings.HasSuffix(strings.ToLower(f.Name), ".nuspec") {
-			rc, err := f.Open()
-			if err != nil {
-				return "", "", fmt.Errorf("failed to open nuspec: %w", err)
-			}
-			defer rc.Close()
-
-			var meta struct {
-				Metadata struct {
-					ID      string `xml:"id"`
-					Version string `xml:"version"`
-				} `xml:"metadata"`
-			}
-			if err := xml.NewDecoder(rc).Decode(&meta); err != nil {
-				return "", "", fmt.Errorf("failed to parse nuspec: %w", err)
-			}
-
-			return meta.Metadata.ID, meta.Metadata.Version, nil
-		}
-	}
-	return "", "", fmt.Errorf("nuspec file not found in nupkg")
-}
-
-// Install attempts to install/update/uninstall the item and returns (output, error).
-func Install(item catalog.Item, action, urlPackages, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
+// Install is the main entry point for installing/updating/uninstalling a catalog item
+func Install(item catalog.Item, action, localFile, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
 	if checkOnly {
 		logging.Info("CheckOnly mode: would perform action", "action", action, "item", item.Name)
 		return "CheckOnly: No action performed.", nil
 	}
 
-	switch action {
+	switch strings.ToLower(action) {
 	case "install", "update":
-		// installItem(...) returns error (not string)
-		err := installItem(item, item.Installer.Location, cachePath)
+		if item.Installer.Type == "nupkg" {
+			return installOrUpgradeNupkg(item, localFile)
+		}
+		err := installItem(item, localFile, cachePath)
 		if err != nil {
 			logging.Error("Installation failed", "item", item.Name, "error", err)
-			// returning empty string + err here
 			return "", err
 		}
 		logging.Info("Installed item successfully", "item", item.Name)
-		// return a success message or an empty string
-		return "Install succeeded", nil
+		return "Installation success", nil
 
 	case "uninstall":
-		// uninstallItem(...) returns (string, error)
 		output, err := uninstallItem(item, cachePath)
 		if err != nil {
 			logging.Error("Uninstall failed", "item", item.Name, "error", err)
@@ -366,22 +56,244 @@ func Install(item catalog.Item, action, urlPackages, cachePath string, checkOnly
 	default:
 		msg := fmt.Sprintf("Unsupported action: %s", action)
 		logging.Warn(msg)
-		return msg, fmt.Errorf("%s", msg)
+		return "", fmt.Errorf("%v", msg)
 	}
 }
 
+// installItem decides how to install or update an item that is NOT a .nupkg
+func installItem(item catalog.Item, localFile, cachePath string) error {
+	sysArch := getSystemArchitecture()
+	if !supportsArchitecture(item, sysArch) {
+		return fmt.Errorf("system arch %s not in supported_arch=%v for item %s", sysArch, item.SupportedArch, item.Name)
+	}
+
+	installerType := strings.ToLower(item.Installer.Type)
+	switch installerType {
+	case "msi":
+		output, err := runMSIInstaller(item, localFile)
+		if err != nil {
+			return err
+		}
+		logging.Debug("MSI install output", "output", output)
+		return nil
+
+	case "exe":
+		// If a postinstall_script is provided, detect if it’s .bat or PowerShell style
+		if item.PostScript != "" {
+			output, err := runPostinstallScript(item, localFile, cachePath)
+			if err != nil {
+				return err
+			}
+			logging.Debug("Postinstall script for EXE completed", "output", output)
+			return nil
+		} else {
+			// Normal silent EXE
+			output, err := runEXEInstaller(item, localFile)
+			if err != nil {
+				return err
+			}
+			logging.Debug("EXE install output", "output", output)
+			return nil
+		}
+
+	case "powershell":
+		output, err := runPS1Installer(item, localFile)
+		if err != nil {
+			return err
+		}
+		logging.Debug("PS1 install output", "output", output)
+		return nil
+
+	case "nupkg":
+		// Fallback logic if we ever get here, though we handle nupkg above
+		output, err := installOrUpgradeNupkg(item, localFile)
+		if err != nil {
+			return err
+		}
+		logging.Debug("Nupkg install output", "output", output)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown installer type: %s", item.Installer.Type)
+	}
+}
+
+// handle .nupkg: check if installed => upgrade, else => install
+func installOrUpgradeNupkg(item catalog.Item, localFile string) (string, error) {
+	pkgID, pkgVer, metaErr := extractNupkgMetadata(localFile)
+	if metaErr != nil {
+		logging.Warn("Failed to extract nupkg metadata, using item.Name", "error", metaErr)
+		pkgID = item.Name
+		pkgVer = item.Version
+	}
+	logging.Info("Installing or upgrading nupkg", "pkgID", pkgID, "version", pkgVer)
+
+	// Check if installed: choco list --local-only <pkgID>
+	checkCmdArgs := []string{"list", "--local-only", pkgID}
+	out, checkErr := runCMD(commandNupkg, checkCmdArgs)
+	if checkErr != nil {
+		logging.Warn("Failed to check nupkg installed, forcing install", "pkgID", pkgID, "error", checkErr)
+		return runChocoInstall(localFile)
+	}
+	lines := strings.Split(strings.ToLower(out), "\n")
+	installed := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, strings.ToLower(pkgID)+"|") {
+			installed = true
+			break
+		}
+	}
+	if installed {
+		logging.Info("Nupkg is installed, upgrading...", "pkgID", pkgID)
+		return runChocoUpgrade(localFile)
+	}
+	logging.Info("Nupkg not installed, installing...", "pkgID", pkgID)
+	return runChocoInstall(localFile)
+}
+
+func runChocoInstall(nupkgFile string) (string, error) {
+	cmdArgs := []string{"install", nupkgFile, "-y"}
+	return runCMD(commandNupkg, cmdArgs)
+}
+
+func runChocoUpgrade(nupkgFile string) (string, error) {
+	cmdArgs := []string{"upgrade", nupkgFile, "-y", "--force"}
+	return runCMD(commandNupkg, cmdArgs)
+}
+
+func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
+	cmdArgs := []string{"/i", localFile, "/quiet", "/norestart"}
+	output, err := runCMD(commandMsi, cmdArgs)
+	if err != nil {
+		logging.Error("Failed to install MSI package", "package", item.Name, "error", err)
+		return output, err
+	}
+	logging.Info("Successfully installed MSI package", "package", item.Name)
+	return output, nil
+}
+
+// runPostinstallScript decides if item.PostScript is a BAT or PowerShell script, then calls the appropriate function.
+func runPostinstallScript(item catalog.Item, localFile, cachePath string) (string, error) {
+	// If the script content appears to start with @echo or any typical .bat syntax, call runBatInstaller
+	// Otherwise, do runPS1InstallerFromScript
+	scriptLower := strings.ToLower(item.PostScript)
+	if strings.Contains(scriptLower, "@echo off") ||
+		strings.HasPrefix(scriptLower, "rem ") ||
+		strings.HasPrefix(scriptLower, "::") {
+		// Looks like a BAT script
+		return runBatInstaller(item, localFile, cachePath)
+	}
+	// else assume PowerShell
+	return runPS1InstallerFromScript(item, localFile, cachePath)
+}
+
+// runBatInstaller writes item.PostScript to a .bat file, then calls it with cmd.exe /c
+func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, error) {
+	// If we truly don't need localFile, explicitly ignore it to silence 'unused param'
+	_ = localFile
+
+	batPath := filepath.Join(cachePath, "tmp_postinstall.bat")
+	err := os.WriteFile(batPath, []byte(item.PostScript), 0o755)
+	if err != nil {
+		return "", fmt.Errorf("failed to write .bat postinstall script: %v", err)
+	}
+	defer os.Remove(batPath)
+
+	cmd := exec.Command("cmd.exe", "/c", batPath)
+	hideConsoleWindow(cmd)
+
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	output := out.String()
+	if runErr != nil {
+		// Use %v for error message
+		return output, fmt.Errorf("command execution failed: %v - %s", runErr, stderr.String())
+	}
+	return output, nil
+}
+
+// runPS1InstallerFromScript writes item.PostScript to a .ps1 file, then calls it with powershell
+func runPS1InstallerFromScript(item catalog.Item, localFile, cachePath string) (string, error) {
+	_ = localFile // not used here
+	psFile := filepath.Join(cachePath, "postinstall_tmp.ps1")
+	err := os.WriteFile(psFile, []byte(item.PostScript), 0o755)
+	if err != nil {
+		return "", fmt.Errorf("failed to write postinstall ps1: %v", err)
+	}
+	defer os.Remove(psFile)
+
+	cmd := exec.Command(commandPs1, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", psFile)
+	hideConsoleWindow(cmd)
+
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	output := out.String()
+	if runErr != nil {
+		return output, fmt.Errorf("postinstall ps1 failed: %v | stderr: %s", runErr, stderr.String())
+	}
+	return output, nil
+}
+
+// runEXEInstaller for direct silent .exe (no postinstall script)
+func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
+	baseSilentArgs := []string{"/S"}
+	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
+	output, err := runCMD(localFile, cmdArgs)
+	if err != nil {
+		logging.Error("Failed to install EXE package", "package", item.Name, "error", err)
+		return output, err
+	}
+	logging.Info("Successfully installed EXE package", "package", item.Name)
+	return output, nil
+}
+
+func runPS1Installer(item catalog.Item, localFile string) (string, error) {
+	cmdArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", localFile}
+	output, err := runCMD(commandPs1, cmdArgs)
+	if err != nil {
+		logging.Error("Failed to execute PowerShell script", "script", item.Name, "error", err)
+		return "", err
+	}
+	logging.Info("Successfully executed PowerShell script", "script", item.Name)
+	return output, nil
+}
+
+func runCMD(command string, arguments []string) (string, error) {
+	cmd := exec.Command(command, arguments...)
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	}
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	output := out.String()
+	if err != nil {
+		return output, fmt.Errorf("command execution failed: %v | stderr: %s", err, stderr.String())
+	}
+	return output, nil
+}
+
+// uninstallItem decides how to uninstall an item
 func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
 
-	if !fileExists(absFile) {
+	// If not present, just skip
+	if _, err := os.Stat(absFile); os.IsNotExist(err) {
 		msg := fmt.Sprintf("Uninstall file does not exist: %s", absFile)
 		logging.Warn(msg)
-		// Return that string with no error
 		return msg, nil
 	}
 
-	// Decide which “runXYZUninstaller” to call:
 	switch strings.ToLower(item.Installer.Type) {
 	case "msi":
 		return runMSIUninstaller(absFile, item)
@@ -394,7 +306,7 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 	default:
 		msg := fmt.Sprintf("Unsupported installer type for uninstall: %s", item.Installer.Type)
 		logging.Warn(msg)
-		return msg, nil
+		return "", nil
 	}
 }
 
@@ -428,19 +340,85 @@ func runPS1Uninstaller(absFile string) (string, error) {
 }
 
 func runNupkgUninstaller(absFile string) (string, error) {
-	id, _, err := extractNupkgMetadata(absFile)
+	pkgID, _, err := extractNupkgMetadata(absFile)
 	if err != nil {
 		msg := fmt.Sprintf("Failed to read nupkg metadata for uninstall: %v", err)
 		logging.Warn(msg)
 		return "", err
 	}
 	nupkgDir := filepath.Dir(absFile)
-	uninstallArgs := []string{"uninstall", id, "-s", nupkgDir, "-y"}
-
+	uninstallArgs := []string{"uninstall", pkgID, "-s", nupkgDir, "-y", "--force"}
 	output, cmdErr := runCMD(commandNupkg, uninstallArgs)
 	if cmdErr != nil {
 		logging.Warn("Nupkg uninstallation failed", "file", absFile, "error", cmdErr)
 		return output, cmdErr
 	}
 	return output, nil
+}
+
+func extractNupkgMetadata(nupkgPath string) (string, string, error) {
+	r, err := zip.OpenReader(nupkgPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to open nupkg: %v", err)
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		if strings.HasSuffix(strings.ToLower(f.Name), ".nuspec") {
+			rc, err := f.Open()
+			if err != nil {
+				return "", "", fmt.Errorf("failed to open nuspec: %v", err)
+			}
+			defer rc.Close()
+
+			var meta struct {
+				Metadata struct {
+					ID      string `xml:"id"`
+					Version string `xml:"version"`
+				} `xml:"metadata"`
+			}
+			if err := xml.NewDecoder(rc).Decode(&meta); err != nil {
+				return "", "", fmt.Errorf("failed to parse nuspec: %v", err)
+			}
+			return meta.Metadata.ID, meta.Metadata.Version, nil
+		}
+	}
+	return "", "", fmt.Errorf("nuspec file not found in nupkg")
+}
+
+// hideConsoleWindow is used by runBatInstaller
+func hideConsoleWindow(cmd *exec.Cmd) {
+	if runtime.GOOS == "windows" {
+		if cmd.SysProcAttr == nil {
+			cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		} else {
+			cmd.SysProcAttr.HideWindow = true
+		}
+	}
+}
+
+// getSystemArchitecture returns a unified architecture string
+// unifyArch is now used in supportsArchitecture
+func unifyArch(arch string) string {
+	a := strings.ToLower(arch)
+	if a == "amd64" || a == "x86_64" {
+		return "x64"
+	}
+	if a == "386" {
+		return "x86"
+	}
+	return a
+}
+
+func getSystemArchitecture() string {
+	return unifyArch(runtime.GOARCH)
+}
+
+func supportsArchitecture(item catalog.Item, systemArch string) bool {
+	for _, arch := range item.SupportedArch {
+		if unifyArch(arch) == systemArch {
+			return true
+		}
+	}
+	return false
 }
