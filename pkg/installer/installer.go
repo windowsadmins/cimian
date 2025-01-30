@@ -13,9 +13,14 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/sys/windows/registry"
+
 	"github.com/windowsadmins/gorilla/pkg/catalog"
 	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/gorilla/pkg/download"
 	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/gorilla/pkg/manifest"
+	"github.com/windowsadmins/gorilla/pkg/status"
 )
 
 var (
@@ -23,6 +28,49 @@ var (
 	commandMsi   = filepath.Join(os.Getenv("WINDIR"), "system32", "msiexec.exe")
 	commandPs1   = filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
 )
+
+func storeInstalledVersionInRegistry(item catalog.Item) {
+	regPath := `Software\ManagedInstalls\` + item.Name
+	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, regPath, registry.SET_VALUE)
+	if err != nil {
+		logging.Warn("Failed to create registry key for installed version",
+			"key", regPath, "error", err)
+		return
+	}
+	defer k.Close()
+
+	// Ensure the “Version” is never empty
+	versionStr := strings.TrimSpace(item.Version)
+	if versionStr == "" {
+		versionStr = "0.0.0"
+	}
+
+	err = k.SetStringValue("Version", versionStr)
+	if err != nil {
+		logging.Warn("Failed to set 'Version' in registry",
+			"key", regPath, "error", err)
+		return
+	}
+	logging.Debug("Wrote local installed version to registry",
+		"item", item.Name, "version", versionStr)
+}
+
+func removeInstalledVersionFromRegistry(item catalog.Item) {
+	regPath := `Software\ManagedInstalls\` + item.Name
+	// We might delete the entire subkey for this item:
+	err := registry.DeleteKey(registry.LOCAL_MACHINE, regPath)
+	if err != nil {
+		if err == registry.ErrNotExist {
+			logging.Debug("No registry entry to remove", "item", item.Name)
+			return
+		}
+		logging.Warn("Failed to delete registry key for item",
+			"item", item.Name, "key", regPath, "error", err)
+		return
+	}
+	logging.Debug("Removed registry key after uninstall",
+		"item", item.Name, "key", regPath)
+}
 
 // Install is the main entry point for installing/updating/uninstalling a catalog item
 func Install(item catalog.Item, action, localFile, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
@@ -42,6 +90,7 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			return "", err
 		}
 		logging.Info("Installed item successfully", "item", item.Name)
+		storeInstalledVersionInRegistry(item)
 		return "Installation success", nil
 
 	case "uninstall":
@@ -51,6 +100,7 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			return output, err
 		}
 		logging.Info("Uninstalled item successfully", "item", item.Name)
+		removeInstalledVersionFromRegistry(item)
 		return output, nil
 
 	default:
@@ -58,6 +108,116 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		logging.Warn(msg)
 		return "", fmt.Errorf("%v", msg)
 	}
+}
+
+// localNeedsUpdate determines if a manifest item needs an update based on the local catalog.
+func LocalNeedsUpdate(m manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) bool {
+	key := strings.ToLower(m.Name)
+	catItem, found := catMap[key]
+	if !found {
+		// Fallback to the old manifest-based logic if not found in the catalog
+		logging.Debug("Item not found in local catalog; fallback to old approach", "item", m.Name)
+		return needsUpdateOld(m, cfg)
+	}
+	// Use status.CheckStatus to determine if an install is needed
+	needed, err := status.CheckStatus(catItem, "install", cfg.CachePath)
+	if err != nil {
+		return true
+	}
+	return needed
+}
+
+// needsUpdateOld retains the original logic for determining if an update is needed.
+func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
+	// If item has an InstallCheckScript, run it
+	if item.InstallCheckScript != "" {
+		exitCode, err := runPowerShellInline(item.InstallCheckScript)
+		if err != nil {
+			logging.Warn("InstallCheckScript failed => default to install", "item", item.Name, "error", err)
+			return true
+		}
+		if exitCode == 0 {
+			logging.Debug("installcheck => 0 => not installed => update needed", "item", item.Name)
+			return true
+		}
+		logging.Debug("installcheck => !=0 => installed => no update", "item", item.Name, "exitCode", exitCode)
+		return false
+	}
+	// If item has installs, check each file
+	if len(item.Installs) > 0 {
+		for _, detail := range item.Installs {
+			if fileNeedsUpdate(detail) {
+				return true
+			}
+		}
+		return false
+	}
+	// Fallback to CheckStatus with a minimal catalog item
+	citem := status.ToCatalogItem(item)
+	needed, err := status.CheckStatus(citem, "install", cfg.CachePath)
+	if err != nil {
+		return true
+	}
+	return needed
+}
+
+// fileNeedsUpdate checks if a specific file needs an update based on its presence, MD5 checksum, and version.
+func fileNeedsUpdate(d manifest.InstallDetail) bool {
+	fi, err := os.Stat(d.Path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			logging.Debug("File missing => update needed", "file", d.Path)
+			return true
+		}
+		logging.Warn("Stat error => update anyway", "file", d.Path, "error", err)
+		return true
+	}
+	if fi.IsDir() {
+		logging.Warn("Path is directory => need update", "file", d.Path)
+		return true
+	}
+	// Check MD5 checksum if provided
+	if d.MD5Checksum != "" {
+		match := download.Verify(d.Path, d.MD5Checksum)
+		if !match {
+			logging.Debug("MD5 checksum mismatch => update needed", "file", d.Path)
+			return true
+		}
+	}
+	// Check version if provided
+	if d.Version != "" {
+		myItem := catalog.Item{Name: filepath.Base(d.Path)}
+		localVersion, err := status.GetInstalledVersion(myItem)
+		if err != nil {
+			logging.Warn("Failed to get installed version => update needed", "file", d.Path, "error", err)
+			return true
+		}
+		if status.IsOlderVersion(localVersion, d.Version) {
+			logging.Debug("Installed version is older => update needed", "file", d.Path, "local_version", localVersion, "required_version", d.Version)
+			return true
+		}
+	}
+	return false
+}
+
+// runPowerShellInline executes a PowerShell script and returns its exit code.
+func runPowerShellInline(script string) (int, error) {
+	psExe := "powershell.exe"
+	cmdArgs := []string{
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy", "Bypass",
+		"-Command", script,
+	}
+	cmd := exec.Command(psExe, cmdArgs...)
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode(), nil
+	}
+	return -1, err
 }
 
 // installItem decides how to install or update an item that is NOT a .nupkg
@@ -174,21 +334,41 @@ func installOrUpgradeNupkg(item catalog.Item, localFile string) (string, error) 
 	return runChocoInstall(localFile)
 }
 
+const chocolateyBin = `C:\ProgramData\chocolatey\bin\choco.exe`
+
 func runChocoInstall(nupkgFile string) (string, error) {
-	cmdArgs := []string{"install", nupkgFile, "-y"}
-	return runCMD(commandNupkg, cmdArgs)
+	cmdArgs := []string{
+		"install",
+		nupkgFile,
+		"-y",
+		"--log-file=C:\\ProgramData\\ManagedInstalls\\Logs\\install.log",
+		"--debug",
+	}
+	return runCMD(chocolateyBin, cmdArgs)
 }
 
 func runChocoUpgrade(nupkgFile string) (string, error) {
-	cmdArgs := []string{"upgrade", nupkgFile, "-y", "--force"}
-	return runCMD(commandNupkg, cmdArgs)
+	cmdArgs := []string{
+		"upgrade",
+		nupkgFile,
+		"-y",
+		"--log-file=C:\\ProgramData\\ManagedInstalls\\Logs\\install.log",
+		"--debug",
+	}
+	return runCMD(chocolateyBin, cmdArgs)
 }
 
 func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
-	cmdArgs := []string{"/i", localFile, "/quiet", "/norestart"}
-	output, err := runCMD(commandMsi, cmdArgs)
+	cmdArgs := []string{
+		"/i", localFile,
+		"/quiet",
+		"/norestart",
+		"/l*v", `C:\ProgramData\ManagedInstalls\Logs\install.log`,
+	}
+
+	output, err := runCMD("msiexec.exe", cmdArgs)
 	if err != nil {
-		logging.Error("Failed to install MSI package", "package", item.Name, "error", err)
+		// Logging already improved in runCMD()
 		return output, err
 	}
 	logging.Info("Successfully installed MSI package", "package", item.Name)
@@ -287,22 +467,37 @@ func runPS1Installer(item catalog.Item, localFile string) (string, error) {
 	return output, nil
 }
 
+// runCMD ensures we do NOT treat a failing command as success
 func runCMD(command string, arguments []string) (string, error) {
 	cmd := exec.Command(command, arguments...)
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	}
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	output := out.String()
+	outStr := stdout.String()
+	errStr := stderr.String()
+
 	if err != nil {
-		return output, fmt.Errorf("command execution failed: %v | stderr: %s", err, stderr.String())
+		// If the error is from a non-zero exit code, log that code explicitly
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode := exitErr.ExitCode()
+			logging.Error("Command failed",
+				"command", command,
+				"args", arguments,
+				"exitCode", exitCode,
+				"stderr", errStr,
+			)
+			return outStr, fmt.Errorf("command failed with exit code=%d", exitCode)
+		}
+		// Or some other error (like “file not found”)
+		logging.Error("Failed to run cmd", "command", command, "args", arguments, "error", err)
+		return outStr, err
 	}
-	return output, nil
+
+	// If we get here => exitCode=0 => success
+	return outStr, nil
 }
 
 // uninstallItem decides how to uninstall an item
