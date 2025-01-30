@@ -70,7 +70,7 @@ func newLogger(cfg *config.Configuration) (*Logger, error) {
 		return nil, fmt.Errorf("failed to create log directory: %w", err)
 	}
 
-	logFilePath := filepath.Join(logDir, "gorilla.log")
+	logFilePath := filepath.Join(logDir, "install.log")
 	file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
