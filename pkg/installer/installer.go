@@ -78,13 +78,13 @@ func installItem(item catalog.Item, localFile, cachePath string) error {
 		return nil
 
 	case "exe":
-		// If a postinstall_script is provided, detect if it’s .bat or PowerShell style
-		if item.PostScript != "" {
-			output, err := runPostinstallScript(item, localFile, cachePath)
+		// If a preinstall_script is provided, detect if it’s .bat or PowerShell style
+		if item.PreScript != "" {
+			output, err := runPreinstallScript(item, localFile, cachePath)
 			if err != nil {
 				return err
 			}
-			logging.Debug("Postinstall script for EXE completed", "output", output)
+			logging.Debug("Preinstall script for EXE completed", "output", output)
 			return nil
 		} else {
 			// Normal silent EXE
@@ -120,33 +120,56 @@ func installItem(item catalog.Item, localFile, cachePath string) error {
 
 // handle .nupkg: check if installed => upgrade, else => install
 func installOrUpgradeNupkg(item catalog.Item, localFile string) (string, error) {
-	pkgID, pkgVer, metaErr := extractNupkgMetadata(localFile)
-	if metaErr != nil {
-		logging.Warn("Failed to extract nupkg metadata, using item.Name", "error", metaErr)
-		pkgID = item.Name
-		pkgVer = item.Version
+	// 1) Choose the pkgID we’ll use for 'choco list'
+	pkgID := strings.TrimSpace(item.Identifier)
+	if pkgID == "" {
+		pkgID = strings.TrimSpace(item.Name)
 	}
-	logging.Info("Installing or upgrading nupkg", "pkgID", pkgID, "version", pkgVer)
 
-	// Check if installed: choco list --local-only <pkgID>
+	// 2) Attempt to parse .nupkg file for ID & version, if desired.
+	//    If you prefer to override the “pkgID” from the .nuspec <id>,
+	//    you can do that here:
+	nupkgID, nupkgVer, metaErr := extractNupkgMetadata(localFile)
+	if metaErr != nil {
+		logging.Warn("Failed to extract nupkg metadata, continuing with item.Identifier or item.Name",
+			"pkgID", pkgID, "error", metaErr)
+	} else {
+		logging.Debug("Nupkg metadata extracted", "nupkgID", nupkgID, "nupkgVer", nupkgVer)
+		// If you want to *override* the item’s ID with the .nuspec’s <id>, do it here:
+		if nupkgID != "" {
+			pkgID = nupkgID
+		}
+		// item.Version could also be set from nupkgVer, if you want.
+		// item.Version = nupkgVer
+	}
+
+	logging.Info("Installing or upgrading nupkg", "pkgID", pkgID)
+
+	// 3) Check if installed: `choco list --local-only <pkgID>`
 	checkCmdArgs := []string{"list", "--local-only", pkgID}
 	out, checkErr := runCMD(commandNupkg, checkCmdArgs)
 	if checkErr != nil {
-		logging.Warn("Failed to check nupkg installed, forcing install", "pkgID", pkgID, "error", checkErr)
+		logging.Warn("Failed to check if nupkg is installed, forcing install",
+			"pkgID", pkgID, "error", checkErr)
 		return runChocoInstall(localFile)
 	}
 	lines := strings.Split(strings.ToLower(out), "\n")
+
+	// We assume it's "installed" if we see a line that starts with "<pkgid>|"
 	installed := false
+	prefix := strings.ToLower(pkgID) + "|"
 	for _, line := range lines {
-		if strings.HasPrefix(line, strings.ToLower(pkgID)+"|") {
+		if strings.HasPrefix(line, prefix) {
 			installed = true
 			break
 		}
 	}
+
 	if installed {
 		logging.Info("Nupkg is installed, upgrading...", "pkgID", pkgID)
 		return runChocoUpgrade(localFile)
 	}
+
 	logging.Info("Nupkg not installed, installing...", "pkgID", pkgID)
 	return runChocoInstall(localFile)
 }
@@ -172,11 +195,11 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 	return output, nil
 }
 
-// runPostinstallScript decides if item.PostScript is a BAT or PowerShell script, then calls the appropriate function.
-func runPostinstallScript(item catalog.Item, localFile, cachePath string) (string, error) {
+// runPreinstallScript decides if item.PreScript is a BAT or PowerShell script, then calls the appropriate function.
+func runPreinstallScript(item catalog.Item, localFile, cachePath string) (string, error) {
 	// If the script content appears to start with @echo or any typical .bat syntax, call runBatInstaller
 	// Otherwise, do runPS1InstallerFromScript
-	scriptLower := strings.ToLower(item.PostScript)
+	scriptLower := strings.ToLower(item.PreScript)
 	if strings.Contains(scriptLower, "@echo off") ||
 		strings.HasPrefix(scriptLower, "rem ") ||
 		strings.HasPrefix(scriptLower, "::") {
@@ -187,15 +210,15 @@ func runPostinstallScript(item catalog.Item, localFile, cachePath string) (strin
 	return runPS1InstallerFromScript(item, localFile, cachePath)
 }
 
-// runBatInstaller writes item.PostScript to a .bat file, then calls it with cmd.exe /c
+// runBatInstaller writes item.PreScript to a .bat file, then calls it with cmd.exe /c
 func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, error) {
 	// If we truly don't need localFile, explicitly ignore it to silence 'unused param'
 	_ = localFile
 
-	batPath := filepath.Join(cachePath, "tmp_postinstall.bat")
-	err := os.WriteFile(batPath, []byte(item.PostScript), 0o755)
+	batPath := filepath.Join(cachePath, "tmp_preinstall.bat")
+	err := os.WriteFile(batPath, []byte(item.PreScript), 0o755)
 	if err != nil {
-		return "", fmt.Errorf("failed to write .bat postinstall script: %v", err)
+		return "", fmt.Errorf("failed to write .bat preinstall script: %v", err)
 	}
 	defer os.Remove(batPath)
 
@@ -215,13 +238,13 @@ func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, er
 	return output, nil
 }
 
-// runPS1InstallerFromScript writes item.PostScript to a .ps1 file, then calls it with powershell
+// runPS1InstallerFromScript writes item.PreScript to a .ps1 file, then calls it with powershell
 func runPS1InstallerFromScript(item catalog.Item, localFile, cachePath string) (string, error) {
 	_ = localFile // not used here
-	psFile := filepath.Join(cachePath, "postinstall_tmp.ps1")
-	err := os.WriteFile(psFile, []byte(item.PostScript), 0o755)
+	psFile := filepath.Join(cachePath, "preinstall_tmp.ps1")
+	err := os.WriteFile(psFile, []byte(item.PreScript), 0o755)
 	if err != nil {
-		return "", fmt.Errorf("failed to write postinstall ps1: %v", err)
+		return "", fmt.Errorf("failed to write preinstall ps1: %v", err)
 	}
 	defer os.Remove(psFile)
 
@@ -235,12 +258,12 @@ func runPS1InstallerFromScript(item catalog.Item, localFile, cachePath string) (
 	runErr := cmd.Run()
 	output := out.String()
 	if runErr != nil {
-		return output, fmt.Errorf("postinstall ps1 failed: %v | stderr: %s", runErr, stderr.String())
+		return output, fmt.Errorf("preinstall ps1 failed: %v | stderr: %s", runErr, stderr.String())
 	}
 	return output, nil
 }
 
-// runEXEInstaller for direct silent .exe (no postinstall script)
+// runEXEInstaller for direct silent .exe (no preinstall script)
 func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	baseSilentArgs := []string{"/S"}
 	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
