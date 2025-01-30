@@ -189,12 +189,13 @@ func ExtractPackageInfo(path string, defaultArch string) (Metadata, error) {
 
 	switch ext {
 	case ".nupkg":
-		name, ver, dev, desc := extract.NupkgMetadata(path)
-		meta.Title = name
-		meta.ID = name
+		ident, nm, ver, dev, extra := extract.NupkgMetadata(path)
+		// Use 'extra' as needed or assign it to a relevant field
+		meta.Title = ident
+		meta.ID = nm
 		meta.Version = ver
 		meta.Developer = dev
-		meta.Description = desc
+		meta.Description = extra
 		meta.InstallerType = "nupkg"
 
 	case ".msi":

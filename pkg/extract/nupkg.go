@@ -51,18 +51,22 @@ type Nuspec struct {
 	} `xml:"metadata"`
 }
 
-// parsePackageName extracts the base name from a file.
+// parsePackageName extracts the base name from a file (no .nupkg extension).
 func parsePackageName(fileName string) string {
 	ext := filepath.Ext(fileName)
 	return strings.TrimSuffix(fileName, ext)
 }
 
-// NupkgMetadata parses a .nupkg, extracts the .nuspec, and returns (name, version, developer, description).
-func NupkgMetadata(nupkgPath string) (string, string, string, string) {
+// NupkgMetadata parses a .nupkg, extracts the .nuspec, and returns 5 values:
+// (identifier, name, version, developer, description).
+func NupkgMetadata(nupkgPath string) (string, string, string, string, string) {
+	// If we fail to open or read the .nuspec, fallback to the file-based name,
+	// with empty version/author/desc. But always set "identifier" to something.
+
 	r, err := zip.OpenReader(nupkgPath)
 	if err != nil {
-		// fallback: return file-based name if we can't open
-		return parsePackageName(filepath.Base(nupkgPath)), "", "", ""
+		fallback := parsePackageName(filepath.Base(nupkgPath))
+		return fallback, fallback, "", "", ""
 	}
 	defer r.Close()
 
@@ -74,31 +78,39 @@ func NupkgMetadata(nupkgPath string) (string, string, string, string) {
 		}
 	}
 	if nuspecFile == nil {
-		return parsePackageName(filepath.Base(nupkgPath)), "", "", ""
+		fallback := parsePackageName(filepath.Base(nupkgPath))
+		return fallback, fallback, "", "", ""
 	}
+
 	rc, err := nuspecFile.Open()
 	if err != nil {
-		return parsePackageName(filepath.Base(nupkgPath)), "", "", ""
+		fallback := parsePackageName(filepath.Base(nupkgPath))
+		return fallback, fallback, "", "", ""
 	}
 	defer rc.Close()
 
 	var doc Nuspec
 	if err := xml.NewDecoder(rc).Decode(&doc); err != nil {
-		return parsePackageName(filepath.Base(nupkgPath)), "", "", ""
+		fallback := parsePackageName(filepath.Base(nupkgPath))
+		return fallback, fallback, "", "", ""
 	}
 
+	// identifier is always Nuspec.Metadata.ID
+	identifier := strings.TrimSpace(doc.Metadata.ID)
+
+	// name can prefer Title, fallback to ID
 	name := doc.Metadata.Title
 	if name == "" {
 		name = doc.Metadata.ID
 	}
-	version := doc.Metadata.Version
-	dev := doc.Metadata.Authors
-	desc := doc.Metadata.Description
+	name = strings.TrimSpace(name)
 
-	return strings.TrimSpace(name),
-		strings.TrimSpace(version),
-		strings.TrimSpace(dev),
-		strings.TrimSpace(desc)
+	version := strings.TrimSpace(doc.Metadata.Version)
+	dev := strings.TrimSpace(doc.Metadata.Authors)
+	desc := strings.TrimSpace(doc.Metadata.Description)
+
+	// Return 5 separate strings.
+	return identifier, name, version, dev, desc
 }
 
 // BuildNupkgInstalls enumerates the contents of a .nupkg, computes MD5 checksums,
@@ -108,6 +120,7 @@ func NupkgMetadata(nupkgPath string) (string, string, string, string) {
 //	C:\ProgramData\chocolatey\lib\<pkgId>\tools\<filename>
 //
 // Only the file extensions in extsWeCare get added.
+// BuildNupkgInstalls enumerates the contents of a .nupkg, computes MD5 checksums, etc.
 func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 	var results []InstallItem
 
@@ -117,7 +130,7 @@ func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 	}
 	defer zr.Close()
 
-	// We'll look for .exe, .dll, .msi, .sys inside the package
+	// We'll look for .exe, .dll, .msi, .sys, etc.
 	extsWeCare := map[string]bool{
 		".exe": true, ".dll": true, ".msi": true, ".sys": true,
 		".ps1": true, ".txt": true, ".json": true, ".config": true,
@@ -134,12 +147,11 @@ func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 			continue
 		}
 
-		// guess final path:
-		//   C:\ProgramData\chocolatey\lib\<pkgID>\tools\filename
+		// guess final path => C:\ProgramData\chocolatey\lib\<pkgID>\tools\<filename>
 		filenameOnly := filepath.Base(f.Name)
 		finalPath := filepath.Join(`C:\ProgramData\chocolatey\lib`, pkgID, `tools`, filenameOnly)
 
-		// compute MD5 from inside the zip
+		// compute MD5
 		md5Val, _ := computeMD5FromZipFile(f)
 
 		item := InstallItem{
@@ -167,15 +179,14 @@ var reInstallLocation = regexp.MustCompile(`(?i)\$installLocation\s*=\s*["']([^"
 func BuildGorillaPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem, error) {
 	var results []InstallItem
 
-	// 1) Attempt to open .nupkg
 	zr, err := zip.OpenReader(nupkgPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open .nupkg: %v", err)
 	}
 	defer zr.Close()
 
-	// 2) Attempt to read $installLocation from tools/chocolateyInstall.ps1
 	installLocation := ""
+	// Look for tools/chocolateyInstall.ps1 to extract $installLocation
 	var chocoInstall *zip.File
 	for _, f := range zr.File {
 		lf := strings.ToLower(f.Name)
@@ -186,23 +197,22 @@ func BuildGorillaPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem
 	}
 	if chocoInstall != nil {
 		loc, _ := parseInstallLocation(chocoInstall)
-		installLocation = loc // might be empty if not found
+		installLocation = loc
 	}
-
-	// If no $installLocation found, fallback to "C:\Program Files\<TruncatedName>\"
+	// If not found, fallback
 	if installLocation == "" {
 		truncatedName := TruncateDomain(pkgID)
 		installLocation = filepath.Join(`C:\Program Files`, truncatedName)
 	}
 
-	// 3) Enumerate only "payload/" subfolders for real files
+	// enumerate only payload/ subfolder
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
 			continue
 		}
 		lowerName := strings.ToLower(f.Name)
 
-		// skip meta files: .nuspec, [Content_Types].xml, _rels, and anything in "tools/"
+		// skip meta files: .nuspec, [Content_Types].xml, _rels, tools/
 		if strings.HasSuffix(lowerName, ".nuspec") ||
 			strings.Contains(lowerName, "[content_types].xml") ||
 			strings.Contains(lowerName, "_rels") ||
@@ -210,26 +220,21 @@ func BuildGorillaPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem
 			continue
 		}
 
-		// We only care about "payload/" files (including subfolders)
 		if !strings.HasPrefix(lowerName, "payload/") {
 			continue
 		}
 
-		// subPath = everything after "payload/", preserving subfolders
 		subPath := strings.TrimPrefix(f.Name, "payload/")
 		subPath = strings.TrimPrefix(subPath, `/`)
-		// final path => installLocation + subfolders
 		finalPath := filepath.Join(installLocation, subPath)
 
-		// compute MD5
 		md5Val, _ := computeMD5FromZipFile(f)
 
-		// build an InstallItem
 		item := InstallItem{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(finalPath),
 			MD5Checksum: SingleQuotedString(md5Val),
-			Version:     SingleQuotedString(rawVersion), // keep the .nupkg version
+			Version:     SingleQuotedString(rawVersion),
 		}
 		results = append(results, item)
 	}

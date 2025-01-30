@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -25,10 +26,13 @@ import (
 	"github.com/windowsadmins/gorilla/pkg/utils"
 )
 
+var identifierFlag string
+
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
 	Name                 string             `yaml:"name"`
 	DisplayName          string             `yaml:"display_name,omitempty"`
+	Identifier           string             `yaml:"identifier,omitempty"`
 	Version              string             `yaml:"version"`
 	Description          NoQuoteEmptyString `yaml:"description"`
 	Category             NoQuoteEmptyString `yaml:"category"`
@@ -200,6 +204,11 @@ func main() {
 	//   - everything else => otherFlags
 	//   - and check if user typed --config / --help / --config-auto
 	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto := parseCustomArgs(os.Args)
+
+	// Initialize flags
+	flag.StringVar(&identifierFlag, "identifier", "", "Optional pkg identifier (nuspec id)")
+	// ...other flag definitions...
+	flag.Parse()
 
 	// If user typed --help or -h
 	if helpRequested {
@@ -648,6 +657,7 @@ func gorillaImport(
 	pkgsInfo := PkgsInfo{
 		Name:          metadata.ID,
 		DisplayName:   metadata.ID,
+		Identifier:    identifierFlag,
 		Version:       metadata.Version,
 		Description:   NoQuoteEmptyString(metadata.Description),
 		Category:      NoQuoteEmptyString(metadata.Category),
@@ -761,29 +771,26 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 
 	switch ext {
 	case ".nupkg":
-		name, ver, dev, desc := extract.NupkgMetadata(packagePath)
+		ident, name, ver, dev, desc := extract.NupkgMetadata(packagePath)
 
-		// Truncate domain-based name => last segment
-		truncated := extract.TruncateDomain(name)
-
-		metadata.Title = truncated
-		metadata.ID = truncated
+		metadata.ID = ident
+		metadata.Title = name
 		metadata.Version = ver
 		metadata.Developer = dev
 		metadata.Description = desc
 		metadata.InstallerType = "nupkg"
 
-		// Try gorillapkg paths
+		// Attempt to build Gorilla-based paths
 		gorillaItems, err := extract.BuildGorillaPkgInstalls(packagePath, metadata.ID, metadata.Version)
 		if err != nil {
 			fmt.Printf("Warning: BuildGorillaPkgInstalls failed: %v\n", err)
 		}
 
 		if len(gorillaItems) > 0 {
-			// Great, we have "C:\\Program Files\\Gorilla..." style items
+			// Gorilla-based .nupkg
 			metadata.Installs = convertExtractItems(gorillaItems)
 		} else {
-			// Not a gorillapkg-based .nupkg => fallback to standard chocolatey style
+			// Fallback: standard Chocolatey style
 			chocoItems := extract.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
 			metadata.Installs = convertExtractItems(chocoItems)
 			fmt.Printf("No gorillapkg items found; using %d chocolatey items.\n", len(chocoItems))

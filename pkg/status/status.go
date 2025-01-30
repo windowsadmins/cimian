@@ -353,12 +353,16 @@ func getFileVersion(filePath string) (string, error) {
 
 // isOlderVersion checks if `local < remote` using semantic versioning where possible.
 func isOlderVersion(local, remote string) bool {
-	vLocal, errL := version.NewVersion(local)
-	vRemote, errR := version.NewVersion(remote)
-	if errL != nil || errR != nil {
-		// fallback to naive string compare
-		return local < remote
+	vLocal, errLocal := version.NewVersion(local)
+	vRemote, errRemote := version.NewVersion(remote)
+	if errLocal != nil || errRemote != nil {
+		// If we cannot parse either => treat as "already up to date"
+		logging.Debug("Skipping update due to parse error",
+			"local", local, "remote", remote,
+			"errLocal", errLocal, "errRemote", errRemote)
+		return false
 	}
+	// If parse works => do standard semver compare
 	return vLocal.LessThan(vRemote)
 }
 

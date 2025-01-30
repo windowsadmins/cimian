@@ -33,6 +33,7 @@ type InstallItem struct {
 type PkgsInfo struct {
 	Name                 string        `yaml:"name"`
 	DisplayName          string        `yaml:"display_name,omitempty"`
+	Identifier           string        `yaml:"identifier,omitempty"`
 	Version              string        `yaml:"version"`
 	Description          string        `yaml:"description,omitempty"`
 	Catalogs             []string      `yaml:"catalogs"`
