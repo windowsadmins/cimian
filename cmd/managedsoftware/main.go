@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -20,7 +19,6 @@ import (
 	"github.com/windowsadmins/gorilla/pkg/logging"
 	"github.com/windowsadmins/gorilla/pkg/manifest"
 	"github.com/windowsadmins/gorilla/pkg/preflight"
-	"github.com/windowsadmins/gorilla/pkg/status"
 	"github.com/windowsadmins/gorilla/pkg/version"
 
 	"golang.org/x/sys/windows"
@@ -270,7 +268,7 @@ func checkForUpdatesWithCatalog(cfg *config.Configuration, verbosity int, manife
 		if verbosity > 0 {
 			logging.Info("Checking item", "name", item.Name, "version", item.Version)
 		}
-		if localNeedsUpdate(item, catMap, cfg) {
+		if installer.LocalNeedsUpdate(item, catMap, cfg) {
 			logging.Info("Update available for package", "package", item.Name)
 			updates = true
 		} else {
@@ -280,101 +278,11 @@ func checkForUpdatesWithCatalog(cfg *config.Configuration, verbosity int, manife
 	return updates
 }
 
-// localNeedsUpdate determines if a manifest item needs an update based on the local catalog.
-func localNeedsUpdate(m manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) bool {
-	key := strings.ToLower(m.Name)
-	catItem, found := catMap[key]
-	if !found {
-		// Fallback to the old manifest-based logic if not found in the catalog
-		logging.Debug("Item not found in local catalog; fallback to old approach", "item", m.Name)
-		return needsUpdateOld(m, cfg)
-	}
-	// Use status.CheckStatus to determine if an install is needed
-	needed, err := status.CheckStatus(catItem, "install", cfg.CachePath)
-	if err != nil {
-		return true
-	}
-	return needed
-}
-
-// needsUpdateOld retains the original logic for determining if an update is needed.
-func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
-	// If item has an InstallCheckScript, run it
-	if item.InstallCheckScript != "" {
-		exitCode, err := runPowerShellInline(item.InstallCheckScript)
-		if err != nil {
-			logging.Warn("InstallCheckScript failed => default to install", "item", item.Name, "error", err)
-			return true
-		}
-		if exitCode == 0 {
-			logging.Debug("installcheck => 0 => not installed => update needed", "item", item.Name)
-			return true
-		}
-		logging.Debug("installcheck => !=0 => installed => no update", "item", item.Name, "exitCode", exitCode)
-		return false
-	}
-	// If item has installs, check each file
-	if len(item.Installs) > 0 {
-		for _, detail := range item.Installs {
-			if fileNeedsUpdate(detail) {
-				return true
-			}
-		}
-		return false
-	}
-	// Fallback to CheckStatus with a minimal catalog item
-	citem := status.ToCatalogItem(item)
-	needed, err := status.CheckStatus(citem, "install", cfg.CachePath)
-	if err != nil {
-		return true
-	}
-	return needed
-}
-
-// fileNeedsUpdate checks if a specific file needs an update based on its presence, MD5 checksum, and version.
-func fileNeedsUpdate(d manifest.InstallDetail) bool {
-	fi, err := os.Stat(d.Path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			logging.Debug("File missing => update needed", "file", d.Path)
-			return true
-		}
-		logging.Warn("Stat error => update anyway", "file", d.Path, "error", err)
-		return true
-	}
-	if fi.IsDir() {
-		logging.Warn("Path is directory => need update", "file", d.Path)
-		return true
-	}
-	// Check MD5 checksum if provided
-	if d.MD5Checksum != "" {
-		match := download.Verify(d.Path, d.MD5Checksum)
-		if !match {
-			logging.Debug("MD5 checksum mismatch => update needed", "file", d.Path)
-			return true
-		}
-	}
-	// Check version if provided
-	if d.Version != "" {
-		myItem := catalog.Item{Name: filepath.Base(d.Path)}
-		localVersion, err := status.GetInstalledVersion(myItem)
-		if err != nil {
-			logging.Warn("Failed to get installed version => update needed", "file", d.Path, "error", err)
-			return true
-		}
-		if status.IsOlderVersion(localVersion, d.Version) {
-			logging.Debug("Installed version is older => update needed", "file", d.Path, "local_version", localVersion, "required_version", d.Version)
-			return true
-		}
-	}
-	return false
-}
-
 // prepareDownloadItemsWithCatalog prepares a list of catalog items that need to be downloaded and installed.
 func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
 	var results []catalog.Item
 	for _, m := range manifestItems {
-		if localNeedsUpdate(m, catMap, cfg) {
+		if installer.LocalNeedsUpdate(m, catMap, cfg) {
 			key := strings.ToLower(m.Name)
 			catItem, found := catMap[key]
 			if !found {
@@ -549,24 +457,4 @@ func clearCacheFolder(cachePath string) {
 		}
 	}
 	logging.Info("Cache folder emptied after run", "cachePath", cachePath)
-}
-
-// runPowerShellInline executes a PowerShell script and returns its exit code.
-func runPowerShellInline(script string) (int, error) {
-	psExe := "powershell.exe"
-	cmdArgs := []string{
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", script,
-	}
-	cmd := exec.Command(psExe, cmdArgs...)
-	err := cmd.Run()
-	if err == nil {
-		return 0, nil
-	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		return exitErr.ExitCode(), nil
-	}
-	return -1, err
 }
