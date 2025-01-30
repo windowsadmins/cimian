@@ -20,6 +20,7 @@ type Item struct {
 	Name          string        `yaml:"name"`
 	Dependencies  []string      `yaml:"dependencies"`
 	DisplayName   string        `yaml:"display_name"`
+	Identifier    string        `yaml:"identifier,omitempty"`
 	Installer     InstallerItem `yaml:"installer"`
 	Check         InstallCheck  `yaml:"check"`
 	Installs      []InstallItem `yaml:"installs"`
