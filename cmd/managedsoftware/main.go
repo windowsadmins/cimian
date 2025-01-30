@@ -1,3 +1,5 @@
+// cmd/managedsoftware/main.go
+
 package main
 
 import (

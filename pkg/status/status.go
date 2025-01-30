@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	version "github.com/hashicorp/go-version"
@@ -58,85 +59,153 @@ func IsOlderVersion(local, remote string) bool {
 	vRemote, errRemote := version.NewVersion(remote)
 
 	if errLocal != nil || errRemote != nil {
-		// Instead of treating this as “need an update,” skip it:
-		logging.Debug("Parse error => skipping update",
+		logging.Debug("Parse error => skipping forced install/update",
 			"local", local,
 			"remote", remote,
 			"errLocal", errLocal,
 			"errRemote", errRemote,
 		)
-		// Return false => means “no update needed”
 		return false
 	}
-
 	return vLocal.LessThan(vRemote)
 }
 
-// CheckStatus determines if a catalogItem requires an install, update, or uninstall action.
-// ...
+// getSystemArchitecture returns a normalized string for the local system arch
+func getSystemArchitecture() string {
+	arch := runtime.GOARCH
+	switch arch {
+	case "amd64", "x86_64":
+		return "x64"
+	case "386":
+		return "x86"
+	default:
+		// e.g. "arm64", or any other
+		return arch
+	}
+}
+
+// supportsArchitecture checks if the systemArch is one of item.SupportedArch
+func supportsArchitecture(item catalog.Item, sysArch string) bool {
+	// If the item has no “supported_arch” set, maybe default to “true”
+	if len(item.SupportedArch) == 0 {
+		return true
+	}
+	sysArchNormalized := normalizeArch(sysArch)
+
+	for _, arch := range item.SupportedArch {
+		if normalizeArch(arch) == sysArchNormalized {
+			return true
+		}
+	}
+	return false
+}
+
+// optional helper to handle synonyms
+func normalizeArch(arch string) string {
+	arch = strings.ToLower(arch)
+	if arch == "amd64" || arch == "x86_64" {
+		return "x64"
+	}
+	if arch == "386" {
+		return "x86"
+	}
+	return arch
+}
+
+// CheckStatus determines if `catalogItem` requires an install, update, or uninstall.
+//
+// Returns (bool, error) => bool means “true => do the action,” or “false => skip.”
 func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool, error) {
-	// See if a script check is present
+	// 1) If a script check is defined (catalogItem.Check.Script)
 	if catalogItem.Check.Script != "" {
 		logging.Info("Checking status via script:", catalogItem.DisplayName)
 		return checkScript(catalogItem, cachePath, installType)
 	}
 
-	// See if a file check is defined
+	// 2) If a file check array is defined
 	if len(catalogItem.Check.File) > 0 {
 		logging.Info("Checking status via file:", catalogItem.DisplayName)
 		return checkPath(catalogItem, installType)
 	}
 
-	// See if a registry check is defined
+	// 3) If a registry check is defined
 	if catalogItem.Check.Registry.Version != "" {
 		logging.Info("Checking status via registry:", catalogItem.DisplayName)
 		return checkRegistry(catalogItem, installType)
 	}
 
-	// Fallback: check the .Installs array or simple version logic
+	// 4) If we have an .Installs array
 	needed, err := checkInstalls(catalogItem, installType)
 	if err != nil {
 		return true, err
 	}
 	if needed {
+		// If we found something missing/mismatched => do install/update
 		return true, nil
 	}
 
-	// Additional fallback:
-	// If in managed_installs => install if not installed or older
-	// If in managed_updates => update only if installed & older
-	// If in managed_uninstalls => remove if installed
+	// 5) Fallback => local version check
 	localVersion, err := getLocalInstalledVersion(catalogItem)
 	if err != nil {
 		return true, fmt.Errorf("unable to detect local version: %v", err)
 	}
+	logging.Debug("Fallback logic for item",
+		"item", catalogItem.Name,
+		"localVersion", localVersion,
+		"remoteVersion", catalogItem.Version,
+		"installType", installType,
+	)
 
-	// If localVersion is "", that means “not installed at all”
-	// => for “install” or “update,” we do want to proceed installing if it’s empty
-	// => for “uninstall,” we only do it if localVersion != ""
+	// check for architecture mismatch
+	sysArch := getSystemArchitecture()
+	if !supportsArchitecture(catalogItem, sysArch) {
+		logging.Warn("Skipping due to architecture mismatch",
+			"item", catalogItem.Name,
+			"supported_arch", catalogItem.SupportedArch,
+			"system_arch", sysArch,
+		)
+		return false, nil
+	}
+
 	switch installType {
 	case "install":
+		// If no local version => do it
 		if localVersion == "" {
-			// Not installed => need install
 			return true, nil
 		}
-		// If we do have localVersion, check if it’s older
+		// If local is strictly *newer*, skip to avoid “downgrading”
+		if IsOlderVersion(catalogItem.Version, localVersion) {
+			logging.Warn("Refusing to install older version on top of newer one",
+				"localVersion", localVersion,
+				"remoteVersion", catalogItem.Version,
+			)
+			return false, nil
+		}
+		// If local is older => do it
 		if IsOlderVersion(localVersion, catalogItem.Version) {
 			return true, nil
 		}
-		// Otherwise same or newer => no action
+		// Same or no parse => skip
 		return false, nil
 
 	case "update":
+		// If not installed => no update
 		if localVersion == "" {
-			// Not installed => no update
 			return false, nil
 		}
-		// If installed but older => do update
+		// If local is strictly newer => skip
+		if IsOlderVersion(catalogItem.Version, localVersion) {
+			logging.Warn("Local version is newer than remote. Not updating.",
+				"localVersion", localVersion,
+				"remoteVersion", catalogItem.Version,
+			)
+			return false, nil
+		}
+		// If local is older => do update
 		if IsOlderVersion(localVersion, catalogItem.Version) {
 			return true, nil
 		}
-		// Otherwise no action
+		// Otherwise skip
 		return false, nil
 
 	case "uninstall":
@@ -144,7 +213,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return (localVersion != ""), nil
 
 	default:
-		// fallback
+		// fallback => do nothing
 		return false, nil
 	}
 }
