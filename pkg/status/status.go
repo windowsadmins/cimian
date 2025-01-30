@@ -54,7 +54,22 @@ func GetInstalledVersion(item catalog.Item) (string, error) {
 // IsOlderVersion is an **exported** convenience wrapper to compare versions
 // (returning true if `local` is strictly older than `remote`).
 func IsOlderVersion(local, remote string) bool {
-	return isOlderVersion(local, remote)
+	vLocal, errLocal := version.NewVersion(local)
+	vRemote, errRemote := version.NewVersion(remote)
+
+	if errLocal != nil || errRemote != nil {
+		// Instead of treating this as “need an update,” skip it:
+		logging.Debug("Parse error => skipping update",
+			"local", local,
+			"remote", remote,
+			"errLocal", errLocal,
+			"errRemote", errRemote,
+		)
+		// Return false => means “no update needed”
+		return false
+	}
+
+	return vLocal.LessThan(vRemote)
 }
 
 // CheckStatus determines if a catalogItem requires an install, update, or uninstall action.
@@ -106,7 +121,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			return true, nil
 		}
 		// If we do have localVersion, check if it’s older
-		if isOlderVersion(localVersion, catalogItem.Version) {
+		if IsOlderVersion(localVersion, catalogItem.Version) {
 			return true, nil
 		}
 		// Otherwise same or newer => no action
@@ -118,7 +133,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			return false, nil
 		}
 		// If installed but older => do update
-		if isOlderVersion(localVersion, catalogItem.Version) {
+		if IsOlderVersion(localVersion, catalogItem.Version) {
 			return true, nil
 		}
 		// Otherwise no action
@@ -134,10 +149,47 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 	}
 }
 
+// readInstalledVersionFromRegistry returns the version we stored
+func readInstalledVersionFromRegistry(name string) (string, error) {
+	regPath := `Software\ManagedInstalls\` + name
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		return "", err
+	}
+	defer k.Close()
+
+	ver, _, err := k.GetStringValue("Version")
+	if err != nil {
+		return "", err
+	}
+	return ver, nil
+}
+
 // getLocalInstalledVersion attempts to find the installed version from registry or file metadata.
 func getLocalInstalledVersion(item catalog.Item) (string, error) {
-	logging.Info("Checking local installed version", "itemName", item.Name)
+	logging.Debug("Reading local installed version from registry (if any)",
+		"item", item.Name,
+		"installerType", item.Installer.Type,
+	)
 
+	// 1) FIRST, check the Gorilla-managed key (i.e. readInstalledVersionFromRegistry).
+	//    This is where you store your "Wrote local installed version to registry item=Git version=2.47.1.1" etc.
+	gorillaVersion, errLocalReg := readInstalledVersionFromRegistry(item.Name)
+	if errLocalReg == nil && gorillaVersion != "" {
+		logging.Info("Found Gorilla-managed registry version",
+			"item", item.Name,
+			"registryVersion", gorillaVersion,
+		)
+		return gorillaVersion, nil
+	}
+	if errLocalReg != nil {
+		logging.Debug("No Gorilla version found in registry or error reading it",
+			"item", item.Name,
+			"error", errLocalReg,
+		)
+	}
+
+	// 2) If not found in Gorilla’s own key, proceed with enumerating the Windows Uninstall keys.
 	if len(RegistryItems) == 0 {
 		var err error
 		RegistryItems, err = getUninstallKeys()
@@ -146,37 +198,42 @@ func getLocalInstalledVersion(item catalog.Item) (string, error) {
 		}
 	}
 
-	// Try an exact match or partial match in RegistryItems
 	for _, regApp := range RegistryItems {
+		// EXACT MATCH
 		if regApp.Name == item.Name {
-			logging.Info("Exact registry match found", "itemName", item.Name, "version", regApp.Version)
+			logging.Info("Exact registry match found",
+				"item", item.Name,
+				"registryVersion", regApp.Version,
+			)
 			return regApp.Version, nil
-		} else if strings.Contains(regApp.Name, item.Name) {
-			logging.Info("Partial registry match found", "itemName", item.Name, "registryEntry", regApp.Name)
+		}
+		// PARTIAL MATCH
+		if strings.Contains(regApp.Name, item.Name) {
+			logging.Info("Partial registry match found",
+				"item", item.Name,
+				"registryEntry", regApp.Name,
+				"registryVersion", regApp.Version,
+			)
 			return regApp.Version, nil
 		}
 	}
 
-	// If this is an MSI with product code
+	// 3) If it's an MSI with a product code, check that:
 	if item.Installer.Type == "msi" && item.Installer.ProductCode != "" {
-		if ver := findMsiVersion(item.Installer.ProductCode); ver != "" {
-			logging.Info("MSI product code match found", "itemName", item.Name, "version", ver)
-			return ver, nil
+		v := findMsiVersion(item.Installer.ProductCode)
+		if v != "" {
+			logging.Info("MSI product code match found",
+				"item", item.Name,
+				"registryVersion", v,
+			)
+			return v, nil
 		}
 	}
 
-	// Fall back to file-based checks
-	for _, fc := range item.Check.File {
-		if fc.Path != "" {
-			meta := GetFileMetadata(fc.Path)
-			if meta.versionString != "" {
-				logging.Info("File-based version found", "filePath", fc.Path, "version", meta.versionString)
-				return meta.versionString, nil
-			}
-		}
-	}
-
-	// Not found => empty version
+	// 4) No match => treat as not installed
+	logging.Debug("No registry version found, returning empty",
+		"item", item.Name,
+	)
 	return "", nil
 }
 
@@ -315,7 +372,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 						// If version check fails => treat as mismatch => needs action
 						return true, nil
 					}
-					if isOlderVersion(fileVersion, install.Version) {
+					if IsOlderVersion(fileVersion, install.Version) {
 						return true, nil
 					}
 				}
@@ -349,21 +406,6 @@ func getFileVersion(filePath string) (string, error) {
 		return "", nil
 	}
 	return metadata.versionString, nil
-}
-
-// isOlderVersion checks if `local < remote` using semantic versioning where possible.
-func isOlderVersion(local, remote string) bool {
-	vLocal, errLocal := version.NewVersion(local)
-	vRemote, errRemote := version.NewVersion(remote)
-	if errLocal != nil || errRemote != nil {
-		// If we cannot parse either => treat as "already up to date"
-		logging.Debug("Skipping update due to parse error",
-			"local", local, "remote", remote,
-			"errLocal", errLocal, "errRemote", errRemote)
-		return false
-	}
-	// If parse works => do standard semver compare
-	return vLocal.LessThan(vRemote)
 }
 
 // checkMsiProductCode queries registry for productCode, compares vs. checkVersion
