@@ -71,7 +71,7 @@ func IsOlderVersion(local, remote string) bool {
 }
 
 // getSystemArchitecture returns a normalized string for the local system arch
-func getSystemArchitecture() string {
+func GetSystemArchitecture() string {
 	arch := runtime.GOARCH
 	switch arch {
 	case "amd64", "x86_64":
@@ -84,8 +84,8 @@ func getSystemArchitecture() string {
 	}
 }
 
-// supportsArchitecture checks if the systemArch is one of item.SupportedArch
-func supportsArchitecture(item catalog.Item, sysArch string) bool {
+// SupportsArchitecture checks if the systemArch is one of item.SupportedArch
+func SupportsArchitecture(item catalog.Item, sysArch string) bool {
 	// If the item has no “supported_arch” set, maybe default to “true”
 	if len(item.SupportedArch) == 0 {
 		return true
@@ -157,8 +157,8 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 	)
 
 	// check for architecture mismatch
-	sysArch := getSystemArchitecture()
-	if !supportsArchitecture(catalogItem, sysArch) {
+	sysArch := GetSystemArchitecture()
+	if !SupportsArchitecture(catalogItem, sysArch) {
 		logging.Warn("Skipping due to architecture mismatch",
 			"item", catalogItem.Name,
 			"supported_arch", catalogItem.SupportedArch,
