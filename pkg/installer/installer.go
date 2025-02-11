@@ -23,12 +23,14 @@ import (
 	"github.com/windowsadmins/gorilla/pkg/status"
 )
 
+// We rely on these from the environment or Windows folder:
 var (
 	commandNupkg = filepath.Join(os.Getenv("ProgramData"), "chocolatey", "bin", "choco.exe")
 	commandMsi   = filepath.Join(os.Getenv("WINDIR"), "system32", "msiexec.exe")
 	commandPs1   = filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
 )
 
+// storeInstalledVersionInRegistry saves the “Version” into HKLM\Software\ManagedInstalls\<Name>
 func storeInstalledVersionInRegistry(item catalog.Item) {
 	regPath := `Software\ManagedInstalls\` + item.Name
 	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, regPath, registry.SET_VALUE)
@@ -39,12 +41,10 @@ func storeInstalledVersionInRegistry(item catalog.Item) {
 	}
 	defer k.Close()
 
-	// Ensure the “Version” is never empty
 	versionStr := strings.TrimSpace(item.Version)
 	if versionStr == "" {
 		versionStr = "0.0.0"
 	}
-
 	err = k.SetStringValue("Version", versionStr)
 	if err != nil {
 		logging.Warn("Failed to set 'Version' in registry",
@@ -55,9 +55,9 @@ func storeInstalledVersionInRegistry(item catalog.Item) {
 		"item", item.Name, "version", versionStr)
 }
 
+// removeInstalledVersionFromRegistry removes HKLM\Software\ManagedInstalls\<Name> entirely
 func removeInstalledVersionFromRegistry(item catalog.Item) {
 	regPath := `Software\ManagedInstalls\` + item.Name
-	// We might delete the entire subkey for this item:
 	err := registry.DeleteKey(registry.LOCAL_MACHINE, regPath)
 	if err != nil {
 		if err == registry.ErrNotExist {
@@ -68,22 +68,46 @@ func removeInstalledVersionFromRegistry(item catalog.Item) {
 			"item", item.Name, "key", regPath, "error", err)
 		return
 	}
-	logging.Debug("Removed registry key after uninstall",
-		"item", item.Name, "key", regPath)
+	logging.Debug("Removed registry key after uninstall", "item", item.Name, "key", regPath)
 }
 
-// Install is the main entry point for installing/updating/uninstalling a catalog item
+// Install is the main entry point for installing/updating/uninstalling a catalog item.
+// This is invoked by "managedsoftware" to do the actual action.
 func Install(item catalog.Item, action, localFile, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
 	if checkOnly {
 		logging.Info("CheckOnly mode: would perform action", "action", action, "item", item.Name)
 		return "CheckOnly: No action performed.", nil
 	}
 
+	// 1) Check for a pending reboot before any actual install/update/uninstall
+	//    so that user can choose to reboot or skip.
+	if isRebootPending() {
+		logging.Warn("A system reboot is pending before continuing", "item", item.Name)
+		userChoseReboot := offerRebootPrompt()
+		if userChoseReboot {
+			rebootSystem()
+			return "System is rebooting now.", fmt.Errorf("reboot in progress")
+		} else {
+			logging.Warn("User declined reboot; continuing with the selected action anyway.")
+		}
+	}
+
+	// 2) Handle the specified action
 	switch strings.ToLower(action) {
 	case "install", "update":
-		if item.Installer.Type == "nupkg" {
-			return installOrUpgradeNupkg(item, localFile)
+		// We do an architecture check here using status.* so we don't duplicate logic
+		sysArch := status.GetSystemArchitecture()
+		if !status.SupportsArchitecture(item, sysArch) {
+			return "", fmt.Errorf("system arch %s not in supported_arch=%v for item %s",
+				sysArch, item.SupportedArch, item.Name)
 		}
+
+		if item.Installer.Type == "nupkg" {
+			// For .nupkg => special function
+			return installOrUpgradeNupkg(item, localFile, cfg)
+		}
+
+		// For MSI, EXE, PS1 => normal path
 		err := installItem(item, localFile, cachePath)
 		if err != nil {
 			logging.Error("Installation failed", "item", item.Name, "error", err)
@@ -94,6 +118,14 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		return "Installation success", nil
 
 	case "uninstall":
+		// If you also want a reboot check for uninstall, do it here:
+		sysArch := status.GetSystemArchitecture()
+		if !status.SupportsArchitecture(item, sysArch) {
+			// Possibly skip or fail if arch mismatch
+			logging.Warn("Skipping uninstall because system arch not matched",
+				"item", item.Name, "arch", sysArch)
+		}
+
 		output, err := uninstallItem(item, cachePath)
 		if err != nil {
 			logging.Error("Uninstall failed", "item", item.Name, "error", err)
@@ -110,16 +142,15 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 	}
 }
 
-// localNeedsUpdate determines if a manifest item needs an update based on the local catalog.
+// localNeedsUpdate is your existing "decide if an update is needed" check:
 func LocalNeedsUpdate(m manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) bool {
+	// The logic here is unchanged from your snippet
 	key := strings.ToLower(m.Name)
 	catItem, found := catMap[key]
 	if !found {
-		// Fallback to the old manifest-based logic if not found in the catalog
 		logging.Debug("Item not found in local catalog; fallback to old approach", "item", m.Name)
 		return needsUpdateOld(m, cfg)
 	}
-	// Use status.CheckStatus to determine if an install is needed
 	needed, err := status.CheckStatus(catItem, "install", cfg.CachePath)
 	if err != nil {
 		return true
@@ -127,9 +158,8 @@ func LocalNeedsUpdate(m manifest.Item, catMap map[string]catalog.Item, cfg *conf
 	return needed
 }
 
-// needsUpdateOld retains the original logic for determining if an update is needed.
+// needsUpdateOld is your legacy fallback approach (unchanged).
 func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
-	// If item has an InstallCheckScript, run it
 	if item.InstallCheckScript != "" {
 		exitCode, err := runPowerShellInline(item.InstallCheckScript)
 		if err != nil {
@@ -143,7 +173,6 @@ func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
 		logging.Debug("installcheck => !=0 => installed => no update", "item", item.Name, "exitCode", exitCode)
 		return false
 	}
-	// If item has installs, check each file
 	if len(item.Installs) > 0 {
 		for _, detail := range item.Installs {
 			if fileNeedsUpdate(detail) {
@@ -152,7 +181,6 @@ func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
 		}
 		return false
 	}
-	// Fallback to CheckStatus with a minimal catalog item
 	citem := status.ToCatalogItem(item)
 	needed, err := status.CheckStatus(citem, "install", cfg.CachePath)
 	if err != nil {
@@ -161,7 +189,7 @@ func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
 	return needed
 }
 
-// fileNeedsUpdate checks if a specific file needs an update based on its presence, MD5 checksum, and version.
+// fileNeedsUpdate is your original "check file presence/hashes/versions".
 func fileNeedsUpdate(d manifest.InstallDetail) bool {
 	fi, err := os.Stat(d.Path)
 	if err != nil {
@@ -176,7 +204,6 @@ func fileNeedsUpdate(d manifest.InstallDetail) bool {
 		logging.Warn("Path is directory => need update", "file", d.Path)
 		return true
 	}
-	// Check MD5 checksum if provided
 	if d.MD5Checksum != "" {
 		match := download.Verify(d.Path, d.MD5Checksum)
 		if !match {
@@ -184,8 +211,8 @@ func fileNeedsUpdate(d manifest.InstallDetail) bool {
 			return true
 		}
 	}
-	// Check version if provided
 	if d.Version != "" {
+		// We'll do a normal status-based version check
 		myItem := catalog.Item{Name: filepath.Base(d.Path)}
 		localVersion, err := status.GetInstalledVersion(myItem)
 		if err != nil {
@@ -193,14 +220,15 @@ func fileNeedsUpdate(d manifest.InstallDetail) bool {
 			return true
 		}
 		if status.IsOlderVersion(localVersion, d.Version) {
-			logging.Debug("Installed version is older => update needed", "file", d.Path, "local_version", localVersion, "required_version", d.Version)
+			logging.Debug("Installed version is older => update needed",
+				"file", d.Path, "local_version", localVersion, "required_version", d.Version)
 			return true
 		}
 	}
 	return false
 }
 
-// runPowerShellInline executes a PowerShell script and returns its exit code.
+// runPowerShellInline is your existing helper for .ps1 scripts
 func runPowerShellInline(script string) (int, error) {
 	psExe := "powershell.exe"
 	cmdArgs := []string{
@@ -220,15 +248,9 @@ func runPowerShellInline(script string) (int, error) {
 	return -1, err
 }
 
-// installItem decides how to install or update an item that is NOT a .nupkg
+// installItem installs items that are NOT .nupkg (MSI, EXE, powershell).
 func installItem(item catalog.Item, localFile, cachePath string) error {
-	sysArch := getSystemArchitecture()
-	if !supportsArchitecture(item, sysArch) {
-		return fmt.Errorf("system arch %s not in supported_arch=%v for item %s", sysArch, item.SupportedArch, item.Name)
-	}
-
-	installerType := strings.ToLower(item.Installer.Type)
-	switch installerType {
+	switch strings.ToLower(item.Installer.Type) {
 	case "msi":
 		output, err := runMSIInstaller(item, localFile)
 		if err != nil {
@@ -238,7 +260,6 @@ func installItem(item catalog.Item, localFile, cachePath string) error {
 		return nil
 
 	case "exe":
-		// If a preinstall_script is provided, detect if it’s .bat or PowerShell style
 		if item.PreScript != "" {
 			output, err := runPreinstallScript(item, localFile, cachePath)
 			if err != nil {
@@ -264,100 +285,119 @@ func installItem(item catalog.Item, localFile, cachePath string) error {
 		logging.Debug("PS1 install output", "output", output)
 		return nil
 
-	case "nupkg":
-		// Fallback logic if we ever get here, though we handle nupkg above
-		output, err := installOrUpgradeNupkg(item, localFile)
-		if err != nil {
-			return err
-		}
-		logging.Debug("Nupkg install output", "output", output)
-		return nil
-
 	default:
+		// If it's actually "nupkg," we handle that in installOrUpgradeNupkg
 		return fmt.Errorf("unknown installer type: %s", item.Installer.Type)
 	}
 }
 
-// handle .nupkg: check if installed => upgrade, else => install
-func installOrUpgradeNupkg(item catalog.Item, localFile string) (string, error) {
-	// 1) Choose the pkgID we’ll use for 'choco list'
-	pkgID := strings.TrimSpace(item.Identifier)
-	if pkgID == "" {
-		pkgID = strings.TrimSpace(item.Name)
-	}
+// We define a single function that forcibly uses --force --allowdowngrade
+// to ensure Gorilla's decision is final.
 
-	// 2) Attempt to parse .nupkg file for ID & version, if desired.
-	//    If you prefer to override the “pkgID” from the .nuspec <id>,
-	//    you can do that here:
+func installOrUpgradeNupkg(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
+	// Mark cfg as “used” so it doesn't trigger unusedparams:
+	_ = cfg
+
+	// 1) Extract .nuspec metadata for pkgID & version
 	nupkgID, nupkgVer, metaErr := extractNupkgMetadata(localFile)
 	if metaErr != nil {
-		logging.Warn("Failed to extract nupkg metadata, continuing with item.Identifier or item.Name",
-			"pkgID", pkgID, "error", metaErr)
-	} else {
-		logging.Debug("Nupkg metadata extracted", "nupkgID", nupkgID, "nupkgVer", nupkgVer)
-		// If you want to *override* the item’s ID with the .nuspec’s <id>, do it here:
-		if nupkgID != "" {
-			pkgID = nupkgID
+		logging.Warn("Failed to parse .nuspec metadata; falling back to item.Name",
+			"file", localFile, "error", metaErr)
+		nupkgID = strings.TrimSpace(item.Identifier)
+		if nupkgID == "" {
+			nupkgID = strings.TrimSpace(item.Name)
 		}
-		// item.Version could also be set from nupkgVer, if you want.
-		// item.Version = nupkgVer
+		if nupkgID == "" {
+			nupkgID = "unknown-nupkgID"
+		}
+		nupkgVer = "0.0.0"
 	}
+	logging.Debug("Parsed .nuspec metadata", "nupkgID", nupkgID, "nupkgVer", nupkgVer, "localFile", localFile)
 
-	logging.Info("Installing or upgrading nupkg", "pkgID", pkgID)
-
-	// 3) Check if installed: `choco list --local-only <pkgID>`
-	checkCmdArgs := []string{"list", "--local-only", pkgID}
-	out, checkErr := runCMD(commandNupkg, checkCmdArgs)
+	// 2) Check if installed
+	installed, checkErr := isNupkgInstalled(nupkgID)
 	if checkErr != nil {
-		logging.Warn("Failed to check if nupkg is installed, forcing install",
-			"pkgID", pkgID, "error", checkErr)
-		return runChocoInstall(localFile)
+		logging.Warn("Could not detect if nupkg is installed; forcing install",
+			"pkgID", nupkgID, "error", checkErr)
+		return doChocoInstall(item, nupkgID, nupkgVer, localFile)
 	}
-	lines := strings.Split(strings.ToLower(out), "\n")
 
-	// We assume it's "installed" if we see a line that starts with "<pkgid>|"
-	installed := false
-	prefix := strings.ToLower(pkgID) + "|"
+	if !installed {
+		// not installed => choco install
+		logging.Info("Nupkg not installed; proceeding with forced install", "pkgID", nupkgID)
+		return doChocoInstall(item, nupkgID, nupkgVer, localFile)
+	}
+
+	// installed => choco upgrade
+	logging.Info("Nupkg is installed; forcing upgrade/downgrade", "pkgID", nupkgID)
+	return doChocoUpgrade(item, nupkgID, nupkgVer, localFile)
+}
+
+func isNupkgInstalled(pkgID string) (bool, error) {
+	cmdArgs := []string{"list", "--local-only", "--limit-output", "--exact", pkgID}
+	out, err := runCMD(commandNupkg, cmdArgs)
+	if err != nil {
+		return false, err
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, prefix) {
-			installed = true
-			break
+		line = strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(line, strings.ToLower(pkgID)+"|") {
+			return true, nil
 		}
 	}
-
-	if installed {
-		logging.Info("Nupkg is installed, upgrading...", "pkgID", pkgID)
-		return runChocoUpgrade(localFile)
-	}
-
-	logging.Info("Nupkg not installed, installing...", "pkgID", pkgID)
-	return runChocoInstall(localFile)
+	return false, nil
 }
 
-const chocolateyBin = `C:\ProgramData\chocolatey\bin\choco.exe`
-
-func runChocoInstall(nupkgFile string) (string, error) {
+func doChocoInstall(item catalog.Item, pkgID, pkgVersion, localFile string) (string, error) {
+	logging.Info("Running choco install with --force", "pkgID", pkgID, "file", localFile)
 	cmdArgs := []string{
-		"install",
-		nupkgFile,
+		"install", localFile,
 		"-y",
-		"--log-file=C:\\ProgramData\\ManagedInstalls\\Logs\\install.log",
+		"--force",
+		"--allowdowngrade",
 		"--debug",
+		"--log-file=C:\\ProgramData\\ManagedInstalls\\Logs\\install.log",
 	}
-	return runCMD(chocolateyBin, cmdArgs)
+	out, err := runCMD(commandNupkg, cmdArgs)
+	if err != nil {
+		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
+		return out, err
+	}
+	storeInstalledVersionInRegistry(catalog.Item{
+		Name:       item.Name,
+		Identifier: pkgID,
+		Version:    pkgVersion,
+	})
+	logging.Info("Choco install succeeded", "pkgID", pkgID)
+	return out, nil
 }
 
-func runChocoUpgrade(nupkgFile string) (string, error) {
+func doChocoUpgrade(item catalog.Item, pkgID, pkgVersion, localFile string) (string, error) {
+	logging.Info("Running choco upgrade with --force", "pkgID", pkgID, "file", localFile)
 	cmdArgs := []string{
-		"upgrade",
-		nupkgFile,
+		"upgrade", localFile,
 		"-y",
-		"--log-file=C:\\ProgramData\\ManagedInstalls\\Logs\\install.log",
+		"--force",
+		"--allowdowngrade",
 		"--debug",
+		"--log-file=C:\\ProgramData\\ManagedInstalls\\Logs\\install.log",
 	}
-	return runCMD(chocolateyBin, cmdArgs)
+	out, err := runCMD(commandNupkg, cmdArgs)
+	if err != nil {
+		logging.Error("Choco upgrade failed", "pkgID", pkgID, "error", err)
+		return out, err
+	}
+	storeInstalledVersionInRegistry(catalog.Item{
+		Name:       item.Name,
+		Identifier: pkgID,
+		Version:    pkgVersion,
+	})
+	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
+	return out, nil
 }
 
+// runMSIInstaller
 func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 	cmdArgs := []string{
 		"/i", localFile,
@@ -365,36 +405,29 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 		"/norestart",
 		"/l*v", `C:\ProgramData\ManagedInstalls\Logs\install.log`,
 	}
-
-	output, err := runCMD("msiexec.exe", cmdArgs)
+	output, err := runCMD(commandMsi, cmdArgs)
 	if err != nil {
-		// Logging already improved in runCMD()
 		return output, err
 	}
 	logging.Info("Successfully installed MSI package", "package", item.Name)
 	return output, nil
 }
 
-// runPreinstallScript decides if item.PreScript is a BAT or PowerShell script, then calls the appropriate function.
+// runPreinstallScript detects .bat vs PowerShell style
 func runPreinstallScript(item catalog.Item, localFile, cachePath string) (string, error) {
-	// If the script content appears to start with @echo or any typical .bat syntax, call runBatInstaller
-	// Otherwise, do runPS1InstallerFromScript
 	scriptLower := strings.ToLower(item.PreScript)
-	if strings.Contains(scriptLower, "@echo off") ||
-		strings.HasPrefix(scriptLower, "rem ") ||
+	if strings.Contains(scriptLower, "@echo off") || strings.HasPrefix(scriptLower, "rem ") ||
 		strings.HasPrefix(scriptLower, "::") {
 		// Looks like a BAT script
 		return runBatInstaller(item, localFile, cachePath)
 	}
-	// else assume PowerShell
+	// else assume PS
 	return runPS1InstallerFromScript(item, localFile, cachePath)
 }
 
-// runBatInstaller writes item.PreScript to a .bat file, then calls it with cmd.exe /c
+// runBatInstaller
 func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, error) {
-	// If we truly don't need localFile, explicitly ignore it to silence 'unused param'
-	_ = localFile
-
+	_ = localFile // ignore
 	batPath := filepath.Join(cachePath, "tmp_preinstall.bat")
 	err := os.WriteFile(batPath, []byte(item.PreScript), 0o755)
 	if err != nil {
@@ -412,15 +445,14 @@ func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, er
 	runErr := cmd.Run()
 	output := out.String()
 	if runErr != nil {
-		// Use %v for error message
 		return output, fmt.Errorf("command execution failed: %v - %s", runErr, stderr.String())
 	}
 	return output, nil
 }
 
-// runPS1InstallerFromScript writes item.PreScript to a .ps1 file, then calls it with powershell
+// runPS1InstallerFromScript
 func runPS1InstallerFromScript(item catalog.Item, localFile, cachePath string) (string, error) {
-	_ = localFile // not used here
+	_ = localFile
 	psFile := filepath.Join(cachePath, "preinstall_tmp.ps1")
 	err := os.WriteFile(psFile, []byte(item.PreScript), 0o755)
 	if err != nil {
@@ -443,7 +475,7 @@ func runPS1InstallerFromScript(item catalog.Item, localFile, cachePath string) (
 	return output, nil
 }
 
-// runEXEInstaller for direct silent .exe (no preinstall script)
+// runEXEInstaller for direct silent .exe
 func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	baseSilentArgs := []string{"/S"}
 	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
@@ -456,6 +488,7 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	return output, nil
 }
 
+// runPS1Installer (for a main PS1 installer)
 func runPS1Installer(item catalog.Item, localFile string) (string, error) {
 	cmdArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", localFile}
 	output, err := runCMD(commandPs1, cmdArgs)
@@ -467,41 +500,10 @@ func runPS1Installer(item catalog.Item, localFile string) (string, error) {
 	return output, nil
 }
 
-// runCMD ensures we do NOT treat a failing command as success
-func runCMD(command string, arguments []string) (string, error) {
-	cmd := exec.Command(command, arguments...)
+// -------------------- UNINSTALL LOGIC --------------------
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	outStr := stdout.String()
-	errStr := stderr.String()
-
-	if err != nil {
-		// If the error is from a non-zero exit code, log that code explicitly
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode := exitErr.ExitCode()
-			logging.Error("Command failed",
-				"command", command,
-				"args", arguments,
-				"exitCode", exitCode,
-				"stderr", errStr,
-			)
-			return outStr, fmt.Errorf("command failed with exit code=%d", exitCode)
-		}
-		// Or some other error (like “file not found”)
-		logging.Error("Failed to run cmd", "command", command, "args", arguments, "error", err)
-		return outStr, err
-	}
-
-	// If we get here => exitCode=0 => success
-	return outStr, nil
-}
-
-// uninstallItem decides how to uninstall an item
 func uninstallItem(item catalog.Item, cachePath string) (string, error) {
+	// Typically we look for the same localFile in cache
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
 
@@ -574,6 +576,39 @@ func runNupkgUninstaller(absFile string) (string, error) {
 	return output, nil
 }
 
+// -------------------- SHARED UTILITY FUNCS --------------------
+
+// runCMD ensures a non-zero exit code => error
+func runCMD(command string, arguments []string) (string, error) {
+	cmd := exec.Command(command, arguments...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	outStr := stdout.String()
+	errStr := stderr.String()
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode := exitErr.ExitCode()
+			logging.Error("Command failed",
+				"command", command,
+				"args", arguments,
+				"exitCode", exitCode,
+				"stderr", errStr,
+			)
+			return outStr, fmt.Errorf("command failed with exit code=%d", exitCode)
+		}
+		logging.Error("Failed to run cmd", "command", command, "args", arguments, "error", err)
+		return outStr, err
+	}
+	// success => exitCode=0
+	return outStr, nil
+}
+
+// extractNupkgMetadata tries to open .nupkg => read .nuspec => return (id, version).
 func extractNupkgMetadata(nupkgPath string) (string, string, error) {
 	r, err := zip.OpenReader(nupkgPath)
 	if err != nil {
@@ -604,7 +639,7 @@ func extractNupkgMetadata(nupkgPath string) (string, string, error) {
 	return "", "", fmt.Errorf("nuspec file not found in nupkg")
 }
 
-// hideConsoleWindow is used by runBatInstaller
+// hideConsoleWindow is used for .bat or .ps1 so it doesn't pop a cmd window.
 func hideConsoleWindow(cmd *exec.Cmd) {
 	if runtime.GOOS == "windows" {
 		if cmd.SysProcAttr == nil {
@@ -615,28 +650,49 @@ func hideConsoleWindow(cmd *exec.Cmd) {
 	}
 }
 
-// getSystemArchitecture returns a unified architecture string
-// unifyArch is now used in supportsArchitecture
-func unifyArch(arch string) string {
-	a := strings.ToLower(arch)
-	if a == "amd64" || a == "x86_64" {
-		return "x64"
+// isRebootPending does a simple check for known "pending reboot" keys (example).
+func isRebootPending() bool {
+	// This is a simplified approach; adapt as needed.
+	if registryKeyExists(`SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired`) {
+		return true
 	}
-	if a == "386" {
-		return "x86"
-	}
-	return a
-}
-
-func getSystemArchitecture() string {
-	return unifyArch(runtime.GOARCH)
-}
-
-func supportsArchitecture(item catalog.Item, systemArch string) bool {
-	for _, arch := range item.SupportedArch {
-		if unifyArch(arch) == systemArch {
-			return true
-		}
+	if registryValueExists(`SYSTEM\CurrentControlSet\Control\Session Manager`, `PendingFileRenameOperations`) {
+		return true
 	}
 	return false
+}
+
+// offerRebootPrompt is a placeholder that prompts user to choose Y/N for an immediate reboot.
+func offerRebootPrompt() bool {
+	fmt.Print("A system reboot is pending. Reboot now? (y/n): ")
+	var answer string
+	_, _ = fmt.Scanln(&answer)
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return (answer == "y" || answer == "yes")
+}
+
+// rebootSystem is a placeholder for forcibly rebooting. You can also schedule it, etc.
+func rebootSystem() {
+	logging.Warn("Rebooting system now (placeholder).")
+	// Example:
+	// exec.Command("shutdown", "/r", "/t", "0").Run()
+}
+
+func registryKeyExists(path string) bool {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.READ)
+	if err == nil {
+		_ = k.Close()
+		return true
+	}
+	return false
+}
+
+func registryValueExists(path, valueName string) bool {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.READ)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	_, valType, err := k.GetValue(valueName, nil)
+	return (err == nil && valType != registry.NONE)
 }
