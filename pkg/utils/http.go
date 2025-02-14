@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/windowsadmins/gorilla/pkg/auth"
-	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/auth"
+	"github.com/windowsadmins/cimian/pkg/logging"
 )
 
 const DefaultTimeout = 10 * time.Second

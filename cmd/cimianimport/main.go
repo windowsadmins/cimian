@@ -1,4 +1,4 @@
-// cmd/gorillaimport/main.go
+// cmd/cimianimport/main.go
 
 //go:build windows
 // +build windows
@@ -21,9 +21,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/extract"
-	"github.com/windowsadmins/gorilla/pkg/utils"
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/extract"
+	"github.com/windowsadmins/cimian/pkg/utils"
 )
 
 var identifierFlag string
@@ -229,14 +229,14 @@ func main() {
 			// (i.e., `--config` overrides `--config-auto` if both are set).
 			if !configAuto {
 				// interactive config
-				if err := configureGorillaImport(conf); err != nil {
+				if err := configureCimianImport(conf); err != nil {
 					fmt.Fprintf(os.Stderr, "Failed to save config (interactive): %v\n", err)
 					os.Exit(1)
 				}
 				fmt.Println("Configuration saved successfully.")
 			} else {
 				// non-interactive
-				if err := configureGorillaImportNonInteractive(conf); err != nil {
+				if err := configureCimianImportNonInteractive(conf); err != nil {
 					fmt.Fprintf(os.Stderr, "Failed to save config (auto): %v\n", err)
 					os.Exit(1)
 				}
@@ -286,8 +286,8 @@ func main() {
 	// If user typed e.g. -uninstaller="C:\some\path"
 	uninstallerPath := otherFlags["uninstaller"]
 
-	// 6) Do the gorillaImport
-	success, err := gorillaImport(
+	// 6) Do the cimianImport
+	success, err := cimianImport(
 		packagePath, // the main installer
 		conf,        // loaded config
 		scripts,     // your script paths
@@ -295,7 +295,7 @@ func main() {
 		filePaths, // the array from -i flags
 	)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error in gorillaImport:", err)
+		fmt.Fprintln(os.Stderr, "Error in cimianImport:", err)
 		os.Exit(1)
 	}
 	if !success {
@@ -323,7 +323,7 @@ func main() {
 		}
 	}
 
-	fmt.Println("Gorilla import completed successfully.")
+	fmt.Println("Cimian import completed successfully.")
 }
 
 // getConfigPath returns the path for the config file.
@@ -352,8 +352,8 @@ func loadOrCreateConfig() (*config.Configuration, error) {
 	return conf, nil
 }
 
-// configureGorillaImport is the interactive wizard for config
-func configureGorillaImport(conf *config.Configuration) error {
+// configureCimianImport is the interactive wizard for config
+func configureCimianImport(conf *config.Configuration) error {
 	// conf is already loaded.
 	// Instead of creating a new conf or calling config.GetDefaultConfig(),
 	// just use the one passed in.
@@ -363,7 +363,7 @@ func configureGorillaImport(conf *config.Configuration) error {
 		return fmt.Errorf("failed to get current user: %v", err)
 	}
 
-	defaultRepoPath := filepath.Join(usr.HomeDir, "DevOps", "Gorilla", "deployment")
+	defaultRepoPath := filepath.Join(usr.HomeDir, "DevOps", "Cimian", "deployment")
 	defaultCloudProvider := "none"
 	defaultCatalog := "Development"
 	defaultArch := "x64"
@@ -430,7 +430,7 @@ func configureGorillaImport(conf *config.Configuration) error {
 	return nil
 }
 
-func configureGorillaImportNonInteractive(conf *config.Configuration) error {
+func configureCimianImportNonInteractive(conf *config.Configuration) error {
 	// Only fill in defaults if they're currently empty/zero:
 
 	// If no RepoPath yet, fill from the user’s profile
@@ -443,7 +443,7 @@ func configureGorillaImportNonInteractive(conf *config.Configuration) error {
 			}
 			userProfile = usr.HomeDir
 		}
-		conf.RepoPath = filepath.Join(userProfile, "DevOps", "Gorilla", "deployment")
+		conf.RepoPath = filepath.Join(userProfile, "DevOps", "Cimian", "deployment")
 	}
 	if conf.CloudProvider == "" {
 		conf.CloudProvider = "none"
@@ -472,7 +472,7 @@ func configureGorillaImportNonInteractive(conf *config.Configuration) error {
 }
 
 func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
-	// For Gorilla, your `All.yaml` is at:
+	// For Cimian, your `All.yaml` is at:
 	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
 
 	// read All.yaml
@@ -578,8 +578,8 @@ func promptInstallerItemPath() (string, error) {
 	return path, nil
 }
 
-// gorillaImport ingests an installer, writes pkgsinfo, etc.
-func gorillaImport(
+// cimianImport ingests an installer, writes pkgsinfo, etc.
+func cimianImport(
 	packagePath string,
 	conf *config.Configuration,
 	scripts ScriptPaths,
@@ -780,20 +780,20 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.Description = desc
 		metadata.InstallerType = "nupkg"
 
-		// Attempt to build Gorilla-based paths
-		gorillaItems, err := extract.BuildGorillaPkgInstalls(packagePath, metadata.ID, metadata.Version)
+		// Attempt to build Cimian-based paths
+		cimianItems, err := extract.BuildCimianPkgInstalls(packagePath, metadata.ID, metadata.Version)
 		if err != nil {
-			fmt.Printf("Warning: BuildGorillaPkgInstalls failed: %v\n", err)
+			fmt.Printf("Warning: BuildCimianPkgInstalls failed: %v\n", err)
 		}
 
-		if len(gorillaItems) > 0 {
-			// Gorilla-based .nupkg
-			metadata.Installs = convertExtractItems(gorillaItems)
+		if len(cimianItems) > 0 {
+			// Cimian-based .nupkg
+			metadata.Installs = convertExtractItems(cimianItems)
 		} else {
 			// Fallback: standard Chocolatey style
 			chocoItems := extract.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
 			metadata.Installs = convertExtractItems(chocoItems)
-			fmt.Printf("No gorillapkg items found; using %d chocolatey items.\n", len(chocoItems))
+			fmt.Printf("No cimianpkg items found; using %d chocolatey items.\n", len(chocoItems))
 		}
 
 	case ".msi":
@@ -1016,7 +1016,7 @@ func getInput(prompt, defaultVal string) string {
 
 // runMakeCatalogs runs makecatalogs.exe
 func runMakeCatalogs(silent bool) error {
-	makeCatalogsBinary := `C:\Program Files\Gorilla\makecatalogs.exe`
+	makeCatalogsBinary := `C:\Program Files\Cimian\makecatalogs.exe`
 	if _, err := os.Stat(makeCatalogsBinary); os.IsNotExist(err) {
 		return fmt.Errorf("makecatalogs binary not found at %s", makeCatalogsBinary)
 	}
@@ -1273,16 +1273,16 @@ func maybeOpenFile(filePath string) error {
 }
 
 func showUsageAndExit() {
-	fmt.Println(`Usage: gorillaimport.exe [options] <installerPath>
+	fmt.Println(`Usage: cimianimport.exe [options] <installerPath>
 
 Manual argument parsing is used, so the first non-flag argument is assumed 
 to be the main installer path. Example:
 
-  gorillaimport.exe "C:\Path With Spaces\SomeInstaller.exe" -i "C:\Also With Spaces\someFile.txt"
+  cimianimport.exe "C:\Path With Spaces\SomeInstaller.exe" -i "C:\Also With Spaces\someFile.txt"
 
 Options:
   -i, --installs-array <path>   Add a path to final 'installs' array (multiple OK)
-  --repo_path=<path>            Override the Gorilla repo path
+  --repo_path=<path>            Override the Cimian repo path
   --arch=<arch>                 Override architecture (e.g. x64)
   --uninstaller=<path>          Specify an optional uninstaller
   --install-check-script=<path> ...

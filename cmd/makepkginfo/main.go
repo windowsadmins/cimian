@@ -13,9 +13,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/windowsadmins/gorilla/pkg/extract"
-	"github.com/windowsadmins/gorilla/pkg/utils"
-	"github.com/windowsadmins/gorilla/pkg/version"
+	"github.com/windowsadmins/cimian/pkg/extract"
+	"github.com/windowsadmins/cimian/pkg/utils"
+	"github.com/windowsadmins/cimian/pkg/version"
 )
 
 // SingleQuotedString forces single quotes in YAML output.
@@ -38,7 +38,7 @@ type InstallItem struct {
 	Version     SingleQuotedString `yaml:"version,omitempty"`
 }
 
-// Installer parallels gorillaimport's "Installer" struct.
+// Installer parallels cimianimport's "Installer" struct.
 type Installer struct {
 	Location string `yaml:"location,omitempty"`
 	Hash     string `yaml:"hash,omitempty"`
@@ -46,7 +46,7 @@ type Installer struct {
 	Size     int64  `yaml:"size,omitempty"`
 }
 
-// PkgsInfo matches your updated gorillaimport pkginfo schema.
+// PkgsInfo matches your updated cimianimport pkginfo schema.
 type PkgsInfo struct {
 	Name                 string        `yaml:"name"`
 	DisplayName          string        `yaml:"display_name,omitempty"`

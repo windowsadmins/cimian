@@ -1,14 +1,14 @@
 <?xml version="1.0"?>
 <package>
   <metadata>
-    <title>Gorilla</title>
-    <id>com.github.windowsadmins.gorilla</id>
+    <title>Cimian</title>
+    <id>com.github.windowsadmins.cimian</id>
     <version>${{ env.SEMANTIC_VERSION }}</version>
     <authors>WindowsAdmins</authors>
-    <description>Gorilla Software Deployment Tools</description>
+    <description>Cimian Software Deployment Tools</description>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <tags>admin</tags>
-    <repository url="https://github.com/windowsadmins/gorilla" />
+    <repository url="https://github.com/windowsadmins/cimian" />
     <readme>README.md</readme>
   </metadata>
   <files>
