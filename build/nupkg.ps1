@@ -1,5 +1,5 @@
 # Define installation paths
-$installPath = "C:\Program Files\Gorilla"
+$installPath = "C:\Program Files\Cimian"
 $configPath = "C:\ProgramData\ManagedInstalls"
 
 # Ensure directories exist
@@ -25,4 +25,4 @@ Copy-Item "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)\config.yaml"
 Write-Host "Added $installPath to system PATH"
 
 # Confirm installation success
-Write-Host "Gorilla installed successfully."
+Write-Host "Cimian installed successfully."

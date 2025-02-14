@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	// Items contains the data we will save to GorillaReport
+	// Items contains the data we will save to CimianReport
 	Items = make(map[string]interface{})
 
 	// InstalledItems contains a list of items we attempted to install
@@ -74,14 +74,14 @@ func End() {
 	// Convert it all to json
 	reportJSON, marshalErr := json.Marshal(Items)
 	if marshalErr != nil {
-		fmt.Println("Unable to create GorillaReport json", marshalErr)
+		fmt.Println("Unable to create CimianReport json", marshalErr)
 	}
 
-	// Write Items to disk as GorillaReport.json
-	reportPath := filepath.Join(os.Getenv("ProgramData"), "gorilla/GorillaReport.json")
+	// Write Items to disk as CimianReport.json
+	reportPath := filepath.Join(os.Getenv("ProgramData"), "cimian/CimianReport.json")
 	writeErr := ioutil.WriteFile(reportPath, reportJSON, 0644)
 	if writeErr != nil {
-		fmt.Println("Unable to write GorillaReport.json to disk:", writeErr)
+		fmt.Println("Unable to write CimianReport.json to disk:", writeErr)
 	}
 
 }
@@ -96,6 +96,6 @@ func Print() {
 	reportJSON, marshalErr := json.MarshalIndent(Items, "", "    ")
 	fmt.Println(string(reportJSON))
 	if marshalErr != nil {
-		fmt.Println("Unable to create GorillaReport json", marshalErr)
+		fmt.Println("Unable to create CimianReport json", marshalErr)
 	}
 }

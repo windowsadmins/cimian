@@ -12,7 +12,7 @@ import (
 
 // RunPreflight runs the preflight script if it exists.
 func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
-	scriptPath := `C:\Program Files\Gorilla\preflight.ps1`
+	scriptPath := `C:\Program Files\Cimian\preflight.ps1`
 	displayName := "preflight"
 
 	// Log the script path

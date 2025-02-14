@@ -15,11 +15,11 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"github.com/windowsadmins/gorilla/pkg/catalog"
-	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/logging"
-	"github.com/windowsadmins/gorilla/pkg/manifest"
-	"github.com/windowsadmins/gorilla/pkg/status"
+	"github.com/windowsadmins/cimian/pkg/catalog"
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/status"
 )
 
 // By default, we expect these paths for msiexec/powershell/chocolatey.

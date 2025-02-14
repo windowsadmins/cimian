@@ -3,8 +3,8 @@
 package status
 
 import (
-	"github.com/windowsadmins/gorilla/pkg/catalog"
-	"github.com/windowsadmins/gorilla/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/catalog"
+	"github.com/windowsadmins/cimian/pkg/manifest"
 )
 
 // ToCatalogItem converts a manifest.Item into a minimal catalog.Item

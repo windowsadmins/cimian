@@ -14,14 +14,14 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/windowsadmins/gorilla/pkg/catalog"
-	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/download"
-	"github.com/windowsadmins/gorilla/pkg/installer"
-	"github.com/windowsadmins/gorilla/pkg/logging"
-	"github.com/windowsadmins/gorilla/pkg/manifest"
-	"github.com/windowsadmins/gorilla/pkg/preflight"
-	"github.com/windowsadmins/gorilla/pkg/version"
+	"github.com/windowsadmins/cimian/pkg/catalog"
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/download"
+	"github.com/windowsadmins/cimian/pkg/installer"
+	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/preflight"
+	"github.com/windowsadmins/cimian/pkg/version"
 
 	"golang.org/x/sys/windows"
 	"gopkg.in/yaml.v3"

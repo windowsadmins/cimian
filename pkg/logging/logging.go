@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/windowsadmins/gorilla/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/config"
 )
 
 // LogLevel represents the severity of the log message.

@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/version"
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/version"
 	"gopkg.in/yaml.v3"
 )
 
-// Installer parallels gorillaimport’s structure.
+// Installer parallels cimianimport’s structure.
 type Installer struct {
 	Location  string   `yaml:"location"`
 	Hash      string   `yaml:"hash"`
@@ -29,7 +29,7 @@ type InstallItem struct {
 	Version     string `yaml:"version,omitempty"`
 }
 
-// PkgsInfo matches your updated gorillaimport pkginfo schema.
+// PkgsInfo matches your updated cimianimport pkginfo schema.
 type PkgsInfo struct {
 	Name                 string        `yaml:"name"`
 	DisplayName          string        `yaml:"display_name,omitempty"`
@@ -62,7 +62,7 @@ type PkgsInfo struct {
 // Basic scanning and reading
 // ----------------------------------------------------------------------------
 
-// loadConfig loads Gorilla’s main config from the default path.
+// loadConfig loads Cimian’s main config from the default path.
 func loadConfig() (*config.Configuration, error) {
 	return config.LoadConfig()
 }
@@ -209,7 +209,7 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 }
 
 func main() {
-	repoFlag := flag.String("repo_path", "", "Path to the Gorilla repo. If empty, uses config.")
+	repoFlag := flag.String("repo_path", "", "Path to the Cimian repo. If empty, uses config.")
 	skipFlag := flag.Bool("skip_payload_check", false, "Disable checking for .Installer/.Uninstaller files.")
 	silentFlag := flag.Bool("silent", false, "Minimize output.")
 	showVersionFlag := flag.Bool("makecatalog_version", false, "Print version and exit.")

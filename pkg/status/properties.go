@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/gonutz/w32"
-	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/logging"
 )
 
 //

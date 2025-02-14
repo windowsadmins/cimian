@@ -1,4 +1,4 @@
-module github.com/windowsadmins/gorilla
+module github.com/windowsadmins/cimian
 
 go 1.21
 

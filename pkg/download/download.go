@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/logging"
-	"github.com/windowsadmins/gorilla/pkg/retry"
-	"github.com/windowsadmins/gorilla/pkg/utils"
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/retry"
+	"github.com/windowsadmins/cimian/pkg/utils"
 )
 
 const (

@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- WiX Installer XML for Gorilla Application -->
+<!-- WiX Installer XML for Cimian Application -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
 
   <!-- Product Definition -->
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
-           Name="Gorilla"
+           Name="Cimian"
            Version="24.11.10"
-           Manufacturer="Gorilla"
+           Manufacturer="Cimian"
            Language="1033">
 
     <!-- Package Information -->
@@ -33,11 +33,11 @@
 
       <!-- Program Files Directory for 64-bit Systems -->
       <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLDIR" Name="Gorilla">
+        <Directory Id="INSTALLDIR" Name="Cimian">
 
           <!-- Components and Files -->
           <Component Id="Binary1" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A" Win64="yes">
-            <File Id="BinaryFile1" Source="release\gorillaimport.exe" KeyPath="yes" />
+            <File Id="BinaryFile1" Source="release\cimianimport.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary2" Guid="67855CDD-8EAB-564C-B795-26091FE9B83A" Win64="yes">
             <File Id="BinaryFile2" Source="release\makecatalogs.exe" KeyPath="yes" />
@@ -54,7 +54,7 @@
 
           <!-- Component to Modify PATH Environment Variable -->
           <Component Id="SetPathComponent" Guid="A5F2C571-89DF-4C71-967F-EC9D3EF4CDD0" Win64="yes">
-            <RegistryValue Root="HKLM" Key="Software\Gorilla" Name="SetPathComponent" Type="integer" Value="1" KeyPath="yes" />
+            <RegistryValue Root="HKLM" Key="Software\Cimian" Name="SetPathComponent" Type="integer" Value="1" KeyPath="yes" />
           </Component>
 
         </Directory>
@@ -82,7 +82,7 @@
                   Impersonate="no"
                   Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN Gorilla /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN Cimian /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
 
     <!-- Delete Scheduled Task -->
     <CustomAction Id="DeleteScheduledTask"
@@ -90,7 +90,7 @@
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN Gorilla" />
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN Cimian" />
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>

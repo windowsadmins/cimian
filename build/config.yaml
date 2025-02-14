@@ -1,10 +1,10 @@
 ---
-# Gorilla Configuration File
+# Cimian Configuration File
 # Define the server details, client-specific configurations, and options.
-# See: https://github.com/windowsadmins/gorilla/wiki/Client-Configuration
+# See: https://github.com/windowsadmins/cimian/wiki/Client-Configuration
 
 # The base URL for the repository hosting manifests, catalogs, and packages.
-software_repo_url: https://gorilla.example.com
+software_repo_url: https://cimian.example.com
 
 # The primary manifest assigned to this machine.
 client_identifier: Bootstrap

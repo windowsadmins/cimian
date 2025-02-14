@@ -14,9 +14,9 @@ import (
 	"strings"
 
 	version "github.com/hashicorp/go-version"
-	"github.com/windowsadmins/gorilla/pkg/catalog"
-	"github.com/windowsadmins/gorilla/pkg/download"
-	"github.com/windowsadmins/gorilla/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/catalog"
+	"github.com/windowsadmins/cimian/pkg/download"
+	"github.com/windowsadmins/cimian/pkg/logging"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -241,24 +241,24 @@ func getLocalInstalledVersion(item catalog.Item) (string, error) {
 		"installerType", item.Installer.Type,
 	)
 
-	// 1) FIRST, check the Gorilla-managed key (i.e. readInstalledVersionFromRegistry).
+	// 1) FIRST, check the Cimian-managed key (i.e. readInstalledVersionFromRegistry).
 	//    This is where you store your "Wrote local installed version to registry item=Git version=2.47.1.1" etc.
-	gorillaVersion, errLocalReg := readInstalledVersionFromRegistry(item.Name)
-	if errLocalReg == nil && gorillaVersion != "" {
-		logging.Info("Found Gorilla-managed registry version",
+	cimianVersion, errLocalReg := readInstalledVersionFromRegistry(item.Name)
+	if errLocalReg == nil && cimianVersion != "" {
+		logging.Info("Found Cimian-managed registry version",
 			"item", item.Name,
-			"registryVersion", gorillaVersion,
+			"registryVersion", cimianVersion,
 		)
-		return gorillaVersion, nil
+		return cimianVersion, nil
 	}
 	if errLocalReg != nil {
-		logging.Debug("No Gorilla version found in registry or error reading it",
+		logging.Debug("No Cimian version found in registry or error reading it",
 			"item", item.Name,
 			"error", errLocalReg,
 		)
 	}
 
-	// 2) If not found in Gorilla’s own key, proceed with enumerating the Windows Uninstall keys.
+	// 2) If not found in Cimian’s own key, proceed with enumerating the Windows Uninstall keys.
 	if len(RegistryItems) == 0 {
 		var err error
 		RegistryItems, err = getUninstallKeys()

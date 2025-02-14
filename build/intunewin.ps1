@@ -5,7 +5,7 @@ param (
     [string]$SetupFolder = "release",
     
     [Parameter(Mandatory = $true)]
-    [string]$SetupFile = "release\gorilla.msi",
+    [string]$SetupFile = "release\cimian.msi",
     
     [Parameter(Mandatory = $true)]
     [string]$OutputFolder = "release\intunewin"
