@@ -551,16 +551,24 @@ func GuessInstallDirFromBat(batPath string) string {
 }
 
 func convertExtractItems(ei []extract.InstallItem) []InstallItem {
-	converted := make([]InstallItem, 0, len(ei))
+	var results []InstallItem
 	for _, item := range ei {
-		converted = append(converted, InstallItem{
+		lowerPath := strings.ToLower(item.Path)
+
+		// Skip the standard Chocolatey script-only paths we never want listed in installs:
+		if strings.HasSuffix(lowerPath, `\tools\chocolateyinstall.ps1`) ||
+			strings.HasSuffix(lowerPath, `\tools\chocolateybeforemodify.ps1`) {
+			continue
+		}
+
+		results = append(results, InstallItem{
 			Type:        SingleQuotedString(item.Type),
 			Path:        SingleQuotedString(item.Path),
 			MD5Checksum: SingleQuotedString(item.MD5Checksum),
 			Version:     SingleQuotedString(item.Version),
 		})
 	}
-	return converted
+	return results
 }
 
 func promptInstallerItemPath() (string, error) {
