@@ -8,7 +8,7 @@
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
-           Version="24.11.10"
+           Version="25.2.14"
            Manufacturer="Cimian"
            Language="1033">
 
@@ -20,8 +20,14 @@
              Platform="x64" />
 
     <!-- Major Upgrade Settings -->
-    <MajorUpgrade AllowSameVersionUpgrades="no"
-                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <Upgrade Id="d61005bf-a182-4583-810d-8c33b056b8be">
+      <UpgradeVersion OnlyDetect="no"
+                      Property="OLDPRODUCTS"
+                      Minimum="0.0.0"
+                      IncludeMinimum="yes"
+                      Maximum="25.2.14"
+                      IncludeMaximum="no" />
+    </Upgrade>
 
     <!-- Media Definition -->
     <Media Id="1"
@@ -50,6 +56,9 @@
           </Component>
           <Component Id="Binary5" Guid="97855CDE-BFAB-664D-E795-26091DE8B83A" Win64="yes">
             <File Id="BinaryFile5" Source="release\manifestutil.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="Binary6" Guid="AF855CDE-1234-5678-9ABC-26091DE9B83B" Win64="yes">
+            <File Id="BinaryFile6" Source="release\cimianpkg.exe" KeyPath="yes" />
           </Component>
 
           <!-- Component to Modify PATH Environment Variable -->
@@ -99,6 +108,7 @@
 
       <!-- Custom Action for Uninstallation -->
       <Custom Action="DeleteScheduledTask" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <RemoveExistingProducts After="InstallInitialize" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->
@@ -110,6 +120,7 @@
       <ComponentRef Id="Binary5" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="Component_Config" />
+      <ComponentRef Id="Binary6" />
     </Feature>
 
   </Product>
