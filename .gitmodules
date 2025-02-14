@@ -1,0 +1,3 @@
+[submodule "cmd/cimianpkg"]
+	path = cmd/cimianpkg
+	url = https://github.com/windowsadmins/cimian-pkg
