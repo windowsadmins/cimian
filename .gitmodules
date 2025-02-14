@@ -1,3 +1,0 @@
-[submodule "cmd/cimianpkg"]
-	path = cmd/cimianpkg/gorillapkg
-	url = https://github.com/windowsadmins/gorilla-pkg
