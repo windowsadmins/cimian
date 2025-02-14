@@ -29,7 +29,7 @@ func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
 	return node, nil
 }
 
-// InstallItem represents a single file entry in Gorilla's "installs" array.
+// InstallItem represents a single file entry in Cimian's "installs" array.
 type InstallItem struct {
 	Type        SingleQuotedString `yaml:"type"`
 	Path        SingleQuotedString `yaml:"path"`
@@ -114,7 +114,7 @@ func NupkgMetadata(nupkgPath string) (string, string, string, string, string) {
 }
 
 // BuildNupkgInstalls enumerates the contents of a .nupkg, computes MD5 checksums,
-// and returns an array of InstallItem for Gorilla's "installs" array.
+// and returns an array of InstallItem for Cimian's "installs" array.
 // We guess final install paths like:
 //
 //	C:\ProgramData\chocolatey\lib\<pkgId>\tools\<filename>
@@ -168,7 +168,7 @@ func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 
 var reInstallLocation = regexp.MustCompile(`(?i)\$installLocation\s*=\s*["']([^"']+)["']`)
 
-// BuildGorillaPkgInstalls analyses the .nupkg built by gorillapkg and returns a well-formed "installs" array.
+// BuildCimianPkgInstalls analyses the .nupkg built by cimianpkg and returns a well-formed "installs" array.
 //
 // Steps:
 //  1. Identify the $installLocation in tools/chocolateyInstall.ps1 if it exists
@@ -176,7 +176,7 @@ var reInstallLocation = regexp.MustCompile(`(?i)\$installLocation\s*=\s*["']([^"
 //  3. Enumerate only "payload/" subfolders, compute MD5, preserve subfolder structure
 //  4. Keep "version" in each item = rawVersion
 //  5. Skip .nuspec, [Content_Types].xml, _rels, "tools/" files
-func BuildGorillaPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem, error) {
+func BuildCimianPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem, error) {
 	var results []InstallItem
 
 	zr, err := zip.OpenReader(nupkgPath)

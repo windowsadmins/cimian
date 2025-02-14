@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	registryPath   = `SOFTWARE\Gorilla`
+	registryPath   = `SOFTWARE\Cimian`
 	authHeaderName = "AuthHeader"
 )
 

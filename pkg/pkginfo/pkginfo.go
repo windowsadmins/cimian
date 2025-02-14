@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/windowsadmins/gorilla/pkg/extract"
-	"github.com/windowsadmins/gorilla/pkg/rollback"
+	"github.com/windowsadmins/cimian/pkg/extract"
+	"github.com/windowsadmins/cimian/pkg/rollback"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -182,7 +182,7 @@ type Metadata struct {
 
 // ExtractPackageInfo merges the “gatherInstallerInfo” and
 // “extractInstallerMetadata” logic into one function.
-// You can call this from makepkginfo or gorillaimport.
+// You can call this from makepkginfo or cimianimport.
 func ExtractPackageInfo(path string, defaultArch string) (Metadata, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	var meta Metadata

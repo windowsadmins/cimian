@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/windowsadmins/gorilla/pkg/version"
+	"github.com/windowsadmins/cimian/pkg/version"
 )
 
 // Manifest represents the structure of the manifest YAML files.
