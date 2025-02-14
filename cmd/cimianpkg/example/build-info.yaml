@@ -1,8 +1,0 @@
-product:
-  name: "Gorilla"
-  version: "2024.10.11"
-  identifier: "com.gorillacorp.gorilla"
-  publisher: "Gorilla Corp"
-install_location: "C:\Program Files\Gorilla"
-postinstall_action: "none"
-signing_certificate: "Gorilla Corp EV Certificate"
