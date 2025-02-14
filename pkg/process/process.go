@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/windowsadmins/gorilla/pkg/catalog"
-	"github.com/windowsadmins/gorilla/pkg/config"
-	"github.com/windowsadmins/gorilla/pkg/installer"
-	"github.com/windowsadmins/gorilla/pkg/logging"
-	"github.com/windowsadmins/gorilla/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/catalog"
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/installer"
+	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/manifest"
 )
 
 // firstItem returns the first occurrence of an item in a map of catalogs

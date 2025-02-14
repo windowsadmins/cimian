@@ -10,7 +10,7 @@ import (
 
 const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 
-// Configuration holds the configurable options for Gorilla in YAML format
+// Configuration holds the configurable options for Cimian in YAML format
 type Configuration struct {
 	Catalogs         []string `yaml:"Catalogs"`
 	CatalogsPath     string   `yaml:"CatalogsPath"`
@@ -81,7 +81,7 @@ func SaveConfig(config *Configuration) error {
 func GetDefaultConfig() *Configuration {
 	return &Configuration{
 		LogLevel:         "INFO",
-		InstallPath:      `C:\Program Files\Gorilla`,
+		InstallPath:      `C:\Program Files\Cimian`,
 		RepoPath:         `C:\ProgramData\ManagedInstalls\repo`,
 		CatalogsPath:     `C:\ProgramData\ManagedInstalls\catalogs`,
 		CachePath:        `C:\ProgramData\ManagedInstalls\Cache`,
@@ -89,7 +89,7 @@ func GetDefaultConfig() *Configuration {
 		Verbose:          false,
 		CheckOnly:        false,
 		ClientIdentifier: "",
-		SoftwareRepoURL:  "https://gorilla.example.com",
+		SoftwareRepoURL:  "https://cimian.example.com",
 		DefaultArch:      "x64",
 		DefaultCatalog:   "testing",
 		CloudProvider:    "none",

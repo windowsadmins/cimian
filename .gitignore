@@ -25,7 +25,7 @@
 # WIX files
 *.wixpdb
 *.wixobj
-/localBuildUpdateGorilla.ps1
+/localBuildUpdateCimian.ps1
 
 # Local go
 /go

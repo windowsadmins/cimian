@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds the Gorilla project locally, replicating the CI/CD pipeline.
+    Builds the Cimian project locally, replicating the CI/CD pipeline.
 
 .DESCRIPTION
     This script automates the build and packaging process, including installing dependencies,
@@ -317,11 +317,11 @@ foreach ($dir in $binaryDirs) {
 
     $buildDate = Get-Date -Format s
 
-    $ldflags = "-X github.com/windowsadmins/gorilla/pkg/version.appName=$binaryName " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.version=$env:RELEASE_VERSION " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.branch=$branchName " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.buildDate=$buildDate " +
-        "-X github.com/windowsadmins/gorilla/pkg/version.revision=$revision " +
+    $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+        "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+        "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+        "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+        "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
         "-X main.version=$env:RELEASE_VERSION"
 
     # Check if this cmd/<binaryName> folder is a separate module (has its own go.mod)
@@ -405,7 +405,7 @@ if (-not (Test-Path $wixToolsetPath)) {
 }
 
 # Define output paths
-$msiOutput = "release\Gorilla-$env:RELEASE_VERSION.msi"
+$msiOutput = "release\Cimian-$env:RELEASE_VERSION.msi"
 
 # Compile WiX source
 try {
@@ -465,7 +465,7 @@ Write-Log "Preparing IntuneWin package..." "INFO"
 
 # Define variables for IntuneWin conversion
 $setupFolder = "release"
-$setupFile   = "release\Gorilla-$env:RELEASE_VERSION.msi"
+$setupFile   = "release\Cimian-$env:RELEASE_VERSION.msi"
 $outputFolder= "release"
 
 # Check if the setup file exists before attempting conversion
