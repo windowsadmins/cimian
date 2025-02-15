@@ -8,7 +8,7 @@
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
-           Version="25.2.14"
+           Version="25.2.15"
            Manufacturer="Cimian"
            Language="1033">
 
@@ -18,6 +18,13 @@
              Comments="Windows Installer Package"
              InstallScope="perMachine"
              Platform="x64" />
+
+    <!-- Search for the config file -->
+    <Property Id="CONFIGYAML">
+      <DirectorySearch Id="ManagedInstallsDirSearch" Path="[CommonAppDataFolder]ManagedInstalls">
+        <FileSearch Id="ConfigFileSearch" Name="Config.yaml" />
+      </DirectorySearch>
+    </Property>
 
     <!-- Major Upgrade Settings -->
     <Upgrade Id="d61005bf-a182-4583-810d-8c33b056b8be">
@@ -63,7 +70,8 @@
 
           <!-- Component to Modify PATH Environment Variable -->
           <Component Id="SetPathComponent" Guid="A5F2C571-89DF-4C71-967F-EC9D3EF4CDD0" Win64="yes">
-            <RegistryValue Root="HKLM" Key="Software\Cimian" Name="SetPathComponent" Type="integer" Value="1" KeyPath="yes" />
+            <RegistryValue Root="HKLM" Key="Software\Cimian" Name="InstallPath" Value="[INSTALLDIR]" Type="string" KeyPath="yes" />
+            <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
           </Component>
 
         </Directory>
@@ -84,6 +92,12 @@
     </Directory>
 
     <!-- Custom Actions -->
+    <CustomAction Id="RunCimianImport"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[INSTALLDIR]cimianimport.exe --config-auto"
+                  Return="check" />
 
     <!-- Create Scheduled Task -->
     <CustomAction Id="CreateScheduledTask"
@@ -91,7 +105,7 @@
                   Impersonate="no"
                   Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN Cimian /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN CimianHourlyRun /TR &quot;[INSTALLDIR]managedsoftware.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
 
     <!-- Delete Scheduled Task -->
     <CustomAction Id="DeleteScheduledTask"
@@ -99,10 +113,11 @@
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN Cimian" />
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN CimianHourlyRun" />
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
+      <Custom Action="RunCimianImport" After="InstallFiles">NOT CONFIGYAML</Custom>
       <!-- Custom Action for Installation -->
       <Custom Action="CreateScheduledTask" After="InstallFiles">NOT REMOVE</Custom>
 
