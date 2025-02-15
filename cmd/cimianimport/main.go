@@ -25,7 +25,10 @@ import (
 	"github.com/windowsadmins/cimian/pkg/utils"
 )
 
-var identifierFlag string
+var (
+	identifierFlag string
+	configAuto     bool
+)
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
@@ -107,6 +110,7 @@ type Metadata struct {
 	InstallerType string
 	Installs      []InstallItem
 	Catalogs      []string
+	RepoPath      string
 }
 
 // parseCustomArgs manually parses os.Args for:
@@ -123,7 +127,7 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 	otherFlags := make(map[string]string)
 	configRequested := false
 	helpRequested := false
-	configAuto := false
+	configAuto = false
 
 	skipNext := false
 	for i := 1; i < len(args); i++ {
@@ -565,13 +569,16 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 	return results
 }
 
-func promptInstallerItemPath() (string, error) {
-	fmt.Print("Location in repo [/]: ")
+func promptInstallerItemPath(defaultPath string) (string, error) {
+	if defaultPath == "" {
+		defaultPath = "/"
+	}
+	fmt.Printf("Location in repo [%s]: ", defaultPath)
 	var path string
 	fmt.Scanln(&path)
 	path = strings.TrimSpace(path)
 	if path == "" {
-		path = "/"
+		path = defaultPath
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -611,8 +618,8 @@ func cimianImport(
 		fmt.Println("This item has the same Name as an existing item in the repo:")
 		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
 			existingPkg.Name, existingPkg.Version, existingPkg.Description)
-		ans := getInput("Use existing item as a template? [y/N]: ", "N")
-		if strings.EqualFold(ans, "y") {
+		ans := getInput("Use existing item as a template? [Y/n]: ", "Y")
+		if strings.EqualFold(ans, "y") || ans == "" {
 			metadata.ID = existingPkg.Name
 			metadata.Title = existingPkg.DisplayName
 			metadata.Version = existingPkg.Version
@@ -620,6 +627,11 @@ func cimianImport(
 			metadata.Description = string(existingPkg.Description)
 			metadata.Category = string(existingPkg.Category)
 			metadata.SupportedArch = existingPkg.SupportedArch
+			metadata.Catalogs = existingPkg.Catalogs // Copy the catalogs
+			// Extract repo path from installer location
+			if existingPkg.Installer != nil && existingPkg.Installer.Location != "" {
+				metadata.RepoPath = filepath.Dir(existingPkg.Installer.Location)
+			}
 			if len(existingPkg.Catalogs) > 0 {
 				conf.DefaultCatalog = existingPkg.Catalogs[0]
 			}
@@ -688,7 +700,7 @@ func cimianImport(
 	}
 
 	// Step 9: prompt user for subdir
-	repoSubPath, err := promptInstallerItemPath()
+	repoSubPath, err := promptInstallerItemPath(metadata.RepoPath)
 	if err != nil {
 		return false, err
 	}
@@ -892,12 +904,21 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	m.Category = readLineWithDefault(reader, "Category", defaultCategory)
 	m.Architecture = readLineWithDefault(reader, "Architecture(s)", defaultArch)
 
-	// For catalogs
-	fallbackCatalogs := []string{conf.DefaultCatalog}
-	if len(fallbackCatalogs) == 0 {
-		fallbackCatalogs = []string{"Development"}
+	// For catalogs: use template catalogs if available, otherwise use defaults
+	var fallbackCatalogs []string
+	if len(m.Catalogs) > 0 {
+		// Use catalogs from template
+		fallbackCatalogs = m.Catalogs
+	} else {
+		// Use default catalogs
+		fallbackCatalogs = []string{conf.DefaultCatalog}
+		if len(fallbackCatalogs) == 0 {
+			fallbackCatalogs = []string{"Development"}
+		}
 	}
-	fallbackCatalogsStr := strings.Join(fallbackCatalogs, ",")
+
+	// Join with commas for display
+	fallbackCatalogsStr := strings.Join(fallbackCatalogs, ", ")
 	typedCatalogs := readLineWithDefault(reader, "Catalogs", fallbackCatalogsStr)
 	if typedCatalogs == fallbackCatalogsStr {
 		// user pressed Enter
