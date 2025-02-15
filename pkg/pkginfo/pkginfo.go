@@ -244,5 +244,8 @@ func parsePackageName(filename string) string {
 }
 
 func NormalizeInstallerLocation(location string) string {
-	return strings.ReplaceAll(location, `\`, "/")
+	// Keep consistent with cimianimport's normalizeInstallerLocation
+	normalized := strings.ReplaceAll(location, `/`, `\`)
+	normalized = strings.TrimPrefix(normalized, `\`)
+	return `\` + normalized
 }

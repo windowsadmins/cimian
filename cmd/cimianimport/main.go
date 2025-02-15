@@ -1331,5 +1331,9 @@ flags, the final PkgsInfo will incorporate your user-provided filePaths
 }
 
 func normalizeInstallerLocation(location string) string {
-	return strings.ReplaceAll(location, `\`, `/`)
+	// First normalize any forward slashes to backslashes
+	normalized := strings.ReplaceAll(location, `/`, `\`)
+	// Then ensure we don't have double backslashes
+	normalized = strings.TrimPrefix(normalized, `\`)
+	return `\` + normalized
 }
