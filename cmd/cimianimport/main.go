@@ -8,7 +8,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -204,11 +203,6 @@ func main() {
 	//   - everything else => otherFlags
 	//   - and check if user typed --config / --help / --config-auto
 	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto := parseCustomArgs(os.Args)
-
-	// Initialize flags
-	flag.StringVar(&identifierFlag, "identifier", "", "Optional pkg identifier (nuspec id)")
-	// ...other flag definitions...
-	flag.Parse()
 
 	// If user typed --help or -h
 	if helpRequested {
@@ -562,7 +556,7 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 		}
 
 		results = append(results, InstallItem{
-			Type:        SingleQuotedString(item.Type),
+			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(item.Path),
 			MD5Checksum: SingleQuotedString(item.MD5Checksum),
 			Version:     SingleQuotedString(item.Version),
@@ -781,7 +775,14 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 	case ".nupkg":
 		ident, name, ver, dev, desc := extract.NupkgMetadata(packagePath)
 
-		metadata.ID = ident
+		// For reverse domain identifiers, only keep the last part after the dot
+		if strings.Contains(ident, ".") {
+			parts := strings.Split(ident, ".")
+			metadata.ID = parts[len(parts)-1]
+		} else {
+			metadata.ID = ident
+		}
+
 		metadata.Title = name
 		metadata.Version = ver
 		metadata.Developer = dev
