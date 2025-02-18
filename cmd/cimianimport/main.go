@@ -620,14 +620,22 @@ func cimianImport(
 			existingPkg.Name, existingPkg.Version, existingPkg.Description)
 		ans := getInput("Use existing item as a template? [Y/n]: ", "Y")
 		if strings.EqualFold(ans, "y") || ans == "" {
+			extractedVersion := metadata.Version
+
 			metadata.ID = existingPkg.Name
 			metadata.Title = existingPkg.DisplayName
-			metadata.Version = existingPkg.Version
+			metadata.Version = extractedVersion
 			metadata.Developer = string(existingPkg.Developer)
-			metadata.Description = string(existingPkg.Description)
+
+			// Take the template’s description but replace the old version with the newly extracted one
+			desc := string(existingPkg.Description)
+			desc = strings.ReplaceAll(desc, existingPkg.Version, extractedVersion)
+			metadata.Description = desc
+
 			metadata.Category = string(existingPkg.Category)
 			metadata.SupportedArch = existingPkg.SupportedArch
-			metadata.Catalogs = existingPkg.Catalogs // Copy the catalogs
+			metadata.Catalogs = existingPkg.Catalogs
+
 			// Extract repo path from installer location
 			if existingPkg.Installer != nil && existingPkg.Installer.Location != "" {
 				metadata.RepoPath = filepath.Dir(existingPkg.Installer.Location)
@@ -1331,9 +1339,20 @@ flags, the final PkgsInfo will incorporate your user-provided filePaths
 }
 
 func normalizeInstallerLocation(location string) string {
-	// First normalize any forward slashes to backslashes
-	normalized := strings.ReplaceAll(location, `/`, `\`)
-	// Then ensure we don't have double backslashes
-	normalized = strings.TrimPrefix(normalized, `\`)
-	return `\` + normalized
+	// Replace any forward slashes with backslashes:
+	normalized := strings.ReplaceAll(location, "/", "\\")
+
+	// Remove all leading backslashes so we can add exactly one:
+	normalized = strings.TrimLeft(normalized, "\\")
+
+	// Ensure only one leading backslash in the final path:
+	normalized = `\` + normalized
+
+	// Also handle any accidental double-backslashes elsewhere:
+	// (optional, if you want to convert multiple inlined \\ to single \)
+	for strings.Contains(normalized, `\\\`) {
+		normalized = strings.ReplaceAll(normalized, `\\\`, `\\`)
+	}
+
+	return normalized
 }
