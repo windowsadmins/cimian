@@ -13,7 +13,7 @@ client_identifier: Bootstrap
 force_basic_auth: false
 
 # Default architecture for the packages.
-default_arch: x86_64
+default_arch: x64
 
 # Default catalog used when a specific catalog is not specified.
 default_catalog: Testing

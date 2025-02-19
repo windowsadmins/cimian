@@ -8,7 +8,7 @@
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
-           Version="25.2.15"
+           Version="25.2.19"
            Manufacturer="Cimian"
            Language="1033">
 
@@ -20,7 +20,7 @@
              Platform="x64" />
 
     <!-- Search for the config file -->
-    <Property Id="CONFIGYAML">
+    <Property Id="CONFIGFILE">
       <DirectorySearch Id="ManagedInstallsDirSearch" Path="[CommonAppDataFolder]ManagedInstalls">
         <FileSearch Id="ConfigFileSearch" Name="Config.yaml" />
       </DirectorySearch>
@@ -50,7 +50,7 @@
 
           <!-- Components and Files -->
           <Component Id="Binary1" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A" Win64="yes">
-            <File Id="BinaryFile1" Source="release\cimianimport.exe" KeyPath="yes" />
+            <File Id="BinaryFile1" Source="release\cimiimport.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary2" Guid="67855CDD-8EAB-564C-B795-26091FE9B83A" Win64="yes">
             <File Id="BinaryFile2" Source="release\makecatalogs.exe" KeyPath="yes" />
@@ -65,7 +65,7 @@
             <File Id="BinaryFile5" Source="release\manifestutil.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary6" Guid="AF855CDE-1234-5678-9ABC-26091DE9B83B" Win64="yes">
-            <File Id="BinaryFile6" Source="release\cimianpkg.exe" KeyPath="yes" />
+            <File Id="BinaryFile6" Source="release\cimipkg.exe" KeyPath="yes" />
           </Component>
 
           <!-- Component to Modify PATH Environment Variable -->
@@ -92,12 +92,17 @@
     </Directory>
 
     <!-- Custom Actions -->
-    <CustomAction Id="RunCimianImport"
+    <SetProperty Id="RunCimiImport"
+                 Value="&quot;[INSTALLDIR]cimiimport.exe&quot; --config-auto"
+                 Sequence="execute"
+                 Before="RunCimiImport">NOT CONFIGFILE</SetProperty>
+                 
+    <CustomAction Id="RunCimiImport"
+                  BinaryKey="WixCA"
+                  DllEntry="CAQuietExec64"
                   Execute="deferred"
-                  Impersonate="no"
-                  Directory="INSTALLDIR"
-                  ExeCommand="[INSTALLDIR]cimianimport.exe --config-auto"
-                  Return="check" />
+                  Return="check"
+                  Impersonate="no" />
 
     <!-- Create Scheduled Task -->
     <CustomAction Id="CreateScheduledTask"
@@ -117,7 +122,7 @@
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
-      <Custom Action="RunCimianImport" After="InstallFiles">NOT CONFIGYAML</Custom>
+      <Custom Action="RunCimiImport" After="InstallFiles">NOT CONFIGFILE</Custom>
       <!-- Custom Action for Installation -->
       <Custom Action="CreateScheduledTask" After="InstallFiles">NOT REMOVE</Custom>
 
