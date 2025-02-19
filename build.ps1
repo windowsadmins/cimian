@@ -291,6 +291,13 @@ Write-Log "Go modules tidied and downloaded." "SUCCESS"
 # Step 8: Build All Binaries
 Write-Log "Building all binaries..." "INFO"
 
+# Clean existing binaries first
+Write-Log "Cleaning existing binaries..." "INFO"
+if (Test-Path "bin") {
+    Remove-Item -Path "bin\*.exe" -Force
+    Write-Log "Cleaned existing binaries from bin directory." "SUCCESS"
+}
+
 $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
 
 foreach ($dir in $binaryDirs) {
