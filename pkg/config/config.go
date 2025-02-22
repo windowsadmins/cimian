@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -49,6 +50,21 @@ func LoadConfig() (*Configuration, error) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		log.Printf("Failed to parse configuration file: %v", err)
 		return nil, err
+	}
+
+	// Set default paths if empty
+	if config.CachePath == "" {
+		config.CachePath = filepath.Join(`C:\ProgramData\ManagedInstalls\cache`)
+	}
+	if config.CatalogsPath == "" {
+		config.CatalogsPath = filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`)
+	}
+
+	// Create required directories
+	for _, path := range []string{config.CachePath, config.CatalogsPath} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return nil, fmt.Errorf("creating directory %s: %v", path, err)
+		}
 	}
 
 	return &config, nil
