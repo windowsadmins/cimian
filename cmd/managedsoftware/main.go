@@ -228,6 +228,11 @@ func main() {
 
 // loadLocalCatalogItems reads all .yaml files in cfg.CatalogsPath and returns a map of catalog items.
 func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, error) {
+	// Create catalogs directory if it doesn't exist
+	if err := os.MkdirAll(cfg.CatalogsPath, 0755); err != nil {
+		return nil, fmt.Errorf("creating catalogs dir: %v", err)
+	}
+
 	itemsMap := make(map[string]catalog.Item)
 	dirEntries, err := os.ReadDir(cfg.CatalogsPath)
 	if err != nil {
