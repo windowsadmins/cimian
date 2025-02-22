@@ -1,3 +1,4 @@
+// cmd\makecatalogs\main.go
 package main
 
 import (
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
 	"gopkg.in/yaml.v3"
 )
@@ -31,28 +33,28 @@ type InstallItem struct {
 
 // PkgsInfo matches your updated cimianimport pkginfo schema.
 type PkgsInfo struct {
-	Name                 string        `yaml:"name"`
-	DisplayName          string        `yaml:"display_name,omitempty"`
-	Identifier           string        `yaml:"identifier,omitempty"`
-	Version              string        `yaml:"version"`
-	Description          string        `yaml:"description,omitempty"`
-	Catalogs             []string      `yaml:"catalogs"`
-	Category             string        `yaml:"category,omitempty"`
-	Developer            string        `yaml:"developer,omitempty"`
-	Installs             []InstallItem `yaml:"installs,omitempty"`
-	SupportedArch        []string      `yaml:"supported_architectures"`
-	UnattendedInstall    bool          `yaml:"unattended_install"`
-	UnattendedUninstall  bool          `yaml:"unattended_uninstall"`
-	Installer            *Installer    `yaml:"installer,omitempty"`
-	Uninstaller          *Installer    `yaml:"uninstaller,omitempty"`
-	ProductCode          string        `yaml:"product_code,omitempty"`
-	UpgradeCode          string        `yaml:"upgrade_code,omitempty"`
-	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
-	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
-	PreuninstallScript   string        `yaml:"preuninstall_script,omitempty"`
-	PostuninstallScript  string        `yaml:"postuninstall_script,omitempty"`
-	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
+	Name                 string              `yaml:"name"`
+	DisplayName          string              `yaml:"display_name,omitempty"`
+	Identifier           string              `yaml:"identifier,omitempty"`
+	Version              string              `yaml:"version"`
+	Description          string              `yaml:"description,omitempty"`
+	Catalogs             []string            `yaml:"catalogs"`
+	Category             string              `yaml:"category,omitempty"`
+	Developer            string              `yaml:"developer,omitempty"`
+	Installs             []InstallItem       `yaml:"installs,omitempty"`
+	SupportedArch        []string            `yaml:"supported_architectures"`
+	UnattendedInstall    bool                `yaml:"unattended_install"`
+	UnattendedUninstall  bool                `yaml:"unattended_uninstall"`
+	Installer            *Installer          `yaml:"installer,omitempty"`
+	Uninstaller          *Installer          `yaml:"uninstaller,omitempty"`
+	ProductCode          string              `yaml:"product_code,omitempty"`
+	UpgradeCode          string              `yaml:"upgrade_code,omitempty"`
+	PreinstallScript     utils.LiteralString `yaml:"preinstall_script,omitempty"`
+	PostinstallScript    utils.LiteralString `yaml:"postinstall_script,omitempty"`
+	PreuninstallScript   utils.LiteralString `yaml:"preuninstall_script,omitempty"`
+	PostuninstallScript  utils.LiteralString `yaml:"postuninstall_script,omitempty"`
+	InstallCheckScript   utils.LiteralString `yaml:"installcheck_script,omitempty"`
+	UninstallCheckScript utils.LiteralString `yaml:"uninstallcheck_script,omitempty"`
 
 	// Not saved to YAML; only used for reference
 	FilePath string `yaml:"-"`
