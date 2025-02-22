@@ -442,7 +442,8 @@ func runNupkgUninstaller(absFile string) (string, error) {
 
 // runPreinstallScript => detect .bat vs .ps1
 func runPreinstallScript(item catalog.Item, localFile, cachePath string) (string, error) {
-	s := strings.ToLower(item.PreScript)
+	preScriptStr := string(item.PreScript)
+	s := strings.ToLower(preScriptStr)
 	if strings.Contains(s, "@echo off") || strings.HasPrefix(s, "rem ") || strings.HasPrefix(s, "::") {
 		return runBatInstaller(item, localFile, cachePath)
 	}

@@ -79,7 +79,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	// Start with just the client’s manifest name
 	manifestsToProcess := []string{cfg.ClientIdentifier}
 
-	// (NEW) We'll keep a global map of "pkgname (lowercased)" -> CatalogEntry
+	// We'll keep a global map of "pkgname (lowercased)" -> CatalogEntry
 	catalogEntries := make(map[string]CatalogEntry)
 
 	for i := 0; i < len(manifestsToProcess); i++ {
@@ -89,8 +89,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		}
 		visitedManifests[mName] = true
 
-		// Download the manifest
-		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), mName)
+		// When processing included manifests, strip the extension if it exists
+		manifestName := strings.TrimSuffix(mName, ".yaml")
+		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml",
+			strings.TrimRight(cfg.SoftwareRepoURL, "/"),
+			manifestName)
 		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, mName+".yaml")
 
 		if err := download.DownloadFile(manifestURL, manifestFilePath, cfg); err != nil {
