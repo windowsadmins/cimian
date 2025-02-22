@@ -12,24 +12,25 @@ import (
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/report"
+	"github.com/windowsadmins/cimian/pkg/utils"
 	"gopkg.in/yaml.v3"
 )
 
 // Item contains an individual entry from the catalog
 type Item struct {
-	Name          string        `yaml:"name"`
-	Dependencies  []string      `yaml:"dependencies"`
-	DisplayName   string        `yaml:"display_name"`
-	Identifier    string        `yaml:"identifier,omitempty"`
-	Installer     InstallerItem `yaml:"installer"`
-	Check         InstallCheck  `yaml:"check"`
-	Installs      []InstallItem `yaml:"installs"`
-	Uninstaller   InstallerItem `yaml:"uninstaller"`
-	Version       string        `yaml:"version"`
-	BlockingApps  []string      `yaml:"blocking_apps"`
-	PreScript     string        `yaml:"preinstall_script"`
-	PostScript    string        `yaml:"postinstall_script"`
-	SupportedArch []string      `yaml:"supported_architectures"`
+	Name          string              `yaml:"name"`
+	Dependencies  []string            `yaml:"dependencies"`
+	DisplayName   string              `yaml:"display_name"`
+	Identifier    string              `yaml:"identifier,omitempty"`
+	Installer     InstallerItem       `yaml:"installer"`
+	Check         InstallCheck        `yaml:"check"`
+	Installs      []InstallItem       `yaml:"installs"`
+	Uninstaller   InstallerItem       `yaml:"uninstaller"`
+	Version       string              `yaml:"version"`
+	BlockingApps  []string            `yaml:"blocking_apps"`
+	PreScript     utils.LiteralString `yaml:"preinstall_script"`
+	PostScript    utils.LiteralString `yaml:"postinstall_script"`
+	SupportedArch []string            `yaml:"supported_architectures"`
 }
 
 type InstallItem struct {
