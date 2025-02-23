@@ -340,7 +340,7 @@ func buildInstallsArray(paths []string) []InstallItem {
 }
 
 func normalizeInstallerLocation(location string) string {
-	return strings.ReplaceAll(location, `\`, `/`)
+	return utils.NormalizeWindowsPath(location)
 }
 
 // multiStringSlice is your existing custom flag type
