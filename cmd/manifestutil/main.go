@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
+	"gopkg.in/yaml.v3"
 )
 
 // Manifest represents the structure of the manifest YAML files.
@@ -72,11 +72,21 @@ func GetManifest(manifestPath string) (Manifest, error) {
 		return manifest, err
 	}
 
+	// Normalize included_manifests paths
+	for i, path := range manifest.IncludedManifests {
+		manifest.IncludedManifests[i] = utils.NormalizeWindowsPath(path)
+	}
+
 	return manifest, nil
 }
 
 // SaveManifest saves a manifest back to its YAML file.
 func SaveManifest(manifestPath string, manifest Manifest) error {
+	// Normalize included_manifests paths before saving
+	for i, path := range manifest.IncludedManifests {
+		manifest.IncludedManifests[i] = utils.NormalizeWindowsPath(path)
+	}
+
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return err
@@ -148,7 +158,6 @@ func main() {
 	section := flag.String("section", "managed_installs", "Manifest section (managed_installs, managed_uninstalls, managed_updates)")
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
 	removePackage := flag.String("remove-pkg", "", "Package to remove from manifest")
-
 	showManifestUtilVersion := flag.Bool("manifestutil_version", false, "Print the version and exit.")
 
 	flag.Parse()

@@ -571,7 +571,7 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 
 func promptInstallerItemPath(defaultPath string) (string, error) {
 	if defaultPath == "" {
-		defaultPath = "/"
+		defaultPath = "\\"
 	}
 	fmt.Printf("Location in repo [%s]: ", defaultPath)
 	var path string
@@ -580,10 +580,10 @@ func promptInstallerItemPath(defaultPath string) (string, error) {
 	if path == "" {
 		path = defaultPath
 	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+	if !strings.HasPrefix(path, "\\") {
+		path = "\\" + path
 	}
-	path = strings.TrimRight(path, "/")
+	path = strings.TrimRight(path, "\\")
 	return path, nil
 }
 
@@ -769,7 +769,9 @@ func cimianImport(
 	if _, err := copyFile(packagePath, installerDest); err != nil {
 		return false, fmt.Errorf("failed to copy installer: %v", err)
 	}
-	pkgsInfo.Installer.Location = normalizeInstallerLocation(filepath.Join(repoSubPath, installerFilename))
+	// Use forward slash in filepath.Join but normalize after
+	subpathAndFile := filepath.Join(repoSubPath, installerFilename)
+	pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(subpathAndFile)
 
 	// Step 13: write pkginfo to pkgsinfo subdir
 	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", repoSubPath)
@@ -977,7 +979,7 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 		return nil, fmt.Errorf("failed to copy uninstaller: %v", err)
 	}
 	return &Installer{
-		Location: normalizeInstallerLocation(filepath.Join("/", installerSubPath, uninstallerFilename)),
+		Location: utils.NormalizeWindowsPath(filepath.Join("/", installerSubPath, uninstallerFilename)),
 		Hash:     uninstallerHash,
 		Type:     strings.TrimPrefix(filepath.Ext(uninstallerPath), "."),
 	}, nil
@@ -1339,20 +1341,5 @@ flags, the final PkgsInfo will incorporate your user-provided filePaths
 }
 
 func normalizeInstallerLocation(location string) string {
-	// Replace any forward slashes with backslashes:
-	normalized := strings.ReplaceAll(location, "/", "\\")
-
-	// Remove all leading backslashes so we can add exactly one:
-	normalized = strings.TrimLeft(normalized, "\\")
-
-	// Ensure only one leading backslash in the final path:
-	normalized = `\` + normalized
-
-	// Also handle any accidental double-backslashes elsewhere:
-	// (optional, if you want to convert multiple inlined \\ to single \)
-	for strings.Contains(normalized, `\\\`) {
-		normalized = strings.ReplaceAll(normalized, `\\\`, `\\`)
-	}
-
-	return normalized
+	return utils.NormalizeWindowsPath(location)
 }
