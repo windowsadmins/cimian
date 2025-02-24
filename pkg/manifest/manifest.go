@@ -84,6 +84,8 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 	for i := 0; i < len(manifestsToProcess); i++ {
 		mName := manifestsToProcess[i]
+		// Always use forward slashes for manifest names in URLs and includes
+		mName = filepath.ToSlash(mName)
 		if visitedManifests[mName] {
 			continue
 		}
@@ -94,6 +96,8 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml",
 			strings.TrimRight(cfg.SoftwareRepoURL, "/"),
 			manifestName)
+
+		// Use system-specific separators for local file paths
 		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, mName+".yaml")
 
 		if err := download.DownloadFile(manifestURL, manifestFilePath, cfg); err != nil {
@@ -107,10 +111,15 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			continue
 		}
 
+		// When unmarshaling manifest YAML, ensure included_manifests use forward slashes
 		var man Item
 		if err := yaml.Unmarshal(manBytes, &man); err != nil {
 			logging.Error("Failed to parse manifest", "path", manifestFilePath, "error", err)
 			continue
+		}
+		// Convert any included manifests to use forward slashes
+		for j := range man.Includes {
+			man.Includes[j] = filepath.ToSlash(man.Includes[j])
 		}
 		allManifests = append(allManifests, man)
 		logging.Info("Processed manifest", "name", man.Name)
