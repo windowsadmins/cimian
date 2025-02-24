@@ -1,4 +1,4 @@
-// cmd/managedsoftware/main.go
+// cmd/managedsoftwareupdate/main.go
 
 package main
 
