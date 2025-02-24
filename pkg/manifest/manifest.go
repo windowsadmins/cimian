@@ -67,6 +67,14 @@ type CatalogEntry struct {
 	// e.g. category, developer, etc. if needed
 }
 
+// normalizeManifestPath ensures manifest paths use the correct separators for the OS
+func normalizeManifestPath(path string) string {
+	// Convert forward slashes to OS-specific separator
+	normalized := filepath.FromSlash(path)
+	// Clean the path to remove any .. or . components
+	return filepath.Clean(normalized)
+}
+
 // AuthenticatedGet loads the main manifest (plus nested ones), downloads any catalogs
 // they reference, then merges catalog data with each "managed_installs" item.
 func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
