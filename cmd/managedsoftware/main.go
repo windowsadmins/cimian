@@ -313,7 +313,14 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 
 		// Build the full URL
 		fullURL := cItem.Installer.Location
-		if strings.HasPrefix(fullURL, "/") {
+		if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
+			// Normalize path separators to forward slashes
+			fullURL = strings.ReplaceAll(fullURL, "\\", "/")
+			// Ensure path starts with /
+			if !strings.HasPrefix(fullURL, "/") {
+				fullURL = "/" + fullURL
+			}
+			// Combine with base URL
 			fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + fullURL
 		}
 
