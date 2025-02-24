@@ -590,6 +590,16 @@ func promptInstallerItemPath(defaultPath string) (string, error) {
 		path = "\\" + path
 	}
 	path = strings.TrimRight(path, "\\")
+
+	// Sanitize each component of the path
+	parts := strings.Split(path, "\\")
+	for i, part := range parts {
+		if part != "" {
+			parts[i] = sanitizeName(part)
+		}
+	}
+	path = strings.Join(parts, "\\")
+
 	return path, nil
 }
 
@@ -682,9 +692,12 @@ func cimianImport(
 	fileSizeKB := stat.Size() / 1024
 
 	// Step 8: build PkgsInfo
+	displayName := metadata.ID                 // Keep spaces in display name
+	sanitizedName := sanitizeName(metadata.ID) // Remove spaces for file paths
+
 	pkgsInfo := PkgsInfo{
-		Name:          metadata.ID,
-		DisplayName:   metadata.ID,
+		Name:          sanitizedName, // Use sanitized version for Name
+		DisplayName:   displayName,   // Keep spaces in DisplayName
 		Identifier:    identifierFlag,
 		Version:       metadata.Version,
 		Description:   NoQuoteEmptyString(metadata.Description),
@@ -760,8 +773,8 @@ func cimianImport(
 		return false, nil
 	}
 
-	// Step 12: copy installer to pkgs subdir
-	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
+	// Step 12: copy installer to pkgs subdir with sanitized names
+	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", sanitizeName(repoSubPath))
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
 	}
@@ -769,7 +782,7 @@ func cimianImport(
 	if len(pkgsInfo.SupportedArch) > 0 && pkgsInfo.SupportedArch[0] == "x64" {
 		archTag = "-x64-"
 	}
-	installerFilename := pkgsInfo.Name + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
+	installerFilename := sanitizedName + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
 	installerDest := filepath.Join(installerFolderPath, installerFilename)
 
 	if _, err := copyFile(packagePath, installerDest); err != nil {
@@ -913,7 +926,7 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	defaultArch := conf.DefaultArch
 
 	// read each field
-	m.ID = readLineWithDefault(reader, "Identifier", defaultID)
+	m.ID = readLineWithDefault(reader, "Name", defaultID)
 	m.Version = readLineWithDefault(reader, "Version", defaultVersion)
 	m.Developer = readLineWithDefault(reader, "Developer", defaultDeveloper)
 	m.Description = readLineWithDefault(reader, "Description", defaultDescription)
@@ -1264,7 +1277,22 @@ func replacePathUserProfile(p string) string {
 
 // writePkgInfoFile writes the final YAML
 func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, sanitizedVersion, archTag string) error {
-	outputPath := filepath.Join(outputDir, sanitizedName+archTag+sanitizedVersion+".yaml")
+	// Ensure output directory uses sanitized path components
+	parts := strings.Split(outputDir, string(filepath.Separator))
+	for i, part := range parts {
+		if part != "" {
+			parts[i] = sanitizeName(part)
+		}
+	}
+	outputDir = strings.Join(parts, string(filepath.Separator))
+
+	// Create pkginfo filename with sanitized components
+	outputPath := filepath.Join(outputDir,
+		sanitizeName(sanitizedName)+
+			archTag+
+			sanitizeName(sanitizedVersion)+
+			".yaml")
+
 	yamlData, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
 		return fmt.Errorf("failed to encode pkginfo with block scalars: %v", err)
@@ -1348,4 +1376,22 @@ flags, the final PkgsInfo will incorporate your user-provided filePaths
 
 func normalizeInstallerLocation(location string) string {
 	return utils.NormalizeWindowsPath(location)
+}
+
+// sanitizeName replaces spaces with dashes and removes any invalid chars
+func sanitizeName(name string) string {
+	// Replace spaces with dashes
+	name = strings.ReplaceAll(name, " ", "-")
+	// Remove any other potentially problematic characters
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+			return r
+		}
+		return '-'
+	}, name)
+	return name
 }
