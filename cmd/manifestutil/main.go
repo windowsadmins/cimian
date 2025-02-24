@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
 	"gopkg.in/yaml.v3"
 )
@@ -72,9 +71,9 @@ func GetManifest(manifestPath string) (Manifest, error) {
 		return manifest, err
 	}
 
-	// Normalize included_manifests paths
+	// Normalize included_manifests paths to forward slashes
 	for i, path := range manifest.IncludedManifests {
-		manifest.IncludedManifests[i] = utils.NormalizeWindowsPath(path)
+		manifest.IncludedManifests[i] = filepath.ToSlash(path)
 	}
 
 	return manifest, nil
@@ -82,9 +81,9 @@ func GetManifest(manifestPath string) (Manifest, error) {
 
 // SaveManifest saves a manifest back to its YAML file.
 func SaveManifest(manifestPath string, manifest Manifest) error {
-	// Normalize included_manifests paths before saving
+	// Normalize included_manifests paths to forward slashes before saving
 	for i, path := range manifest.IncludedManifests {
-		manifest.IncludedManifests[i] = utils.NormalizeWindowsPath(path)
+		manifest.IncludedManifests[i] = filepath.ToSlash(path)
 	}
 
 	data, err := yaml.Marshal(manifest)
