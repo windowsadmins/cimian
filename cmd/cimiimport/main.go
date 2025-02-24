@@ -470,6 +470,12 @@ func configureCimianImportNonInteractive(conf *config.Configuration) error {
 }
 
 func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
+	// Run makecatalogs silently to ensure All.yaml is up to date
+	if err := runMakeCatalogs(true); err != nil {
+		fmt.Printf("Warning: makecatalogs failed: %v\n", err)
+		// Continue anyway - we'll use whatever All.yaml exists
+	}
+
 	// For Cimian, your `All.yaml` is at:
 	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
 
