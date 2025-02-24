@@ -59,7 +59,7 @@
             <File Id="BinaryFile3" Source="release\makepkginfo.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary4" Guid="87855CDE-AFAB-564D-D795-26091FE9B83A" Win64="yes">
-            <File Id="BinaryFile4" Source="release\managedsoftware.exe" KeyPath="yes" />
+            <File Id="BinaryFile4" Source="release\managedsoftwareupdate.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary5" Guid="97855CDE-BFAB-664D-E795-26091DE8B83A" Win64="yes">
             <File Id="BinaryFile5" Source="release\manifestutil.exe" KeyPath="yes" />
@@ -110,7 +110,7 @@
                   Impersonate="no"
                   Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN CimianHourlyRun /TR &quot;[INSTALLDIR]managedsoftware.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN CimianHourlyRun /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
 
     <!-- Delete Scheduled Task -->
     <CustomAction Id="DeleteScheduledTask"
