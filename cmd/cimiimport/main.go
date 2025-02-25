@@ -577,7 +577,7 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 
 func promptInstallerItemPath(defaultPath string) (string, error) {
 	if defaultPath == "" {
-		defaultPath = "\\"
+		defaultPath = "\\mgmt"
 	}
 	fmt.Printf("Location in repo [%s]: ", defaultPath)
 	var path string
@@ -586,20 +586,15 @@ func promptInstallerItemPath(defaultPath string) (string, error) {
 	if path == "" {
 		path = defaultPath
 	}
+
+	// Ensure path starts with backslash
 	if !strings.HasPrefix(path, "\\") {
 		path = "\\" + path
 	}
 	path = strings.TrimRight(path, "\\")
 
-	// Sanitize each component of the path
-	parts := strings.Split(path, "\\")
-	for i, part := range parts {
-		if part != "" {
-			parts[i] = sanitizeName(part)
-		}
-	}
-	path = strings.Join(parts, "\\")
-
+	// Do NOT sanitize path components here - these are directory names
+	// that should remain as-is
 	return path, nil
 }
 
@@ -773,8 +768,9 @@ func cimianImport(
 		return false, nil
 	}
 
-	// Step 12: copy installer to pkgs subdir with sanitized names
-	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", sanitizeName(repoSubPath))
+	// Step 12: copy installer to pkgs subdir
+	repoSubPath = strings.TrimPrefix(repoSubPath, "\\") // Remove leading backslash for joining
+	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
 	}
