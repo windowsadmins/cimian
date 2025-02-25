@@ -100,10 +100,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		visitedManifests[mName] = true
 
 		// When processing included manifests, strip the extension if it exists
-		manifestName := strings.TrimSuffix(mName, ".yaml")
-		manifestURL := fmt.Sprintf("%s/manifests/%s.yaml",
+		manifestURL := fmt.Sprintf("%s/manifests/%s",
 			strings.TrimRight(cfg.SoftwareRepoURL, "/"),
-			manifestName)
+			ensureYAMLExtension(filepath.ToSlash(mName)))
 
 		// Use system-specific separators for local file paths
 		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, ensureYAMLExtension(mName))
@@ -134,6 +133,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 		// Enqueue any "included_manifests"
 		for _, inc := range man.Includes {
+			inc = ensureYAMLExtension(filepath.ToSlash(inc)) // Ensure correct format
 			if !visitedManifests[inc] {
 				logging.Info("Including nested manifest", "parent", mName, "nested", inc)
 				manifestsToProcess = append(manifestsToProcess, inc)
