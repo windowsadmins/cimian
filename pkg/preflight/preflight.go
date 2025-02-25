@@ -15,29 +15,39 @@ func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError 
 	scriptPath := `C:\Program Files\Cimian\preflight.ps1`
 	displayName := "preflight"
 
-	// Log the script path
-	logInfo("Preflight script path", "path", scriptPath)
-
 	// Check if script exists
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		logInfo("Preflight script not found", "path", scriptPath)
 		return nil
 	}
 
-	// Build the command
-	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	// Use pwsh.exe for PowerShell 7.5.
+	cmd := exec.Command(
+		"pwsh.exe",
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command", fmt.Sprintf(`& "%s" 2>&1`, scriptPath),
+	)
+
 	cmd.Dir = filepath.Dir(scriptPath)
 
-	// Log the full command and working directory
-	logInfo("Preflight command", "command", strings.Join(cmd.Args, " "))
-	logInfo("Preflight working directory", "directory", cmd.Dir)
+	outputBytes, err := cmd.CombinedOutput()
+	outputStr := string(outputBytes)
 
-	// Execute the command
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
-
-	// Log the raw output
-	logInfo("Preflight raw output", "output", outputStr)
+	// Split and log each output line directly
+	lines := strings.Split(outputStr, "\n")
+	for _, line := range lines {
+		txt := strings.TrimSpace(line)
+		if txt == "" {
+			continue
+		}
+		// Optionally remove any BOM or ANSI sequences
+		txt = strings.TrimPrefix(txt, "\ufeff")
+		txt = strings.ReplaceAll(txt, "\u001b[0m", "")
+		txt = strings.ReplaceAll(txt, "\u001b[", "")
+		logInfo(txt)
+	}
 
 	if err != nil {
 		logError("Preflight script error", "error", err)
