@@ -67,12 +67,12 @@ type CatalogEntry struct {
 	// e.g. category, developer, etc. if needed
 }
 
-// normalizeManifestPath ensures manifest paths use the correct separators for the OS
-func normalizeManifestPath(path string) string {
-	// Convert forward slashes to OS-specific separator
-	normalized := filepath.FromSlash(path)
-	// Clean the path to remove any .. or . components
-	return filepath.Clean(normalized)
+// Helper function to append `.yaml` only if missing
+func ensureYAMLExtension(name string) string {
+	if !strings.HasSuffix(name, ".yaml") {
+		return name + ".yaml"
+	}
+	return name
 }
 
 // AuthenticatedGet loads the main manifest (plus nested ones), downloads any catalogs
@@ -106,7 +106,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			manifestName)
 
 		// Use system-specific separators for local file paths
-		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, mName+".yaml")
+		manifestFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, ensureYAMLExtension(mName))
 
 		if err := download.DownloadFile(manifestURL, manifestFilePath, cfg); err != nil {
 			logging.Warn("Failed to download manifest", "url", manifestURL, "error", err)
