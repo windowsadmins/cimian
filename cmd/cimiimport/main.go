@@ -1277,36 +1277,41 @@ func replacePathUserProfile(p string) string {
 
 // writePkgInfoFile writes the final YAML
 func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, sanitizedVersion, archTag string) error {
-	// Ensure output directory uses sanitized path components
-	parts := strings.Split(outputDir, string(filepath.Separator))
-	for i, part := range parts {
-		if part != "" {
-			parts[i] = sanitizeName(part)
-		}
+	// First ensure outputDir is an absolute path and normalize it
+	absOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %v", err)
 	}
-	outputDir = strings.Join(parts, string(filepath.Separator))
+
+	// Ensure we have a properly formatted Windows path
+	absOutputDir = strings.ReplaceAll(absOutputDir, "/", "\\")
 
 	// Create pkginfo filename with sanitized components
-	outputPath := filepath.Join(outputDir,
+	outputPath := filepath.Join(absOutputDir,
 		sanitizeName(sanitizedName)+
 			archTag+
 			sanitizeName(sanitizedVersion)+
 			".yaml")
 
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %v", err)
+	}
+
 	yamlData, err := encodeWithSelectiveBlockScalars(pkgsInfo)
 	if err != nil {
 		return fmt.Errorf("failed to encode pkginfo with block scalars: %v", err)
 	}
+
 	if err := os.WriteFile(outputPath, yamlData, 0644); err != nil {
 		return fmt.Errorf("failed to write pkginfo to file: %v", err)
 	}
 
-	absOutputPath, err := filepath.Abs(outputPath)
-	if err == nil {
-		fmt.Printf("Pkginfo created at: %s\n", absOutputPath)
-	}
+	// Get clean path for display
+	displayPath := strings.ReplaceAll(outputPath, "/", "\\")
+	fmt.Printf("Pkginfo created at: %s\n", displayPath)
 
-	if err := maybeOpenFile(absOutputPath); err != nil {
+	if err := maybeOpenFile(outputPath); err != nil {
 		fmt.Printf("Warning: could not open pkginfo in an editor: %v\n", err)
 	}
 
