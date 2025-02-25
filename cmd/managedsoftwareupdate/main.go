@@ -33,7 +33,24 @@ type LASTINPUTINFO struct {
 	DwTime uint32
 }
 
+func enableANSIConsole() {
+	// Attempt to enable virtual terminal processing on both stdout and stderr.
+	// If the user runs in a standard Windows console, it should allow ANSI colors to display.
+	for _, stream := range []*os.File{os.Stdout, os.Stderr} {
+		handle := windows.Handle(stream.Fd())
+		var mode uint32
+
+		// Get current console mode
+		if err := windows.GetConsoleMode(handle, &mode); err == nil {
+			// Enable the flag for virtual terminal sequences
+			mode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
+			_ = windows.SetConsoleMode(handle, mode)
+		}
+	}
+}
+
 func main() {
+	enableANSIConsole()
 	// Define command-line flags
 	showConfig := pflag.Bool("show-config", false, "Display the current configuration and exit.")
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")
@@ -86,7 +103,9 @@ func main() {
 	}()
 
 	// 4) Run preflight script
-	logging.Info("Running preflight script now...")
+	if verbosity > 0 {
+		logging.Info("Running preflight script with verbosity level", "level", verbosity)
+	}
 	pErr := preflight.RunPreflight(verbosity, logging.Info, logging.Error)
 	if pErr != nil {
 		logging.Error("Preflight script failed", "error", pErr)
