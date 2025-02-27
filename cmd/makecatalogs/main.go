@@ -9,10 +9,13 @@ import (
 	"strings"
 
 	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
 	"gopkg.in/yaml.v3"
 )
+
+var logger *logging.Logger
 
 // Installer parallels cimianimport’s structure.
 type Installer struct {
@@ -156,7 +159,7 @@ func buildCatalogs(pkgs []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) 
 		// also add to each item’s .Catalogs
 		for _, catName := range pkg.Catalogs {
 			if !silent {
-				fmt.Printf("Adding %s to %s...\n", pkg.FilePath, catName)
+				logger.Debug("Adding %s to %s...", pkg.FilePath, catName)
 			}
 			cats[catName] = append(cats[catName], pkg)
 		}
@@ -184,7 +187,7 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 			toRemove := filepath.Join(catDir, name)
 			if rmErr := os.Remove(toRemove); rmErr == nil {
 				if !silent {
-					fmt.Printf("Removed stale catalog %s\n", toRemove)
+					logger.Warning("Removed stale catalog %s", toRemove)
 				}
 			}
 		}
@@ -203,7 +206,7 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 		}
 		file.Close()
 		if !silent {
-			fmt.Printf("Wrote catalog %s (%d items)\n", catName, len(items))
+			logger.Success("Wrote catalog %s (%d items)", catName, len(items))
 		}
 	}
 
@@ -217,6 +220,9 @@ func main() {
 	showVersionFlag := flag.Bool("makecatalog_version", false, "Print version and exit.")
 	flag.Parse()
 
+	// Initialize logger
+	logger = logging.New(!*silentFlag) // Enable verbose mode if not silent
+
 	if *showVersionFlag {
 		version.Print()
 		os.Exit(0)
@@ -227,18 +233,18 @@ func main() {
 	if repo == "" {
 		conf, err := loadConfig()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			logger.Error("Error loading config: %v", err)
 			os.Exit(1)
 		}
 		if conf.RepoPath == "" {
-			fmt.Fprintln(os.Stderr, "No repo_path found in config or via --repo_path.")
+			logger.Error("No repo_path found in config or via --repo_path.")
 			os.Exit(1)
 		}
 		repo = conf.RepoPath
 	}
 
 	if !*silentFlag {
-		fmt.Printf("Scanning %s for .yaml pkginfo...\n", repo)
+		logger.Printf("Scanning %s for .yaml pkginfo...", repo)
 	}
 	items, err := scanRepo(repo)
 	// ----------------------------------------------------------------------------
@@ -246,7 +252,7 @@ func main() {
 	// ----------------------------------------------------------------------------
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error scanning repo: %v\n", err)
+		logger.Error("Error scanning repo: %v", err)
 		os.Exit(1)
 	}
 
@@ -261,22 +267,22 @@ func main() {
 	// Build catalogs
 	catMap, err := buildCatalogs(finalItems, *silentFlag)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error building catalogs: %v\n", err)
+		logger.Error("Error building catalogs: %v", err)
 		os.Exit(1)
 	}
 
 	// Write them
 	if err := writeCatalogs(repo, catMap, *silentFlag); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing catalogs: %v\n", err)
+		logger.Error("Error writing catalogs: %v", err)
 		os.Exit(1)
 	}
 
 	// Finally, print any collected warnings
 	if len(warnings) > 0 {
 		for _, w := range warnings {
-			fmt.Println(w)
+			logger.Warning("%s", w)
 		}
 	}
 
-	fmt.Println("makecatalogs completed successfully.")
+	logger.Success("makecatalogs completed successfully.")
 }
