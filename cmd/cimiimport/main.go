@@ -22,12 +22,14 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/extract"
+	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/utils"
 )
 
 var (
 	identifierFlag string
 	configAuto     bool
+	logger         *logging.Logger
 )
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
@@ -198,6 +200,9 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 }
 
 func main() {
+	// Initialize logger
+	logger = logging.New(false) // Set to true for verbose mode
+
 	// 1) Patch Windows args so spaces are preserved:
 	utils.PatchWindowsArgs()
 
@@ -217,7 +222,7 @@ func main() {
 	if configRequested {
 		conf, err := loadOrCreateConfig()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			logger.Error("Error loading config: %v", err)
 			os.Exit(1)
 		}
 
@@ -228,14 +233,14 @@ func main() {
 			if !configAuto {
 				// interactive config
 				if err := configureCimianImport(conf); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to save config (interactive): %v\n", err)
+					logger.Error("Failed to save config (interactive): %v", err)
 					os.Exit(1)
 				}
-				fmt.Println("Configuration saved successfully.")
+				logger.Success("Configuration saved successfully.")
 			} else {
 				// non-interactive
 				if err := configureCimianImportNonInteractive(conf); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to save config (auto): %v\n", err)
+					logger.Error("Failed to save config (auto): %v", err)
 					os.Exit(1)
 				}
 			}
@@ -251,7 +256,7 @@ func main() {
 	if packagePath == "" {
 		packagePath = getInstallerPathInteractive()
 		if packagePath == "" {
-			fmt.Fprintln(os.Stderr, "No installer path provided; exiting.")
+			logger.Error("No installer path provided; exiting.")
 			os.Exit(1)
 		}
 	}
@@ -259,7 +264,7 @@ func main() {
 	// 3) Load config
 	conf, err := loadOrCreateConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		logger.Error("Error loading config: %v", err)
 		os.Exit(1)
 	}
 
@@ -293,7 +298,7 @@ func main() {
 		filePaths, // the array from -i flags
 	)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error in cimianImport:", err)
+		logger.Error("Error in cimianImport: %v", err)
 		os.Exit(1)
 	}
 	if !success {
@@ -303,25 +308,25 @@ func main() {
 	// 7) upload to cloud if set
 	if conf.CloudProvider != "none" {
 		if err := uploadToCloud(conf); err != nil {
-			fmt.Fprintln(os.Stderr, "Error uploading to cloud:", err)
+			logger.Error("Error uploading to cloud: %v", err)
 		}
 	}
 
 	// 8) Always run makecatalogs
 	if err := runMakeCatalogs(true); err != nil {
-		fmt.Fprintln(os.Stderr, "makecatalogs error:", err)
+		logger.Error("makecatalogs error: %v", err)
 	}
 
 	// 9) If AWS/Azure => optionally sync pkgs or icons
 	if conf.CloudProvider == "aws" || conf.CloudProvider == "azure" {
-		fmt.Println("Starting upload for pkgs")
+		logger.Printf("Starting upload for pkgs")
 		err = syncToCloud(conf, filepath.Join(conf.RepoPath, "pkgs"), "pkgs")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error syncing pkgs to %s: %v\n", conf.CloudProvider, err)
+			logger.Error("Error syncing pkgs to %s: %v", conf.CloudProvider, err)
 		}
 	}
 
-	fmt.Println("Cimian import completed successfully.")
+	logger.Success("Cimian import completed successfully.")
 }
 
 // getConfigPath returns the path for the config file.
@@ -472,7 +477,7 @@ func configureCimianImportNonInteractive(conf *config.Configuration) error {
 func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
 	// Run makecatalogs silently to ensure All.yaml is up to date
 	if err := runMakeCatalogs(true); err != nil {
-		fmt.Printf("Warning: makecatalogs failed: %v\n", err)
+		logger.Warning("makecatalogs failed: %v", err)
 		// Continue anyway - we'll use whatever All.yaml exists
 	}
 
@@ -522,7 +527,6 @@ func getInstallerPathInteractive() string {
 // or the same with INSTALLLOCATION
 var reInstallDir = regexp.MustCompile(`(?i)--INSTALL(?:DIR|LOCATION)\s*=\s*(?:"([^"]+)"|'([^']+)'|(\S+))`)
 
-// GuessInstallDirFromBat tries to parse out an install directory from .bat lines
 func GuessInstallDirFromBat(batPath string) string {
 	data, err := os.ReadFile(batPath)
 	if err != nil {
@@ -624,10 +628,10 @@ func cimianImport(
 	// Step 3: see if item already in All.yaml
 	existingPkg, found, err := findMatchingItemInAllCatalog(conf.RepoPath, metadata.ID)
 	if err != nil {
-		fmt.Println("Warning: could not check existing items:", err)
+		logger.Warning("Could not check existing items: %v", err)
 	} else if found && existingPkg != nil {
-		fmt.Println("This item has the same Name as an existing item in the repo:")
-		fmt.Printf("    Name: %s\n    Version: %s\n    Description: %s\n",
+		logger.Printf("This item has the same Name as an existing item in the repo:")
+		logger.Printf("    Name: %s\n    Version: %s\n    Description: %s",
 			existingPkg.Name, existingPkg.Version, existingPkg.Description)
 		ans := getInput("Use existing item as a template? [Y/n]: ", "Y")
 		if strings.EqualFold(ans, "y") || ans == "" {
@@ -750,25 +754,26 @@ func cimianImport(
 	pkgsInfo.Installs = finalInstalls
 
 	// Step 11: show final details
-	fmt.Println("\nPkginfo details:")
-	fmt.Printf("    Name: %s\n", pkgsInfo.Name)
-	fmt.Printf("    Display Name: %s\n", pkgsInfo.DisplayName)
-	fmt.Printf("    Version: %s\n", pkgsInfo.Version)
-	fmt.Printf("    Description: %s\n", pkgsInfo.Description)
-	fmt.Printf("    Category: %s\n", pkgsInfo.Category)
-	fmt.Printf("    Developer: %s\n", pkgsInfo.Developer)
-	fmt.Printf("    Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
-	fmt.Printf("    Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
-	fmt.Printf("    Installer Type: %s\n", pkgsInfo.Installer.Type)
-	fmt.Println()
+	logger.Printf("\nPkginfo details:")
+	logger.Printf("    Name: %s", pkgsInfo.Name)
+	logger.Printf("    Display Name: %s", pkgsInfo.DisplayName)
+	logger.Printf("    Version: %s", pkgsInfo.Version)
+	logger.Printf("    Description: %s", pkgsInfo.Description)
+	logger.Printf("    Category: %s", pkgsInfo.Category)
+	logger.Printf("    Developer: %s", pkgsInfo.Developer)
+	logger.Printf("    Architectures: %s", strings.Join(pkgsInfo.SupportedArch, ", "))
+	logger.Printf("    Catalogs: %s", strings.Join(pkgsInfo.Catalogs, ", "))
+	logger.Printf("    Installer Type: %s", pkgsInfo.Installer.Type)
+	logger.Printf("")
 
 	confirm := getInput("Import this item? (y/n): ", "n")
 	if !strings.EqualFold(confirm, "y") {
-		fmt.Println("Import canceled.")
+		logger.Printf("Import canceled.")
 		return false, nil
 	}
 
 	// Step 12: copy installer to pkgs subdir
+	logger.Debug("Copying installer to repo...")
 	repoSubPath = strings.TrimPrefix(repoSubPath, "\\") // Remove leading backslash for joining
 	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
@@ -784,11 +789,12 @@ func cimianImport(
 	if _, err := copyFile(packagePath, installerDest); err != nil {
 		return false, fmt.Errorf("failed to copy installer: %v", err)
 	}
-	// Use forward slash in filepath.Join but normalize after
+	// Use utils.NormalizeWindowsPath instead of local normalizeInstallerLocation
 	subpathAndFile := filepath.Join(repoSubPath, installerFilename)
 	pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(subpathAndFile)
 
 	// Step 13: write pkginfo to pkgsinfo subdir
+	logger.Debug("Writing pkginfo file...")
 	pkginfoFolderPath := filepath.Join(conf.RepoPath, "pkgsinfo", repoSubPath)
 	if err := os.MkdirAll(pkginfoFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create pkginfo directory: %v", err)
@@ -800,6 +806,7 @@ func cimianImport(
 		return false, fmt.Errorf("failed to write final pkginfo: %v", err)
 	}
 
+	logger.Success("Installer imported successfully!")
 	return true, nil
 }
 
@@ -993,6 +1000,7 @@ func processUninstaller(uninstallerPath, pkgsFolderPath, installerSubPath string
 	if _, err := copyFile(uninstallerPath, uninstallerDest); err != nil {
 		return nil, fmt.Errorf("failed to copy uninstaller: %v", err)
 	}
+	// Use utils.NormalizeWindowsPath here too
 	return &Installer{
 		Location: utils.NormalizeWindowsPath(filepath.Join("/", installerSubPath, uninstallerFilename)),
 		Hash:     uninstallerHash,
@@ -1095,6 +1103,7 @@ func uploadToCloud(conf *config.Configuration) error {
 	localIconsPath := filepath.Join(conf.RepoPath, "icons")
 
 	if conf.CloudProvider == "aws" {
+		// Use the variable in this branch so it's no longer unused
 		pkgsDestination := fmt.Sprintf("s3://%s/pkgs/", conf.CloudBucket)
 		cmdPkgs := exec.Command("aws", "s3", "sync", localPkgsPath, pkgsDestination, "--exclude", "*.git/*", "--exclude", "**/.DS_Store")
 		cmdPkgs.Stdout = os.Stdout
@@ -1373,10 +1382,6 @@ If you specify both an installer path and one or more -i/--installs-array
 flags, the final PkgsInfo will incorporate your user-provided filePaths 
 (and skip the .exe fallback).`)
 	os.Exit(0)
-}
-
-func normalizeInstallerLocation(location string) string {
-	return utils.NormalizeWindowsPath(location)
 }
 
 // sanitizeName replaces spaces with dashes and removes any invalid chars

@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/windowsadmins/cimian/pkg/extract"
+	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
 )
@@ -194,7 +195,7 @@ func gatherInstallerInfo(path string) (
 
 		_, _, err = getFileInfo(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
+			logger.Error("Error getting file info: %v", err)
 		}
 		md5Val, _ := calculateMD5(path)
 
@@ -223,7 +224,7 @@ func gatherInstallerInfo(path string) (
 
 		_, _, err = getFileInfo(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
+			logger.Error("Error getting file info: %v", err)
 		}
 		md5Val, _ := calculateMD5(path)
 
@@ -243,7 +244,7 @@ func gatherInstallerInfo(path string) (
 
 		_, _, err = getFileInfo(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting file info: %v\n", err)
+			logger.Error("Error getting file info: %v", err)
 		}
 		md5Val, _ := calculateMD5(path)
 
@@ -309,12 +310,12 @@ func buildInstallsArray(paths []string) []InstallItem {
 
 		st, err := os.Stat(abs)
 		if err != nil || st.IsDir() {
-			fmt.Fprintf(os.Stderr, "Skipping '%s' in -f, not found or directory.\n", f)
+			logger.Warning("Skipping '%s' in -f, not found or directory.", f)
 			continue
 		}
 		md5val, err := calculateMD5(abs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error calculating MD5 for %s: %v\n", abs, err)
+			logger.Warning("Error calculating MD5 for %s: %v", abs, err)
 			continue
 		}
 
@@ -322,7 +323,7 @@ func buildInstallsArray(paths []string) []InstallItem {
 		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
 			v, err := getFileVersion(abs)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting file version for %s: %v\n", abs, err)
+				logger.Warning("Error getting file version for %s: %v", abs, err)
 			} else {
 				fileVersion = v
 			}
@@ -339,10 +340,6 @@ func buildInstallsArray(paths []string) []InstallItem {
 	return installs
 }
 
-func normalizeInstallerLocation(location string) string {
-	return utils.NormalizeWindowsPath(location)
-}
-
 // multiStringSlice is your existing custom flag type
 type multiStringSlice []string
 
@@ -356,6 +353,7 @@ func (m *multiStringSlice) Set(value string) error {
 
 // main entry point
 var identifierFlag string
+var logger *logging.Logger
 
 func main() {
 	var (
@@ -399,6 +397,9 @@ func main() {
 	showMakePkgInfoVersion := flag.Bool("makepkginfo_version", false, "Print the version and exit.")
 	flag.Parse()
 
+	// Initialize logger
+	logger = logging.New(false) // Set to true if you want verbose with line numbers
+
 	// If --version
 	if *showMakePkgInfoVersion {
 		version.Print()
@@ -408,14 +409,14 @@ func main() {
 	// Load config
 	config, err := LoadConfig(`C:\ProgramData\ManagedInstalls\Config.yaml`)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		logger.Error("Error loading config: %v", err)
 		os.Exit(1)
 	}
 
 	// If --new
 	if newPkg {
 		if flag.NArg() < 1 {
-			fmt.Println("Usage: makepkginfo --new PkginfoName")
+			logger.Error("Usage: makepkginfo --new PkginfoName")
 			flag.PrintDefaults()
 			os.Exit(1)
 		}
@@ -423,16 +424,16 @@ func main() {
 		pkgsinfoPath := filepath.Join(config.RepoPath, "pkgsinfo", pkgsinfoName+".yaml")
 		err := CreateNewPkgsInfo(pkgsinfoPath, pkgsinfoName)
 		if err != nil {
-			fmt.Println("Error creating pkgsinfo:", err)
+			logger.Error("Error creating pkgsinfo: %v", err)
 			return
 		}
-		fmt.Println("New pkgsinfo created:", pkgsinfoPath)
+		logger.Success("New pkgsinfo created: %s", pkgsinfoPath)
 		return
 	}
 
 	// If not creating a new pkg, we expect at least 1 argument => the installer path
 	if flag.NArg() < 1 && len(filePaths) == 0 {
-		fmt.Println("Usage: makepkginfo [options] /path/to/installer.msi -f path1 -f path2 ...")
+		logger.Error("Usage: makepkginfo [options] /path/to/installer.msi -f path1 -f path2 ...")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -492,7 +493,7 @@ func main() {
 		sizeKB := sizeBytes / 1024
 
 		pkginfo.Installer = &Installer{
-			Location: normalizeInstallerLocation(filepath.Base(installerPath)),
+			Location: utils.NormalizeWindowsPath(filepath.Base(installerPath)), // Use utils.NormalizeWindowsPath instead
 			Hash:     hashVal,
 			Type:     installerType,
 			Size:     sizeKB,
@@ -533,7 +534,7 @@ func main() {
 	// Output final YAML to stdout
 	yamlData, err := yaml.Marshal(&pkginfo)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling YAML: %v\n", err)
+		logger.Error("Error marshaling YAML: %v", err)
 		os.Exit(1)
 	}
 	fmt.Println(string(yamlData))

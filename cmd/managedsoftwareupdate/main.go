@@ -27,6 +27,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var logger *logging.Logger
+
 // LASTINPUTINFO is used to track user idle time
 type LASTINPUTINFO struct {
 	CbSize uint32
@@ -63,6 +65,9 @@ func main() {
 
 	pflag.Parse()
 
+	// Initialize logger
+	logger = logging.New(verbosity > 0)
+
 	// Handle --version flag
 	if *versionFlag {
 		version.Print()
@@ -72,8 +77,7 @@ func main() {
 	// 1) Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		fmt.Printf("Failed to load configuration: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Failed to load configuration: %v", err)
 	}
 
 	// Apply verbosity settings
@@ -84,11 +88,10 @@ func main() {
 		}
 	}
 
-	// 2) Initialize logging
+	// 2) Initialize logging (keep this for backward compatibility)
 	err = logging.Init(cfg)
 	if err != nil {
-		fmt.Printf("Error initializing logger: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Error initializing logger: %v", err)
 	}
 	defer logging.CloseLogger()
 
@@ -97,26 +100,35 @@ func main() {
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-signalChan
-		logging.Info("Signal received, exiting gracefully", "signal", sig.String())
+		logger.Warning("Signal received, exiting gracefully: %s", sig.String())
 		logging.CloseLogger()
 		os.Exit(1)
 	}()
 
 	// 4) Run preflight script
 	if verbosity > 0 {
-		logging.Info("Running preflight script with verbosity level", "level", verbosity)
+		logger.Debug("Running preflight script with verbosity level: %d", verbosity)
 	}
-	pErr := preflight.RunPreflight(verbosity, logging.Info, logging.Error)
+
+	// Convert the logger methods to match what preflight expects
+	logInfo := func(format string, args ...interface{}) {
+		logger.Printf(format, args...)
+	}
+	logError := func(format string, args ...interface{}) {
+		logger.Error(format, args...)
+	}
+
+	pErr := preflight.RunPreflight(verbosity, logInfo, logError)
 	if pErr != nil {
-		logging.Error("Preflight script failed", "error", pErr)
+		logger.Error("Preflight script failed: %v", pErr)
 		os.Exit(1)
 	}
-	logging.Info("Preflight script completed.")
+	logger.Success("Preflight script completed.")
 
 	// Re-load configuration after preflight
 	cfg, err = config.LoadConfig()
 	if err != nil {
-		logging.Error("Failed to reload configuration after preflight", "error", err)
+		logger.Error("Failed to reload configuration after preflight: %v", err)
 		os.Exit(1)
 	}
 
@@ -131,8 +143,7 @@ func main() {
 	// Re-initialize logging with updated config
 	err = logging.ReInit(cfg)
 	if err != nil {
-		fmt.Printf("Error re-initializing logger after preflight: %v\n", err)
-		os.Exit(1)
+		logger.Fatal("Error re-initializing logger after preflight: %v", err)
 	}
 	defer logging.CloseLogger()
 
@@ -140,14 +151,14 @@ func main() {
 	if *showConfig {
 		cfgYaml, yerr := yaml.Marshal(cfg)
 		if yerr == nil {
-			logging.Info("Current configuration:\n%s", string(cfgYaml))
+			logger.Printf("Current configuration:\n%s", string(cfgYaml))
 		}
 		os.Exit(0)
 	}
 
 	// Ensure mutually exclusive flags are not set
 	if *checkOnly && *installOnly {
-		logging.Warn("Conflicting flags", "flags", "--checkonly and --installonly are mutually exclusive")
+		logger.Warning("Conflicting flags: --checkonly and --installonly are mutually exclusive")
 		pflag.Usage()
 		os.Exit(1)
 	}
@@ -160,43 +171,42 @@ func main() {
 		*checkOnly = false
 		*installOnly = false
 	}
-	logging.Info("Run type", "run_type", runType)
+	logger.Printf("Run type: %s", runType)
 
 	// 5) Check administrative privileges
 	admin, adminErr := adminCheck()
 	if adminErr != nil || !admin {
-		logging.Error("Administrative access required", "error", adminErr, "admin", admin)
-		os.Exit(1)
+		logger.Fatal("Administrative access required. Error: %v, Admin: %v", adminErr, admin)
 	}
 
 	// 6) Ensure cache directory exists
 	cachePath := cfg.CachePath
 	if err := os.MkdirAll(filepath.Clean(cachePath), 0755); err != nil {
-		logging.Error("Failed to create cache directory", "cache_path", cachePath, "error", err)
+		logger.Error("Failed to create cache directory: %v", err)
 		os.Exit(1)
 	}
 
 	// 7) Retrieve manifests
 	manifestItems, mErr := manifest.AuthenticatedGet(cfg)
 	if mErr != nil {
-		logging.Error("Failed to retrieve manifests", "error", mErr)
+		logger.Error("Failed to retrieve manifests: %v", mErr)
 		os.Exit(1)
 	}
 
 	// 7.1) Load local catalogs into a map (name.lower() => catalog.Item)
 	localCatalogMap, err := loadLocalCatalogItems(cfg)
 	if err != nil {
-		logging.Error("Failed to load local catalogs", "error", err)
+		logger.Error("Failed to load local catalogs: %v", err)
 		os.Exit(1)
 	}
-	logging.Debug("Local catalogs loaded", "count", len(localCatalogMap))
+	logger.Debug("Local catalogs loaded: %d", len(localCatalogMap))
 
 	// Handle install-only mode
 	if *installOnly {
-		logging.Info("Running in install-only mode")
+		logger.Info("Running in install-only mode")
 		itemsToInstall := prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
 		if err := downloadAndInstallPerItem(itemsToInstall, cfg); err != nil {
-			logging.Error("Failed to install pending updates (install-only)", "error", err)
+			logger.Error("Failed to install pending updates (install-only): %v", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -206,9 +216,9 @@ func main() {
 	if *checkOnly {
 		updatesAvailable := checkForUpdatesWithCatalog(cfg, verbosity, manifestItems, localCatalogMap)
 		if updatesAvailable {
-			logging.Info("Updates are available.")
+			logger.Info("Updates are available.")
 		} else {
-			logging.Info("No updates available.")
+			logger.Info("No updates available.")
 		}
 		os.Exit(0)
 	}
@@ -216,7 +226,7 @@ func main() {
 	// Handle auto mode: skip if user is active
 	if *auto {
 		if isUserActive() {
-			logging.Info("User is active. Skipping automatic updates", "idle_seconds", getIdleSeconds())
+			logger.Info("User is active. Skipping automatic updates: %d", getIdleSeconds())
 			os.Exit(0)
 		}
 	}
@@ -230,14 +240,14 @@ func main() {
 		// Download and install each item
 		err := downloadAndInstallPerItem(updateList, cfg)
 		if err != nil {
-			logging.Error("Failed to download+install updates", "error", err)
+			logger.Error("Failed to download+install updates: %v", err)
 			os.Exit(1)
 		}
 	} else {
-		logging.Info("No updates available")
+		logger.Info("No updates available")
 	}
 
-	logging.Info("Software updates completed")
+	logger.Info("Software updates completed")
 
 	// 9) If you want to do a final, full cleanup, call it here:
 	clearCacheFolder(cfg.CachePath)
@@ -268,12 +278,12 @@ func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, 
 		path := filepath.Join(cfg.CatalogsPath, e.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			logging.Warn("Failed to read catalog file", "path", path, "error", err)
+			logger.Warning("Failed to read catalog file: %v", err)
 			continue
 		}
 		var catItems []catalog.Item
 		if err := yaml.Unmarshal(data, &catItems); err != nil {
-			logging.Warn("Failed to parse catalog YAML", "path", path, "error", err)
+			logger.Warning("Failed to parse catalog YAML: %v", err)
 			continue
 		}
 		// Store each item in the map with lowercase keys for case-insensitive matching
@@ -287,18 +297,18 @@ func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, 
 
 // checkForUpdatesWithCatalog checks all manifest items against the local catalog to determine if updates are available.
 func checkForUpdatesWithCatalog(cfg *config.Configuration, verbosity int, manifestItems []manifest.Item, catMap map[string]catalog.Item) bool {
-	logging.Info("Checking for updates...")
+	logger.Info("Checking for updates...")
 	updates := false
 
 	for _, item := range manifestItems {
 		if verbosity > 0 {
-			logging.Info("Checking item", "name", item.Name, "version", item.Version)
+			logger.Info("Checking item: %s, version: %s", item.Name, item.Version)
 		}
 		if installer.LocalNeedsUpdate(item, catMap, cfg) {
-			logging.Info("Update available for package", "package", item.Name)
+			logger.Info("Update available for package: %s", item.Name)
 			updates = true
 		} else {
-			logging.Info("No update needed for package", "package", item.Name)
+			logger.Info("No update needed for package: %s", item.Name)
 		}
 	}
 	return updates
@@ -312,7 +322,7 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 			key := strings.ToLower(m.Name)
 			catItem, found := catMap[key]
 			if !found {
-				logging.Warn("Skipping item not in local catalog", "item", m.Name)
+				logger.Warning("Skipping item not in local catalog: %s", m.Name)
 				continue
 			}
 			results = append(results, catItem)
@@ -326,7 +336,7 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) error {
 	for _, cItem := range items { // <--- valid 'continue' usage inside this for loop
 		if cItem.Installer.Location == "" {
-			logging.Warn("No installer location found for item", "item", cItem.Name)
+			logger.Warning("No installer location found for item: %s", cItem.Name)
 			continue
 		}
 
@@ -347,16 +357,16 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 		destFile := filepath.Join(cfg.CachePath, filepath.Base(cItem.Installer.Location))
 
 		// Download the installer
-		logging.Info("Downloading item", "name", cItem.Name, "url", fullURL, "destination", destFile)
+		logger.Info("Downloading item: %s, url: %s, destination: %s", cItem.Name, fullURL, destFile)
 		if err := download.DownloadFile(fullURL, destFile, cfg); err != nil {
-			logging.Error("Failed to download item", "name", cItem.Name, "error", err)
+			logger.Error("Failed to download item: %s, error: %v", cItem.Name, err)
 			continue
 		}
-		logging.Info("Downloaded item successfully", "name", cItem.Name, "file", destFile)
+		logger.Info("Downloaded item successfully: %s, file: %s", cItem.Name, destFile)
 
 		// Perform the install using your custom function
 		if err := installOneCatalogItem(cItem, destFile, cfg); err != nil {
-			logging.Error("Installation command failed", "item", cItem.Name, "error", err)
+			logger.Error("Installation command failed: %s, error: %v", cItem.Name, err)
 			continue
 		}
 	}
@@ -368,8 +378,8 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Configuration) error {
 	normalizeArchitecture(&cItem)
 	sysArch := getSystemArchitecture()
-	logging.Debug("Detected system architecture", "sysArch", sysArch)
-	logging.Debug("Supported architectures for item", "item", cItem.Name, "supported_arch", cItem.SupportedArch)
+	logger.Debug("Detected system architecture: %s", sysArch)
+	logger.Debug("Supported architectures for item: %s, supported_arch: %v", cItem.Name, cItem.SupportedArch)
 
 	// Actually install
 	installedOutput, installErr := installer.Install(cItem, "install", localFile, cfg.CachePath, cfg.CheckOnly, cfg)
@@ -379,8 +389,8 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 	}
 
 	// If we get here => success
-	logging.Info("Install output", "item", cItem.Name, "output", installedOutput)
-	logging.Info("Installed item successfully", "item", cItem.Name)
+	logger.Info("Install output: %s, output: %s", cItem.Name, installedOutput)
+	logger.Info("Installed item successfully: %s", cItem.Name)
 
 	// If you want to remove it from cache here, do so:
 	// os.Remove(localFile)
@@ -478,16 +488,16 @@ func isUserActive() bool {
 func clearCacheFolder(cachePath string) {
 	dirEntries, err := os.ReadDir(cachePath)
 	if err != nil {
-		logging.Warn("Failed to read cache directory", "path", cachePath, "error", err)
+		logger.Warning("Failed to read cache directory: %v", err)
 		return
 	}
 	for _, e := range dirEntries {
 		p := filepath.Join(cachePath, e.Name())
 		if rmErr := os.RemoveAll(p); rmErr != nil {
-			logging.Warn("Failed to remove cached item", "path", p, "error", rmErr)
+			logger.Warning("Failed to remove cached item: %v", rmErr)
 		} else {
-			logging.Debug("Removed cached item", "path", p)
+			logger.Debug("Removed cached item: %s", p)
 		}
 	}
-	logging.Info("Cache folder emptied after run", "cachePath", cachePath)
+	logger.Info("Cache folder emptied after run: %s", cachePath)
 }
