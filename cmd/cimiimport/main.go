@@ -754,17 +754,17 @@ func cimianImport(
 	pkgsInfo.Installs = finalInstalls
 
 	// Step 11: show final details
-	logger.Printf("\nPkginfo details:")
-	logger.Printf("    Name: %s", pkgsInfo.Name)
-	logger.Printf("    Display Name: %s", pkgsInfo.DisplayName)
-	logger.Printf("    Version: %s", pkgsInfo.Version)
-	logger.Printf("    Description: %s", pkgsInfo.Description)
-	logger.Printf("    Category: %s", pkgsInfo.Category)
-	logger.Printf("    Developer: %s", pkgsInfo.Developer)
-	logger.Printf("    Architectures: %s", strings.Join(pkgsInfo.SupportedArch, ", "))
-	logger.Printf("    Catalogs: %s", strings.Join(pkgsInfo.Catalogs, ", "))
-	logger.Printf("    Installer Type: %s", pkgsInfo.Installer.Type)
-	logger.Printf("")
+	fmt.Printf("\nPkginfo details:\n") // Added newline after the colon
+	// Use fmt.Printf instead of logger.Printf to avoid timestamps
+	fmt.Printf("     Name: %s\n", pkgsInfo.Name)
+	fmt.Printf("     Display Name: %s\n", pkgsInfo.DisplayName)
+	fmt.Printf("     Version: %s\n", pkgsInfo.Version)
+	fmt.Printf("     Description: %s\n", pkgsInfo.Description)
+	fmt.Printf("     Category: %s\n", pkgsInfo.Category)
+	fmt.Printf("     Developer: %s\n", pkgsInfo.Developer)
+	fmt.Printf("     Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
+	fmt.Printf("     Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
+	fmt.Printf("     Installer Type: %s\n\n", pkgsInfo.Installer.Type)
 
 	confirm := getInput("Import this item? (y/n): ", "n")
 	if !strings.EqualFold(confirm, "y") {
