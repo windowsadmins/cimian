@@ -47,6 +47,9 @@ type InstallerItem struct {
 	Type        string   `yaml:"type"`
 	Location    string   `yaml:"location"`
 	Hash        string   `yaml:"hash"`
+	Verb        string   `yaml:"verb,omitempty" json:"verb,omitempty"`         // new
+	Switches    []string `yaml:"switches,omitempty" json:"switches,omitempty"` // new
+	Flags       []string `yaml:"flags,omitempty" json:"flags,omitempty"`       // new
 	Arguments   []string `yaml:"arguments"`
 	ProductCode string   `yaml:"product_code,omitempty"`
 }

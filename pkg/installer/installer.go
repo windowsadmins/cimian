@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -396,10 +397,72 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 
 // runEXEInstaller => typical silent with /S
 func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
-	_ = item
-	baseSilentArgs := []string{"/S"}
-	cmdArgs := append(baseSilentArgs, item.Installer.Arguments...)
-	return runCMD(localFile, cmdArgs)
+	installerPath := filepath.Join(localFile)
+	args := []string{}
+
+	// Add verb if present
+	if item.Installer.Verb != "" {
+		args = append(args, item.Installer.Verb)
+	}
+
+	if len(item.Installer.Flags) > 0 && len(item.Installer.Switches) > 0 {
+		return "", fmt.Errorf("Installer cannot have both switches and flags defined simultaneously")
+	}
+
+	// Handle switches (/S style)
+	if len(item.Installer.Switches) > 0 {
+		for _, sw := range item.Installer.Switches {
+			if strings.Contains(sw, "=") {
+				parts := strings.SplitN(sw, "=", 2)
+				key, value := parts[0], parts[1]
+
+				// Wrap value with spaces in quotes
+				if strings.ContainsAny(value, " ") {
+					value = "\"" + value + "\""
+				}
+				args = append(args, "/"+key+"="+value)
+			} else {
+				args = append(args, "/"+sw)
+			}
+		}
+	}
+
+	// Handle flags (-- style)
+	if len(item.Installer.Flags) > 0 {
+		for _, flag := range item.Installer.Flags {
+			formattedFlag := "--" + flag
+			if strings.Contains(flag, "=") {
+				parts := strings.SplitN(flag, "=", 2)
+				key, value := parts[0], parts[1]
+
+				// Wrap value with spaces in quotes
+				if strings.ContainsAny(value, " ") {
+					value = "'" + value + "'"
+				}
+				formattedFlag = "--" + key + "=" + value
+			}
+			args = append(args, formattedFlag)
+		}
+	}
+
+	logging.Info("Executing EXE installer", "path", installerPath, "args", args)
+
+	cmd := exec.Command(installerPath, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logging.Error("EXE installer execution failed", "error", err, "output", string(output))
+		return string(output), err
+	}
+
+	logging.Info("EXE installer executed successfully", "output", string(output))
+	return string(output), nil
+}
+
+func ValidateInstallerConfig(installer catalog.InstallerItem) error {
+	if len(installer.Switches) > 0 && len(installer.Flags) > 0 {
+		return errors.New("installer configuration invalid: define either switches or flags, not both")
+	}
+	return nil
 }
 
 func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
