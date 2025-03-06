@@ -171,6 +171,10 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 		keyValues = append(keyValues, "MISSING_VALUE")
 	}
 
+	// Check if this is a special message that should have the entire line colored
+	isSuccessfulInstall := level == LevelInfo && strings.HasPrefix(message, "Installed item successfully")
+	isVersionWarning := level == LevelWarn && strings.Contains(message, "Refusing to install older version")
+
 	// Pick a color based on log level.
 	prefixColor := ""
 	switch level {
@@ -186,13 +190,17 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 		prefixColor = ""
 	}
 
-	// Override color for successful install messages.
-	if level == LevelInfo && strings.HasPrefix(message, "Installed item successfully") {
-		prefixColor = colorGreen
-	}
-
 	ts := time.Now().Format("2006-01-02 15:04:05")
-	prefix := fmt.Sprintf("%s[%s] %-5s%s", prefixColor, ts, level.String(), colorReset)
+
+	// Format the prefix differently based on whether this is a special message
+	var prefix string
+	if isSuccessfulInstall || isVersionWarning {
+		// For special messages, we'll add color at the start but not reset until the end
+		prefix = fmt.Sprintf("%s[%s] %-5s", prefixColor, ts, level.String())
+	} else {
+		// For other messages, reset the color after the prefix
+		prefix = fmt.Sprintf("%s[%s] %-5s%s", prefixColor, ts, level.String(), colorReset)
+	}
 
 	// If there are many key–value pairs, use multiline formatting.
 	var kvPairs string
@@ -233,6 +241,11 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 	}
 	if kvPairs != "" {
 		logLine += kvPairs
+	}
+
+	// For special messages, add the color reset at the end of the line
+	if isSuccessfulInstall || isVersionWarning {
+		logLine += colorReset
 	}
 
 	l.logger.Println(logLine)
@@ -334,15 +347,18 @@ func (l *Logger) colorPrintf(color, format string, v ...interface{}) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
+	ts := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, v...)
-	l.logger.Printf("%s%s%s", color, msg, colorReset)
+	l.logger.Printf("%s[%s] %s%s", color, ts, msg, colorReset)
 }
 
 // Printf prints a regular message
 func (l *Logger) Printf(format string, v ...interface{}) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	l.logger.Printf(format, v...)
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("[%s] %s", ts, msg)
 }
 
 // Info prints an informational message (instance method counterpart to the package-level Info)
