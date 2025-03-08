@@ -160,9 +160,6 @@ func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
 		return false
 	}
 
-	// If item has .Installs, check them. (omitted for brevity or your own logic)
-	// ...
-
 	// Otherwise do final fallback
 	return false
 }
@@ -202,6 +199,14 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 		logging.Debug("PS1 install output", "output", out)
 		return nil
 
+	case "msix":
+		out, err := runMSIXInstaller(item, localFile)
+		if err != nil {
+			return err
+		}
+		logging.Debug("MSIX install output", "output", out)
+		return nil
+
 	default:
 		return fmt.Errorf("unknown installer type: %s", item.Installer.Type)
 	}
@@ -209,9 +214,7 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 
 // installOrUpgradeNupkg handles local .nupkg installs/updates using Chocolatey.
 func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, cfg *config.Configuration) (string, error) {
-	// We don't actually need cfg here, so silence the lint error:
 	_ = cfg
-
 	// 1) Extract nupkg metadata
 	nupkgID, nupkgVer, metaErr := extractNupkgMetadata(downloadedFile)
 	if metaErr != nil {
@@ -253,18 +256,14 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 func renameNupkgFile(downloadedFile, cacheDir, pkgID, pkgVer string) error {
 	desiredName := fmt.Sprintf("%s.%s.nupkg", pkgID, pkgVer)
 	newPath := filepath.Join(cacheDir, desiredName)
-
-	// If already correct name, skip
 	if strings.EqualFold(downloadedFile, newPath) {
 		return nil
 	}
-	// If it exists from a prior run, remove
 	if _, err := os.Stat(newPath); err == nil {
 		if err := os.Remove(newPath); err != nil {
 			return fmt.Errorf("failed to remove existing file: %w", err)
 		}
 	}
-	// rename
 	if err := os.Rename(downloadedFile, newPath); err != nil {
 		return fmt.Errorf("rename nupkg -> %s: %w", newPath, err)
 	}
@@ -285,8 +284,7 @@ func isNupkgInstalled(pkgID string) (bool, error) {
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	for _, line := range lines {
-		line = strings.ToLower(strings.TrimSpace(line))
-		if strings.HasPrefix(line, strings.ToLower(pkgID)+"|") {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), strings.ToLower(pkgID)+"|") {
 			return true, nil
 		}
 	}
@@ -294,9 +292,7 @@ func isNupkgInstalled(pkgID string) (bool, error) {
 }
 
 func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
-	// item might not be used, so silence lint error:
 	_ = item
-
 	chocoLog := filepath.Join(cachePath, fmt.Sprintf("install_choco_%s.log", pkgID))
 	logging.Info("Running choco install", "pkgID", pkgID, "version", pkgVer)
 	cmdArgs := []string{
@@ -314,8 +310,6 @@ func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
 		return out, err
 	}
-
-	// On success, store version
 	storeInstalledVersionInRegistry(catalog.Item{
 		Name:    item.Name,
 		Version: pkgVer,
@@ -326,7 +320,6 @@ func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 
 func doChocoUpgrade(pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
 	_ = item
-
 	chocoLog := filepath.Join(cachePath, fmt.Sprintf("upgrade_choco_%s.log", pkgID))
 	logging.Info("Running choco upgrade", "pkgID", pkgID, "version", pkgVer)
 	cmdArgs := []string{
@@ -352,7 +345,7 @@ func doChocoUpgrade(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 	return out, nil
 }
 
-// uninstallItem => decides how to uninstall MSI/EXE/PS1/nupkg.
+// uninstallItem decides how to uninstall MSI/EXE/PS1/nupkg.
 func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
@@ -371,6 +364,8 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 		return runPS1Uninstaller(absFile)
 	case "nupkg":
 		return runNupkgUninstaller(absFile)
+	case "msix":
+		return runMSIXUninstaller(absFile, item)
 	default:
 		msg := fmt.Sprintf("Unsupported installer type for uninstall: %s", item.Installer.Type)
 		logging.Warn(msg)
@@ -378,16 +373,48 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 	}
 }
 
-// runMSIInstaller => /i ...
 func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
-	_ = item // not used
-	cmdArgs := []string{
+	// Standard MSI install arguments
+	args := []string{
 		"/i", localFile,
 		"/quiet",
 		"/norestart",
-		"/l*v", filepath.Join(`C:\ProgramData\ManagedInstalls\Logs`, "install.log"),
+		"/l*v", `C:\ProgramData\ManagedInstalls\Logs\install.log`,
 	}
-	return runCMD(commandMsi, cmdArgs)
+
+	// Append additional MSI flags from the catalog, if provided.
+	if len(item.Installer.Flags) > 0 {
+		args = append(args, item.Installer.Flags...)
+	}
+
+	logging.Info("Invoking MSI install", "msi", localFile, "item", item.Name, "extraArgs", item.Installer.Flags)
+
+	cmd := exec.Command(commandMsi, args...)
+	outputBytes, err := cmd.CombinedOutput()
+	output := string(outputBytes)
+
+	if err != nil {
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			logging.Error("Failed to run msiexec", "error", err, "stderr", output)
+			return output, err
+		}
+		code := exitErr.ExitCode()
+		logging.Error("MSI installation failed", "item", item.Name, "exitCode", code, "stderr", output)
+		switch code {
+		case 1603:
+			return output, fmt.Errorf("msiexec exit code 1603 (fatal) - skipping re-try")
+		case 1618:
+			return output, fmt.Errorf("msiexec exit code 1618 (another install in progress)")
+		case 3010:
+			logging.Warn("MSI installed but requires reboot (3010)", "item", item.Name)
+			return output, nil
+		default:
+			return output, fmt.Errorf("msiexec exit code %d", code)
+		}
+	}
+	logging.Info("MSI installed successfully", "item", item.Name)
+	return output, nil
 }
 
 func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
@@ -397,7 +424,40 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 	return runCMD(commandMsi, args)
 }
 
-// runEXEInstaller => typical silent with /S
+func runMSIXInstaller(item catalog.Item, localFile string) (string, error) {
+	args := []string{
+		localFile,
+	}
+	logging.Info("Invoking MSIX install", "msix", localFile, "item", item.Name)
+	cmd := exec.Command("Add-AppxPackage", args...)
+	outputBytes, err := cmd.CombinedOutput()
+	output := string(outputBytes)
+
+	if err != nil {
+		logging.Error("MSIX installation failed", "item", item.Name, "error", err, "output", output)
+		return output, err
+	}
+	logging.Info("MSIX installed successfully", "item", item.Name)
+	return output, nil
+}
+
+func runMSIXUninstaller(_ string, item catalog.Item) (string, error) {
+	// Here we assume that for MSIX, uninstaller.Arguments has the necessary parameters
+	args := []string{}
+	args = append(args, item.Uninstaller.Arguments...)
+	logging.Info("Invoking MSIX uninstaller for", "item", item.Name)
+	cmd := exec.Command("Remove-AppxPackage", args...)
+	outputBytes, err := cmd.CombinedOutput()
+	output := string(outputBytes)
+	if err != nil {
+		logging.Error("MSIX uninstallation failed", "item", item.Name, "error", err, "output", output)
+		return output, err
+	}
+	logging.Info("MSIX uninstalled successfully", "item", item.Name)
+	return output, nil
+}
+
+// runEXEInstaller: supports both switches and flags.
 func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	installerPath := filepath.Join(localFile)
 	args := []string{}
@@ -408,7 +468,7 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	}
 
 	if len(item.Installer.Flags) > 0 && len(item.Installer.Switches) > 0 {
-		return "", fmt.Errorf("Installer cannot have both switches and flags defined simultaneously")
+		return "", errors.New("installer cannot have both switches and flags defined simultaneously")
 	}
 
 	// Handle switches (/S style)
@@ -417,8 +477,6 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 			if strings.Contains(sw, "=") {
 				parts := strings.SplitN(sw, "=", 2)
 				key, value := parts[0], parts[1]
-
-				// Wrap value with spaces in quotes
 				if strings.ContainsAny(value, " ") {
 					value = "\"" + value + "\""
 				}
@@ -436,8 +494,6 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 			if strings.Contains(flag, "=") {
 				parts := strings.SplitN(flag, "=", 2)
 				key, value := parts[0], parts[1]
-
-				// Wrap value with spaces in quotes
 				if strings.ContainsAny(value, " ") {
 					value = "'" + value + "'"
 				}
@@ -448,14 +504,12 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	}
 
 	logging.Info("Executing EXE installer", "path", installerPath, "args", args)
-
 	cmd := exec.Command(installerPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		logging.Error("EXE installer execution failed", "error", err, "output", string(output))
 		return string(output), err
 	}
-
 	logging.Info("EXE installer executed successfully", "output", string(output))
 	return string(output), nil
 }
@@ -472,7 +526,7 @@ func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
 	return runCMD(absFile, item.Uninstaller.Arguments)
 }
 
-// runPS1Installer => powershell -File <localFile>
+// runPS1Installer: powershell -File <localFile>
 func runPS1Installer(item catalog.Item, localFile string) (string, error) {
 	_ = item
 	psArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", localFile}
@@ -484,7 +538,7 @@ func runPS1Uninstaller(absFile string) (string, error) {
 	return runCMD(commandPs1, psArgs)
 }
 
-// runNupkgUninstaller => choco uninstall <pkgID> ...
+// runNupkgUninstaller: choco uninstall <pkgID> ...
 func runNupkgUninstaller(absFile string) (string, error) {
 	pkgID, pkgVer, err := extractNupkgMetadata(absFile)
 	if err != nil {
@@ -492,7 +546,6 @@ func runNupkgUninstaller(absFile string) (string, error) {
 	}
 	cacheDir := filepath.Dir(absFile)
 	logPath := filepath.Join(cacheDir, fmt.Sprintf("uninstall_choco_%s.log", pkgID))
-
 	args := []string{
 		"uninstall", pkgID,
 		"--version", pkgVer,
@@ -505,7 +558,7 @@ func runNupkgUninstaller(absFile string) (string, error) {
 	return runCMD(chocolateyBin, args)
 }
 
-// runPreinstallScript => detect .bat vs .ps1
+// runPreinstallScript detects .bat vs .ps1 and calls the proper function.
 func runPreinstallScript(item catalog.Item, localFile, cachePath string) (string, error) {
 	preScriptStr := string(item.PreScript)
 	s := strings.ToLower(preScriptStr)
@@ -515,20 +568,16 @@ func runPreinstallScript(item catalog.Item, localFile, cachePath string) (string
 	return runPS1FromScript(item, localFile, cachePath)
 }
 
-// runBatInstaller => writes PreScript to a .bat file, then runs it
+// runBatInstaller writes PreScript to a .bat file, then runs it.
 func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, error) {
-	// localFile not used => silence lint:
 	_ = localFile
-
 	batPath := filepath.Join(cachePath, "tmp_preinstall.bat")
-	if err := os.WriteFile(batPath, []byte(item.PreScript), 0o644); err != nil {
+	if err := os.WriteFile(batPath, []byte(item.PreScript), 0644); err != nil {
 		return "", fmt.Errorf("failed writing .bat: %w", err)
 	}
 	defer os.Remove(batPath)
-
 	cmd := exec.Command("cmd.exe", "/c", batPath)
 	hideConsoleWindow(cmd)
-
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
@@ -539,19 +588,16 @@ func runBatInstaller(item catalog.Item, localFile, cachePath string) (string, er
 	return out.String(), nil
 }
 
-// runPS1FromScript => writes PreScript to a .ps1 file, then runs it
+// runPS1FromScript writes PreScript to a .ps1 file, then runs it.
 func runPS1FromScript(item catalog.Item, localFile, cachePath string) (string, error) {
 	_ = localFile
-
 	psFile := filepath.Join(cachePath, "preinstall_tmp.ps1")
-	if err := os.WriteFile(psFile, []byte(item.PreScript), 0o644); err != nil {
+	if err := os.WriteFile(psFile, []byte(item.PreScript), 0644); err != nil {
 		return "", fmt.Errorf("failed writing .ps1: %w", err)
 	}
 	defer os.Remove(psFile)
-
 	cmd := exec.Command(commandPs1, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", psFile)
 	hideConsoleWindow(cmd)
-
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
@@ -562,26 +608,19 @@ func runPS1FromScript(item catalog.Item, localFile, cachePath string) (string, e
 	return out.String(), nil
 }
 
-// runCMD => runs a command, capturing stdout/stderr. Non-zero exit => error
+// runCMD runs a command, capturing stdout/stderr. Non-zero exit yields an error.
 func runCMD(command string, arguments []string) (string, error) {
 	cmd := exec.Command(command, arguments...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
 	err := cmd.Run()
 	outStr := stdout.String()
 	errStr := stderr.String()
-
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
-			logging.Error("Command failed",
-				"command", command,
-				"args", arguments,
-				"exitCode", exitCode,
-				"stderr", errStr,
-			)
+			logging.Error("Command failed", "command", command, "args", arguments, "exitCode", exitCode, "stderr", errStr)
 			return outStr, fmt.Errorf("command failed exit code=%d", exitCode)
 		}
 		logging.Error("Failed to run cmd", "command", command, "args", arguments, "error", err)
@@ -590,14 +629,13 @@ func runCMD(command string, arguments []string) (string, error) {
 	return outStr, nil
 }
 
-// extractNupkgMetadata => parse a .nuspec to find <id> / <version>
+// extractNupkgMetadata parses a .nuspec to find <id> and <version>.
 func extractNupkgMetadata(nupkgPath string) (string, string, error) {
 	r, err := zip.OpenReader(nupkgPath)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to open nupkg: %w", err)
 	}
 	defer r.Close()
-
 	for _, f := range r.File {
 		if strings.HasSuffix(strings.ToLower(f.Name), ".nuspec") {
 			rc, err := f.Open()
@@ -605,7 +643,6 @@ func extractNupkgMetadata(nupkgPath string) (string, string, error) {
 				return "", "", fmt.Errorf("failed to open nuspec: %w", err)
 			}
 			defer rc.Close()
-
 			var meta struct {
 				Metadata struct {
 					ID      string `xml:"id"`
@@ -621,7 +658,7 @@ func extractNupkgMetadata(nupkgPath string) (string, string, error) {
 	return "", "", fmt.Errorf("nuspec not found in nupkg")
 }
 
-// runPowerShellInline => used by needsUpdateOld
+// runPowerShellInline is used by needsUpdateOld.
 func runPowerShellInline(script string) (int, error) {
 	psExe := "powershell.exe"
 	cmdArgs := []string{
@@ -641,7 +678,7 @@ func runPowerShellInline(script string) (int, error) {
 	return -1, err
 }
 
-// hideConsoleWindow => keep cmd window from popping
+// hideConsoleWindow keeps the command window from popping up.
 func hideConsoleWindow(cmd *exec.Cmd) {
 	if runtime.GOOS == "windows" && cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
