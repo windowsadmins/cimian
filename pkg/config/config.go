@@ -1,3 +1,5 @@
+// pkg/config/config.go - configuration settings for Cimian.
+
 package config
 
 import (

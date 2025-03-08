@@ -1,4 +1,4 @@
-// pkg/manifest/manifest.go
+// pkg/manifest/manifest.go - Functions for downloading and parsing manifests and catalogs.
 
 package manifest
 

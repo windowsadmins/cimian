@@ -1,3 +1,5 @@
+// pkg/download/download.go - functions for downloading files from repo.
+
 package download
 
 import (
