@@ -1,3 +1,5 @@
+// cmd/makepkginfo/main.go
+
 package main
 
 import (

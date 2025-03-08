@@ -1,3 +1,5 @@
+// pkg/status/properties.go - functions for retrieving file properties.
+
 //go:build windows
 // +build windows
 
