@@ -47,9 +47,9 @@ type InstallerItem struct {
 	Type        string   `yaml:"type"`
 	Location    string   `yaml:"location"`
 	Hash        string   `yaml:"hash"`
-	Verb        string   `yaml:"verb,omitempty" json:"verb,omitempty"`         // new
-	Switches    []string `yaml:"switches,omitempty" json:"switches,omitempty"` // new
-	Flags       []string `yaml:"flags,omitempty" json:"flags,omitempty"`       // new
+	Verb        string   `yaml:"verb,omitempty" json:"verb,omitempty"`
+	Switches    []string `yaml:"switches,omitempty" json:"switches,omitempty"`
+	Flags       []string `yaml:"flags,omitempty" json:"flags,omitempty"`
 	Arguments   []string `yaml:"arguments"`
 	ProductCode string   `yaml:"product_code,omitempty"`
 }
@@ -119,18 +119,25 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 			continue
 		}
 
-		// Parse the catalog YAML content
-		var catalogItems map[string]Item
-		if err := yaml.Unmarshal(yamlFile, &catalogItems); err != nil {
-			logging.Error("Unable to parse YAML catalog", "path", catalogFilePath, "error", err)
+		// Parse the catalog YAML content into a slice of Items
+		var itemSlice []Item
+		if err := yaml.Unmarshal(yamlFile, &itemSlice); err != nil {
+			logging.Error("unable to parse YAML", "path", catalogFilePath, "error", err)
 			continue
 		}
 
-		// Add parsed items to the catalogMap
-		catalogMap[catalogCount] = catalogItems
-		logging.Info("Successfully processed catalog", "name", catalog, "items", len(catalogItems))
+		// Build a map, keyed by item name
+		indexedItems := make(map[string]Item)
+		for _, it := range itemSlice {
+			if it.Name != "" {
+				indexedItems[it.Name] = it
+			}
+		}
+		// Store the map in catalogMap
+		catalogMap[catalogCount] = indexedItems
+
+		logging.Info("Successfully processed catalog", "name", catalog, "items", len(indexedItems))
 	}
 
 	return catalogMap
-
 }
