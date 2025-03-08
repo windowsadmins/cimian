@@ -1,4 +1,4 @@
-// pkg/extract/nupkg.go
+// pkg/extract/nupkg.go - functions for extracting metadata from NuGet packages.
 
 package extract
 
