@@ -1,4 +1,4 @@
-// pkg/preflight/preflight.go
+// pkg/preflight/preflight.go - functions for running preflight scripts.
 
 package preflight
 

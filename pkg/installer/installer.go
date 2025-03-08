@@ -1,3 +1,5 @@
+// pkg/installer/installer.go - functions for installing software packages.
+
 package installer
 
 import (

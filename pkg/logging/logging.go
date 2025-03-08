@@ -1,4 +1,5 @@
 // pkg/logging/logging.go - Logging package for Cimian
+
 package logging
 
 import (

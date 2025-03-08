@@ -1,4 +1,4 @@
-// pkg/extract/exe.go
+// pkg/extract/exe.go - functions for extracting metadata from executables.
 
 //go:build windows
 // +build windows

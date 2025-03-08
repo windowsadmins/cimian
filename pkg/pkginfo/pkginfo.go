@@ -1,5 +1,4 @@
-// pkg/pkginfo/pkginfo.go
-// Package pkginfo provides functions for reading and installing package metadata.
+// pkg/pkginfo/pkginfo.go - functions for managing package metadata.
 
 package pkginfo
 

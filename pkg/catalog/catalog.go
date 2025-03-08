@@ -1,4 +1,4 @@
-// pkg/catalog/catalog.go
+// pkg/catalog/catalog.go - functions for managing software catalogs.
 
 package catalog
 
