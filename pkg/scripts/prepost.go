@@ -1,6 +1,6 @@
 // pkg/scripts/prepost.go - Functions for running preflight and postflight scripts.
 
-package flight
+package scripts
 
 import (
 	"fmt"
