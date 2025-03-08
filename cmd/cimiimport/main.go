@@ -48,8 +48,6 @@ type PkgsInfo struct {
 	UnattendedUninstall  bool               `yaml:"unattended_uninstall"`
 	Installer            *Installer         `yaml:"installer"`
 	Uninstaller          *Installer         `yaml:"uninstaller,omitempty"`
-	ProductCode          string             `yaml:"product_code,omitempty"`
-	UpgradeCode          string             `yaml:"upgrade_code,omitempty"`
 	PreinstallScript     string             `yaml:"preinstall_script,omitempty"`
 	PostinstallScript    string             `yaml:"postinstall_script,omitempty"`
 	PreuninstallScript   string             `yaml:"preuninstall_script,omitempty"`
@@ -58,13 +56,81 @@ type PkgsInfo struct {
 	UninstallCheckScript string             `yaml:"uninstallcheck_script,omitempty"`
 }
 
-// Installer represents the structure of the installer/uninstaller in pkginfo.
+// Installer represents the installer/uninstaller details.
 type Installer struct {
-	Location  string   `yaml:"location"`
-	Hash      string   `yaml:"hash"`
-	Type      string   `yaml:"type"`
-	Size      int64    `yaml:"size,omitempty"`
-	Arguments []string `yaml:"arguments,omitempty"`
+	Location    string   `yaml:"location"`
+	Hash        string   `yaml:"hash"`
+	Type        string   `yaml:"type"`
+	Size        int64    `yaml:"size,omitempty"`
+	Arguments   []string `yaml:"arguments,omitempty"`
+	ProductCode string   `yaml:"product_code,omitempty"`
+	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
+}
+
+// MarshalYAML forces the output order as follows:
+// type, size, location, hash, then (if type=="msi") product_code and upgrade_code,
+// then arguments (only if non-empty).
+func (i *Installer) MarshalYAML() (interface{}, error) {
+	var content []*yaml.Node
+
+	// Always include "type"
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Type},
+	)
+	// Always include "size"
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "size"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", i.Size)},
+	)
+	// Always include "location"
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "location"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Location},
+	)
+	// Always include "hash"
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "hash"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Hash},
+	)
+	// Include product_code and upgrade_code only if installer type is "msi"
+	if strings.ToLower(i.Type) == "msi" {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "product_code"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.ProductCode},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "upgrade_code"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.UpgradeCode},
+		)
+	}
+	// Only include arguments if there are any
+	if len(i.Arguments) > 0 {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "arguments"},
+			buildArgumentsNode(i.Arguments),
+		)
+	}
+
+	node := &yaml.Node{
+		Kind:    yaml.MappingNode,
+		Tag:     "!!map",
+		Content: content,
+	}
+	return node, nil
+}
+
+func buildArgumentsNode(args []string) *yaml.Node {
+	seq := &yaml.Node{
+		Kind: yaml.SequenceNode,
+		Tag:  "!!seq",
+	}
+	for _, a := range args {
+		seq.Content = append(seq.Content, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: a,
+		})
+	}
+	return seq
 }
 
 // InstallItem for the "installs" array.
@@ -87,7 +153,7 @@ func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
 	return node, nil
 }
 
-// For capturing scripts.
+// ScriptPaths captures paths for custom scripts.
 type ScriptPaths struct {
 	Preinstall     string
 	Postinstall    string
@@ -97,7 +163,7 @@ type ScriptPaths struct {
 	UninstallCheck string
 }
 
-// Metadata as in your code
+// Metadata holds extracted metadata.
 type Metadata struct {
 	Title         string
 	ID            string
@@ -113,6 +179,26 @@ type Metadata struct {
 	Installs      []InstallItem
 	Catalogs      []string
 	RepoPath      string
+}
+
+// NoQuoteEmptyString ensures empty strings appear without quotes.
+type NoQuoteEmptyString string
+
+func (s NoQuoteEmptyString) MarshalYAML() (interface{}, error) {
+	if len(s) == 0 {
+		return &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: "",
+			Style: 0,
+		}, nil
+	}
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Value: string(s),
+		Style: 0,
+	}, nil
 }
 
 // parseCustomArgs manually parses os.Args for:
@@ -707,16 +793,16 @@ func cimianImport(
 		Installs:      []InstallItem{},
 
 		Installer: &Installer{
-			Hash: fileHash,
-			Type: metadata.InstallerType,
-			Size: fileSizeKB,
+			Hash:        fileHash,
+			Type:        metadata.InstallerType,
+			Size:        fileSizeKB,
+			ProductCode: strings.TrimSpace(metadata.ProductCode),
+			UpgradeCode: strings.TrimSpace(metadata.UpgradeCode),
 		},
 		Uninstaller:         uninstaller,
 		UnattendedInstall:   true,
 		UnattendedUninstall: true,
 
-		ProductCode:          strings.TrimSpace(metadata.ProductCode),
-		UpgradeCode:          strings.TrimSpace(metadata.UpgradeCode),
 		PreinstallScript:     preinstallScriptContent,
 		PostinstallScript:    postinstallScriptContent,
 		PreuninstallScript:   preuninstallScriptContent,
@@ -859,6 +945,15 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.InstallerType = "msi"
 		metadata.ProductCode = prodCode
 		metadata.UpgradeCode = upgCode
+
+	case ".msix":
+		// For now, use a simple fallback since MSIX metadata extraction might require a separate tool/API.
+		metadata.Title = parsePackageName(filepath.Base(packagePath))
+		metadata.ID = metadata.Title
+		metadata.Version = "1.0.0" // or try to extract version via another method
+		metadata.Developer = ""
+		metadata.Description = ""
+		metadata.InstallerType = "msix"
 
 	case ".exe":
 		versionString, err := extract.ExeMetadata(packagePath)
@@ -1321,30 +1416,6 @@ func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, saniti
 	}
 
 	return nil
-}
-
-// NoQuoteEmptyString is a custom type for YAML fields that, if empty,
-// appear as key: (with nothing after the colon). Otherwise, plain text (no quotes).
-type NoQuoteEmptyString string
-
-func (s NoQuoteEmptyString) MarshalYAML() (interface{}, error) {
-	// If empty, return a node with an empty value & default (plain) style = 0
-	if len(s) == 0 {
-		return &yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Tag:   "!!str",
-			Value: "",
-			Style: 0, // <-- instead of yaml.PlainStyle
-		}, nil
-	}
-
-	// If non-empty, still use plain style so there's no quotes.
-	return &yaml.Node{
-		Kind:  yaml.ScalarNode,
-		Tag:   "!!str",
-		Value: string(s),
-		Style: 0, // 0 => plain style
-	}, nil
 }
 
 // maybeOpenFile tries code.cmd or notepad
