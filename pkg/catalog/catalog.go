@@ -136,7 +136,7 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 		// Store the map in catalogMap
 		catalogMap[catalogCount] = indexedItems
 
-		logging.Info("Successfully processed catalog", "name", catalog, "items", len(indexedItems))
+		logging.Info("Successfully processed catalog", catalog, "items", len(indexedItems))
 	}
 
 	return catalogMap
