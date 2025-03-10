@@ -19,11 +19,13 @@ var logger *logging.Logger
 
 // Installer parallels cimianimport’s structure.
 type Installer struct {
-	Location  string   `yaml:"location"`
-	Hash      string   `yaml:"hash"`
-	Type      string   `yaml:"type"`
-	Size      int64    `yaml:"size,omitempty"`
-	Arguments []string `yaml:"arguments,omitempty"`
+	Location    string   `yaml:"location"`
+	Hash        string   `yaml:"hash"`
+	Type        string   `yaml:"type"`
+	Size        int64    `yaml:"size,omitempty"`
+	Arguments   []string `yaml:"arguments,omitempty"`
+	ProductCode string   `yaml:"product_code,omitempty"`
+	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
 }
 
 // InstallItem is the "installs" array item (if present).
