@@ -1,5 +1,3 @@
-// pkg/scripts/prepost.go - Functions for running preflight and postflight scripts.
-
 package scripts
 
 import (
@@ -7,62 +5,82 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-// runScript is a helper that executes the PowerShell script at the provided path,
-// logs each line via logInfo and logs errors via logError.
-func runScript(scriptPath, displayName string, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
-	// Check if the script file exists.
-	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-		logInfo("%s script not found", displayName, "path", scriptPath)
-		return nil
+// runScript executes the PowerShell script at the provided path,
+// passing -Verbosity <int> and setting TERM=xterm-256color so that ANSI
+// escape codes from the script output are preserved.
+// Debug messages about the PowerShell executable and its version are printed
+// only if the provided verbosity is 3 or greater.
+func runScript(
+	scriptPath string,
+	displayName string,
+	verbosity int,
+	logInfo func(string, ...interface{}),
+	logError func(string, ...interface{}),
+) error {
+	// 1. Find the PowerShell executable.
+	psExe, err := exec.LookPath("pwsh.exe")
+	if err != nil {
+		if verbosity >= 3 {
+			logInfo("pwsh.exe not found; falling back to Windows PowerShell (v5)")
+		}
+		psExe, err = exec.LookPath("powershell.exe")
+		if err != nil {
+			return fmt.Errorf("neither pwsh.exe nor powershell.exe were found: %v", err)
+		}
+	} else {
+		if verbosity >= 3 {
+			logInfo("Using PowerShell Core (pwsh) for %s", displayName)
+		}
 	}
 
-	// Use pwsh.exe for PowerShell (assuming PowerShell 7 is available).
+	// 2. Print the PowerShell version only if verbosity is high.
+	if verbosity >= 3 {
+		if versionBytes, verErr := exec.Command(psExe, "--version").CombinedOutput(); verErr == nil {
+			logInfo("%s version: %s", psExe, strings.TrimSpace(string(versionBytes)))
+		}
+	}
+
+	// 3. Build the command to run the script.
 	cmd := exec.Command(
-		"pwsh.exe",
+		psExe,
 		"-NoLogo",
 		"-NoProfile",
-		"-NonInteractive",
-		"-Command", fmt.Sprintf(`& "%s" 2>&1`, scriptPath),
+		"-ExecutionPolicy", "Bypass",
+		"-File", scriptPath,
+		"-Verbosity", strconv.Itoa(verbosity),
 	)
 	cmd.Dir = filepath.Dir(scriptPath)
+	// Set TERM so that ANSI colors are preserved.
+	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
+	cmd.Env = append(cmd.Env, os.Environ()...)
 
-	outputBytes, err := cmd.CombinedOutput()
-	outputStr := string(outputBytes)
-
-	// Log each non-empty output line.
-	lines := strings.Split(outputStr, "\n")
-	for _, line := range lines {
-		txt := strings.TrimSpace(line)
-		if txt == "" {
-			continue
-		}
-		// Optionally remove BOM or ANSI escape sequences.
-		txt = strings.TrimPrefix(txt, "\ufeff")
-		txt = strings.ReplaceAll(txt, "\u001b[0m", "")
-		txt = strings.ReplaceAll(txt, "\u001b[", "")
-		logInfo("%s", txt)
+	// 4. Run the command and capture its output.
+	outputBytes, execErr := cmd.CombinedOutput()
+	// Print the raw output so any ANSI codes are passed through.
+	fmt.Print(string(outputBytes))
+	if execErr != nil {
+		logError("%s script error: %v", displayName, execErr)
+		return fmt.Errorf("%s script error: %w", displayName, execErr)
 	}
 
-	if err != nil {
-		logError("%s script error: %v", displayName, err)
-		return fmt.Errorf("%s script error: %w", displayName, err)
+	if verbosity >= 3 {
+		logInfo("%s script completed successfully", displayName)
 	}
-
-	logInfo("%s script completed successfully", displayName)
 	return nil
 }
 
-// RunPreflight runs the preflight script located at a predefined path.
-func RunPreflight(logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
+// RunPreflight calls runScript for preflight.
+func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
 	scriptPath := `C:\Program Files\Cimian\preflight.ps1`
-	return runScript(scriptPath, "Preflight", logInfo, logError)
+	return runScript(scriptPath, "Preflight", verbosity, logInfo, logError)
 }
 
-// RunPostflight runs the postflight script located at a predefined path.
-func RunPostflight(logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
+// RunPostflight calls runScript for postflight.
+func RunPostflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
 	scriptPath := `C:\Program Files\Cimian\postflight.ps1`
-	return runScript(scriptPath, "Postflight", logInfo, logError)
+	return runScript(scriptPath, "Postflight", verbosity, logInfo, logError)
 }
