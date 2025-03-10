@@ -141,7 +141,8 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			logging.Warn("Failed to parse manifest YAML", "file", localPath, "error", err)
 			continue
 		}
-		logging.Info("Processed manifest", "name", mf.Name)
+		logging.Info(fmt.Sprintf("Processed manifest: %s", mf.Name))
+
 		allManifests = append(allManifests, mf)
 
 		// Enqueue its "included_manifests"
@@ -167,7 +168,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				logging.Warn("Failed to download catalog", "catalogURL", catURL, "error", err)
 				continue
 			}
-			logging.Info("Downloaded catalog", "catalog", catName)
+			logging.Info(fmt.Sprintf("Downloaded catalog: %s", catName))
 
 			// Parse it
 			cEntries, err := parseCatalogFile(catLocal)
