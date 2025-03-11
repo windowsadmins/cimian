@@ -95,6 +95,11 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 			if yamlErr := yaml.Unmarshal(data, &item); yamlErr != nil {
 				return fmt.Errorf("unmarshal error in %s: %v", path, yamlErr)
 			}
+			// If installer exists and is MSI, copy product_code and upgrade_code to top-level fields
+			if item.Installer != nil && strings.ToLower(item.Installer.Type) == "msi" {
+				item.ProductCode = item.Installer.ProductCode
+				item.UpgradeCode = item.Installer.UpgradeCode
+			}
 			rel, rErr := filepath.Rel(repoPath, path)
 			if rErr != nil {
 				return fmt.Errorf("computing relative path for %s: %v", path, rErr)
