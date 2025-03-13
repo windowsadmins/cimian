@@ -21,11 +21,9 @@ import (
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
-	"github.com/windowsadmins/cimian/pkg/scripts"
 	"github.com/windowsadmins/cimian/pkg/version"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 )
 
 var logger *logging.Logger
@@ -270,140 +268,6 @@ func main() {
 	clearCacheFolder(cfg.CachePath)
 
 	os.Exit(0)
-}
-
-// runPreflightIfNeeded runs the preflight script.
-func runPreflightIfNeeded(verbosity int) {
-	logInfo := func(format string, args ...interface{}) {
-		logger.Debug(format, args...)
-	}
-	logError := func(format string, args ...interface{}) {
-		logger.Error(format, args...)
-	}
-
-	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
-		logger.Error("Preflight script failed: %v", err)
-		os.Exit(1)
-	}
-}
-
-// runPostflightIfNeeded runs the postflight script.
-func runPostflightIfNeeded(verbosity int) {
-	logInfo := func(format string, args ...interface{}) {
-		logger.Debug(format, args...)
-	}
-	logError := func(format string, args ...interface{}) {
-		logger.Error(format, args...)
-	}
-
-	if err := scripts.RunPostflight(verbosity, logInfo, logError); err != nil {
-		logger.Error("Postflight script failed: %v", err)
-	}
-}
-
-// adminCheck verifies whether the current process has administrative privileges.
-func adminCheck() (bool, error) {
-	var adminSid *windows.SID
-	err := windows.AllocateAndInitializeSid(
-		&windows.SECURITY_NT_AUTHORITY,
-		2,
-		windows.SECURITY_BUILTIN_DOMAIN_RID,
-		windows.DOMAIN_ALIAS_RID_ADMINS,
-		0, 0, 0, 0, 0, 0,
-		&adminSid)
-	if err != nil {
-		return false, err
-	}
-	defer windows.FreeSid(adminSid)
-	token := windows.Token(0)
-	isMember, err := token.IsMember(adminSid)
-	return isMember, err
-}
-
-// identifyRemovals enumerates all installed items (registry subkeys)
-// and returns only those items that are both present in the local catalog
-// and are explicitly marked for removal (for example, if their catalog item
-// has an Uninstaller specified or an uninstall check defined).
-func identifyRemovals(localCatalogMap map[string]catalog.Item, _ *config.Configuration) []catalog.Item {
-	var toRemove []catalog.Item
-
-	// Open the registry key for ManagedInstalls.
-	regKeyPath := `SOFTWARE\ManagedInstalls`
-	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyPath, registry.READ)
-	if err != nil {
-		if err == registry.ErrNotExist {
-			logging.Debug("No items in HKLM\\Software\\ManagedInstalls => no removals")
-			return toRemove
-		}
-		logging.Warn("Failed to open registry key for removals", "key", regKeyPath, "error", err)
-		return toRemove
-	}
-	defer k.Close()
-
-	// Iterate over the local catalog; we ignore any installed items that are no longer in the catalog.
-	for _, catItem := range localCatalogMap {
-		// Try to open the registry key for this catalog item.
-		regKeyItemPath := regKeyPath + `\` + catItem.Name
-		_, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyItemPath, registry.READ)
-		if err != nil {
-			// If there's no registry key for this catalog item, skip it.
-			continue
-		}
-		// Only mark for removal if the catalog explicitly indicates it should be uninstalled.
-		// For example, if the Uninstaller field is non-empty or if an uninstall check is defined.
-		if catItem.Uninstaller.Location != "" || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "") {
-			logging.Info("Catalog item marked for removal", "item", catItem.Name)
-			toRemove = append(toRemove, catItem)
-		}
-	}
-
-	return toRemove
-}
-
-// identifyNewInstalls checks each manifest item and returns those NOT present in the local catalog.
-func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
-	_ = cfg // dummy reference to suppress "unused parameter" warning
-
-	var toInstall []catalog.Item
-	for _, mItem := range manifestItems {
-		if mItem.Name == "" {
-			continue
-		}
-		key := strings.ToLower(mItem.Name)
-		if _, found := localCatalogMap[key]; !found {
-			logging.Info("Identified new item for installation", "item", mItem.Name)
-			newCatItem := catalog.Item{
-				Name:    mItem.Name,
-				Version: mItem.Version,
-				Installer: catalog.InstallerItem{
-					Location: mItem.InstallerLocation,
-					Type:     "exe", // or "msi"/"nupkg" if determinable
-				},
-				SupportedArch: mItem.SupportedArch,
-			}
-			toInstall = append(toInstall, newCatItem)
-		}
-	}
-	return toInstall
-}
-
-// uninstallCatalogItems loops over the items and uninstalls each.
-func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) error {
-	_ = cfg // dummy reference to suppress "unused parameter" warning
-
-	if len(items) == 0 {
-		logging.Debug("No items to uninstall.")
-		return nil
-	}
-	logging.Info("Starting batch uninstall of items", "count", len(items))
-	for _, item := range items {
-		_, err := installer.Install(item, "uninstall", "", cfg.CachePath, cfg.CheckOnly, cfg)
-		if err != nil {
-			return fmt.Errorf("failed uninstalling '%s': %w", item.Name, err)
-		}
-		logging.Info("Uninstall successful", "item", item.Name)
-	}
-	return nil
 }
 
 // loadLocalCatalogItems reads all .yaml files in cfg.CatalogsPath and returns a map of catalog items.
@@ -680,15 +544,4 @@ func clearCacheFolder(cachePath string) {
 		}
 	}
 	logger.Info("Cache folder emptied after run: %s", cachePath)
-}
-
-func cleanManifestsCatalogsPreRun(dirPath string) error {
-	if err := os.RemoveAll(dirPath); err != nil {
-		return fmt.Errorf("failed to remove %s: %w", dirPath, err)
-	}
-	if err := os.MkdirAll(dirPath, 0755); err != nil {
-		return fmt.Errorf("failed to create %s: %w", dirPath, err)
-	}
-	logging.Debug("Cleaned and recreated directory: %s", dirPath)
-	return nil
 }
