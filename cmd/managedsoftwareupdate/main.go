@@ -269,6 +269,24 @@ func main() {
 
 	os.Exit(0)
 }
+// uninstallCatalogItems loops over the items and uninstalls each.
+func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) error {
+	_ = cfg // dummy reference to suppress "unused parameter" warning
+
+	if len(items) == 0 {
+		logging.Debug("No items to uninstall.")
+		return nil
+	}
+	logging.Info("Starting batch uninstall of items", "count", len(items))
+	for _, item := range items {
+		_, err := installer.Install(item, "uninstall", "", cfg.CachePath, cfg.CheckOnly, cfg)
+		if err != nil {
+			return fmt.Errorf("failed uninstalling '%s': %w", item.Name, err)
+		}
+		logging.Info("Uninstall successful", "item", item.Name)
+	}
+	return nil
+}
 
 // loadLocalCatalogItems reads all .yaml files in cfg.CatalogsPath and returns a map of catalog items.
 func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, error) {
