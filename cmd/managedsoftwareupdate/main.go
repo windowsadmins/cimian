@@ -269,6 +269,54 @@ func main() {
 
 	os.Exit(0)
 }
+
+// runPreflightIfNeeded runs the preflight script.
+func runPreflightIfNeeded(verbosity int) {
+	logInfo := func(format string, args ...interface{}) {
+		logger.Debug(format, args...)
+	}
+	logError := func(format string, args ...interface{}) {
+		logger.Error(format, args...)
+	}
+
+	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
+		logger.Error("Preflight script failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+// runPostflightIfNeeded runs the postflight script.
+func runPostflightIfNeeded(verbosity int) {
+	logInfo := func(format string, args ...interface{}) {
+		logger.Debug(format, args...)
+	}
+	logError := func(format string, args ...interface{}) {
+		logger.Error(format, args...)
+	}
+
+	if err := scripts.RunPostflight(verbosity, logInfo, logError); err != nil {
+		logger.Error("Postflight script failed: %v", err)
+	}
+}
+
+// adminCheck verifies whether the current process has administrative privileges.
+func adminCheck() (bool, error) {
+	var adminSid *windows.SID
+	err := windows.AllocateAndInitializeSid(
+		&windows.SECURITY_NT_AUTHORITY,
+		2,
+		windows.SECURITY_BUILTIN_DOMAIN_RID,
+		windows.DOMAIN_ALIAS_RID_ADMINS,
+		0, 0, 0, 0, 0, 0,
+		&adminSid)
+	if err != nil {
+		return false, err
+	}
+	defer windows.FreeSid(adminSid)
+	token := windows.Token(0)
+	isMember, err := token.IsMember(adminSid)
+	return isMember, err
+}
 // uninstallCatalogItems loops over the items and uninstalls each.
 func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) error {
 	_ = cfg // dummy reference to suppress "unused parameter" warning
