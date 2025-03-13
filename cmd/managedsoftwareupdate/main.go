@@ -317,6 +317,74 @@ func adminCheck() (bool, error) {
 	isMember, err := token.IsMember(adminSid)
 	return isMember, err
 }
+
+// identifyRemovals enumerates all installed items (registry subkeys)
+// and returns only those items that are both present in the local catalog
+// and are explicitly marked for removal (for example, if their catalog item
+// has an Uninstaller specified or an uninstall check defined).
+func identifyRemovals(localCatalogMap map[string]catalog.Item, _ *config.Configuration) []catalog.Item {
+	var toRemove []catalog.Item
+
+	// Open the registry key for ManagedInstalls.
+	regKeyPath := `SOFTWARE\ManagedInstalls`
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyPath, registry.READ)
+	if err != nil {
+		if err == registry.ErrNotExist {
+			logging.Debug("No items in HKLM\\Software\\ManagedInstalls => no removals")
+			return toRemove
+		}
+		logging.Warn("Failed to open registry key for removals", "key", regKeyPath, "error", err)
+		return toRemove
+	}
+	defer k.Close()
+
+	// Iterate over the local catalog; we ignore any installed items that are no longer in the catalog.
+	for _, catItem := range localCatalogMap {
+		// Try to open the registry key for this catalog item.
+		regKeyItemPath := regKeyPath + `\` + catItem.Name
+		_, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyItemPath, registry.READ)
+		if err != nil {
+			// If there's no registry key for this catalog item, skip it.
+			continue
+		}
+		// Only mark for removal if the catalog explicitly indicates it should be uninstalled.
+		// For example, if the Uninstaller field is non-empty or if an uninstall check is defined.
+		if catItem.Uninstaller.Location != "" || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "") {
+			logging.Info("Catalog item marked for removal", "item", catItem.Name)
+			toRemove = append(toRemove, catItem)
+		}
+	}
+
+	return toRemove
+}
+
+// identifyNewInstalls checks each manifest item and returns those NOT present in the local catalog.
+func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
+	_ = cfg // dummy reference to suppress "unused parameter" warning
+
+	var toInstall []catalog.Item
+	for _, mItem := range manifestItems {
+		if mItem.Name == "" {
+			continue
+		}
+		key := strings.ToLower(mItem.Name)
+		if _, found := localCatalogMap[key]; !found {
+			logging.Info("Identified new item for installation", "item", mItem.Name)
+			newCatItem := catalog.Item{
+				Name:    mItem.Name,
+				Version: mItem.Version,
+				Installer: catalog.InstallerItem{
+					Location: mItem.InstallerLocation,
+					Type:     "exe", // or "msi"/"nupkg" if determinable
+				},
+				SupportedArch: mItem.SupportedArch,
+			}
+			toInstall = append(toInstall, newCatItem)
+		}
+	}
+	return toInstall
+}
+
 // uninstallCatalogItems loops over the items and uninstalls each.
 func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) error {
 	_ = cfg // dummy reference to suppress "unused parameter" warning
