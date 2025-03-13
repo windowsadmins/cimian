@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -266,8 +267,9 @@ func main() {
 	runPostflightIfNeeded(verbosity)
 	logger.Success("Postflight script completed.")
 
-	// Clear the cache folder.
-	clearCacheFolder(cfg.CachePath)
+	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
+	logsFolder := `C:\ProgramData\ManagedInstalls\Logs`
+	clearCacheFolderSelective(cacheFolder, logsFolder)
 
 	os.Exit(0)
 }
@@ -664,22 +666,95 @@ func isUserActive() bool {
 	return idleSeconds < 300
 }
 
-// clearCacheFolder removes all items in the cache directory.
-func clearCacheFolder(cachePath string) {
-	dirEntries, err := os.ReadDir(cachePath)
+// clearCacheFolderSelective reads log files from logsPath (e.g. "C:\ProgramData\ManagedInstalls\Logs")
+// and only deletes files in cachePath (e.g. "C:\ProgramData\ManagedInstalls\Cache")
+// that are associated with a successful installation.
+func clearCacheFolderSelective(cachePath, logsPath string) {
+	// successSet will hold the base names (e.g. "GitCredentialManager-x64-2.6.0.0.exe")
+	// of installer files that ran successfully.
+	successSet := make(map[string]bool)
+
+	// Read log files from the logsPath
+	logFiles, err := ioutil.ReadDir(logsPath)
+	if err != nil {
+		logger.Warning("Failed to read logs directory: %v", err)
+	} else {
+		for _, entry := range logFiles {
+			if entry.IsDir() {
+				continue
+			}
+			logFilePath := filepath.Join(logsPath, entry.Name())
+			data, err := ioutil.ReadFile(logFilePath)
+			if err != nil {
+				logger.Warning("Failed to read log file %s: %v", logFilePath, err)
+				continue
+			}
+			// Split the log file into lines
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				// Look for lines where an installer was successfully downloaded
+				if strings.Contains(line, "Downloaded item successfully:") {
+					// Expect a pattern like: "file: C:\ProgramData\ManagedInstalls\cache\SomeApp-x64-1.2.3.exe"
+					idx := strings.Index(line, "file:")
+					if idx != -1 {
+						filePart := strings.TrimSpace(line[idx+len("file:"):])
+						baseName := filepath.Base(filePart)
+						successSet[baseName] = true
+					}
+				}
+				// Also check for an explicit "Installed item successfully:" log line.
+				if strings.Contains(line, "Installed item successfully:") {
+					idx := strings.Index(line, "file:")
+					if idx != -1 {
+						filePart := strings.TrimSpace(line[idx+len("file:"):])
+						baseName := filepath.Base(filePart)
+						successSet[baseName] = true
+					}
+				}
+				// If an installation failed, remove any matching installer from the success set.
+				if strings.Contains(line, "Installation failed") {
+					// Expect a pattern like: "Installation failed item=SomeApp error=..."
+					idx := strings.Index(line, "item=")
+					if idx != -1 {
+						afterItem := line[idx+len("item="):]
+						fields := strings.Fields(afterItem)
+						if len(fields) > 0 {
+							failedItem := fields[0]
+							// Remove any installer whose name starts with the failed item plus a hyphen.
+							for k := range successSet {
+								if strings.HasPrefix(k, failedItem+"-") {
+									delete(successSet, k)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Now iterate through the cache folder.
+	cacheEntries, err := ioutil.ReadDir(cachePath)
 	if err != nil {
 		logger.Warning("Failed to read cache directory: %v", err)
 		return
 	}
-	for _, e := range dirEntries {
-		p := filepath.Join(cachePath, e.Name())
-		if rmErr := os.RemoveAll(p); rmErr != nil {
-			logger.Warning("Failed to remove cached item: %v", rmErr)
+
+	for _, entry := range cacheEntries {
+		fullPath := filepath.Join(cachePath, entry.Name())
+		// Only remove the file if its base name is in the success set.
+		if successSet[entry.Name()] {
+			err := os.RemoveAll(fullPath)
+			if err != nil {
+				logger.Warning("Failed to remove cached item %s: %v", fullPath, err)
+			} else {
+				logger.Debug("Removed cached item: %s", fullPath)
+			}
 		} else {
-			logger.Debug("Removed cached item: %s", p)
+			logger.Debug("Retaining cached item: %s", fullPath)
 		}
 	}
-	logger.Info("Cache folder emptied after run: %s", cachePath)
+	logger.Info("Selective cache clearing complete for folder: %s", cachePath)
 }
 
 func cleanManifestsCatalogsPreRun(dirPath string) error {
