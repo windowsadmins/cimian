@@ -1,4 +1,4 @@
-// pkg/status/convert.go
+// pkg/status/convert.go - functions for converting between package status types.
 
 package status
 
