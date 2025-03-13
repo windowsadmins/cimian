@@ -1,3 +1,5 @@
+// pkg/status/status.go - functions for managing package status.
+
 package status
 
 import (

@@ -276,6 +276,16 @@ function Set-Version {
 
     Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
     Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
+    
+    # Update the WiX XML with the new version
+    Write-Log "Updating WiX product version to $semanticVersion in msi.wxs..." "INFO"
+    $wxsPath = "build\msi.wxs"
+    $wxsContent = Get-Content $wxsPath -Raw
+    $updatedWxsContent = [regex]::Replace($wxsContent, 
+                                       '(<Product Id="\*"\s+UpgradeCode="[^"]+"\s+Name="[^"]+"\s+Version=")([^"]+)(")', 
+                                       "`${1}$semanticVersion`${3}")
+    Set-Content -Path $wxsPath -Value $updatedWxsContent
+    Write-Log "Updated WiX product version in $wxsPath" "SUCCESS"
 }
 
 Set-Version
