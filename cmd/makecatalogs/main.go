@@ -19,11 +19,13 @@ var logger *logging.Logger
 
 // Installer parallels cimianimport’s structure.
 type Installer struct {
-	Location  string   `yaml:"location"`
-	Hash      string   `yaml:"hash"`
-	Type      string   `yaml:"type"`
-	Size      int64    `yaml:"size,omitempty"`
-	Arguments []string `yaml:"arguments,omitempty"`
+	Location    string   `yaml:"location"`
+	Hash        string   `yaml:"hash"`
+	Type        string   `yaml:"type"`
+	Size        int64    `yaml:"size,omitempty"`
+	Arguments   []string `yaml:"arguments,omitempty"`
+	ProductCode string   `yaml:"product_code,omitempty"`
+	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
 }
 
 // InstallItem is the "installs" array item (if present).
@@ -92,6 +94,11 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 			var item PkgsInfo
 			if yamlErr := yaml.Unmarshal(data, &item); yamlErr != nil {
 				return fmt.Errorf("unmarshal error in %s: %v", path, yamlErr)
+			}
+			// If installer exists and is MSI, copy product_code and upgrade_code to top-level fields
+			if item.Installer != nil && strings.ToLower(item.Installer.Type) == "msi" {
+				item.ProductCode = item.Installer.ProductCode
+				item.UpgradeCode = item.Installer.UpgradeCode
 			}
 			rel, rErr := filepath.Rel(repoPath, path)
 			if rErr != nil {

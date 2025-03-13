@@ -1,4 +1,4 @@
-// pkg/utils/http.go
+// pkg/utils/http.go - utility functions for making authenticated HTTP requests.
 
 package utils
 

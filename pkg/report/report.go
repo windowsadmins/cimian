@@ -1,3 +1,5 @@
+// pkg/report/report.go - functions for generating and saving a report of installed/uninstalled items.
+
 package report
 
 import (
