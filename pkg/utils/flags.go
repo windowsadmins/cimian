@@ -1,3 +1,5 @@
+// pkg/utils/flags.go - utility functions for working with command-line flags.
+
 //go:build windows
 // +build windows
 

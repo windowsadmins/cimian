@@ -1,3 +1,5 @@
+// pkg/process/process.go - functions for processing install, uninstall, and update actions.
+
 package process
 
 import (

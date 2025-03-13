@@ -13,6 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
 
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
@@ -20,31 +21,27 @@ import (
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
-	"github.com/windowsadmins/cimian/pkg/preflight"
+	"github.com/windowsadmins/cimian/pkg/scripts"
 	"github.com/windowsadmins/cimian/pkg/version"
 
 	"golang.org/x/sys/windows"
-	"gopkg.in/yaml.v3"
+	"golang.org/x/sys/windows/registry"
 )
 
 var logger *logging.Logger
 
-// LASTINPUTINFO is used to track user idle time
+// LASTINPUTINFO is used to track user idle time.
 type LASTINPUTINFO struct {
 	CbSize uint32
 	DwTime uint32
 }
 
+// enableANSIConsole enables ANSI colors in the console.
 func enableANSIConsole() {
-	// Attempt to enable virtual terminal processing on both stdout and stderr.
-	// If the user runs in a standard Windows console, it should allow ANSI colors to display.
 	for _, stream := range []*os.File{os.Stdout, os.Stderr} {
 		handle := windows.Handle(stream.Fd())
 		var mode uint32
-
-		// Get current console mode
 		if err := windows.GetConsoleMode(handle, &mode); err == nil {
-			// Enable the flag for virtual terminal sequences
 			mode |= windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING
 			_ = windows.SetConsoleMode(handle, mode)
 		}
@@ -53,49 +50,65 @@ func enableANSIConsole() {
 
 func main() {
 	enableANSIConsole()
-	// Define command-line flags
+
+	// Define command-line flags.
 	showConfig := pflag.Bool("show-config", false, "Display the current configuration and exit.")
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")
 	installOnly := pflag.Bool("installonly", false, "Install pending updates without checking for new ones.")
 	auto := pflag.Bool("auto", false, "Perform automatic updates.")
 	versionFlag := pflag.Bool("version", false, "Print the version and exit.")
 
+	// Count the number of -v flags.
 	var verbosity int
-	pflag.CountVarP(&verbosity, "verbose", "v", "Increase verbosity by adding more 'v' (e.g. -v, -vv, -vvv)")
-
+	pflag.CountVarP(&verbosity, "verbose", "v", "Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)")
 	pflag.Parse()
 
-	// Initialize logger
-	logger = logging.New(verbosity > 0)
+	// Load configuration (only once)
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
 
-	// Handle --version flag
+	// Dynamically override LogLevel based on the number of -v flags.
+	// 0 => ERROR and SUCCESS, 1 => WARN, 2 => INFO, 3+ => DEBUG
+	switch verbosity {
+	case 0:
+		cfg.LogLevel = "ERROR"
+	case 1:
+		cfg.LogLevel = "WARN"
+	case 2:
+		cfg.LogLevel = "INFO"
+	default:
+		cfg.LogLevel = "DEBUG"
+	}
+
+	// Initialize logger.
+	logger = logging.New(verbosity > 0)
+	if err := logging.Init(cfg); err != nil {
+		logger.Fatal("Error initializing logger: %v", err)
+	}
+	defer logging.CloseLogger()
+
+	// Handle --version flag.
 	if *versionFlag {
 		version.Print()
 		os.Exit(0)
 	}
 
-	// 1) Load configuration
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		logger.Fatal("Failed to load configuration: %v", err)
+	catalogsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "catalogs")
+	manifestsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "manifests")
+
+	if err := cleanManifestsCatalogsPreRun(catalogsDir); err != nil {
+		logger.Error("Failed to clean catalogs directory: %v", err)
+		os.Exit(1)
+	}
+	if err := cleanManifestsCatalogsPreRun(manifestsDir); err != nil {
+		logger.Error("Failed to clean manifests directory: %v", err)
+		os.Exit(1)
 	}
 
-	// Apply verbosity settings
-	if verbosity > 0 {
-		cfg.Verbose = true
-		if verbosity >= 3 {
-			cfg.Debug = true
-		}
-	}
-
-	// 2) Initialize logging (keep this for backward compatibility)
-	err = logging.Init(cfg)
-	if err != nil {
-		logger.Fatal("Error initializing logger: %v", err)
-	}
-	defer logging.CloseLogger()
-
-	// 3) Handle system signals for graceful shutdown
+	// Handle system signals for graceful shutdown.
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -105,103 +118,81 @@ func main() {
 		os.Exit(1)
 	}()
 
-	// 4) Run preflight script
-	if verbosity > 0 {
-		logger.Debug("Running preflight script with verbosity level: %d", verbosity)
-	}
+	// Run preflight script.
+	runPreflightIfNeeded(verbosity)
 
-	// Convert the logger methods to match what preflight expects
-	logInfo := func(format string, args ...interface{}) {
-		logger.Printf(format, args...)
-	}
-	logError := func(format string, args ...interface{}) {
-		logger.Error(format, args...)
-	}
-
-	pErr := preflight.RunPreflight(verbosity, logInfo, logError)
-	if pErr != nil {
-		logger.Error("Preflight script failed: %v", pErr)
-		os.Exit(1)
-	}
-	logger.Success("Preflight script completed.")
-
-	// Re-load configuration after preflight
-	cfg, err = config.LoadConfig()
-	if err != nil {
-		logger.Error("Failed to reload configuration after preflight: %v", err)
-		os.Exit(1)
-	}
-
-	// Re-apply verbosity settings
+	// Optionally update configuration based on verbosity.
 	if verbosity > 0 {
 		cfg.Verbose = true
 		if verbosity >= 3 {
 			cfg.Debug = true
 		}
 	}
-
-	// Re-initialize logging with updated config
-	err = logging.ReInit(cfg)
-	if err != nil {
+	// Reinitialize the logger so that any changes in cfg take effect.
+	if err := logging.ReInit(cfg); err != nil {
 		logger.Fatal("Error re-initializing logger after preflight: %v", err)
 	}
-	defer logging.CloseLogger()
 
-	// --show-config flag
+	// Show configuration if requested.
 	if *showConfig {
-		cfgYaml, yerr := yaml.Marshal(cfg)
-		if yerr == nil {
+		if cfgYaml, err := yaml.Marshal(cfg); err == nil {
 			logger.Printf("Current configuration:\n%s", string(cfgYaml))
 		}
 		os.Exit(0)
 	}
 
-	// Ensure mutually exclusive flags are not set
+	// Ensure mutually exclusive flags are not set.
 	if *checkOnly && *installOnly {
 		logger.Warning("Conflicting flags: --checkonly and --installonly are mutually exclusive")
 		pflag.Usage()
 		os.Exit(1)
 	}
 
-	// Determine run type
-	runType := "custom"
+	// Determine run type.
+	var runType string
 	if *auto {
 		runType = "auto"
-		// Override flags for auto
 		*checkOnly = false
 		*installOnly = false
+	} else if *checkOnly {
+		runType = "checkonly"
+		*installOnly = false
+	} else if *installOnly {
+		runType = "installonly"
+		*checkOnly = false
+	} else {
+		runType = "manual"
 	}
 	logger.Printf("Run type: %s", runType)
 
-	// 5) Check administrative privileges
+	// Check administrative privileges.
 	admin, adminErr := adminCheck()
 	if adminErr != nil || !admin {
 		logger.Fatal("Administrative access required. Error: %v, Admin: %v", adminErr, admin)
 	}
 
-	// 6) Ensure cache directory exists
+	// Ensure cache directory exists.
 	cachePath := cfg.CachePath
 	if err := os.MkdirAll(filepath.Clean(cachePath), 0755); err != nil {
 		logger.Error("Failed to create cache directory: %v", err)
 		os.Exit(1)
 	}
 
-	// 7) Retrieve manifests
+	// Retrieve manifests.
 	manifestItems, mErr := manifest.AuthenticatedGet(cfg)
 	if mErr != nil {
 		logger.Error("Failed to retrieve manifests: %v", mErr)
 		os.Exit(1)
 	}
 
-	// 7.1) Load local catalogs into a map (name.lower() => catalog.Item)
+	// Load local catalogs into a map (keys are lowercase names).
 	localCatalogMap, err := loadLocalCatalogItems(cfg)
 	if err != nil {
 		logger.Error("Failed to load local catalogs: %v", err)
 		os.Exit(1)
 	}
-	logger.Debug("Local catalogs loaded: %d", len(localCatalogMap))
 
-	// Handle install-only mode
+	// If install-only mode, perform installs and exit.
 	if *installOnly {
 		logger.Info("Running in install-only mode")
 		itemsToInstall := prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
@@ -212,18 +203,53 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Handle check-only mode
+	// Gather actions: updates, new installs, removals.
+	var toInstall []catalog.Item
+	var toUpdate []catalog.Item
+	var toUninstall []catalog.Item
+
+	updatesAvailable := checkForUpdatesWithCatalog(cfg, verbosity, manifestItems, localCatalogMap)
+	if updatesAvailable {
+		toUpdate = prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
+	}
+	toInstall = identifyNewInstalls(manifestItems, localCatalogMap, cfg)
+	toUninstall = identifyRemovals(localCatalogMap, cfg)
+
+	// Print summary of planned actions.
+	printPendingActions(toInstall, toUninstall, toUpdate)
+
+	// If check-only mode, exit after summary.
 	if *checkOnly {
-		updatesAvailable := checkForUpdatesWithCatalog(cfg, verbosity, manifestItems, localCatalogMap)
-		if updatesAvailable {
-			logger.Info("Updates are available.")
-		} else {
-			logger.Info("No updates available.")
-		}
 		os.Exit(0)
 	}
 
-	// Handle auto mode: skip if user is active
+	// Prompt user for confirmation.
+	fmt.Print("Proceed with installations/updates/uninstalls? (Y/n): ")
+	var response string
+	fmt.Scanln(&response)
+	if strings.TrimSpace(strings.ToLower(response)) != "y" && response != "" {
+		logger.Info("User aborted installation.")
+		os.Exit(0)
+	}
+
+	// Combine install and update items and perform installations.
+	var allToInstall []catalog.Item
+	allToInstall = append(allToInstall, toInstall...)
+	allToInstall = append(allToInstall, toUpdate...)
+	if len(allToInstall) > 0 {
+		if err := downloadAndInstallPerItem(allToInstall, cfg); err != nil {
+			logger.Error("Failed installing items: %v", err)
+		}
+	}
+
+	// Process uninstalls.
+	if len(toUninstall) > 0 {
+		if err := uninstallCatalogItems(toUninstall, cfg); err != nil {
+			logger.Error("Failed uninstalling items: %v", err)
+		}
+	}
+
+	// For auto mode: if the user is active, skip updates.
 	if *auto {
 		if isUserActive() {
 			logger.Info("User is active. Skipping automatic updates: %d", getIdleSeconds())
@@ -231,28 +257,153 @@ func main() {
 		}
 	}
 
-	// 8) Normal or auto mode: check for updates, then download & install
-	updatesAvailable := checkForUpdatesWithCatalog(cfg, verbosity, manifestItems, localCatalogMap)
-	if updatesAvailable {
-		// Gather items that need updates
-		updateList := prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
-
-		// Download and install each item
-		err := downloadAndInstallPerItem(updateList, cfg)
-		if err != nil {
-			logger.Error("Failed to download+install updates: %v", err)
-			os.Exit(1)
-		}
-	} else {
-		logger.Info("No updates available")
-	}
-
 	logger.Info("Software updates completed")
 
-	// 9) If you want to do a final, full cleanup, call it here:
+	// Run postflight script.
+	if verbosity > 0 {
+		logger.Debug("Running postflight script with verbosity level: %d", verbosity)
+	}
+	runPostflightIfNeeded(verbosity)
+	logger.Success("Postflight script completed.")
+
+	// Clear the cache folder.
 	clearCacheFolder(cfg.CachePath)
 
 	os.Exit(0)
+}
+
+// runPreflightIfNeeded runs the preflight script.
+func runPreflightIfNeeded(verbosity int) {
+	logInfo := func(format string, args ...interface{}) {
+		logger.Debug(format, args...)
+	}
+	logError := func(format string, args ...interface{}) {
+		logger.Error(format, args...)
+	}
+
+	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
+		logger.Error("Preflight script failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+// runPostflightIfNeeded runs the postflight script.
+func runPostflightIfNeeded(verbosity int) {
+	logInfo := func(format string, args ...interface{}) {
+		logger.Debug(format, args...)
+	}
+	logError := func(format string, args ...interface{}) {
+		logger.Error(format, args...)
+	}
+
+	if err := scripts.RunPostflight(verbosity, logInfo, logError); err != nil {
+		logger.Error("Postflight script failed: %v", err)
+	}
+}
+
+// adminCheck verifies whether the current process has administrative privileges.
+func adminCheck() (bool, error) {
+	var adminSid *windows.SID
+	err := windows.AllocateAndInitializeSid(
+		&windows.SECURITY_NT_AUTHORITY,
+		2,
+		windows.SECURITY_BUILTIN_DOMAIN_RID,
+		windows.DOMAIN_ALIAS_RID_ADMINS,
+		0, 0, 0, 0, 0, 0,
+		&adminSid)
+	if err != nil {
+		return false, err
+	}
+	defer windows.FreeSid(adminSid)
+	token := windows.Token(0)
+	isMember, err := token.IsMember(adminSid)
+	return isMember, err
+}
+
+// identifyRemovals enumerates all installed items (registry subkeys)
+// and returns only those items that are both present in the local catalog
+// and are explicitly marked for removal (for example, if their catalog item
+// has an Uninstaller specified or an uninstall check defined).
+func identifyRemovals(localCatalogMap map[string]catalog.Item, _ *config.Configuration) []catalog.Item {
+	var toRemove []catalog.Item
+
+	// Open the registry key for ManagedInstalls.
+	regKeyPath := `SOFTWARE\ManagedInstalls`
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyPath, registry.READ)
+	if err != nil {
+		if err == registry.ErrNotExist {
+			logging.Debug("No items in HKLM\\Software\\ManagedInstalls => no removals")
+			return toRemove
+		}
+		logging.Warn("Failed to open registry key for removals", "key", regKeyPath, "error", err)
+		return toRemove
+	}
+	defer k.Close()
+
+	// Iterate over the local catalog; we ignore any installed items that are no longer in the catalog.
+	for _, catItem := range localCatalogMap {
+		// Try to open the registry key for this catalog item.
+		regKeyItemPath := regKeyPath + `\` + catItem.Name
+		_, err := registry.OpenKey(registry.LOCAL_MACHINE, regKeyItemPath, registry.READ)
+		if err != nil {
+			// If there's no registry key for this catalog item, skip it.
+			continue
+		}
+		// Only mark for removal if the catalog explicitly indicates it should be uninstalled.
+		// For example, if the Uninstaller field is non-empty or if an uninstall check is defined.
+		if catItem.Uninstaller.Location != "" || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "") {
+			logging.Info("Catalog item marked for removal", "item", catItem.Name)
+			toRemove = append(toRemove, catItem)
+		}
+	}
+
+	return toRemove
+}
+
+// identifyNewInstalls checks each manifest item and returns those NOT present in the local catalog.
+func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
+	_ = cfg // dummy reference to suppress "unused parameter" warning
+
+	var toInstall []catalog.Item
+	for _, mItem := range manifestItems {
+		if mItem.Name == "" {
+			continue
+		}
+		key := strings.ToLower(mItem.Name)
+		if _, found := localCatalogMap[key]; !found {
+			logging.Info("Identified new item for installation", "item", mItem.Name)
+			newCatItem := catalog.Item{
+				Name:    mItem.Name,
+				Version: mItem.Version,
+				Installer: catalog.InstallerItem{
+					Location: mItem.InstallerLocation,
+					Type:     "exe", // or "msi"/"nupkg" if determinable
+				},
+				SupportedArch: mItem.SupportedArch,
+			}
+			toInstall = append(toInstall, newCatItem)
+		}
+	}
+	return toInstall
+}
+
+// uninstallCatalogItems loops over the items and uninstalls each.
+func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) error {
+	_ = cfg // dummy reference to suppress "unused parameter" warning
+
+	if len(items) == 0 {
+		logging.Debug("No items to uninstall.")
+		return nil
+	}
+	logging.Info("Starting batch uninstall of items", "count", len(items))
+	for _, item := range items {
+		_, err := installer.Install(item, "uninstall", "", cfg.CachePath, cfg.CheckOnly, cfg)
+		if err != nil {
+			return fmt.Errorf("failed uninstalling '%s': %w", item.Name, err)
+		}
+		logging.Info("Uninstall successful", "item", item.Name)
+	}
+	return nil
 }
 
 // loadLocalCatalogItems reads all .yaml files in cfg.CatalogsPath and returns a map of catalog items.
@@ -334,7 +485,8 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 // downloadAndInstallPerItem handles downloading & installing each catalog item individually.
 // It calls installOneCatalogItem(...) so we can reuse your custom logic.
 func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) error {
-	for _, cItem := range items { // <--- valid 'continue' usage inside this for loop
+	_ = cfg
+	for _, cItem := range items {
 		if cItem.Installer.Location == "" {
 			logger.Warning("No installer location found for item: %s", cItem.Name)
 			continue
@@ -349,8 +501,8 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 			if !strings.HasPrefix(fullURL, "/") {
 				fullURL = "/" + fullURL
 			}
-			// Combine with base URL
-			fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + fullURL
+			// Insert "/pkgs" between the repo URL and the relative path
+			fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
 		}
 
 		// Destination file path in cache
@@ -371,6 +523,54 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 		}
 	}
 	return nil
+}
+
+// printPendingActions prints a summary of planned actions: installs, updates, and uninstalls.
+func printPendingActions(toInstall, toUninstall, toUpdate []catalog.Item) {
+	logger.Info("")
+	logger.Info("Summary of planned actions:")
+	logger.Info("")
+	// Check if no actions are planned.
+	if len(toInstall) == 0 && len(toUninstall) == 0 && len(toUpdate) == 0 {
+		logger.Info("No actions are planned.")
+		return
+	}
+
+	// Helper to print a table header and divider.
+	printTableHeader := func(header string) {
+		logger.Info(strings.Repeat("-", len(header)))
+	}
+
+	// Print INSTALL actions as a table.
+	if len(toInstall) > 0 {
+		logger.Info("Will install these items:")
+		// Changed format: Version column now 20 characters wide.
+		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "Version", "Installer"))
+		for _, item := range toInstall {
+			logger.Info("%-20s %-20s %s", item.Name, item.Version, item.Installer.Location)
+		}
+		logger.Info("")
+	}
+
+	// Print UPDATE actions as a table.
+	if len(toUpdate) > 0 {
+		logger.Info("Will update these items:")
+		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "Version", "Installer"))
+		for _, item := range toUpdate {
+			logger.Info("%-20s %-20s %s", item.Name, item.Version, item.Installer.Location)
+		}
+		logger.Info("")
+	}
+
+	// Print UNINSTALL actions as a table.
+	if len(toUninstall) > 0 {
+		logger.Info("Will remove these items:")
+		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "InstalledVersion", "Uninstaller"))
+		for _, item := range toUninstall {
+			logger.Info("%-20s %-20s %s", item.Name, "?", item.Uninstaller.Location)
+		}
+		logger.Info("")
+	}
 }
 
 // installOneCatalogItem installs a single catalog item using the installer package.
@@ -439,26 +639,6 @@ func getSystemArchitecture() string {
 	}
 }
 
-// adminCheck verifies if the current process has administrative privileges.
-func adminCheck() (bool, error) {
-	var adminSid *windows.SID
-	err := windows.AllocateAndInitializeSid(
-		&windows.SECURITY_NT_AUTHORITY,
-		2,
-		windows.SECURITY_BUILTIN_DOMAIN_RID,
-		windows.DOMAIN_ALIAS_RID_ADMINS,
-		0, 0, 0, 0, 0, 0,
-		&adminSid)
-	if err != nil {
-		return false, err
-	}
-	defer windows.FreeSid(adminSid)
-
-	token := windows.Token(0)
-	isMember, err := token.IsMember(adminSid)
-	return isMember, err
-}
-
 // getIdleSeconds returns the number of seconds the user has been idle.
 func getIdleSeconds() int {
 	lastInput := LASTINPUTINFO{
@@ -469,9 +649,9 @@ func getIdleSeconds() int {
 		fmt.Printf("Error getting last input info: %v\n", err)
 		return 0
 	}
-	tickCount, _, err := syscall.NewLazyDLL("kernel32.dll").NewProc("GetTickCount").Call()
+	tickCount, _, err2 := syscall.NewLazyDLL("kernel32.dll").NewProc("GetTickCount").Call()
 	if tickCount == 0 {
-		fmt.Printf("Error getting tick count: %v\n", err)
+		fmt.Printf("Error getting tick count: %v\n", err2)
 		return 0
 	}
 	idleTime := (uint32(tickCount) - lastInput.DwTime) / 1000
@@ -500,4 +680,15 @@ func clearCacheFolder(cachePath string) {
 		}
 	}
 	logger.Info("Cache folder emptied after run: %s", cachePath)
+}
+
+func cleanManifestsCatalogsPreRun(dirPath string) error {
+	if err := os.RemoveAll(dirPath); err != nil {
+		return fmt.Errorf("failed to remove %s: %w", dirPath, err)
+	}
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", dirPath, err)
+	}
+	logging.Debug("Cleaned and recreated directory: %s", dirPath)
+	return nil
 }

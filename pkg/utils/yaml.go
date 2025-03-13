@@ -1,4 +1,4 @@
-// pkg/utils/yaml.go
+// pkg/utils/yaml.go - utility functions for working with YAML.
 
 package utils
 

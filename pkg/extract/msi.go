@@ -1,4 +1,4 @@
-// pkg/extract/msi.go
+// pkg/extract/msi.go - functions for extracting metadata from MSI files.
 
 package extract
 

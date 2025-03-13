@@ -1,3 +1,5 @@
+// cmd/makepkginfo/main.go
+
 package main
 
 import (
@@ -31,7 +33,7 @@ func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
 	return node, nil
 }
 
-// InstallItem is for the "installs" array in pkginfo.
+// InstallItem is for the "installs" array.
 type InstallItem struct {
 	Type        SingleQuotedString `yaml:"type"`
 	Path        SingleQuotedString `yaml:"path"`
@@ -39,15 +41,79 @@ type InstallItem struct {
 	Version     SingleQuotedString `yaml:"version,omitempty"`
 }
 
-// Installer parallels cimianimport's "Installer" struct.
+// Installer parallels cimiimport's Installer type.
 type Installer struct {
-	Location string `yaml:"location,omitempty"`
-	Hash     string `yaml:"hash,omitempty"`
-	Type     string `yaml:"type,omitempty"`
-	Size     int64  `yaml:"size,omitempty"`
+	Location    string   `yaml:"location,omitempty"`
+	Hash        string   `yaml:"hash,omitempty"`
+	Type        string   `yaml:"type,omitempty"`
+	Size        int64    `yaml:"size,omitempty"`
+	Arguments   []string `yaml:"arguments,omitempty"`
+	ProductCode string   `yaml:"product_code,omitempty"`
+	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
 }
 
-// PkgsInfo matches your updated cimianimport pkginfo schema.
+// Custom YAML marshaler for Installer enforcing order:
+// type, size, location, hash, then (if type=="msi") product_code and upgrade_code,
+// then arguments (only if non-empty).
+func (i *Installer) MarshalYAML() (interface{}, error) {
+	var content []*yaml.Node
+
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Type},
+	)
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "size"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", i.Size)},
+	)
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "location"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Location},
+	)
+	content = append(content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "hash"},
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Hash},
+	)
+	// Include product_code and upgrade_code only for MSI installers.
+	if strings.ToLower(i.Type) == "msi" {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "product_code"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.ProductCode},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "upgrade_code"},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.UpgradeCode},
+		)
+	}
+	// Only output "arguments" if there is at least one argument.
+	if len(i.Arguments) > 0 {
+		content = append(content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "arguments"},
+			buildArgumentsNode(i.Arguments),
+		)
+	}
+	node := &yaml.Node{
+		Kind:    yaml.MappingNode,
+		Tag:     "!!map",
+		Content: content,
+	}
+	return node, nil
+}
+
+func buildArgumentsNode(args []string) *yaml.Node {
+	seq := &yaml.Node{
+		Kind: yaml.SequenceNode,
+		Tag:  "!!seq",
+	}
+	for _, a := range args {
+		seq.Content = append(seq.Content, &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: a,
+		})
+	}
+	return seq
+}
+
+// PkgsInfo matches the updated pkginfo schema.
 type PkgsInfo struct {
 	Name                 string        `yaml:"name"`
 	DisplayName          string        `yaml:"display_name,omitempty"`
@@ -65,8 +131,6 @@ type PkgsInfo struct {
 	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
 	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
 	Installer            *Installer    `yaml:"installer,omitempty"`
-	ProductCode          string        `yaml:"product_code,omitempty"`
-	UpgradeCode          string        `yaml:"upgrade_code,omitempty"`
 }
 
 // NoQuoteString ensures empty strings appear without quotes.
@@ -80,7 +144,7 @@ func (s NoQuoteString) MarshalYAML() (interface{}, error) {
 	return node, nil
 }
 
-// wrapperPkgsInfo is only if you want a minimal new file.
+// wrapperPkgsInfo is used only for creating a minimal pkginfo file.
 type wrapperPkgsInfo struct {
 	Name                 NoQuoteString `yaml:"name"`
 	DisplayName          NoQuoteString `yaml:"display_name"`
@@ -150,7 +214,6 @@ func CreateNewPkgsInfo(pkgsinfoPath, name string) error {
 		Developer:         "",
 		UnattendedInstall: newPkgsInfo.UnattendedInstall,
 	}
-
 	data, err := yaml.Marshal(&wrapped)
 	if err != nil {
 		return err
@@ -175,7 +238,7 @@ func calculateMD5(filePath string) (string, error) {
 	return fmt.Sprintf("%x", hash), nil
 }
 
-// gatherInstallerInfo returns 9 items now, including metaIdent for .nupkg
+// gatherInstallerInfo returns metadata details.
 func gatherInstallerInfo(path string) (
 	installs []InstallItem,
 	metaName, metaVersion, metaDeveloper, metaDesc, iType string,
@@ -185,27 +248,22 @@ func gatherInstallerInfo(path string) (
 	if path == "" {
 		return nil, "NoName", "", "", "", "", "", "", ""
 	}
-
 	ext := strings.ToLower(filepath.Ext(path))
-
 	switch ext {
 	case ".msi":
 		iType = "msi"
 		metaName, metaVersion, metaDeveloper, metaDesc, productCode, upgradeCode = extract.MsiMetadata(path)
-
 		_, _, err = getFileInfo(path)
 		if err != nil {
 			logger.Error("Error getting file info: %v", err)
 		}
 		md5Val, _ := calculateMD5(path)
-
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
 			MD5Checksum: SingleQuotedString(md5Val),
 			Version:     SingleQuotedString(metaVersion),
 		}}
-
 	case ".exe":
 		iType = "exe"
 		exeVersion, err := getFileVersion(path)
@@ -217,50 +275,41 @@ func gatherInstallerInfo(path string) (
 		} else {
 			metaName = parsePackageName(filepath.Base(path))
 			metaVersion = exeVersion
-			metaDeveloper = ""
-			metaDesc = ""
 		}
 		productCode, upgradeCode = "", ""
-
 		_, _, err = getFileInfo(path)
 		if err != nil {
 			logger.Error("Error getting file info: %v", err)
 		}
 		md5Val, _ := calculateMD5(path)
-
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
 			MD5Checksum: SingleQuotedString(md5Val),
 			Version:     SingleQuotedString(metaVersion),
 		}}
-
 	case ".nupkg":
 		iType = "nupkg"
 		ident, nm, ver, dev, desc := extract.NupkgMetadata(path)
 		metaIdent = ident
 		metaName, metaVersion, metaDeveloper, metaDesc = nm, ver, dev, desc
 		productCode, upgradeCode = "", ""
-
 		_, _, err = getFileInfo(path)
 		if err != nil {
 			logger.Error("Error getting file info: %v", err)
 		}
 		md5Val, _ := calculateMD5(path)
-
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(path),
 			MD5Checksum: SingleQuotedString(md5Val),
 			Version:     SingleQuotedString(metaVersion),
 		}}
-
 	default:
 		iType = "unknown"
 		metaName = parsePackageName(filepath.Base(path))
 		metaVersion, metaDeveloper, metaDesc = "", "", ""
 		productCode, upgradeCode = "", ""
-
 		md5Val, _ := calculateMD5(path)
 		installs = []InstallItem{{
 			Type:        SingleQuotedString("file"),
@@ -304,21 +353,19 @@ func replacePathUserProfile(p string) string {
 }
 
 func buildInstallsArray(paths []string) []InstallItem {
-	var installs []InstallItem
-	for _, f := range paths {
-		abs, _ := filepath.Abs(f)
-
-		st, err := os.Stat(abs)
-		if err != nil || st.IsDir() {
-			logger.Warning("Skipping '%s' in -f, not found or directory.", f)
+	var arr []InstallItem
+	for _, p := range paths {
+		abs, _ := filepath.Abs(p)
+		fi, err := os.Stat(abs)
+		if err != nil || fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "Skipping -i path: '%s'\n", p)
 			continue
 		}
-		md5val, err := calculateMD5(abs)
+		md5v, err := calculateMD5(abs)
 		if err != nil {
 			logger.Warning("Error calculating MD5 for %s: %v", abs, err)
 			continue
 		}
-
 		var fileVersion string
 		if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(abs), ".exe") {
 			v, err := getFileVersion(abs)
@@ -329,15 +376,14 @@ func buildInstallsArray(paths []string) []InstallItem {
 			}
 		}
 		finalPath := replacePathUserProfile(abs)
-
-		installs = append(installs, InstallItem{
+		arr = append(arr, InstallItem{
 			Type:        SingleQuotedString("file"),
 			Path:        SingleQuotedString(finalPath),
-			MD5Checksum: SingleQuotedString(md5val),
+			MD5Checksum: SingleQuotedString(md5v),
 			Version:     SingleQuotedString(fileVersion),
 		})
 	}
-	return installs
+	return arr
 }
 
 // multiStringSlice is your existing custom flag type
@@ -393,14 +439,10 @@ func main() {
 	flag.BoolVar(&unattendedUninstall, "unattended_uninstall", false, "Set 'unattended_uninstall: true'")
 	flag.BoolVar(&newPkg, "new", false, "Create a new pkginfo stub")
 	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags allowed)")
-
 	showMakePkgInfoVersion := flag.Bool("makepkginfo_version", false, "Print the version and exit.")
 	flag.Parse()
 
-	// Initialize logger
-	logger = logging.New(false) // Set to true if you want verbose with line numbers
-
-	// If --version
+	logger = logging.New(false)
 	if *showMakePkgInfoVersion {
 		version.Print()
 		return
@@ -471,32 +513,30 @@ func main() {
 	pkginfo := PkgsInfo{
 		Name:              finalName,
 		DisplayName:       displayName,
-		Identifier:        metaIdent, // <-- .nupkg ID
+		Identifier:        metaIdent,
 		Version:           finalVersion,
 		Catalogs:          strings.Split(catalogs, ","),
 		Category:          category,
 		Developer:         metaDeveloper,
 		Description:       metaDesc,
 		InstallerType:     installerType,
-		ProductCode:       prodCode,
-		UpgradeCode:       upgrCode,
 		Installs:          autoInstalls,
 		UnattendedInstall: unattendedInstall,
 	}
 
-	// If we have an installer path, gather size + hash
 	if installerPath != "" {
 		sizeBytes, hashVal, errFileInfo := getFileInfo(installerPath)
 		if errFileInfo != nil {
 			fmt.Fprintf(os.Stderr, "Warning: can't read installer info: %v\n", errFileInfo)
 		}
 		sizeKB := sizeBytes / 1024
-
 		pkginfo.Installer = &Installer{
-			Location: utils.NormalizeWindowsPath(filepath.Base(installerPath)), // Use utils.NormalizeWindowsPath instead
-			Hash:     hashVal,
-			Type:     installerType,
-			Size:     sizeKB,
+			Location:    utils.NormalizeWindowsPath(filepath.Base(installerPath)),
+			Hash:        hashVal,
+			Type:        installerType,
+			Size:        sizeKB,
+			ProductCode: prodCode,
+			UpgradeCode: upgrCode,
 		}
 	}
 
@@ -517,18 +557,15 @@ func main() {
 	// also process user-specified -f items
 	userInstalls := buildInstallsArray(filePaths)
 	alreadyHasValidVersion := (pkginfo.Version != "" && pkginfo.Version != "1.0.0")
-
 	for i := range userInstalls {
 		fileVersion := string(userInstalls[i].Version)
 		// Always remove per-file version from final YAML
 		userInstalls[i].Version = ""
-
 		if !alreadyHasValidVersion && fileVersion != "" && fileVersion != "1.0.0" {
 			pkginfo.Version = fileVersion
 			alreadyHasValidVersion = true
 		}
 	}
-
 	pkginfo.Installs = append(pkginfo.Installs, userInstalls...)
 
 	// Output final YAML to stdout

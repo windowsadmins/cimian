@@ -1,4 +1,4 @@
-// pkg/auth/credentials.go
+// pkg/auth/credentials.go - functions for managing authentication credentials.
 
 package auth
 

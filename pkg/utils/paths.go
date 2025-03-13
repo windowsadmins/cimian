@@ -1,3 +1,5 @@
+// pkg/utils/paths.go - utility functions for working with file paths.
+
 package utils
 
 import "strings"
