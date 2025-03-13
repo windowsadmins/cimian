@@ -545,3 +545,14 @@ func clearCacheFolder(cachePath string) {
 	}
 	logger.Info("Cache folder emptied after run: %s", cachePath)
 }
+
+func cleanManifestsCatalogsPreRun(dirPath string) error {
+	if err := os.RemoveAll(dirPath); err != nil {
+		return fmt.Errorf("failed to remove %s: %w", dirPath, err)
+	}
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", dirPath, err)
+	}
+	logging.Debug("Cleaned and recreated directory: %s", dirPath)
+	return nil
+}
