@@ -21,7 +21,7 @@ import (
 
 const (
 	CacheExpirationDays = 30
-	Timeout             = 10 * time.Second
+	Timeout             = 10 * time.Minute
 )
 
 // DownloadFile replaces any hardcoded paths with your config paths and ensures packages go to cfg.CachePath.
