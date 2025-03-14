@@ -23,6 +23,8 @@ type Installer struct {
 	Hash        string   `yaml:"hash"`
 	Type        string   `yaml:"type"`
 	Size        int64    `yaml:"size,omitempty"`
+	Switches    []string `yaml:"switches,omitempty"`
+	Flags       []string `yaml:"flags,omitempty"`
 	Arguments   []string `yaml:"arguments,omitempty"`
 	ProductCode string   `yaml:"product_code,omitempty"`
 	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
