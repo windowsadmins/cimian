@@ -1,5 +1,7 @@
 # Cimian
 
+![Cimian](cimian.png)
+
 Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. Heavily inspired by Munki, Cimian allows Windows administrators to efficiently manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals at scale.
 
 Cimian simplifies the software lifecycle management process, from creating packages to deploying them securely via Microsoft Intune or other cloud providers, ensuring consistency and reliability across large-scale Windows deployments.
@@ -7,7 +9,7 @@ Cimian simplifies the software lifecycle management process, from creating packa
 ## Key Features
 
 - **Automated Package Management**: Streamline software packaging, metadata management, and distribution.
-- **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based configuration files.
+- **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based config files.
 - **Multi-format Installer Support**: Supports MSI, MSIX, EXE, and NuGet package formats.
 
 ## Components
