@@ -1,6 +1,6 @@
 # Cimian
 
-![Cimian](cimian.png)
+<img src="cimian.png" alt="Cimian" width="300">
 
 Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. Heavily inspired by Munki, Cimian allows Windows administrators to efficiently manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals at scale.
 
