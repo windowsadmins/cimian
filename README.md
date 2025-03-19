@@ -1,46 +1,44 @@
-![Cimian logo](cimian.png)
 # Cimian
 
-Munki-like Application Management for Windows
+<img src="cimian.png" alt="Cimian" width="300">
 
-## About This Fork
+Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. Heavily inspired by Munki, Cimian allows Windows administrators to efficiently manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals at scale.
 
-This is a fork of the original Cimian project by Dustin Davis (https://github.com/1dustindavis/cimian). The goal of this fork is to extend Cimian's capabilities.
+Cimian simplifies the software lifecycle management process, from creating packages to deploying them securely via Microsoft Intune or other cloud providers, ensuring consistency and reliability across large-scale Windows deployments.
 
-## Changes in this Fork so far:
+## Key Features
 
-- Implemented `cimianimport` and `makepkginfo` tools
-- Added support for pkginfo files
+- **Automated Package Management**: Streamline software packaging, metadata management, and distribution.
+- **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based config files.
+- **Multi-format Installer Support**: Supports MSI, MSIX, EXE, and NuGet package formats.
 
-## Original Description
+## Components
 
-Cimian is intended to provide application management on Windows using [Munki](https://github.com/munki/munki) as inspiration.
-Cimian supports `.msi`, `.ps1`, `.exe`, or `.nupkg` [(via chocolatey)](https://github.com/chocolatey/choco).
+Cimian consists of the following core tools:
 
-## Getting Started
-Information related to installing and configuring Cimian can be found on the [Wiki](https://github.com/windowsadmins/cimian/wiki).
+* `cimipkg`: Facilitates the creation of deployable NuGet packages.
+* `cimiimport`: Automates importing software packages and generating metadata.
+* `makecatalogs`: Generates software catalogs used to organize and manage software packages.
+* `manifestutil`: Utility for managing deployment manifests.
+* `managedsoftwareupdate`: Client-side component for handling software updates and maintenance tasks.
 
-## Building
 
-If you just want the latest version, download it from the [releases page](https://github.com/windowsadmins/cimian/releases).
+### Configuration
 
-Building from source requires the [Go tools](https://golang.org/doc/install).
+Configure your Cimian setup by editing the `config.yaml` file:
 
-#### Windows
-After cloning this repo, just run `go build -i ./cmd/cimian`. A new binary will be created in the current directory.
-
-## Contributing
-Pull Requests are always welcome. Before submitting, lint and test:
-```
-go fmt ./...
-go test ./...
+```yaml
+software_repo_url: https://cimian.domain.com/
+client_identifier: Bootstrap
+force_basic_auth: false
+default_arch: x64
+default_catalog: Testing
 ```
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
+Cimian is distributed under the MIT License. See [LICENSE](LICENSE) for details.
 
-## Acknowledgments
+## Contributing
 
-- Dustin Davis and all contributors to the original Cimian project
-- The Munki project, which served as inspiration for Cimian
+We welcome contributions! Feel free to submit pull requests, report issues, or suggest improvements via our [GitHub repository](https://github.com/windowsadmins/cimian).
