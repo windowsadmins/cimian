@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -23,6 +22,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/scripts"
+	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/version"
 
 	"golang.org/x/sys/windows"
@@ -209,11 +209,11 @@ func main() {
 	var toUpdate []catalog.Item
 	var toUninstall []catalog.Item
 
-	updatesAvailable := checkForUpdatesWithCatalog(cfg, verbosity, manifestItems, localCatalogMap)
-	if updatesAvailable {
-		toUpdate = prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
-	}
-	toInstall = identifyNewInstalls(manifestItems, localCatalogMap, cfg)
+	dedupedManifestItems := status.DeduplicateManifestItems(manifestItems)
+	itemsToProcess := prepareDownloadItemsWithCatalog(dedupedManifestItems, localCatalogMap, cfg)
+
+	toUpdate = itemsToProcess
+	toInstall = identifyNewInstalls(dedupedManifestItems, localCatalogMap, cfg)
 	toUninstall = identifyRemovals(localCatalogMap, cfg)
 
 	// Print summary of planned actions.
@@ -408,14 +408,18 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 	return nil
 }
 
-// loadLocalCatalogItems reads all .yaml files in cfg.CatalogsPath and returns a map of catalog items.
+// loadLocalCatalogItems returns a map[string]catalog.Item, but only the
+// highest-version item if a name appears multiple times.
 func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, error) {
 	// Create catalogs directory if it doesn't exist
 	if err := os.MkdirAll(cfg.CatalogsPath, 0755); err != nil {
 		return nil, fmt.Errorf("creating catalogs dir: %v", err)
 	}
 
-	itemsMap := make(map[string]catalog.Item)
+	// Instead of returning map[string]catalog.Item directly, we'll collect
+	// everything first in map[string][]catalog.Item so we can handle duplicates.
+	itemsMulti := make(map[string][]catalog.Item)
+
 	dirEntries, err := os.ReadDir(cfg.CatalogsPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading catalogs dir: %v", err)
@@ -439,38 +443,28 @@ func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, 
 			logger.Warning("Failed to parse catalog YAML: %v", err)
 			continue
 		}
-		// Store each item in the map with lowercase keys for case-insensitive matching
+		// For each item in this catalog, store it in itemsMulti by lowercase name
 		for _, cItem := range catItems {
 			key := strings.ToLower(cItem.Name)
-			itemsMap[key] = cItem
+			itemsMulti[key] = append(itemsMulti[key], cItem)
 		}
 	}
-	return itemsMap, nil
-}
 
-// checkForUpdatesWithCatalog checks all manifest items against the local catalog to determine if updates are available.
-func checkForUpdatesWithCatalog(cfg *config.Configuration, verbosity int, manifestItems []manifest.Item, catMap map[string]catalog.Item) bool {
-	logger.Info("Checking for updates...")
-	updates := false
-
-	for _, item := range manifestItems {
-		if verbosity > 0 {
-			logger.Info("Checking item: %s, version: %s", item.Name, item.Version)
-		}
-		if installer.LocalNeedsUpdate(item, catMap, cfg) {
-			logger.Info("Update available for package: %s", item.Name)
-			updates = true
-		} else {
-			logger.Info("No update needed for package: %s", item.Name)
-		}
+	// Now deduplicate: pick the item with the highest Version for each name.
+	finalCatalogMap := make(map[string]catalog.Item)
+	for key, sliceOfItems := range itemsMulti {
+		finalCatalogMap[key] = status.DeduplicateCatalogItems(sliceOfItems)
 	}
-	return updates
+
+	return finalCatalogMap, nil
 }
 
-// prepareDownloadItemsWithCatalog prepares a list of catalog items that need to be downloaded and installed.
+// prepareDownloadItemsWithCatalog returns the catalog items that need to be installed/updated,
+// using the deduplicated manifest items.
 func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
 	var results []catalog.Item
-	for _, m := range manifestItems {
+	dedupedItems := status.DeduplicateManifestItems(manifestItems)
+	for _, m := range dedupedItems {
 		if installer.LocalNeedsUpdate(m, catMap, cfg) {
 			key := strings.ToLower(m.Name)
 			catItem, found := catMap[key]
@@ -579,9 +573,9 @@ func printPendingActions(toInstall, toUninstall, toUpdate []catalog.Item) {
 // It normalizes the architecture and handles installation output for error detection.
 func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Configuration) error {
 	normalizeArchitecture(&cItem)
-	sysArch := getSystemArchitecture()
-	logger.Debug("Detected system architecture: %s", sysArch)
-	logger.Debug("Supported architectures for item: %s, supported_arch: %v", cItem.Name, cItem.SupportedArch)
+	sysArch := status.GetSystemArchitecture()
+	logging.Debug("Detected system architecture: %s", sysArch)
+	logging.Debug("Supported architectures for item: %s, supported_arch: %v", cItem.Name, cItem.SupportedArch)
 
 	// Actually install
 	installedOutput, installErr := installer.Install(cItem, "install", localFile, cfg.CachePath, cfg.CheckOnly, cfg)
@@ -607,7 +601,7 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 // normalizeArchitecture ensures that the system architecture matches the catalog's expectations.
 // It maps "amd64" and "x86_64" to "x64" to resolve compatibility issues.
 func normalizeArchitecture(item *catalog.Item) {
-	sysArch := getSystemArchitecture()
+	sysArch := status.GetSystemArchitecture()
 	for i, arch := range item.SupportedArch {
 		if strings.EqualFold(arch, "amd64") || strings.EqualFold(arch, "x86_64") {
 			item.SupportedArch[i] = "x64"
@@ -623,21 +617,6 @@ func normalizeArchitecture(item *catalog.Item) {
 	}
 	if !found {
 		item.SupportedArch = append(item.SupportedArch, sysArch)
-	}
-}
-
-// getSystemArchitecture determines the system's architecture and maps it to the catalog's expected values.
-func getSystemArchitecture() string {
-	arch := runtime.GOARCH
-	switch arch {
-	case "amd64", "x86_64":
-		return "x64"
-	case "arm64":
-		return "arm64"
-	case "386":
-		return "x86"
-	default:
-		return arch
 	}
 }
 
@@ -764,6 +743,6 @@ func cleanManifestsCatalogsPreRun(dirPath string) error {
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("failed to create %s: %w", dirPath, err)
 	}
-	logging.Debug("Cleaned and recreated directory: %s", dirPath)
+	logging.Debug("Cleaned and recreated directory", "dirPath", dirPath)
 	return nil
 }
