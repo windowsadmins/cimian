@@ -1,4 +1,4 @@
-// pkg/installer/installer.go - functions for installing software packages.
+// pkg/installer/installer.go contains the main logic for installing, updating, and uninstalling software items.
 
 package installer
 
@@ -6,7 +6,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,7 +29,7 @@ var (
 	commandMsi = filepath.Join(os.Getenv("WINDIR"), "system32", "msiexec.exe")
 	commandPs1 = filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
 
-	// Typically "C:\ProgramData\chocolatey\bin\choco.exe"
+	// Typically "C:\\ProgramData\\chocolatey\\bin\\choco.exe"
 	chocolateyBin = filepath.Join(os.Getenv("ProgramData"), "chocolatey", "bin", "choco.exe")
 )
 
@@ -39,7 +38,8 @@ func storeInstalledVersionInRegistry(item catalog.Item) {
 	regPath := `Software\ManagedInstalls\` + item.Name
 	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, regPath, registry.SET_VALUE)
 	if err != nil {
-		logging.Warn("Failed to create registry key for installed version", "key", regPath, "error", err)
+		logging.Warn("Failed to create registry key for installed version",
+			"key", regPath, "error", err)
 		return
 	}
 	defer k.Close()
@@ -50,10 +50,12 @@ func storeInstalledVersionInRegistry(item catalog.Item) {
 	}
 	err = k.SetStringValue("Version", versionStr)
 	if err != nil {
-		logging.Warn("Failed to set 'Version' in registry", "key", regPath, "error", err)
+		logging.Warn("Failed to set 'Version' in registry",
+			"key", regPath, "error", err)
 		return
 	}
-	logging.Debug("Wrote local installed version to registry", "item", item.Name, "version", versionStr)
+	logging.Debug("Wrote local installed version to registry",
+		"item", item.Name, "version", versionStr)
 }
 
 // removeInstalledVersionFromRegistry deletes HKLM\Software\ManagedInstalls\<Name>.
@@ -65,18 +67,20 @@ func removeInstalledVersionFromRegistry(item catalog.Item) {
 			logging.Debug("No registry entry to remove", "item", item.Name)
 			return
 		}
-		logging.Warn("Failed to delete registry key for item", "item", item.Name, "key", regPath, "error", err)
+		logging.Warn("Failed to delete registry key for item",
+			"item", item.Name, "key", regPath, "error", err)
 		return
 	}
-	logging.Debug("Removed registry key after uninstall", "item", item.Name, "key", regPath)
+	logging.Debug("Removed registry key after uninstall",
+		"item", item.Name, "key", regPath)
 }
 
 // Install is the main entry point for installing/updating/uninstalling a catalog item.
-// This is called by your main code once it decides an item needs installing.
 func Install(item catalog.Item, action, localFile, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
 	// If we are only checking, do not proceed with actual installation.
 	if checkOnly {
-		logging.Info("CheckOnly mode: would perform action", "action", action, "item", item.Name)
+		logging.Info("CheckOnly mode: would perform action",
+			"action", action, "item", item.Name)
 		return "CheckOnly: No action performed.", nil
 	}
 
@@ -109,7 +113,8 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 	case "uninstall":
 		sysArch := status.GetSystemArchitecture()
 		if !status.SupportsArchitecture(item, sysArch) {
-			logging.Warn("Skipping uninstall due to system arch mismatch", "item", item.Name, "arch", sysArch)
+			logging.Warn("Skipping uninstall due to system arch mismatch",
+				"item", item.Name, "arch", sysArch)
 		}
 		out, err := uninstallItem(item, cachePath)
 		if err != nil {
@@ -127,40 +132,66 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 	}
 }
 
-// LocalNeedsUpdate is a fallback that checks if item needs an update.
+// LocalNeedsUpdate explicitly prioritizes clear version comparison over status.CheckStatus.
 func LocalNeedsUpdate(m manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) bool {
 	key := strings.ToLower(m.Name)
 	catItem, found := catMap[key]
 	if !found {
-		logging.Debug("Item not found in local catalog; fallback to old approach", "item", m.Name)
+		logging.Debug("Item not found in local catalog; falling back to old update check", "item", m.Name)
 		return needsUpdateOld(m, cfg)
 	}
-	needed, err := status.CheckStatus(catItem, "install", cfg.CachePath)
+
+	// Call CheckStatus explicitly instead of just comparing versions
+	needed, err := status.CheckStatus(catItem, "update", cfg.CachePath)
 	if err != nil {
+		logging.Warn("Error in CheckStatus, assuming update needed",
+			"item", m.Name, "error", err)
 		return true
 	}
-	return needed
+	if needed {
+		logging.Debug("CheckStatus explicitly indicates update required", "item", m.Name)
+		return true
+	}
+
+	logging.Debug("CheckStatus explicitly indicates NO update required", "item", m.Name)
+	return false
 }
 
-// needsUpdateOld is your original fallback logic for deciding an update is needed.
-func needsUpdateOld(item manifest.Item, cfg *config.Configuration) bool {
-	_ = cfg // not used here, so explicitly discard to avoid lint errors
+// PrepareDownloadItemsWithCatalog returns the catalog items that need to be installed/updated,
+// based on the deduplicated manifest items.
+func PrepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
+	var results []catalog.Item
+	dedupedItems := status.DeduplicateManifestItems(manifestItems)
+	for _, m := range dedupedItems {
+		if LocalNeedsUpdate(m, catMap, cfg) {
+			key := strings.ToLower(m.Name)
+			if catItem, found := catMap[key]; found {
+				results = append(results, catItem)
+			} else {
+				logging.Warn("Manifest item %s not found in local catalog", m.Name)
+			}
+		}
+	}
+	return results
+}
 
+// needsUpdateOld is the original fallback logic for deciding an update is needed.
+func needsUpdateOld(item manifest.Item, _ *config.Configuration) bool {
 	if item.InstallCheckScript != "" {
 		exitCode, err := runPowerShellInline(item.InstallCheckScript)
 		if err != nil {
-			logging.Warn("InstallCheckScript failed => default to install", "item", item.Name, "error", err)
+			logging.Warn("InstallCheckScript failed for %s with error: %v; defaulting to update", item.Name, err)
 			return true
 		}
+		logging.Debug("InstallCheckScript for %s returned exit code %d", item.Name, exitCode)
 		if exitCode == 0 {
-			logging.Debug("installcheck => 0 => not installed => update needed", "item", item.Name)
+			logging.Debug("InstallCheckScript for %s indicates not installed; update needed", item.Name)
 			return true
 		}
-		logging.Debug("installcheck => !=0 => installed => no update", "item", item.Name, "exitCode", exitCode)
+		logging.Debug("InstallCheckScript for %s indicates installed (exit code %d); no update needed", item.Name, exitCode)
 		return false
 	}
-
-	// Otherwise do final fallback
+	logging.Debug("No InstallCheckScript defined for %s; assuming no update needed", item.Name)
 	return false
 }
 
@@ -176,19 +207,20 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 		return nil
 
 	case "exe":
+		// Run preinstall script if present
 		if item.PreScript != "" {
 			out, err := runPreinstallScript(item, localFile, cachePath)
 			if err != nil {
 				return err
 			}
 			logging.Debug("Preinstall script for EXE completed", "output", out)
-		} else {
-			out, err := runEXEInstaller(item, localFile)
-			if err != nil {
-				return err
-			}
-			logging.Debug("EXE install output", "output", out)
 		}
+		// Always run the EXE afterwards
+		out, err := runEXEInstaller(item, localFile)
+		if err != nil {
+			return err
+		}
+		logging.Debug("EXE install output", "output", out)
 		return nil
 
 	case "powershell":
@@ -214,11 +246,11 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 
 // installOrUpgradeNupkg handles local .nupkg installs/updates using Chocolatey.
 func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, cfg *config.Configuration) (string, error) {
-	_ = cfg
-	// 1) Extract nupkg metadata
 	nupkgID, nupkgVer, metaErr := extractNupkgMetadata(downloadedFile)
+	_ = cfg
 	if metaErr != nil {
-		logging.Warn("Failed to parse .nuspec; falling back to item.Name", "file", downloadedFile, "err", metaErr)
+		logging.Warn("Failed to parse .nuspec; falling back to item.Name",
+			"file", downloadedFile, "err", metaErr)
 		nupkgID = strings.TrimSpace(item.Identifier)
 		if nupkgID == "" {
 			nupkgID = strings.TrimSpace(item.Name)
@@ -230,16 +262,15 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 	}
 	logging.Debug("Parsed .nuspec metadata", "nupkgID", nupkgID, "nupkgVer", nupkgVer)
 
-	// 2) Rename the file to <pkgID>.<pkgVersion>.nupkg
 	if err := renameNupkgFile(downloadedFile, cachePath, nupkgID, nupkgVer); err != nil {
 		logging.Error("Failed to rename .nupkg for choco", "err", err)
 		return "", err
 	}
 
-	// 3) Check if installed
 	installed, checkErr := isNupkgInstalled(nupkgID)
 	if checkErr != nil {
-		logging.Warn("Could not detect if nupkg is installed; forcing install", "pkgID", nupkgID, "err", checkErr)
+		logging.Warn("Could not detect if nupkg is installed; forcing install",
+			"pkgID", nupkgID, "err", checkErr)
 		return doChocoInstall(nupkgID, nupkgVer, cachePath, item)
 	}
 
@@ -248,7 +279,6 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 		return doChocoInstall(nupkgID, nupkgVer, cachePath, item)
 	}
 
-	// If installed => do forced upgrade
 	logging.Info("Nupkg is installed; forcing upgrade/downgrade", "pkgID", nupkgID)
 	return doChocoUpgrade(nupkgID, nupkgVer, cachePath, item)
 }
@@ -292,7 +322,6 @@ func isNupkgInstalled(pkgID string) (bool, error) {
 }
 
 func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
-	_ = item
 	chocoLog := filepath.Join(cachePath, fmt.Sprintf("install_choco_%s.log", pkgID))
 	logging.Info("Running choco install", "pkgID", pkgID, "version", pkgVer)
 	cmdArgs := []string{
@@ -305,6 +334,10 @@ func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 		"--debug",
 		fmt.Sprintf("--log-file=%s", chocoLog),
 	}
+
+	logging.Debug("doChocoInstall => final command",
+		"exe", chocolateyBin, "args", strings.Join(cmdArgs, " "))
+
 	out, err := runCMD(chocolateyBin, cmdArgs)
 	if err != nil {
 		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
@@ -319,7 +352,6 @@ func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 }
 
 func doChocoUpgrade(pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
-	_ = item
 	chocoLog := filepath.Join(cachePath, fmt.Sprintf("upgrade_choco_%s.log", pkgID))
 	logging.Info("Running choco upgrade", "pkgID", pkgID, "version", pkgVer)
 	cmdArgs := []string{
@@ -332,6 +364,10 @@ func doChocoUpgrade(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 		"--debug",
 		fmt.Sprintf("--log-file=%s", chocoLog),
 	}
+
+	logging.Debug("doChocoUpgrade => final command",
+		"exe", chocolateyBin, "args", strings.Join(cmdArgs, " "))
+
 	out, err := runCMD(chocolateyBin, cmdArgs)
 	if err != nil {
 		logging.Error("Choco upgrade failed", "pkgID", pkgID, "error", err)
@@ -345,7 +381,7 @@ func doChocoUpgrade(pkgID, pkgVer, cachePath string, item catalog.Item) (string,
 	return out, nil
 }
 
-// uninstallItem decides how to uninstall MSI/EXE/PS1/nupkg.
+// uninstallItem decides how to uninstall MSI/EXE/PS1/nupkg/msix.
 func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
@@ -374,7 +410,7 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 }
 
 func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
-	// Standard MSI install arguments
+	// Base MSI installation arguments
 	args := []string{
 		"/i", localFile,
 		"/quiet",
@@ -382,12 +418,38 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 		"/l*v", `C:\ProgramData\ManagedInstalls\Logs\install.log`,
 	}
 
-	// Append additional MSI flags from the catalog, if provided.
-	if len(item.Installer.Flags) > 0 {
-		args = append(args, item.Installer.Flags...)
+	// Add installer switches (/ style arguments)
+	for _, sw := range item.Installer.Switches {
+		if strings.Contains(sw, "=") {
+			parts := strings.SplitN(sw, "=", 2)
+			key, value := parts[0], parts[1]
+			if strings.ContainsAny(value, " ") {
+				value = fmt.Sprintf("\"%s\"", value)
+			}
+			args = append(args, fmt.Sprintf("/%s=%s", key, value))
+		} else {
+			args = append(args, fmt.Sprintf("/%s", sw))
+		}
 	}
 
-	logging.Info("Invoking MSI install", "msi", localFile, "item", item.Name, "extraArgs", item.Installer.Flags)
+	// Add installer flags (-- style arguments)
+	for _, flag := range item.Installer.Flags {
+		if strings.Contains(flag, "=") {
+			parts := strings.SplitN(flag, "=", 2)
+			key, value := parts[0], parts[1]
+			if strings.ContainsAny(value, " ") {
+				value = fmt.Sprintf("\"%s\"", value)
+			}
+			args = append(args, fmt.Sprintf("--%s=%s", key, value))
+		} else {
+			args = append(args, fmt.Sprintf("--%s", flag))
+		}
+	}
+
+	logging.Info("Invoking MSI install",
+		"msi", localFile, "item", item.Name, "extraArgs", args)
+	logging.Debug("runMSIInstaller => final command",
+		"exe", commandMsi, "args", strings.Join(args, " "))
 
 	cmd := exec.Command(commandMsi, args...)
 	outputBytes, err := cmd.CombinedOutput()
@@ -418,17 +480,21 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 }
 
 func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
-	_ = item
 	args := []string{"/x", absFile, "/qn", "/norestart"}
 	args = append(args, item.Uninstaller.Arguments...)
+
+	logging.Debug("runMSIUninstaller => final command",
+		"exe", commandMsi, "args", strings.Join(args, " "))
+
 	return runCMD(commandMsi, args)
 }
 
 func runMSIXInstaller(item catalog.Item, localFile string) (string, error) {
-	args := []string{
-		localFile,
-	}
+	args := []string{localFile}
 	logging.Info("Invoking MSIX install", "msix", localFile, "item", item.Name)
+	logging.Debug("runMSIXInstaller => final command",
+		"cmd", "Add-AppxPackage", "args", strings.Join(args, " "))
+
 	cmd := exec.Command("Add-AppxPackage", args...)
 	outputBytes, err := cmd.CombinedOutput()
 	output := string(outputBytes)
@@ -442,10 +508,13 @@ func runMSIXInstaller(item catalog.Item, localFile string) (string, error) {
 }
 
 func runMSIXUninstaller(_ string, item catalog.Item) (string, error) {
-	// Here we assume that for MSIX, uninstaller.Arguments has the necessary parameters
 	args := []string{}
 	args = append(args, item.Uninstaller.Arguments...)
+
 	logging.Info("Invoking MSIX uninstaller for", "item", item.Name)
+	logging.Debug("runMSIXUninstaller => final command",
+		"cmd", "Remove-AppxPackage", "args", strings.Join(args, " "))
+
 	cmd := exec.Command("Remove-AppxPackage", args...)
 	outputBytes, err := cmd.CombinedOutput()
 	output := string(outputBytes)
@@ -457,7 +526,7 @@ func runMSIXUninstaller(_ string, item catalog.Item) (string, error) {
 	return output, nil
 }
 
-// runEXEInstaller: supports both switches and flags.
+// runEXEInstaller: supports mixing switches (/switch) and flags (--flag).
 func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	installerPath := filepath.Join(localFile)
 	args := []string{}
@@ -467,43 +536,38 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 		args = append(args, item.Installer.Verb)
 	}
 
-	if len(item.Installer.Flags) > 0 && len(item.Installer.Switches) > 0 {
-		return "", errors.New("installer cannot have both switches and flags defined simultaneously")
-	}
-
-	// Handle switches (/S style)
-	if len(item.Installer.Switches) > 0 {
-		for _, sw := range item.Installer.Switches {
-			if strings.Contains(sw, "=") {
-				parts := strings.SplitN(sw, "=", 2)
-				key, value := parts[0], parts[1]
-				if strings.ContainsAny(value, " ") {
-					value = "\"" + value + "\""
-				}
-				args = append(args, "/"+key+"="+value)
-			} else {
-				args = append(args, "/"+sw)
+	// Handle switches (/ style)
+	for _, sw := range item.Installer.Switches {
+		if strings.Contains(sw, "=") {
+			parts := strings.SplitN(sw, "=", 2)
+			key, value := parts[0], parts[1]
+			if strings.ContainsAny(value, " ") {
+				value = "\"" + value + "\""
 			}
+			args = append(args, fmt.Sprintf("/%s=%s", key, value))
+		} else {
+			args = append(args, "/"+sw)
 		}
 	}
 
 	// Handle flags (-- style)
-	if len(item.Installer.Flags) > 0 {
-		for _, flag := range item.Installer.Flags {
-			formattedFlag := "--" + flag
-			if strings.Contains(flag, "=") {
-				parts := strings.SplitN(flag, "=", 2)
-				key, value := parts[0], parts[1]
-				if strings.ContainsAny(value, " ") {
-					value = "'" + value + "'"
-				}
-				formattedFlag = "--" + key + "=" + value
+	for _, flag := range item.Installer.Flags {
+		if strings.Contains(flag, "=") {
+			parts := strings.SplitN(flag, "=", 2)
+			key, value := parts[0], parts[1]
+			if strings.ContainsAny(value, " ") {
+				value = "'" + value + "'"
 			}
-			args = append(args, formattedFlag)
+			args = append(args, fmt.Sprintf("--%s=%s", key, value))
+		} else {
+			args = append(args, "--"+flag)
 		}
 	}
 
 	logging.Info("Executing EXE installer", "path", installerPath, "args", args)
+	logging.Debug("runEXEInstaller => final command",
+		"exe", installerPath, "args", strings.Join(args, " "))
+
 	cmd := exec.Command(installerPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -514,27 +578,32 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	return string(output), nil
 }
 
-func ValidateInstallerConfig(installer catalog.InstallerItem) error {
-	if len(installer.Switches) > 0 && len(installer.Flags) > 0 {
-		return errors.New("installer configuration invalid: define either switches or flags, not both")
-	}
-	return nil
-}
-
 func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
-	_ = item
-	return runCMD(absFile, item.Uninstaller.Arguments)
+	args := item.Uninstaller.Arguments
+
+	logging.Debug("runEXEUninstaller => final command",
+		"exe", absFile, "args", strings.Join(args, " "))
+
+	return runCMD(absFile, args)
 }
 
 // runPS1Installer: powershell -File <localFile>
 func runPS1Installer(item catalog.Item, localFile string) (string, error) {
 	_ = item
 	psArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", localFile}
+
+	logging.Debug("runPS1Installer => final command",
+		"exe", commandPs1, "args", strings.Join(psArgs, " "))
+
 	return runCMD(commandPs1, psArgs)
 }
 
 func runPS1Uninstaller(absFile string) (string, error) {
 	psArgs := []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", absFile}
+
+	logging.Debug("runPS1Uninstaller => final command",
+		"exe", commandPs1, "args", strings.Join(psArgs, " "))
+
 	return runCMD(commandPs1, psArgs)
 }
 
@@ -555,6 +624,10 @@ func runNupkgUninstaller(absFile string) (string, error) {
 		"--debug",
 		fmt.Sprintf("--log-file=%s", logPath),
 	}
+
+	logging.Debug("runNupkgUninstaller => final command",
+		"exe", chocolateyBin, "args", strings.Join(args, " "))
+
 	return runCMD(chocolateyBin, args)
 }
 
@@ -610,6 +683,9 @@ func runPS1FromScript(item catalog.Item, localFile, cachePath string) (string, e
 
 // runCMD runs a command, capturing stdout/stderr. Non-zero exit yields an error.
 func runCMD(command string, arguments []string) (string, error) {
+	logging.Debug("runCMD => about to run",
+		"command", command, "args", strings.Join(arguments, " "))
+
 	cmd := exec.Command(command, arguments...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -617,13 +693,16 @@ func runCMD(command string, arguments []string) (string, error) {
 	err := cmd.Run()
 	outStr := stdout.String()
 	errStr := stderr.String()
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
-			logging.Error("Command failed", "command", command, "args", arguments, "exitCode", exitCode, "stderr", errStr)
+			logging.Error("Command failed",
+				"command", command, "args", arguments, "exitCode", exitCode, "stderr", errStr)
 			return outStr, fmt.Errorf("command failed exit code=%d", exitCode)
 		}
-		logging.Error("Failed to run cmd", "command", command, "args", arguments, "error", err)
+		logging.Error("Failed to run cmd",
+			"command", command, "args", arguments, "error", err)
 		return outStr, err
 	}
 	return outStr, nil
