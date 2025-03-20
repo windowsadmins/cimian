@@ -561,35 +561,30 @@ func configureCimianImportNonInteractive(conf *config.Configuration) error {
 }
 
 func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInfo, bool, error) {
-	// Run makecatalogs silently to ensure All.yaml is up to date
+	// run makecatalogs silently
 	if err := runMakeCatalogs(true); err != nil {
 		logger.Warning("makecatalogs failed: %v", err)
-		// Continue anyway - we'll use whatever All.yaml exists
 	}
 
-	// For Cimian, your `All.yaml` is at:
 	allCatalogPath := filepath.Join(repoPath, "catalogs", "All.yaml")
-
-	// read All.yaml
 	fileContent, err := os.ReadFile(allCatalogPath)
 	if err != nil {
-		// if this fails, you could run `runMakeCatalogs(false)` or just return
 		return nil, false, fmt.Errorf("failed to read All.yaml: %v", err)
 	}
 
-	var allPackages []PkgsInfo
-	if err := yaml.Unmarshal(fileContent, &allPackages); err != nil {
-		return nil, false, fmt.Errorf("failed to unmarshal All.yaml: %v", err)
+	// Use a wrapper with `items:` for the top-level
+	var wrap struct {
+		Items []PkgsInfo `yaml:"items"`
+	}
+	if err := yaml.Unmarshal(fileContent, &wrap); err != nil {
+		return nil, false, fmt.Errorf("unmarshal of All.yaml failed: %v", err)
 	}
 
-	// Compare item.Name (or product code, or both)
-	// In Munki, we compare on `name`; you might want to do the same or use `ProductCode`
-	newNameLower := strings.TrimSpace(strings.ToLower(newItemName))
-	for _, item := range allPackages {
-		existingNameLower := strings.TrimSpace(strings.ToLower(item.Name))
+	newNameLower := strings.ToLower(strings.TrimSpace(newItemName))
+	for i := range wrap.Items {
+		existingNameLower := strings.ToLower(strings.TrimSpace(wrap.Items[i].Name))
 		if existingNameLower == newNameLower {
-			// Found a match with same Name
-			return &item, true, nil
+			return &wrap.Items[i], true, nil
 		}
 	}
 	return nil, false, nil

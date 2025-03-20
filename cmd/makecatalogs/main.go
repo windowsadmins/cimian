@@ -73,7 +73,8 @@ func loadConfig() (*config.Configuration, error) {
 	return config.LoadConfig()
 }
 
-// scanRepo enumerates pkginfo YAML in <repo>/pkgsinfo and returns them.
+// scanRepo enumerates all .yaml files in <repo>/pkgsinfo
+// and collects all PkgsInfo from each file's "items:" array.
 func scanRepo(repoPath string) ([]PkgsInfo, error) {
 	var results []PkgsInfo
 	root := filepath.Join(repoPath, "pkgsinfo")
@@ -90,16 +91,14 @@ func scanRepo(repoPath string) ([]PkgsInfo, error) {
 			if readErr != nil {
 				return fmt.Errorf("reading %s: %v", path, readErr)
 			}
-			var item PkgsInfo
-			if yamlErr := yaml.Unmarshal(data, &item); yamlErr != nil {
+
+			var pkg PkgsInfo
+			if yamlErr := yaml.Unmarshal(data, &pkg); yamlErr != nil {
 				return fmt.Errorf("unmarshal error in %s: %v", path, yamlErr)
 			}
-			rel, rErr := filepath.Rel(repoPath, path)
-			if rErr != nil {
-				return fmt.Errorf("computing relative path for %s: %v", path, rErr)
-			}
-			item.FilePath = rel
-			results = append(results, item)
+
+			pkg.FilePath = path
+			results = append(results, pkg)
 		}
 		return nil
 	})
@@ -168,15 +167,14 @@ func buildCatalogs(pkgs []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) 
 	return cats, nil
 }
 
-// writeCatalogs writes out each named catalog to <repo>/catalogs/<name>.yaml
-// removing stale catalogs not in the new set.
+// writeCatalogs writes each named catalog to <repo>/catalogs/<name>.yaml as an array under "items"
 func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool) error {
 	catDir := filepath.Join(repoPath, "catalogs")
 	if err := os.MkdirAll(catDir, 0755); err != nil {
 		return fmt.Errorf("failed to create catalogs directory: %v", err)
 	}
 
-	// remove old .yaml that are not in our new set
+	// Remove any stale .yaml files not in our catalogs map
 	dirEntries, _ := os.ReadDir(catDir)
 	for _, e := range dirEntries {
 		if e.IsDir() {
@@ -186,10 +184,8 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 		base := strings.TrimSuffix(name, filepath.Ext(name))
 		if _, ok := catalogs[base]; !ok {
 			toRemove := filepath.Join(catDir, name)
-			if rmErr := os.Remove(toRemove); rmErr == nil {
-				if !silent {
-					logger.Warning("Removed stale catalog %s", toRemove)
-				}
+			if rmErr := os.Remove(toRemove); rmErr == nil && !silent {
+				logger.Warning("Removed stale catalog %s", toRemove)
 			}
 		}
 	}
@@ -200,12 +196,22 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 		if err != nil {
 			return fmt.Errorf("creating %s: %v", outPath, err)
 		}
+
+		// Wrap items in a top-level key "items" => {"items": [...]}
+		catalogWrapper := struct {
+			Items []PkgsInfo `yaml:"items"`
+		}{
+			Items: items,
+		}
+
 		enc := yaml.NewEncoder(file)
-		if e2 := enc.Encode(items); e2 != nil {
+		enc.SetIndent(2)
+		if encodeErr := enc.Encode(catalogWrapper); encodeErr != nil {
 			file.Close()
-			return fmt.Errorf("yaml encode error for %s: %v", outPath, e2)
+			return fmt.Errorf("yaml encode error for %s: %v", outPath, encodeErr)
 		}
 		file.Close()
+
 		if !silent {
 			logger.Success("Wrote catalog %s (%d items)", catName, len(items))
 		}
