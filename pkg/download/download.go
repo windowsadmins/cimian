@@ -24,53 +24,104 @@ const (
 	Timeout             = 10 * time.Minute
 )
 
-// DownloadFile replaces any hardcoded paths with your config paths and ensures packages go to cfg.CachePath.
-func DownloadFile(url, dest string, cfg *config.Configuration) error {
+// DownloadFile retrieves a file from `url` and saves it to the correct local path.
+// If the URL indicates a catalog or manifest, it goes in the corresponding folder.
+// Otherwise, it's treated as a package and goes to cfg.CachePath.
+func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 	if url == "" {
-		return fmt.Errorf("invalid parameters: url cannot be empty")
+		return fmt.Errorf("DownloadFile: URL cannot be empty")
 	}
 
-	// Default paths if config is empty
-	catalogsPath := cfg.CatalogsPath
-	if catalogsPath == "" {
-		catalogsPath = `C:\ProgramData\ManagedInstalls\catalogs`
+	// If not set, use defaults
+	if cfg.CatalogsPath == "" {
+		cfg.CatalogsPath = `C:\ProgramData\ManagedInstalls\catalogs`
 	}
-	cachePath := cfg.CachePath
-	if cachePath == "" {
-		cachePath = `C:\ProgramData\ManagedInstalls\Cache`
+	if cfg.CachePath == "" {
+		cfg.CachePath = `C:\ProgramData\ManagedInstalls\Cache`
 	}
-	const defaultManifestsPath = `C:\ProgramData\ManagedInstalls\manifests`
+	manifestsPath := `C:\ProgramData\ManagedInstalls\manifests` // if you want it configurable, move to cfg
 
-	isManifest := strings.Contains(url, "/manifests/")
-	isCatalog := strings.Contains(url, "/catalogs/")
-	isPackage := !isManifest && !isCatalog
+	// 1) Figure out if this is a manifest, a catalog, or a package.
+	lowerURL := strings.ToLower(url)
+	isCatalog := strings.Contains(lowerURL, "/catalogs/")
+	isManifest := strings.Contains(lowerURL, "/manifests/")
+	isPackage := (!isCatalog && !isManifest)
 
-	// Insert /pkgs if it's a package URL but missing
-	if isPackage && strings.HasPrefix(url, cfg.SoftwareRepoURL) && !strings.Contains(url, "/pkgs/") {
-		url = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + strings.TrimPrefix(url, cfg.SoftwareRepoURL)
+	// 2) Possibly insert "/pkgs/" if it's a package but missing from the URL
+	//    and the URL starts with your repo base.
+	//    (You might want more robust checks if your repo has subfolders.)
+	if isPackage && strings.HasPrefix(lowerURL, strings.ToLower(cfg.SoftwareRepoURL)) {
+		if !strings.Contains(lowerURL, "/pkgs/") {
+			// Insert /pkgs
+			trimmedRepo := strings.TrimSuffix(cfg.SoftwareRepoURL, "/")
+			url = trimmedRepo + "/pkgs" + strings.TrimPrefix(url, trimmedRepo)
+			lowerURL = strings.ToLower(url)
+			logging.Debug("Adjusted URL for package to include /pkgs/",
+				"finalURL", url)
+		}
 	}
 
-	var basePath, subPath string
+	// 3) Decide local base directory
+	var baseDir string
+	if isManifest {
+		baseDir = manifestsPath
+	} else if isCatalog {
+		baseDir = cfg.CatalogsPath
+	} else {
+		// treat as package
+		baseDir = cfg.CachePath
+	}
+
+	// 4) Determine local subPath
+	//    If there's a known marker ("/catalogs/", "/manifests/", or "/pkgs/"),
+	//    extract everything *after* that marker for local subfolder structure.
+	var subPath string
 	switch {
 	case isManifest:
-		basePath = defaultManifestsPath
-		subPath = strings.SplitN(url, "/manifests/", 2)[1]
+		// e.g. https://cimian.example.com/manifests/MyManifest.yaml
+		parts := strings.SplitN(url, "/manifests/", 2)
+		if len(parts) == 2 {
+			subPath = parts[1]
+		} else {
+			// fallback => just the file name
+			subPath = filepath.Base(url)
+		}
+
 	case isCatalog:
-		basePath = catalogsPath
-		subPath = strings.SplitN(url, "/catalogs/", 2)[1]
+		parts := strings.SplitN(url, "/catalogs/", 2)
+		if len(parts) == 2 {
+			subPath = parts[1]
+		} else {
+			subPath = filepath.Base(url)
+		}
+
 	default:
-		basePath = cachePath
-		subPath = filepath.Base(url)
+		// for packages, we might see /pkgs/ or not
+		if idx := strings.Index(lowerURL, "/pkgs/"); idx >= 0 {
+			// e.g. "https://cimian.example.com/pkgs/apps/.../file.exe"
+			subPath = url[idx+len("/pkgs/"):]
+		} else {
+			// fallback => just file name
+			subPath = filepath.Base(url)
+		}
 	}
 
-	dest = filepath.Join(basePath, subPath)
-	logging.Debug("Resolved download destination", "url", url, "destination", dest)
+	// 5) Build final local path
+	dest := filepath.Join(baseDir, subPath)
+	dest = filepath.Clean(dest)
 
+	// 6) Ensure parent directories exist
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-		return fmt.Errorf("failed to create directory structure: %v", err)
+		return fmt.Errorf("failed to create directory structure for %s: %v", dest, err)
 	}
 
-	configRetry := retry.RetryConfig{MaxRetries: 3, InitialInterval: time.Second, Multiplier: 2.0}
+	// 7) Start the retry logic
+	configRetry := retry.RetryConfig{
+		MaxRetries:      3,
+		InitialInterval: time.Second,
+		Multiplier:      2.0,
+	}
+
 	return retry.Retry(configRetry, func() error {
 		logging.Info("Starting download", "url", url, "destination", dest)
 
@@ -85,6 +136,7 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 			return fmt.Errorf("failed to prepare HTTP request: %v", err)
 		}
 
+		// Optionally set a short-ish timeout
 		client := &http.Client{Timeout: Timeout}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -106,13 +158,13 @@ func DownloadFile(url, dest string, cfg *config.Configuration) error {
 	})
 }
 
-// Verify checks if the given file matches the expected hash.
+// Verify checks if the given file matches the expected hash (SHA256).
 func Verify(file string, expectedHash string) bool {
 	actualHash := calculateHash(file)
 	return strings.EqualFold(actualHash, expectedHash)
 }
 
-// InstallPendingUpdates downloads files based on a map of file names and URLs.
+// InstallPendingUpdates downloads files based on a map of fileName => URL.
 func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configuration) error {
 	logging.Info("Starting pending downloads...")
 
@@ -125,31 +177,27 @@ func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configur
 			logging.Warn("Empty URL for package", "package", name)
 			continue
 		}
-		if strings.HasPrefix(url, "/") {
-			url = cfg.SoftwareRepoURL + "/pkgs" + url
-		}
-		targetFile := filepath.Join(cfg.CachePath, filepath.Base(url))
-		logging.Debug("Processing download item", "name", name, "url", url, "destination", targetFile)
+		logging.Debug("Processing download item", "name", name, "url", url)
 
-		if err := DownloadFile(url, targetFile, cfg); err != nil {
+		if err := DownloadFile(url, "", cfg); err != nil {
 			logging.Error("Failed to download", "name", name, "error", err)
 			return fmt.Errorf("failed to download %s: %v", name, err)
 		}
-		logging.Info("Successfully downloaded", "name", name, "target", targetFile)
+		logging.Info("Successfully downloaded", "name", name)
 	}
 
 	return nil
 }
 
+// calculateHash returns the SHA256 hex of a file.
 func calculateHash(path string) string {
-	file, err := os.Open(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
-
+	defer f.Close()
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
+	if _, err := io.Copy(hasher, f); err != nil {
 		return ""
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
