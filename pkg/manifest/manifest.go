@@ -325,15 +325,20 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	return finalItems, nil
 }
 
-// parseCatalogFile reads a local .yaml and returns a list of CatalogEntry objects.
+type catalogWrapper struct {
+	Items []CatalogEntry `yaml:"items"`
+}
+
 func parseCatalogFile(path string) ([]CatalogEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read catalog file: %w", err)
 	}
-	var entries []CatalogEntry
-	if err := yaml.Unmarshal(data, &entries); err != nil {
+
+	var wrapper catalogWrapper
+	if err := yaml.Unmarshal(data, &wrapper); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal catalog: %w", err)
 	}
-	return entries, nil
+
+	return wrapper.Items, nil
 }
