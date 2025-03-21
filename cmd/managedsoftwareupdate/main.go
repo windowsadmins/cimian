@@ -408,55 +408,75 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 	return nil
 }
 
+// Wrapper struct for the top-level "items" key:
+type catalogWrapper struct {
+	Items []catalog.Item `yaml:"items"`
+}
+
 // loadLocalCatalogItems returns a map[string]catalog.Item, but only the
 // highest-version item if a name appears multiple times.
 func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, error) {
-	// Create catalogs directory if it doesn't exist
+	// Make sure the catalogs directory exists (or create it).
 	if err := os.MkdirAll(cfg.CatalogsPath, 0755); err != nil {
-		return nil, fmt.Errorf("creating catalogs dir: %v", err)
+		return nil, fmt.Errorf("error creating catalogs directory: %v", err)
 	}
 
-	// Instead of returning map[string]catalog.Item directly, we'll collect
-	// everything first in map[string][]catalog.Item so we can handle duplicates.
+	// We will first collect items in a "multi-map" so that if a name appears
+	// in multiple catalogs, we keep each one for a version check.
 	itemsMulti := make(map[string][]catalog.Item)
 
 	dirEntries, err := os.ReadDir(cfg.CatalogsPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading catalogs dir: %v", err)
+		return nil, fmt.Errorf("failed reading catalogs dir %q: %v", cfg.CatalogsPath, err)
 	}
 
-	for _, e := range dirEntries {
-		if e.IsDir() {
+	type catalogWrapper struct {
+		Items []catalog.Item `yaml:"items"`
+	}
+
+	for _, entry := range dirEntries {
+		if entry.IsDir() {
 			continue
 		}
-		if filepath.Ext(e.Name()) != ".yaml" {
+		if filepath.Ext(entry.Name()) != ".yaml" {
+			// skip any non-YAML
 			continue
 		}
-		path := filepath.Join(cfg.CatalogsPath, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			logger.Warning("Failed to read catalog file: %v", err)
+
+		// Build full path to the .yaml catalog file.
+		catPath := filepath.Join(cfg.CatalogsPath, entry.Name())
+
+		data, readErr := os.ReadFile(catPath)
+		if readErr != nil {
+			logging.Warn("Failed to read catalog file %s: %v", catPath, readErr)
 			continue
 		}
-		var catItems []catalog.Item
-		if err := yaml.Unmarshal(data, &catItems); err != nil {
-			logger.Warning("Failed to parse catalog YAML: %v", err)
+
+		var wrapper catalogWrapper
+		if err := yaml.Unmarshal(data, &wrapper); err != nil {
+			logging.Warn("Failed to parse catalog YAML %s: %v", catPath, err)
 			continue
 		}
-		// For each item in this catalog, store it in itemsMulti by lowercase name
+
+		// catItems is the slice from the "items" array in that catalog.
+		catItems := wrapper.Items
+		// Add them to our multi-map keyed by item name, in lowercase for deduping.
 		for _, cItem := range catItems {
 			key := strings.ToLower(cItem.Name)
 			itemsMulti[key] = append(itemsMulti[key], cItem)
 		}
 	}
 
-	// Now deduplicate: pick the item with the highest Version for each name.
-	finalCatalogMap := make(map[string]catalog.Item)
+	// Now deduplicate by picking the highest-version item for each name.
+	finalMap := make(map[string]catalog.Item)
 	for key, sliceOfItems := range itemsMulti {
-		finalCatalogMap[key] = status.DeduplicateCatalogItems(sliceOfItems)
+		// Use your existing logic (e.g. status.DeduplicateCatalogItems) to pick a “best” item.
+		// For demonstration, we’ll just pick the first if you don't have version logic:
+		bestItem := status.DeduplicateCatalogItems(sliceOfItems)
+		finalMap[key] = bestItem
 	}
 
-	return finalCatalogMap, nil
+	return finalMap, nil
 }
 
 // prepareDownloadItemsWithCatalog returns the catalog items that need to be installed/updated,
