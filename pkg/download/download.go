@@ -164,13 +164,15 @@ func Verify(file string, expectedHash string) bool {
 	return strings.EqualFold(actualHash, expectedHash)
 }
 
-// InstallPendingUpdates downloads files based on a map of fileName => URL.
-func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configuration) error {
+// InstallPendingUpdates downloads files and returns a map[name]localFilePath
+func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configuration) (map[string]string, error) {
 	logging.Info("Starting pending downloads...")
 
 	if err := os.MkdirAll(cfg.CachePath, 0755); err != nil {
-		return fmt.Errorf("failed to create cache directory: %v", err)
+		return nil, fmt.Errorf("failed to create cache directory: %v", err)
 	}
+
+	resultPaths := make(map[string]string)
 
 	for name, url := range downloadItems {
 		if url == "" {
@@ -179,14 +181,41 @@ func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configur
 		}
 		logging.Debug("Processing download item", "name", name, "url", url)
 
+		// Call DownloadFile
 		if err := DownloadFile(url, "", cfg); err != nil {
 			logging.Error("Failed to download", "name", name, "error", err)
-			return fmt.Errorf("failed to download %s: %v", name, err)
+			return nil, fmt.Errorf("failed to download %s: %v", name, err)
 		}
-		logging.Info("Successfully downloaded", "name", name)
+
+		// Reconstruct exact local path the file ended up in (MUST match DownloadFile logic)
+		subPath := getSubPathFromURL(url, cfg)
+		localFilePath := filepath.Join(cfg.CachePath, subPath)
+		localFilePath = filepath.Clean(localFilePath)
+
+		resultPaths[name] = localFilePath
+		logging.Info("Successfully downloaded", "name", name, "path", localFilePath)
 	}
 
-	return nil
+	return resultPaths, nil
+}
+
+// getSubPathFromURL mirrors the logic in DownloadFile to consistently generate paths
+func getSubPathFromURL(url string, cfg *config.Configuration) string {
+	lowerURL := strings.ToLower(url)
+	var subPath string
+
+	switch {
+	case strings.Contains(lowerURL, "/catalogs/"):
+		subPath = strings.SplitN(url, "/catalogs/", 2)[1]
+	case strings.Contains(lowerURL, "/manifests/"):
+		subPath = strings.SplitN(url, "/manifests/", 2)[1]
+	case strings.Contains(lowerURL, "/pkgs/"):
+		idx := strings.Index(lowerURL, "/pkgs/")
+		subPath = url[idx+len("/pkgs/"):]
+	default:
+		subPath = filepath.Base(url)
+	}
+	return filepath.FromSlash(subPath)
 }
 
 // calculateHash returns the SHA256 hex of a file.
