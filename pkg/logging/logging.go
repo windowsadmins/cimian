@@ -240,6 +240,45 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 	}
 }
 
+// StructuredEntry represents a single structured log entry for ManagedReport compatibility.
+type StructuredEntry struct {
+	Timestamp string `yaml:"timestamp"`
+	Level     string `yaml:"level"`
+	Message   string `yaml:"message"`
+}
+
+// structuredLog writes a structured log entry to CimianReport.yaml.
+func (l *Logger) structuredLog(level LogLevel, message string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Build structured entry
+	entry := StructuredEntry{
+		Timestamp: time.Now().Format(time.RFC3339),
+		Level:     level.String(),
+		Message:   message,
+	}
+
+	// Convert to YAML format
+	yamlEntry := fmt.Sprintf("- timestamp: \"%s\"\n  level: \"%s\"\n  message: \"%s\"\n",
+		entry.Timestamp, entry.Level, entry.Message)
+
+	// Determine CimianReport YAML log path
+	cimianReportPath := filepath.Join(`C:\ProgramData\ManagedInstalls\Logs`, "CimianReport.yaml")
+
+	// Append structured log to CimianReport.yaml
+	f, err := os.OpenFile(cimianReportPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		l.logger.Printf("Failed to write structured log: %v", err)
+		return
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(yamlEntry); err != nil {
+		l.logger.Printf("Failed to write structured log entry: %v", err)
+	}
+}
+
 // Info logs informational messages.
 func Info(message string, keyValues ...interface{}) {
 	if instance == nil {
@@ -247,6 +286,7 @@ func Info(message string, keyValues ...interface{}) {
 		return
 	}
 	instance.logMessage(LevelInfo, message, keyValues...)
+	instance.structuredLog(LevelInfo, message)
 }
 
 // Debug logs debug messages.
@@ -256,6 +296,7 @@ func Debug(message string, keyValues ...interface{}) {
 		return
 	}
 	instance.logMessage(LevelDebug, message, keyValues...)
+	instance.structuredLog(LevelDebug, message)
 }
 
 // Warn logs warning messages.
@@ -265,6 +306,7 @@ func Warn(message string, keyValues ...interface{}) {
 		return
 	}
 	instance.logMessage(LevelWarn, message, keyValues...)
+	instance.structuredLog(LevelWarn, message)
 }
 
 // Error logs error messages.
@@ -274,6 +316,7 @@ func Error(message string, keyValues ...interface{}) {
 		return
 	}
 	instance.logMessage(LevelError, message, keyValues...)
+	instance.structuredLog(LevelError, message)
 }
 
 // ReInit allows re-initializing the logger (e.g., after configuration reload).
