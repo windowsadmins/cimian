@@ -498,46 +498,53 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 	return results
 }
 
-// downloadAndInstallPerItem handles downloading & installing each catalog item individually.
-// It calls installOneCatalogItem(...) so we can reuse your custom logic.
+// downloadAndInstallPerItem handles downloading & installing each catalog item individually,
+// ensuring exact file paths match installer expectations.
 func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) error {
-	_ = cfg
+	downloadItems := make(map[string]string)
+
+	// Prepare the correct full URLs for each item
 	for _, cItem := range items {
 		if cItem.Installer.Location == "" {
 			logger.Warning("No installer location found for item: %s", cItem.Name)
 			continue
 		}
 
-		// Build the full URL
 		fullURL := cItem.Installer.Location
 		if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
-			// Normalize path separators to forward slashes
 			fullURL = strings.ReplaceAll(fullURL, "\\", "/")
-			// Ensure path starts with /
 			if !strings.HasPrefix(fullURL, "/") {
 				fullURL = "/" + fullURL
 			}
-			// Insert "/pkgs" between the repo URL and the relative path
 			fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
 		}
 
-		// Destination file path in cache
-		destFile := filepath.Join(cfg.CachePath, filepath.Base(cItem.Installer.Location))
+		downloadItems[cItem.Name] = fullURL
+	}
 
-		// Download the installer
-		logger.Info("Downloading item: %s, url: %s, destination: %s", cItem.Name, fullURL, destFile)
-		if err := download.DownloadFile(fullURL, destFile, cfg); err != nil {
-			logger.Error("Failed to download item: %s, error: %v", cItem.Name, err)
+	// Download each item and retrieve precise downloaded file paths
+	downloadedPaths, err := download.InstallPendingUpdates(downloadItems, cfg)
+	if err != nil {
+		logger.Error("Error downloading pending updates: %v", err)
+		return err
+	}
+
+	// Perform installation for each item using the correct paths
+	for _, cItem := range items {
+		localFile, exists := downloadedPaths[cItem.Name]
+		if !exists {
+			logger.Error("Downloaded path not found for item: %s", cItem.Name)
 			continue
 		}
-		logger.Info("Downloaded item successfully: %s, file: %s", cItem.Name, destFile)
 
-		// Perform the install using your custom function
-		if err := installOneCatalogItem(cItem, destFile, cfg); err != nil {
+		logger.Info("Installing downloaded item: %s, file: %s", cItem.Name, localFile)
+
+		if err := installOneCatalogItem(cItem, localFile, cfg); err != nil {
 			logger.Error("Installation command failed: %s, error: %v", cItem.Name, err)
 			continue
 		}
 	}
+
 	return nil
 }
 

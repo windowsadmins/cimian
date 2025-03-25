@@ -244,10 +244,9 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 	}
 }
 
-// installOrUpgradeNupkg handles local .nupkg installs/updates using Chocolatey.
+// installOrUpgradeNupkg handles local .nupkg installs/updates using Chocolatey without unnecessary renaming.
 func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, cfg *config.Configuration) (string, error) {
 	nupkgID, nupkgVer, metaErr := extractNupkgMetadata(downloadedFile)
-	_ = cfg
 	if metaErr != nil {
 		logging.Warn("Failed to parse .nuspec; falling back to item.Name",
 			"file", downloadedFile, "err", metaErr)
@@ -262,25 +261,84 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 	}
 	logging.Debug("Parsed .nuspec metadata", "nupkgID", nupkgID, "nupkgVer", nupkgVer)
 
-	if err := renameNupkgFile(downloadedFile, cachePath, nupkgID, nupkgVer); err != nil {
-		logging.Error("Failed to rename .nupkg for choco", "err", err)
-		return "", err
-	}
-
 	installed, checkErr := isNupkgInstalled(nupkgID)
 	if checkErr != nil {
 		logging.Warn("Could not detect if nupkg is installed; forcing install",
 			"pkgID", nupkgID, "err", checkErr)
-		return doChocoInstall(nupkgID, nupkgVer, cachePath, item)
+		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item)
 	}
 
 	if !installed {
 		logging.Info("Nupkg not installed; forcing install", "pkgID", nupkgID)
-		return doChocoInstall(nupkgID, nupkgVer, cachePath, item)
+		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item)
 	}
 
 	logging.Info("Nupkg is installed; forcing upgrade/downgrade", "pkgID", nupkgID)
-	return doChocoUpgrade(nupkgID, nupkgVer, cachePath, item)
+	return doChocoUpgrade(downloadedFile, nupkgID, nupkgVer, cachePath, item)
+}
+
+// doChocoInstall runs choco install with the given nupkg file.
+func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
+	chocoLog := filepath.Join(cachePath, fmt.Sprintf("install_choco_%s.log", pkgID))
+	sourceDir := filepath.Dir(filePath)
+	cmdArgs := []string{
+		"install", pkgID,
+		"--version", pkgVer,
+		"--source", sourceDir,
+		"-y",
+		"--force",
+		"--allowdowngrade",
+		"--debug",
+		fmt.Sprintf("--log-file=%s", chocoLog),
+	}
+
+	logging.Debug("doChocoInstall => final command",
+		"exe", chocolateyBin, "args", strings.Join(cmdArgs, " "))
+
+	out, err := runCMD(chocolateyBin, cmdArgs)
+	if err != nil {
+		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
+		return out, err
+	}
+
+	storeInstalledVersionInRegistry(catalog.Item{
+		Name:    item.Name,
+		Version: pkgVer,
+	})
+	logging.Info("Choco install succeeded", "pkgID", pkgID)
+	return out, nil
+}
+
+// doChocoUpgrade runs choco upgrade with the given nupkg file.
+func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
+	chocoLog := filepath.Join(cachePath, fmt.Sprintf("upgrade_choco_%s.log", pkgID))
+	sourceDir := filepath.Dir(filePath)
+	cmdArgs := []string{
+		"upgrade", pkgID,
+		"--version", pkgVer,
+		"--source", sourceDir,
+		"-y",
+		"--force",
+		"--allowdowngrade",
+		"--debug",
+		fmt.Sprintf("--log-file=%s", chocoLog),
+	}
+
+	logging.Debug("doChocoUpgrade => final command",
+		"exe", chocolateyBin, "args", strings.Join(cmdArgs, " "))
+
+	out, err := runCMD(chocolateyBin, cmdArgs)
+	if err != nil {
+		logging.Error("Choco upgrade failed", "pkgID", pkgID, "error", err)
+		return out, err
+	}
+
+	storeInstalledVersionInRegistry(catalog.Item{
+		Name:    item.Name,
+		Version: pkgVer,
+	})
+	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
+	return out, nil
 }
 
 func renameNupkgFile(downloadedFile, cacheDir, pkgID, pkgVer string) error {
@@ -319,66 +377,6 @@ func isNupkgInstalled(pkgID string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func doChocoInstall(pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
-	chocoLog := filepath.Join(cachePath, fmt.Sprintf("install_choco_%s.log", pkgID))
-	logging.Info("Running choco install", "pkgID", pkgID, "version", pkgVer)
-	cmdArgs := []string{
-		"install", pkgID,
-		"--version", pkgVer,
-		"--source", cachePath,
-		"-y",
-		"--force",
-		"--allowdowngrade",
-		"--debug",
-		fmt.Sprintf("--log-file=%s", chocoLog),
-	}
-
-	logging.Debug("doChocoInstall => final command",
-		"exe", chocolateyBin, "args", strings.Join(cmdArgs, " "))
-
-	out, err := runCMD(chocolateyBin, cmdArgs)
-	if err != nil {
-		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
-		return out, err
-	}
-	storeInstalledVersionInRegistry(catalog.Item{
-		Name:    item.Name,
-		Version: pkgVer,
-	})
-	logging.Info("Choco install succeeded", "pkgID", pkgID)
-	return out, nil
-}
-
-func doChocoUpgrade(pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
-	chocoLog := filepath.Join(cachePath, fmt.Sprintf("upgrade_choco_%s.log", pkgID))
-	logging.Info("Running choco upgrade", "pkgID", pkgID, "version", pkgVer)
-	cmdArgs := []string{
-		"upgrade", pkgID,
-		"--version", pkgVer,
-		"--source", cachePath,
-		"-y",
-		"--force",
-		"--allowdowngrade",
-		"--debug",
-		fmt.Sprintf("--log-file=%s", chocoLog),
-	}
-
-	logging.Debug("doChocoUpgrade => final command",
-		"exe", chocolateyBin, "args", strings.Join(cmdArgs, " "))
-
-	out, err := runCMD(chocolateyBin, cmdArgs)
-	if err != nil {
-		logging.Error("Choco upgrade failed", "pkgID", pkgID, "error", err)
-		return out, err
-	}
-	storeInstalledVersionInRegistry(catalog.Item{
-		Name:    item.Name,
-		Version: pkgVer,
-	})
-	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
-	return out, nil
 }
 
 // uninstallItem decides how to uninstall MSI/EXE/PS1/nupkg/msix.
@@ -526,41 +524,42 @@ func runMSIXUninstaller(_ string, item catalog.Item) (string, error) {
 	return output, nil
 }
 
-// runEXEInstaller: supports mixing switches (/switch) and flags (--flag).
+// runEXEInstaller: supports human-friendly syntax for installer flags in pkginfo YAML.
 func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
-	installerPath := filepath.Join(localFile)
+	installerPath := localFile
 	args := []string{}
 
-	// Add verb if present
+	// Handle optional verb
 	if item.Installer.Verb != "" {
 		args = append(args, item.Installer.Verb)
 	}
 
-	// Handle switches (/ style)
+	// Handle switches (e.g., /silent)
 	for _, sw := range item.Installer.Switches {
 		if strings.Contains(sw, "=") {
 			parts := strings.SplitN(sw, "=", 2)
-			key, value := parts[0], parts[1]
-			if strings.ContainsAny(value, " ") {
-				value = "\"" + value + "\""
-			}
-			args = append(args, fmt.Sprintf("/%s=%s", key, value))
+			args = append(args, fmt.Sprintf("/%s=%s", parts[0], quoteIfNeeded(parts[1])))
+		} else if strings.Contains(sw, " ") {
+			parts := strings.SplitN(sw, " ", 2)
+			args = append(args, fmt.Sprintf("/%s", parts[0]), quoteIfNeeded(parts[1]))
 		} else {
-			args = append(args, "/"+sw)
+			args = append(args, fmt.Sprintf("/%s", sw))
 		}
 	}
 
-	// Handle flags (-- style)
+	// Enhanced logic for flags (-- style arguments), supporting "key value" syntax
 	for _, flag := range item.Installer.Flags {
-		if strings.Contains(flag, "=") {
-			parts := strings.SplitN(flag, "=", 2)
-			key, value := parts[0], parts[1]
-			if strings.ContainsAny(value, " ") {
-				value = "'" + value + "'"
-			}
-			args = append(args, fmt.Sprintf("--%s=%s", key, value))
+		flag = strings.TrimSpace(flag)
+
+		// Split flags only on the first whitespace
+		parts := strings.SplitN(flag, " ", 2)
+
+		if len(parts) == 2 {
+			key := strings.TrimLeft(parts[0], "-") // removes accidental "--" or "-" prefix if included
+			val := strings.TrimSpace(parts[1])
+			args = append(args, fmt.Sprintf("--%s", key), quoteIfNeeded(val))
 		} else {
-			args = append(args, "--"+flag)
+			args = append(args, fmt.Sprintf("--%s", strings.TrimLeft(parts[0], "-")))
 		}
 	}
 
@@ -576,6 +575,15 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	}
 	logging.Info("EXE installer executed successfully", "output", string(output))
 	return string(output), nil
+}
+
+// quoteIfNeeded adds double quotes if the string contains spaces and doesn't already have them.
+func quoteIfNeeded(s string) string {
+	s = strings.Trim(s, `"'`) // remove accidental outer quotes
+	if strings.ContainsAny(s, " \t") {
+		return fmt.Sprintf(`"%s"`, s)
+	}
+	return s
 }
 
 func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
