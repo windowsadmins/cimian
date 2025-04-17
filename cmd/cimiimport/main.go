@@ -806,6 +806,13 @@ func cimianImport(
 		UninstallCheckScript: uninstallCheckScriptContent,
 	}
 
+	// ─── decide architecture tag ────────────────────────────────────────────────
+	archTag := ""
+	if len(pkgsInfo.SupportedArch) > 0 {
+		primaryArch := strings.ToLower(pkgsInfo.SupportedArch[0])
+		archTag = "-" + primaryArch + "-"
+	}
+
 	// Step 9: prompt user for subdir
 	repoSubPath, err := promptInstallerItemPath(metadata.RepoPath)
 	if err != nil {
@@ -859,10 +866,6 @@ func cimianImport(
 	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
 	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
 		return false, fmt.Errorf("failed to create installer directory: %v", err)
-	}
-	archTag := ""
-	if len(pkgsInfo.SupportedArch) > 0 && pkgsInfo.SupportedArch[0] == "x64" {
-		archTag = "-x64-"
 	}
 	installerFilename := sanitizedName + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
 	installerDest := filepath.Join(installerFolderPath, installerFilename)
@@ -1016,7 +1019,6 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	defaultDeveloper := m.Developer
 	defaultDescription := m.Description
 	defaultCategory := m.Category
-	defaultArch := conf.DefaultArch
 
 	// read each field
 	m.ID = readLineWithDefault(reader, "Name", defaultID)
@@ -1024,7 +1026,24 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	m.Developer = readLineWithDefault(reader, "Developer", defaultDeveloper)
 	m.Description = readLineWithDefault(reader, "Description", defaultDescription)
 	m.Category = readLineWithDefault(reader, "Category", defaultCategory)
-	m.Architecture = readLineWithDefault(reader, "Architecture(s)", defaultArch)
+
+	// ─── Architecture(s) ────────────────────────────────────────────────────────
+	archLine := readLineWithDefault(reader, "Architecture(s)", strings.Join(m.SupportedArch, ","))
+	archLine = strings.TrimSpace(archLine) // allow blank to keep default
+
+	if archLine != "" {
+		// accept comma/space/semicolon separators – e.g. "arm64", "x64,arm64", "x64 arm64"
+		parts := strings.FieldsFunc(archLine, func(r rune) bool {
+			return r == ',' || r == ';' || r == ' ' || r == '\t'
+		})
+
+		for i := range parts {
+			parts[i] = strings.ToLower(strings.TrimSpace(parts[i]))
+		}
+
+		m.SupportedArch = parts   // drives filename/tag creation
+		m.Architecture = parts[0] // primary arch for metadata
+	}
 
 	// For catalogs: use template catalogs if available, otherwise use defaults
 	var fallbackCatalogs []string
