@@ -7,6 +7,17 @@
     building binaries, and packaging artifacts.
 #>
 
+#  ─Sign          … build + sign
+#  ─Thumbprint XX … override auto-detection
+param(
+    [switch]$Sign,
+    [string]$Thumbprint
+)
+
+# ──────────────────────────  GLOBALS  ──────────────────────────
+# Friendly name (CN) of the enterprise code-signing certificate you push with Intune
+$Global:EnterpriseCertCN = 'EmilyCarrU Intune Windows Enterprise Certificate'
+
 # Exit immediately if a command exits with a non-zero status
 $ErrorActionPreference = 'Stop'
 
@@ -37,6 +48,72 @@ function Test-Command {
     )
     # Compare with $null on the left
     return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
+}
+
+function Get-SigningCertThumbprint {
+    [OutputType([string])]
+
+    param()
+
+    Get-ChildItem Cert:\CurrentUser\My |
+        Where-Object {
+            $_.Subject -like "*CN=$Global:EnterpriseCertCN*" -and
+            $_.NotAfter -gt (Get-Date) -and
+            $_.HasPrivateKey
+        } |
+        Sort-Object NotAfter -Descending |
+        Select-Object -First 1 -ExpandProperty Thumbprint
+}
+
+# Function to ensure signtool is available
+function Ensure-SignTool {
+
+    # helper to prepend path only once
+    function Add-ToPath([string]$dir) {
+        if (-not [string]::IsNullOrWhiteSpace($dir) -and
+            -not ($env:Path -split ';' | Where-Object { $_ -ieq $dir })) {
+            $env:Path = "$dir;$env:Path"
+        }
+    }
+
+    # already reachable?
+    if (Get-Command signtool.exe -EA SilentlyContinue) { return }
+
+    # harvest possible SDK roots
+    $roots = @(
+        "${env:ProgramFiles}\Windows Kits\10\bin",
+        "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+    )
+
+    # add KitsRoot10 from the registry (covers non-standard installs)
+    try {
+        $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' `
+                     -EA Stop).KitsRoot10
+        if ($kitsRoot) { $roots += (Join-Path $kitsRoot 'bin') }
+    } catch { }
+
+    $roots = $roots | Where-Object { Test-Path $_ } | Select-Object -Unique
+
+    # scan every root for any architecture’s signtool.exe
+    foreach ($root in $roots) {
+        $exe = Get-ChildItem -Path $root -Recurse -Filter signtool.exe -EA SilentlyContinue |
+               Sort-Object LastWriteTime -Desc | Select-Object -First 1
+        if ($exe) {
+            Add-ToPath $exe.Directory.FullName
+            Write-Log "signtool discovered at $($exe.FullName)" "SUCCESS"
+            return
+        }
+    }
+
+    # graceful failure
+    Write-Log @"
+signtool.exe not found.
+
+Install **any** Windows 10/11 SDK _or_ Visual Studio Build Tools  
+(choose a workload that includes **Windows SDK Signing Tools**),  
+then run the build again.
+"@ "ERROR"
+    exit 1
 }
 
 # Function to find the WiX Toolset bin directory
@@ -81,6 +158,101 @@ function Invoke-Retry {
         }
     }
 }
+
+# ──────────────────────────  SIGNING DECISION  ─────────────────
+if ($Sign) {
+    Ensure-SignTool
+    if (-not $Thumbprint) {
+        $Thumbprint = Get-SigningCertThumbprint
+        if (-not $Thumbprint) {
+            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found – aborting." "ERROR"
+            exit 1
+        }
+        Write-Log "Auto-selected signing cert $Thumbprint" "INFO"
+    } else {
+        Write-Log "Using user-supplied thumbprint $Thumbprint" "INFO"
+    }
+    $env:SIGN_THUMB = $Thumbprint   # used by the two sign* functions
+} else {
+    Write-Log "Sign switch not present – build will be unsigned." "INFO"
+}
+
+# ────────────────  SIGNING HELPERS  ────────────────
+function signPackage {
+    <#
+      .SYNOPSIS  Authenticode-signs an MSI/EXE/… with our enterprise cert.
+      .PARAMETER FilePath     – the file you want to sign
+      .PARAMETER Thumbprint   – SHA-1 thumbprint of the cert (defaults to $env:SIGN_THUMB)
+    #>
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$Thumbprint = $env:SIGN_THUMB
+    )
+
+    $tsaList = @(
+        'http://timestamp.digicert.com',
+        'http://timestamp.sectigo.com',
+        'http://timestamp.entrust.net/TSS/RFC3161sha2TS'
+    )
+
+    foreach ($tsa in $tsaList) {
+        Write-Log "Signing '$FilePath' using $tsa …" "INFO"
+        & signtool.exe sign `
+            /sha1  $Thumbprint `
+            /fd    SHA256 `
+            /tr    $tsa `
+            /td    SHA256 `
+            /v `
+            "$FilePath"
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log  "signtool succeeded with $tsa" "SUCCESS"
+            return
+        }
+        Write-Log "signtool failed with $tsa (exit $LASTEXITCODE)" "WARNING"
+    }
+
+    throw "signtool failed with all timestamp authorities."
+}
+
+function signNuget {
+    param(
+        [Parameter(Mandatory)][string]$Nupkg,
+        [string]$Thumbprint            # ← optional override (matches existing caller)
+    )
+
+    if (-not (Test-Path $Nupkg)) {
+        throw "NuGet package '$Nupkg' not found – cannot sign."
+    }
+
+    $tsa = 'http://timestamp.digicert.com'
+
+    if (-not $Thumbprint) {
+        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My |
+                       Where-Object { $_.Subject -like "*CN=$Global:EnterpriseCertCN*" -and $_.HasPrivateKey } |
+                       Sort-Object NotAfter -Descending |
+                       Select-Object -First 1 -ExpandProperty Thumbprint)
+    }
+
+    if (-not $Thumbprint) {
+        Write-Log "No enterprise code-signing cert present – skipping NuGet repo sign." "WARNING"
+        return
+    }
+
+    & nuget.exe sign `
+    $Nupkg `
+    -CertificateStoreName   My `
+    -CertificateSubjectName $Global:EnterpriseCertCN `
+    -Timestamper            $tsa
+
+    if ($LASTEXITCODE) { throw "nuget sign failed ($LASTEXITCODE)" }
+    Write-Log "NuGet repo signature complete." "SUCCESS"
+}
+
+
+# ───────────────────────────────────────────────────
+#  BUILD PROCESS STARTS
+# ───────────────────────────────────────────────────
 
 # Step 0: Clean Release Directory Before Build
 Write-Log "Cleaning existing release directory..." "INFO"
@@ -389,6 +561,32 @@ Get-ChildItem -Path "bin\*.exe" | ForEach-Object {
     Write-Log "Copied $($_.Name) to release directory." "INFO"
 }
 
+if ($Sign)
+{
+    Write-Log "Signing all EXEs in release directory..." "INFO"
+
+    Get-ChildItem -Path "release\*.exe" | ForEach-Object {
+        try {
+            signPackage -FilePath $_.FullName                      # uses $env:SIGN_THUMB
+            # Quick verification – make sure Status = Valid
+            $sig = Get-AuthenticodeSignature $_.FullName
+            if ($sig.Status -eq 'Valid') {
+                if (-not $sig.SignerCertificate.NotBefore -or -not $sig.TimeStamperCertificate) {
+                    Write-Log "Signed $($_.Name) ✔ but no timestamp was embedded. Signature may expire with certificate." "WARNING"
+                } else {
+                    Write-Log "Signed $($_.Name) ✔" "SUCCESS"
+                }
+            } else {
+                Write-Log "Signature on $($_.Name) is $($sig.Status)" "WARNING"
+            }
+        }
+        catch {
+            Write-Log "Failed to sign $($_.Name). Error: $_" "ERROR"
+            exit 1
+        }
+    }
+}
+
 # Compress release directory with retry mechanism
 Write-Log "Compressing release directory into release.zip..." "INFO"
 
@@ -439,6 +637,8 @@ catch {
     exit 1
 }
 
+if ($Sign) { signPackage $msiOutput $env:SIGN_THUMB }
+
 # Step 11: Prepare NuGet Package
 Write-Log "Preparing NuGet package..." "INFO"
 
@@ -452,6 +652,8 @@ catch {
     exit 1
 }
 
+if (-not (Test-Path "build\install.ps1")) { '' | Out-File "build\install.ps1" -Encoding ASCII }
+
 # Pack NuGet package
 try {
     nuget pack "build\nupkg.nuspec" -OutputDirectory "release" -BasePath "$PSScriptRoot" | Out-Null
@@ -461,6 +663,16 @@ catch {
     Write-Log "Failed to pack NuGet package. Error: $_" "ERROR"
     exit 1
 }
+
+# pick up the freshly created .nupkg (whatever it’s called)
+$nupkgPath = Get-ChildItem -Path "release\*.nupkg" |
+             Sort-Object LastWriteTime -Desc | Select-Object -First 1
+
+if (-not $nupkgPath) {
+    throw "No .nupkg produced – cannot sign."
+}
+
+if ($Sign) { signNuget $nupkgPath.FullName $Thumbprint }
 
 # Step 11.1: Revert `nupkg.nuspec` to its dynamic state
 Write-Log "Reverting build/nupkg.nuspec to dynamic state..." "INFO"
