@@ -8,7 +8,7 @@
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
-           Version="25.3.21"
+           Version="25.5.5"
            Manufacturer="Cimian"
            Language="1033">
 
@@ -146,7 +146,3 @@
   </Product>
 
 </Wix>
-
-
-
-
