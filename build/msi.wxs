@@ -4,11 +4,15 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
 
+  <?ifndef ProductVersion?>
+    <?define ProductVersion = "0.0.0"?>
+  <?endif?>
+
   <!-- Product Definition -->
   <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
-           Version="25.5.5"
+           Version="$(var.ProductVersion)"
            Manufacturer="Cimian"
            Language="1033">
 
@@ -50,22 +54,22 @@
 
           <!-- Components and Files -->
           <Component Id="Binary1" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A" Win64="yes">
-            <File Id="BinaryFile1" Source="release\cimiimport.exe" KeyPath="yes" />
+            <File Id="BinaryFile1" Source="$(var.BIN_DIR)\cimiimport.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary2" Guid="67855CDD-8EAB-564C-B795-26091FE9B83A" Win64="yes">
-            <File Id="BinaryFile2" Source="release\makecatalogs.exe" KeyPath="yes" />
+            <File Id="BinaryFile2" Source="$(var.BIN_DIR)\makecatalogs.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary3" Guid="77855CDE-9FAB-464D-C795-26091DE8B83A" Win64="yes">
-            <File Id="BinaryFile3" Source="release\makepkginfo.exe" KeyPath="yes" />
+            <File Id="BinaryFile3" Source="$(var.BIN_DIR)\makepkginfo.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary4" Guid="87855CDE-AFAB-564D-D795-26091FE9B83A" Win64="yes">
-            <File Id="BinaryFile4" Source="release\managedsoftwareupdate.exe" KeyPath="yes" />
+            <File Id="BinaryFile4" Source="$(var.BIN_DIR)\managedsoftwareupdate.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary5" Guid="97855CDE-BFAB-664D-E795-26091DE8B83A" Win64="yes">
-            <File Id="BinaryFile5" Source="release\manifestutil.exe" KeyPath="yes" />
+            <File Id="BinaryFile5" Source="$(var.BIN_DIR)\manifestutil.exe" KeyPath="yes" />
           </Component>
           <Component Id="Binary6" Guid="AF855CDE-1234-5678-9ABC-26091DE9B83B" Win64="yes">
-            <File Id="BinaryFile6" Source="release\cimipkg.exe" KeyPath="yes" />
+            <File Id="BinaryFile6" Source="$(var.BIN_DIR)\cimipkg.exe" KeyPath="yes" />
           </Component>
 
           <!-- Component to Modify PATH Environment Variable -->
