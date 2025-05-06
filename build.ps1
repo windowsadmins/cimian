@@ -448,16 +448,7 @@ function Set-Version {
 
     Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
     Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
-    
-    # Update the WiX XML with the new version
-    Write-Log "Updating WiX product version to $semanticVersion in msi.wxs..." "INFO"
-    $wxsPath = "build\msi.wxs"
-    $wxsContent = Get-Content $wxsPath -Raw
-    $updatedWxsContent = [regex]::Replace($wxsContent, 
-                                       '(<Product Id="\*"\s+UpgradeCode="[^"]+"\s+Name="[^"]+"\s+Version=")([^"]+)(")', 
-                                       "`${1}$semanticVersion`${3}")
-    Set-Content -Path $wxsPath -Value $updatedWxsContent
-    Write-Log "Updated WiX product version in $wxsPath" "SUCCESS"
+    # No longer update msi.wxs file here
 }
 
 Set-Version
@@ -471,118 +462,130 @@ go mod download
 Write-Log "Go modules tidied and downloaded." "SUCCESS"
 
 # Step 8: Build All Binaries
-Write-Log "Building all binaries..." "INFO"
+Write-Log "Building all binaries for x64 and arm64..." "INFO"
 
 # Clean existing binaries first
-Write-Log "Cleaning existing binaries..." "INFO"
+Write-Log "Cleaning existing binaries from bin directory..." "INFO"
 if (Test-Path "bin") {
-    Remove-Item -Path "bin\*.exe" -Force
+    Remove-Item -Path "bin\*" -Recurse -Force
     Write-Log "Cleaned existing binaries from bin directory." "SUCCESS"
 }
 
 $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
 
-foreach ($dir in $binaryDirs) {
-    $binaryName = $dir.Name
-    Write-Log "Building $binaryName..." "INFO"
+$archs = @("x64", "arm64")
+$goarchMap = @{
+    "x64"   = "amd64"
+    "arm64" = "arm64"
+}
 
-    # Retrieve the current Git branch name
-    try {
-        $branchName = (git rev-parse --abbrev-ref HEAD)
-        Write-Log "Current Git branch: $branchName" "INFO"
+foreach ($arch in $archs) {
+    $binArchDir = "bin\$arch"
+    if (-not (Test-Path $binArchDir)) {
+        New-Item -ItemType Directory -Path $binArchDir | Out-Null
     }
-    catch {
-        Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
-        $branchName = "main"
-    }
+    foreach ($dir in $binaryDirs) {
+        $binaryName = $dir.Name
+        Write-Log "Building $binaryName for $arch..." "INFO"
 
-    $revision = "unknown"
-    try {
-        $revision = (git rev-parse HEAD)
-    }
-    catch {
-        Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
-    }
-
-    $buildDate = Get-Date -Format s
-
-    $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
-        "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
-        "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
-        "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
-        "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
-        "-X main.version=$env:RELEASE_VERSION"
-
-    # Check if this cmd/<binaryName> folder is a separate module (has its own go.mod)
-    $submoduleGoMod = Join-Path $dir.FullName "go.mod"
-    if (Test-Path $submoduleGoMod) {
-        Write-Log "Detected submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
-        Push-Location $dir.FullName
+        # Retrieve the current Git branch name
         try {
-            go mod tidy
-            go mod download
-            go build -v -o "../../bin/$binaryName.exe" -ldflags="$ldflags" .
-            if ($LASTEXITCODE -ne 0) {
-                throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
-            }
-            Write-Log "$binaryName (submodule) built successfully." "SUCCESS"
+            $branchName = (git rev-parse --abbrev-ref HEAD)
+            Write-Log "Current Git branch: $branchName" "INFO"
         }
         catch {
-            Write-Log "Failed to build submodule $binaryName. Error: $_" "ERROR"
+            Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
+            $branchName = "main"
+        }
+
+        $revision = "unknown"
+        try {
+            $revision = (git rev-parse HEAD)
+        }
+        catch {
+            Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
+        }
+
+        $buildDate = Get-Date -Format s
+
+        $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+            "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+            "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+            "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+            "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
+            "-X main.version=$env:RELEASE_VERSION"
+
+        $env:GOARCH = $goarchMap[$arch]
+        $env:GOOS = "windows"
+
+        $submoduleGoMod = Join-Path $dir.FullName "go.mod"
+        $outputPath = "bin\$arch\$binaryName.exe"
+        if (Test-Path $submoduleGoMod) {
+            Write-Log "Detected submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
+            Push-Location $dir.FullName
+            try {
+                go mod tidy
+                go mod download
+                go build -v -o "..\..\$outputPath" -ldflags="$ldflags" .
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
+                }
+                Write-Log "$binaryName ($arch, submodule) built successfully." "SUCCESS"
+            }
+            catch {
+                Write-Log "Failed to build submodule $binaryName ($arch). Error: $_" "ERROR"
+                Pop-Location
+                exit 1
+            }
             Pop-Location
-            exit 1
         }
-        Pop-Location
-    }
-    else {
-        Write-Log "Building $binaryName from main module..." "INFO"
-        try {
-            go build -v -o "bin\$binaryName.exe" -ldflags="$ldflags" "./cmd/$binaryName"
-            if ($LASTEXITCODE -ne 0) {
-                throw "Build failed for $binaryName with exit code $LASTEXITCODE."
+        else {
+            Write-Log "Building $binaryName ($arch) from main module..." "INFO"
+            try {
+                go build -v -o "$outputPath" -ldflags="$ldflags" "./cmd/$binaryName"
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Build failed for $binaryName ($arch) with exit code $LASTEXITCODE."
+                }
+                Write-Log "$binaryName ($arch) built successfully." "SUCCESS"
             }
-            Write-Log "$binaryName built successfully." "SUCCESS"
-        }
-        catch {
-            Write-Log "Failed to build $binaryName. Error: $_" "ERROR"
-            exit 1
+            catch {
+                Write-Log "Failed to build $binaryName ($arch). Error: $_" "ERROR"
+                exit 1
+            }
         }
     }
 }
 
-Write-Log "All binaries built." "SUCCESS"
+Write-Log "All binaries built for all architectures." "SUCCESS"
 
 # Step 9: Package Binaries
-Write-Log "Packaging binaries..." "INFO"
+Write-Log "Packaging binaries for all architectures..." "INFO"
 
-# Copy binaries to release
-Get-ChildItem -Path "bin\*.exe" | ForEach-Object {
-    Copy-Item $_.FullName "release\"
-    Write-Log "Copied $($_.Name) to release directory." "INFO"
+foreach ($arch in $archs) {
+    $releaseArchDir = "release\$arch"
+    if (-not (Test-Path $releaseArchDir)) {
+        New-Item -ItemType Directory -Path $releaseArchDir | Out-Null
+    }
+    Get-ChildItem -Path "bin\$arch\*.exe" | ForEach-Object {
+        Copy-Item $_.FullName $releaseArchDir
+        Write-Log "Copied $($_.Name) to $releaseArchDir." "INFO"
+    }
 }
 
-if ($Sign)
-{
-    Write-Log "Signing all EXEs in release directory..." "INFO"
+# ───────────── SIGN EVERY EXE (once) IN ITS OWN ARCH FOLDER ─────────────
+if ($Sign) {
+    Write-Log "Signing all EXEs in each release\<arch>\ folder..." "INFO"
 
-    Get-ChildItem -Path "release\*.exe" | ForEach-Object {
-        try {
-            signPackage -FilePath $_.FullName                      # uses $env:SIGN_THUMB
-            # Quick verification – make sure Status = Valid
-            $sig = Get-AuthenticodeSignature $_.FullName
-            if ($sig.Status -eq 'Valid') {
-                if (-not $sig.SignerCertificate.NotBefore -or -not $sig.TimeStamperCertificate) {
-                    Write-Log "Signed $($_.Name) ✔ but no timestamp was embedded. Signature may expire with certificate." "WARNING"
-                } else {
-                    Write-Log "Signed $($_.Name) ✔" "SUCCESS"
-                }
-            } else {
-                Write-Log "Signature on $($_.Name) is $($sig.Status)" "WARNING"
+    foreach ($arch in $archs) {
+        Get-ChildItem -Path ("release\{0}\*.exe" -f $arch) | ForEach-Object {
+            try {
+                signPackage -FilePath $_.FullName   # ← uses $env:SIGN_THUMB, adds RFC 3161 timestamp
+                Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
             }
-        }
-        catch {
-            Write-Log "Failed to sign $($_.Name). Error: $_" "ERROR"
-            exit 1
+            catch {
+                Write-Log "Failed to sign $($_.FullName). $_" "ERROR"
+                exit 1
+            }
         }
     }
 }
@@ -604,81 +607,126 @@ else {
     exit 1
 }
 
-# Step 10: Build MSI Package with WiX
-Write-Log "Building MSI package with WiX..." "INFO"
+# Step 10: Build MSI Packages with WiX for both x64 and arm64
+Write-Log "Building MSI packages with WiX for x64 and arm64..." "INFO"
 
-# Define WiX Toolset Path
 $wixToolsetPath   = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
 $candlePath       = Join-Path $wixToolsetPath "candle.exe"
 $lightPath        = Join-Path $wixToolsetPath "light.exe"
 $wixUtilExtension = Join-Path $wixToolsetPath "WixUtilExtension.dll"
 
-# Validate WiX Toolset path
 if (-not (Test-Path $wixToolsetPath)) {
     Write-Log "WiX Toolset path '$wixToolsetPath' not found. Exiting..." "ERROR"
     exit 1
 }
 
-# Define output paths
-$msiOutput = "release\Cimian-$env:RELEASE_VERSION.msi"
+$msiArchs = @("x64", "arm64")
+foreach ($msiArch in $msiArchs) {
+    $msiTempDir = "release\msi_$msiArch"
+    if (Test-Path $msiTempDir) { Remove-Item -Path "$msiTempDir\*" -Recurse -Force }
+    else { New-Item -ItemType Directory -Path $msiTempDir | Out-Null }
 
-# Compile WiX source
-try {
-    Write-Log "Compiling WiX source with candle..." "INFO"
-    & $candlePath -ext $wixUtilExtension -out "build\msi.wixobj" "build\msi.wxs"
+    # Copy correct binaries for this arch
+    Write-Log "Preparing $msiArch binaries for MSI..." "INFO"
+    Get-ChildItem -Path "release\$msiArch\*.exe" | ForEach-Object {
+        Copy-Item $_.FullName $msiTempDir -Force
+    }
 
-    Write-Log "Linking and creating MSI with light..." "INFO"
-    & $lightPath -sice:ICE* -ext $wixUtilExtension -out $msiOutput "build\msi.wixobj"
+    # Copy any other required files (e.g., config.yaml) if needed by WiX
+    if (Test-Path "build\config.yaml") {
+        Copy-Item "build\config.yaml" $msiTempDir -Force
+    }
 
-    Write-Log "MSI package built at $msiOutput." "SUCCESS"
+    # Build MSI for this arch
+    $msiOutput = "release\Cimian-$msiArch-$env:RELEASE_VERSION.msi"
+    try {
+        Write-Log "Compiling WiX source with candle for $msiArch..." "INFO"
+        # Use argument splatting for candle
+        $candleArgs = @(
+            "-dBIN_DIR=$msiTempDir"
+            "-dProductVersion=$env:SEMANTIC_VERSION"
+            "-ext", $wixUtilExtension
+            "-out", "build\msi.$msiArch.wixobj"
+            "build\msi.wxs"
+        )
+        & $candlePath @candleArgs
+
+        Write-Log "Linking and creating MSI with light for $msiArch..." "INFO"
+        # Use argument splatting for light
+        $lightArgs = @(
+            "-dBIN_DIR=$msiTempDir"
+            "-dProductVersion=$env:SEMANTIC_VERSION"
+            "-sice:ICE*"
+            "-ext", $wixUtilExtension
+            "-out", $msiOutput
+            "build\msi.$msiArch.wixobj"
+        )
+        & $lightPath @lightArgs
+
+        Write-Log "MSI package built at $msiOutput." "SUCCESS"
+    }
+    catch {
+        Write-Log "Failed to build MSI package for $msiArch. Error: $_" "ERROR"
+        exit 1
+    }
+
+    if ($Sign) { signPackage $msiOutput $env:SIGN_THUMB }
+
+    # Clean up temp folder
+    Remove-Item -Path "$msiTempDir\*" -Recurse -Force
 }
-catch {
-    Write-Log "Failed to build MSI package. Error: $_" "ERROR"
-    exit 1
-}
 
-if ($Sign) { signPackage $msiOutput $env:SIGN_THUMB }
+# Step 11: Prepare NuGet Packages for both x64 and arm64
+Write-Log "Preparing NuGet packages for x64 and arm64..." "INFO"
 
-# Step 11: Prepare NuGet Package
-Write-Log "Preparing NuGet package..." "INFO"
+foreach ($arch in $archs) {
 
-# Replace SEMANTIC_VERSION in nuspec
-try {
-    (Get-Content "build\nupkg.nuspec") -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $env:SEMANTIC_VERSION | Set-Content "build\nupkg.nuspec"
-    Write-Log "Updated nuspec with SEMANTIC_VERSION." "INFO"
-}
-catch {
-    Write-Log "Failed to update nuspec. Error: $_" "ERROR"
-    exit 1
-}
+    $pkgTempDir  = "release\nupkg_$arch"
+    $archBinDst  = Join-Path $pkgTempDir $arch
+    $nuspecPath  = "build\nupkg.$arch.nuspec"
+    $nupkgOut    = "release\Cimian-$arch-$env:SEMANTIC_VERSION.nupkg"
 
-if (-not (Test-Path "build\install.ps1")) { '' | Out-File "build\install.ps1" -Encoding ASCII }
+    # workspace
+    if (Test-Path $pkgTempDir) { Remove-Item $pkgTempDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $archBinDst -Force | Out-Null
 
-# Pack NuGet package
-try {
-    nuget pack "build\nupkg.nuspec" -OutputDirectory "release" -BasePath "$PSScriptRoot" | Out-Null
-    Write-Log "NuGet package created in release directory." "SUCCESS"
-}
-catch {
-    Write-Log "Failed to pack NuGet package. Error: $_" "ERROR"
-    exit 1
-}
+    # binaries
+    Copy-Item "release\$arch\*.exe" $archBinDst
 
-# pick up the freshly created .nupkg (whatever it’s called)
-$nupkgPath = Get-ChildItem -Path "release\*.nupkg" |
+    # common payload
+    Copy-Item "build\config.yaml"   $pkgTempDir        -EA SilentlyContinue
+    if (Test-Path "build\install.ps1") { Copy-Item "build\install.ps1" $pkgTempDir }
+    if (Test-Path "README.md")      { Copy-Item "README.md" $pkgTempDir }
+    else { 'Cimian command-line tools.' | Set-Content (Join-Path $pkgTempDir 'README.md') }
+
+    # materialise nuspec (add <file> line for install.ps1 only if present)
+    $nuspecText = Get-Content "build\nupkg.nuspec"
+    if (-not (Test-Path "$pkgTempDir\install.ps1")) {
+        $nuspecText = $nuspecText -replace '<file src="install.ps1".*?/>', ''
+    }
+    $nuspecText `
+        -replace '\$\{\{ARCH\}\}',        $arch `
+        -replace '\$\{\{VERSION\}\}',     $env:SEMANTIC_VERSION |
+        Set-Content $nuspecPath
+
+    # pack
+    nuget pack $nuspecPath -OutputDirectory "release" `
+                -BasePath $pkgTempDir -NoDefaultExcludes | Out-Null
+    $built = Get-ChildItem "release" -Filter '*.nupkg' |
              Sort-Object LastWriteTime -Desc | Select-Object -First 1
+    Move-Item $built.FullName $nupkgOut -Force
 
-if (-not $nupkgPath) {
-    throw "No .nupkg produced – cannot sign."
+    if ($Sign) { signNuget $nupkgOut }
+
+    # cleanup
+    Remove-Item $pkgTempDir -Recurse -Force
+    Remove-Item $nuspecPath -Force
+    Write-Log "$arch NuGet ready → $nupkgOut" "SUCCESS"
 }
-
-if ($Sign) { signNuget $nupkgPath.FullName $Thumbprint }
 
 # Step 11.1: Revert `nupkg.nuspec` to its dynamic state
 Write-Log "Reverting build/nupkg.nuspec to dynamic state..." "INFO"
-
 try {
-    # Replace hardcoded version with placeholder
     (Get-Content "build\nupkg.nuspec") -replace "$env:SEMANTIC_VERSION", '${{ env.SEMANTIC_VERSION }}' | Set-Content "build\nupkg.nuspec"
     Write-Log "Reverted build/nupkg.nuspec to use dynamic placeholder." "SUCCESS"
 }
@@ -687,28 +735,29 @@ catch {
     exit 1
 }
 
-Write-Log "Build process completed successfully with cleanup." "SUCCESS"
+Write-Log "NuGet packaging for all architectures completed." "SUCCESS"
 
-# Step 12: Prepare IntuneWin Package
-Write-Log "Preparing IntuneWin package..." "INFO"
+# Step 12: Prepare IntuneWin Packages for both x64 and arm64
+Write-Log "Preparing IntuneWin packages for x64 and arm64..." "INFO"
 
-# Define variables for IntuneWin conversion
-$setupFolder = "release"
-$setupFile   = "release\Cimian-$env:RELEASE_VERSION.msi"
-$outputFolder= "release"
+foreach ($arch in $archs) {
+    $msiFile = "release\Cimian-$arch-$env:RELEASE_VERSION.msi"
+    $outputFolder = "release"
+    $intunewinOutput = "release\Cimian-$arch-$env:RELEASE_VERSION.intunewin"
 
-# Check if the setup file exists before attempting conversion
-if (-not (Test-Path $setupFile)) {
-    Write-Log "Setup file '$setupFile' does not exist. Skipping IntuneWin package preparation." "WARNING"
-}
-else {
-    # Run intunewin.ps1 and capture any errors
+    if (-not (Test-Path $msiFile)) {
+        Write-Log "Setup file '$msiFile' does not exist. Skipping IntuneWin package preparation for $arch." "WARNING"
+        continue
+    }
     try {
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "build\intunewin.ps1" -SetupFolder $setupFolder -SetupFile $setupFile -OutputFolder $outputFolder
-        Write-Log "IntuneWin package prepared." "SUCCESS"
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "build\intunewin.ps1" -SetupFolder $outputFolder -SetupFile $msiFile -OutputFolder $outputFolder
+        if ($latestIntuneWin -and ($latestIntuneWin.Name -notlike "*$arch*")) {
+            Move-Item $latestIntuneWin.FullName $intunewinOutput -Force
+        }
+        Write-Log ("IntuneWin package prepared for {0}: {1}" -f $arch, $intunewinOutput) "SUCCESS"
     }
     catch {
-        Write-Log "IntuneWin package preparation failed. Error: $_" "ERROR"
+        Write-Log "IntuneWin package preparation failed for $arch. Error: $_" "ERROR"
         exit 1
     }
 }
@@ -755,4 +804,16 @@ function Remove-TempFiles {
 Write-Log "Cleaning up temporary files..." "INFO"
 $temporaryFiles = @("release.zip", "build\msi.msi", "build\msi.wixobj", "build\msi.wixpdb")
 Remove-TempFiles -Files $temporaryFiles
+
+# Clean up .wixpdb files in release\
+Get-ChildItem -Path "release" -Filter "*.wixpdb" -File | ForEach-Object {
+    try {
+        Remove-Item $_.FullName -Force
+        Write-Log "Temporary file '$($_.FullName)' deleted successfully." "SUCCESS"
+    }
+    catch {
+        Write-Log "Failed to delete '$($_.FullName)'. Error: $_" "WARNING"
+    }
+}
+
 Write-Log "Temporary files cleanup completed." "SUCCESS"
