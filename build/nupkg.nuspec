@@ -1,20 +1,21 @@
 <?xml version="1.0"?>
 <package>
   <metadata>
-    <title>Cimian</title>
-    <id>com.github.windowsadmins.cimian</id>
-    <version>${{ env.SEMANTIC_VERSION }}</version>
+    <title>Cimian ${{ARCH}}</title>
+    <id>com.github.windowsadmins.cimian.${{ARCH}}</id>
+    <version>${{VERSION}}</version>
     <authors>WindowsAdmins</authors>
-    <description>Cimian Software Deployment Tools</description>
+    <description>Cimian software-deployment CLI — ${{ARCH}} build</description>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <tags>admin</tags>
+    <tags>admin cimian ${{ARCH}}</tags>
     <repository url="https://github.com/windowsadmins/cimian" />
     <readme>README.md</readme>
   </metadata>
+
   <files>
-    <file src="README.md" target="" />
-    <file src="release/*.exe" target="tools" />
-    <file src="build/config.yaml" target="tools" />
-    <file src="build/install.ps1" target="tools" />
+    <file src="README.md"               target=""                    />
+    <file src="${{ARCH}}\*.exe"         target="tools\${{ARCH}}"     />
+    <file src="config.yaml"             target="tools"               />
+    <!-- install.ps1 is optional; script injects this line only when the file exists -->
   </files>
 </package>
