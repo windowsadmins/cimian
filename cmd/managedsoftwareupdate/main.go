@@ -14,13 +14,13 @@ import (
 
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
-
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/process"
 	"github.com/windowsadmins/cimian/pkg/scripts"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/version"
@@ -185,13 +185,15 @@ func main() {
 		logger.Error("Failed to retrieve manifests: %v", mErr)
 		os.Exit(1)
 	}
-
 	// Load local catalogs into a map (keys are lowercase names).
 	localCatalogMap, err := loadLocalCatalogItems(cfg)
 	if err != nil {
 		logger.Error("Failed to load local catalogs: %v", err)
 		os.Exit(1)
 	}
+
+	// Convert to the expected format for advanced dependency processing
+	fullCatalogMap := catalog.AuthenticatedGet(*cfg)
 
 	// If install-only mode, perform installs and exit.
 	if *installOnly {
@@ -231,21 +233,19 @@ func main() {
 	if strings.TrimSpace(strings.ToLower(response)) != "y" && response != "" {
 		logger.Info("User aborted installation.")
 		os.Exit(0)
-	}
-
-	// Combine install and update items and perform installations.
+	}	// Combine install and update items and perform installations.
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)
 	allToInstall = append(allToInstall, toUpdate...)
 	if len(allToInstall) > 0 {
-		if err := downloadAndInstallPerItem(allToInstall, cfg); err != nil {
+		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg); err != nil {
 			logger.Error("Failed installing items: %v", err)
 		}
 	}
 
 	// Process uninstalls.
 	if len(toUninstall) > 0 {
-		if err := uninstallCatalogItems(toUninstall, cfg); err != nil {
+		if err := uninstallWithAdvancedLogic(toUninstall, fullCatalogMap, cfg); err != nil {
 			logger.Error("Failed uninstalling items: %v", err)
 		}
 	}
@@ -546,6 +546,47 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 	}
 
 	return nil
+}
+
+// downloadAndInstallWithAdvancedLogic handles downloading & installing with advanced dependency logic
+func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration) error {
+	// Get list of currently installed items for dependency checking
+	installedItems := getInstalledItemNames()
+
+	// Convert catalog.Item slice to string slice for processing
+	var itemNames []string
+	for _, item := range items {
+		itemNames = append(itemNames, item.Name)
+	}
+	// Use the new advanced dependency processing
+	process.InstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg)
+
+	return nil
+}
+
+// uninstallWithAdvancedLogic handles uninstalling with advanced dependency logic
+func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration) error {
+	// Get list of currently installed items for dependency checking
+	installedItems := getInstalledItemNames()
+
+	// Convert catalog.Item slice to string slice for processing
+	var itemNames []string
+	for _, item := range items {
+		itemNames = append(itemNames, item.Name)
+	}
+	// Use the new advanced dependency processing
+	process.UninstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg)
+
+	return nil
+}
+
+// getInstalledItemNames returns a list of currently installed item names
+// This would typically check the registry or local state to determine what's installed
+func getInstalledItemNames() []string {
+	// TODO: Implement proper installed items detection
+	// For now, return empty slice - this should be enhanced to read from
+	// registry or local state to determine what packages are actually installed
+	return []string{}
 }
 
 // printPendingActions prints a summary of planned actions: installs, updates, and uninstalls.
