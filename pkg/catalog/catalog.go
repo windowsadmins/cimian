@@ -29,6 +29,9 @@ type Item struct {
 	PreScript     utils.LiteralString `yaml:"preinstall_script"`
 	PostScript    utils.LiteralString `yaml:"postinstall_script"`
 	SupportedArch []string            `yaml:"supported_architectures"`
+	// Advanced dependency support
+	Requires  []string `yaml:"requires,omitempty"`   // Prerequisites that must be installed first
+	UpdateFor []string `yaml:"update_for,omitempty"` // Items this package is an update for
 }
 
 // InstallItem holds details for the "installs" array.
@@ -145,4 +148,241 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 	}
 
 	return catalogMap
+}
+
+// LookForUpdates searches for items that declare they are updates for the given item name.
+// This handles updates that aren't simply later versions of the same item.
+// For example, AdobeCameraRaw is an update for Adobe Photoshop, but doesn't update 
+// the version of Adobe Photoshop itself.
+// Returns a list of catalog item names that are updates for manifestitem.
+func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []string {
+	logging.Debug("Looking for updates for item", "item", itemName)
+	
+	var updateList []string
+	
+	// Look through all catalogs for items that have update_for pointing to our item
+	for _, catalog := range catalogMap {
+		for _, catalogItem := range catalog {
+			if catalogItem.UpdateFor != nil {
+				for _, updateForItem := range catalogItem.UpdateFor {
+					if updateForItem == itemName {
+						updateList = append(updateList, catalogItem.Name)
+						logging.Debug("Found update item", "update", catalogItem.Name, "for", itemName)
+					}
+				}
+			}
+		}
+	}
+	
+	// Remove duplicates
+	updateList = removeDuplicates(updateList)
+	
+	if len(updateList) > 0 {
+		logging.Debug("Found updates", "count", len(updateList), "updates", updateList, "for", itemName)
+	}
+	
+	return updateList
+}
+
+// LookForUpdatesForVersion searches for updates for a specific version of an item.
+// Since these can appear in manifests as item-version or item--version, we search for both.
+func LookForUpdatesForVersion(itemName, itemVersion string, catalogMap map[int]map[string]Item) []string {
+	nameAndVersion := fmt.Sprintf("%s-%s", itemName, itemVersion)
+	altNameAndVersion := fmt.Sprintf("%s--%s", itemName, itemVersion)
+	
+	updateList := LookForUpdates(nameAndVersion, catalogMap)
+	updateList = append(updateList, LookForUpdates(altNameAndVersion, catalogMap)...)
+	
+	// Remove duplicates
+	updateList = removeDuplicates(updateList)
+	
+	return updateList
+}
+
+// CheckDependencies checks if all required dependencies for an item are installed or scheduled for install.
+// Returns a list of missing dependencies.
+func CheckDependencies(item Item, installedItems []string, scheduledItems []string) []string {
+	if len(item.Requires) == 0 {
+		return nil
+	}
+	
+	var missingDeps []string
+	
+	// Combine installed and scheduled items
+	allAvailableItems := append(installedItems, scheduledItems...)
+	
+	for _, reqItem := range item.Requires {
+		// Parse the requirement to handle versioned dependencies
+		reqName, reqVersion := SplitNameAndVersion(reqItem)
+		
+		satisfied := false
+		for _, availableItem := range allAvailableItems {
+			availableName, availableVersion := SplitNameAndVersion(availableItem)
+			
+			// Check if names match (case-insensitive)
+			if strings.EqualFold(availableName, reqName) {
+				// If no specific version required, any version satisfies
+				if reqVersion == "" {
+					satisfied = true
+					break
+				}
+				
+				// If specific version required, check if it matches
+				if reqVersion != "" && availableVersion != "" {
+					// Simple exact version match for now
+					// TODO: Implement more sophisticated version comparison
+					if strings.EqualFold(availableVersion, reqVersion) {
+						satisfied = true
+						break
+					}
+				} else if reqVersion != "" && availableVersion == "" {
+					// Required version specified but available item has no version
+					// For now, assume it's satisfied if name matches
+					satisfied = true
+					break
+				}
+			}
+		}
+		
+		if !satisfied {
+			missingDeps = append(missingDeps, reqItem)
+		}
+	}
+	
+	return missingDeps
+}
+
+// FindItemsRequiring finds all items in catalogs that require the given item.
+// This is used during removal to determine what dependent items also need to be removed.
+func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []Item {
+	var dependentItems []Item
+	
+	// Check different name formats that might be used in requires
+	checkNames := []string{
+		itemName,
+		// TODO: Add versioned names if needed based on the item's version
+	}
+	
+	for _, catalog := range catalogMap {
+		for _, catalogItem := range catalog {
+			if len(catalogItem.Requires) > 0 {
+				for _, reqItem := range catalogItem.Requires {
+					reqName, _ := SplitNameAndVersion(reqItem)
+					
+					for _, checkName := range checkNames {
+						if strings.EqualFold(reqName, checkName) {
+							dependentItems = append(dependentItems, catalogItem)
+							logging.Debug("Found dependent item", "item", catalogItem.Name, "requires", itemName)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	return dependentItems
+}
+
+// GetItemByName searches for an item by name across all catalogs.
+// Returns the item and true if found, or an empty item and false if not found.
+func GetItemByName(itemName string, catalogMap map[int]map[string]Item) (Item, bool) {
+	itemNameLower := strings.ToLower(itemName)
+	
+	for _, catalog := range catalogMap {
+		for name, item := range catalog {
+			if strings.ToLower(name) == itemNameLower {
+				return item, true
+			}
+		}
+	}
+	
+	return Item{}, false
+}
+
+// removeDuplicates removes duplicate strings from a slice
+func removeDuplicates(slice []string) []string {
+	keys := make(map[string]bool)
+	var result []string
+	
+	for _, item := range slice {
+		if !keys[item] {
+			keys[item] = true
+			result = append(result, item)
+		}
+	}
+	
+	return result
+}
+
+// IsItemInstalled checks if an item is installed by comparing against a list of installed items
+func IsItemInstalled(itemName string, installedItems []string) bool {
+	for _, installed := range installedItems {
+		installedName, _ := SplitNameAndVersion(installed)
+		checkName, _ := SplitNameAndVersion(itemName)
+		
+		if strings.EqualFold(installedName, checkName) {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterInstalledItems returns only the items from the input list that are actually installed
+func FilterInstalledItems(itemNames []string, installedItems []string) []string {
+	var result []string
+	
+	for _, itemName := range itemNames {
+		if IsItemInstalled(itemName, installedItems) {
+			result = append(result, itemName)
+		}
+	}
+	
+	return result
+}
+
+// GetVersionFromInstalledItems returns the version of an installed item, if available
+func GetVersionFromInstalledItems(itemName string, installedItems []string) string {
+	for _, installed := range installedItems {
+		installedName, installedVersion := SplitNameAndVersion(installed)
+		checkName, _ := SplitNameAndVersion(itemName)
+		
+		if strings.EqualFold(installedName, checkName) {
+			return installedVersion
+		}
+	}
+	return ""
+}
+
+// SplitNameAndVersion splits an item name that may contain a version suffix.
+// It handles formats like "itemname-1.0.0" or "itemname--1.0.0"
+// Returns the name and version separately.
+func SplitNameAndVersion(nameWithVersion string) (string, string) {
+	// Handle the double dash format first (itemname--version)
+	if strings.Contains(nameWithVersion, "--") {
+		parts := strings.SplitN(nameWithVersion, "--", 2)
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		}
+	}
+	
+	// Handle the single dash format (itemname-version)
+	// We need to be careful here as some item names might contain dashes
+	// A simple heuristic: if the last part after the last dash looks like a version, split there
+	if strings.Contains(nameWithVersion, "-") {
+		parts := strings.Split(nameWithVersion, "-")
+		if len(parts) >= 2 {
+			lastPart := parts[len(parts)-1]
+			// Simple version detection: contains digits and dots/underscores
+			if strings.ContainsAny(lastPart, "0123456789") && 
+			   (strings.Contains(lastPart, ".") || strings.Contains(lastPart, "_")) {
+				// Reconstruct name without the version part
+				name := strings.Join(parts[:len(parts)-1], "-")
+				return strings.TrimSpace(name), strings.TrimSpace(lastPart)
+			}
+		}
+	}
+	
+	// No version found, return the whole string as name with empty version
+	return strings.TrimSpace(nameWithVersion), ""
 }
