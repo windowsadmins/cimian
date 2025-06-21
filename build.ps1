@@ -66,7 +66,7 @@ function Get-SigningCertThumbprint {
 }
 
 # Function to ensure signtool is available
-function Ensure-SignTool {
+function Test-SignTool {
 
     # helper to prepend path only once
     function Add-ToPath([string]$dir) {
@@ -161,7 +161,7 @@ function Invoke-Retry {
 
 # ──────────────────────────  SIGNING DECISION  ─────────────────
 if ($Sign) {
-    Ensure-SignTool
+    Test-SignTool
     if (-not $Thumbprint) {
         $Thumbprint = Get-SigningCertThumbprint
         if (-not $Thumbprint) {
