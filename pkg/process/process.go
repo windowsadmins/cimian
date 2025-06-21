@@ -309,3 +309,457 @@ func CleanUp(cachePath string, cfg *config.Configuration) {
 		return
 	}
 }
+
+// ProcessInstallWithDependencies processes an install item with full dependency handling
+// including requires, update_for, and architecture checks
+func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, scheduledItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+
+	logging.Debug("Processing install with dependencies", "item", itemName)
+
+	// Get the item from catalogs
+	item, err := firstItem(itemName, catalogsMap)
+	if err != nil {
+		return fmt.Errorf("item not found in catalogs: %v", err)
+	}
+
+	systemArch := getSystemArchitecture()
+
+	// Check architecture support
+	if !supportsArchitecture(item, systemArch) {
+		logging.Info("Skipping installation due to architecture mismatch",
+			"package", item.Name, "required_architectures", item.SupportedArch, "system_architecture", systemArch)
+		return nil
+	}
+
+	// Check and install requires dependencies first
+	if item.Requires != nil {
+		missingDeps := catalog.CheckDependencies(item, installedItems, scheduledItems)
+		for _, dep := range missingDeps {
+			logging.Info("Installing required dependency", "dependency", dep, "for", itemName)
+
+			// Recursively process the dependency
+			if err := ProcessInstallWithDependencies(dep, catalogsMap, installedItems,
+				append(scheduledItems, dep), cachePath, checkOnly, cfg); err != nil {
+				logging.Error("Failed to install required dependency", "dependency", dep, "error", err)
+				return fmt.Errorf("failed to install required dependency %s: %v", dep, err)
+			}
+			// Add to scheduled items for future dependency checks
+			scheduledItems = append(scheduledItems, dep)
+		}
+	}
+
+	// Handle legacy dependencies field as well
+	if len(item.Dependencies) > 0 {
+		for _, dependency := range item.Dependencies {
+			validDependency, err := firstItem(dependency, catalogsMap)
+			if err != nil {
+				logging.Error("Failed to process legacy dependency", "dependency", dependency, "error", err)
+				continue
+			}
+
+			if !supportsArchitecture(validDependency, systemArch) {
+				logging.Info("Skipping legacy dependency installation due to architecture mismatch",
+					"package", validDependency.Name, "required_architectures", validDependency.SupportedArch, "system_architecture", systemArch)
+				continue
+			}
+
+			installerInstall(validDependency, "install", "", cachePath, checkOnly, cfg)
+		}
+	}
+
+	// Install the main item
+	logging.Info("Installing main item", "item", itemName)
+	installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+
+	// Look for updates that should be applied after this install
+	updateList := catalog.LookForUpdates(itemName, catalogsMap)
+	for _, updateItem := range updateList {
+		logging.Info("Installing update for item", "update", updateItem, "for", itemName)
+		if err := ProcessInstallWithDependencies(updateItem, catalogsMap,
+			append(installedItems, itemName), scheduledItems, cachePath, checkOnly, cfg); err != nil {
+			logging.Warn("Failed to install update item", "update", updateItem, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// ProcessUninstallWithDependencies processes an uninstall item with dependency checking
+// Removes dependent items first, then the main item
+func ProcessUninstallWithDependencies(itemName string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+
+	logging.Debug("Processing uninstall with dependencies", "item", itemName)
+
+	// Find items that require this item
+	dependentItems := catalog.FindItemsRequiring(itemName, catalogsMap)
+
+	// Remove dependent items first
+	for _, depItem := range dependentItems {
+		// Check if dependent item is actually installed
+		depInstalled := false
+		for _, installed := range installedItems {
+			if strings.EqualFold(installed, depItem.Name) {
+				depInstalled = true
+				break
+			}
+		}
+
+		if depInstalled {
+			logging.Info("Removing dependent item first", "dependent", depItem.Name, "required_by", itemName)
+			if err := ProcessUninstallWithDependencies(depItem.Name, catalogsMap,
+				installedItems, cachePath, checkOnly, cfg); err != nil {
+				logging.Error("Failed to remove dependent item", "dependent", depItem.Name, "error", err)
+				return fmt.Errorf("failed to remove dependent item %s: %v", depItem.Name, err)
+			}
+		}
+	}
+
+	// Get the main item and uninstall it
+	item, err := firstItem(itemName, catalogsMap)
+	if err != nil {
+		return fmt.Errorf("item not found in catalogs: %v", err)
+	}
+
+	logging.Info("Uninstalling main item", "item", itemName)
+	installerInstall(item, "uninstall", "", cachePath, checkOnly, cfg)
+
+	// Look for and remove any updates for this item
+	updateList := catalog.LookForUpdates(itemName, catalogsMap)
+	for _, updateItem := range updateList {
+		// Check if update item is installed
+		updateInstalled := false
+		for _, installed := range installedItems {
+			if strings.EqualFold(installed, updateItem) {
+				updateInstalled = true
+				break
+			}
+		}
+
+		if updateInstalled {
+			logging.Info("Removing update item", "update", updateItem, "for", itemName)
+			if err := ProcessUninstallWithDependencies(updateItem, catalogsMap,
+				installedItems, cachePath, checkOnly, cfg); err != nil {
+				logging.Warn("Failed to remove update item", "update", updateItem, "error", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// InstallsWithDependencies processes installs with full dependency logic
+// This function handles requires, update_for relationships, and proper dependency ordering
+func InstallsWithDependencies(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+	// Track processed items to avoid infinite loops
+	processedInstalls := make(map[string]bool)
+	// Process each item recursively with full dependency logic
+	for _, itemName := range itemNames {
+		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
+			processedInstalls, cachePath, checkOnly, cfg); err != nil {
+			logging.Error("Failed to process install with dependency logic", "item", itemName, "error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// UninstallsWithDependencies processes uninstalls with full dependency logic
+// This function handles dependency checking and proper removal ordering
+func UninstallsWithDependencies(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+
+	// Track processed items to avoid infinite loops
+	processedUninstalls := make(map[string]bool)	// Process each item recursively with full dependency logic
+	for _, itemName := range itemNames {
+		if err := processUninstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
+			processedUninstalls, cachePath, checkOnly, cfg); err != nil {
+			logging.Error("Failed to process uninstall with dependency logic", "item", itemName, "error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// InstallsWithAdvancedLogic processes installation of items with full dependency resolution
+// Recursively handles requires and update_for relationships
+func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+	// Track processed items to avoid infinite loops
+	processedInstalls := make(map[string]bool)
+	// Process each item recursively with full dependency logic
+	for _, itemName := range itemNames {
+		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
+			processedInstalls, cachePath, checkOnly, cfg); err != nil {
+			logging.Error("Failed to process install with advanced dependency logic", "item", itemName, "error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// UninstallsWithAdvancedLogic processes uninstalls with full dependency logic
+// This function handles dependency checking and proper removal ordering
+func UninstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+	// Track processed items to avoid infinite loops
+	processedUninstalls := make(map[string]bool)
+	// Process each item recursively with full dependency logic
+	for _, itemName := range itemNames {
+		if err := processUninstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
+			processedUninstalls, cachePath, checkOnly, cfg); err != nil {
+			logging.Error("Failed to process uninstall with advanced dependency logic", "item", itemName, "error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// processInstallWithAdvancedLogic handles installation with full advanced dependency logic
+func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, processedInstalls map[string]bool,
+	cachePath string, checkOnly bool, cfg *config.Configuration) error {
+
+	// Check if already processed to avoid loops
+	if processedInstalls[itemName] {
+		logging.Debug("Item already processed for install", "item", itemName)
+		return nil
+	}
+
+	logging.Debug("Processing install with advanced dependency logic", "item", itemName)
+
+	// Mark as processed early to avoid infinite recursion
+	processedInstalls[itemName] = true
+
+	// Get the main item
+	item, err := firstItem(itemName, catalogsMap)
+	if err != nil {
+		logging.Error("Item not found in any catalog", "item", itemName)
+		return fmt.Errorf("item %s not found in any catalog", itemName)
+	}
+
+	// Track items scheduled for installation during this operation
+	var scheduledItems []string
+
+	// Process requires dependencies first
+	if len(item.Requires) > 0 {
+		logging.Debug("Processing requires dependencies", "item", itemName, "requires", item.Requires)
+
+		for _, req := range item.Requires {
+			reqItemName, reqVersion := catalog.SplitNameAndVersion(req)
+
+			// Check if requirement is already satisfied
+			if isRequirementSatisfied(reqItemName, reqVersion, installedItems, scheduledItems) {
+				logging.Debug("Requirement already satisfied", "item", itemName, "requirement", req)
+				continue
+			}
+
+			// Recursively install the required item
+			logging.Info("Installing required dependency", "dependency", reqItemName, "for", itemName)
+
+			if err := processInstallWithAdvancedLogic(reqItemName, catalogsMap, installedItems,
+				processedInstalls, cachePath, checkOnly, cfg); err != nil {
+				logging.Error("Failed to install required dependency", "dependency", reqItemName, "error", err)
+				return fmt.Errorf("failed to install required dependency %s: %v", reqItemName, err)
+			}
+
+			// Add to scheduled items for future dependency checks
+			scheduledItems = append(scheduledItems, reqItemName)
+		}
+	}
+
+	// Install the main item
+	logging.Info("Installing item with advanced dependency logic", "item", itemName)
+	_, err = installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to install item %s: %v", itemName, err)
+	}
+
+	// Process 'update_for' items (items that are updates for this item)
+	updateList := catalog.LookForUpdates(itemName, catalogsMap)
+	if len(updateList) > 0 {
+		logging.Debug("Processing update_for items", "item", itemName, "updates", updateList)
+		for _, updateItem := range updateList {
+			logging.Info("Installing update item", "update", updateItem, "for", itemName)
+
+			if err := processInstallWithAdvancedLogic(updateItem, catalogsMap, installedItems,
+				processedInstalls, cachePath, checkOnly, cfg); err != nil {
+				logging.Warn("Failed to install update item", "update", updateItem, "error", err)
+				// Don't fail the main install if an update installation fails
+			}
+		}
+	}
+
+	return nil
+}
+
+// processUninstallWithAdvancedLogic handles uninstallation with full dependency logic
+func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[string]catalog.Item,
+	installedItems []string, processedUninstalls map[string]bool,
+	cachePath string, checkOnly bool, cfg *config.Configuration) error {
+
+	// Check if already processed to avoid loops
+	if processedUninstalls[itemName] {
+		logging.Debug("Item already processed for uninstall", "item", itemName)
+		return nil
+	}
+
+	logging.Debug("Processing uninstall with advanced dependency logic", "item", itemName)
+
+	// Mark as processed early to avoid infinite recursion
+	processedUninstalls[itemName] = true
+
+	// Find and process items that require this item (dependents)
+	dependentItems := findItemsRequiringItem(itemName, catalogsMap, installedItems)
+	if len(dependentItems) > 0 {
+		logging.Debug("Processing dependent items for removal", "item", itemName, "dependents", dependentItems)
+
+		for _, depItem := range dependentItems {
+			logging.Info("Removing dependent item first", "dependent", depItem, "required_by", itemName)
+
+			if err := processUninstallWithAdvancedLogic(depItem, catalogsMap, installedItems,
+				processedUninstalls, cachePath, checkOnly, cfg); err != nil {
+				logging.Error("Failed to remove dependent item", "dependent", depItem, "error", err)
+				return fmt.Errorf("failed to remove dependent item %s: %v", depItem, err)
+			}
+		}
+	}
+
+	// Find and process update items for this item
+	updateItems := findUpdateItemsInstalled(itemName, catalogsMap, installedItems)
+	if len(updateItems) > 0 {
+		logging.Debug("Processing update items for removal", "item", itemName, "updates", updateItems)
+
+		for _, updateItem := range updateItems {
+			logging.Info("Removing update item", "update", updateItem, "for", itemName)
+
+			if err := processUninstallWithAdvancedLogic(updateItem, catalogsMap, installedItems,
+				processedUninstalls, cachePath, checkOnly, cfg); err != nil {
+				logging.Warn("Failed to remove update item", "update", updateItem, "error", err)
+				// Don't fail the main uninstall if an update removal fails
+			}
+		}
+	}
+
+	// Get the main item and uninstall it
+	item, err := firstItem(itemName, catalogsMap)
+	if err != nil {
+		// Item might not be in catalogs anymore, but we should still try to uninstall
+		logging.Warn("Item not found in catalogs during uninstall, continuing anyway", "item", itemName)
+		// Create a minimal item for uninstall
+		item = catalog.Item{
+			Name: itemName,
+			// We'll rely on the system's built-in uninstall mechanisms
+		}
+	}
+	logging.Info("Uninstalling item with advanced dependency logic", "item", itemName)
+	_, err = installerInstall(item, "uninstall", "", cachePath, checkOnly, cfg)
+	if err != nil {
+		logging.Error("Failed to uninstall item", "item", itemName, "error", err)
+		// Continue anyway as partial removal is better than none
+	}
+
+	return nil
+}
+
+// Helper functions for advanced dependency processing
+
+// isRequirementSatisfied checks if a requirement is already satisfied by installed or scheduled items
+func isRequirementSatisfied(reqName, reqVersion string, installedItems, scheduledItems []string) bool {
+	allItems := append(installedItems, scheduledItems...)
+	for _, item := range allItems {
+		itemName, itemVersion := catalog.SplitNameAndVersion(item)
+
+		// Simple name match for now
+		if strings.EqualFold(itemName, reqName) {
+			// If no specific version required, any version satisfies
+			if reqVersion == "" {
+				return true
+			}
+
+			// If specific version required, check if it matches
+			if reqVersion != "" && itemVersion != "" {
+				// TODO: Implement proper version comparison
+				if strings.EqualFold(itemVersion, reqVersion) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// findItemsRequiringItem finds all installed items that require the given item
+func findItemsRequiringItem(itemName string, catalogsMap map[int]map[string]catalog.Item, installedItems []string) []string {
+	var dependentItems []string
+
+	// Check different name formats that might be used in requires
+	checkNames := []string{
+		itemName,
+		// TODO: Add versioned names if needed
+	}
+
+	// Only check items that are actually installed
+	for _, installedItem := range installedItems {
+		// Find the catalog entry for this installed item
+		if catalogItem, err := firstItem(installedItem, catalogsMap); err == nil {
+			if catalogItem.Requires != nil {
+				for _, reqItem := range catalogItem.Requires {
+					reqName, _ := catalog.SplitNameAndVersion(reqItem)
+
+					for _, checkName := range checkNames {
+						if strings.EqualFold(reqName, checkName) {
+							dependentItems = append(dependentItems, installedItem)
+							logging.Debug("Found dependent item", "dependent", installedItem, "requires", itemName)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return removeDuplicatesLocal(dependentItems)
+}
+
+// removeDuplicatesLocal removes duplicate strings from a slice
+func removeDuplicatesLocal(slice []string) []string {
+	keys := make(map[string]bool)
+	var result []string
+
+	for _, item := range slice {
+		if !keys[item] {
+			keys[item] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
+// findUpdateItemsInstalled finds installed items that are updates for the given item
+func findUpdateItemsInstalled(itemName string, catalogsMap map[int]map[string]catalog.Item, installedItems []string) []string {
+	var updateItems []string
+
+	// Find all items in catalogs that declare they are updates for this item
+	allUpdates := catalog.LookForUpdates(itemName, catalogsMap)
+
+	// Filter to only those that are actually installed
+	for _, updateItem := range allUpdates {
+		for _, installedItem := range installedItems {
+			if strings.EqualFold(updateItem, installedItem) {
+				updateItems = append(updateItems, updateItem)
+				break
+			}
+		}
+	}
+
+	return updateItems
+}
