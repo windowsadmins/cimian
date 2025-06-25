@@ -8,10 +8,15 @@
 #>
 
 #  ─Sign          … build + sign
+#  ─NoSign        … disable auto-signing even if enterprise cert is found
 #  ─Thumbprint XX … override auto-detection
+#  ─Task XX       … run specific task: build, package, all (default: all)
 param(
     [switch]$Sign,
-    [string]$Thumbprint
+    [switch]$NoSign,
+    [string]$Thumbprint,
+    [ValidateSet("build", "package", "all")]
+    [string]$Task = "all"
 )
 
 # ──────────────────────────  GLOBALS  ──────────────────────────
@@ -23,6 +28,9 @@ $ErrorActionPreference = 'Stop'
 
 # Ensure GO111MODULE is enabled for module-based builds
 $env:GO111MODULE = "on"
+
+# Disable CGO for pure Go builds (no GUI dependencies)
+$env:CGO_ENABLED = "0"
 
 # Function to display messages with different log levels
 function Write-Log {
@@ -160,6 +168,30 @@ function Invoke-Retry {
 }
 
 # ──────────────────────────  SIGNING DECISION  ─────────────────
+# ──────────────────────────  SIGNING DECISION  ─────────────────
+# Auto-detect enterprise certificate if available
+$autoDetectedThumbprint = $null
+if (-not $Sign -and -not $NoSign -and -not $Thumbprint) {
+    try {
+        $autoDetectedThumbprint = Get-SigningCertThumbprint
+        if ($autoDetectedThumbprint) {
+            Write-Log "Auto-detected enterprise certificate $autoDetectedThumbprint - will sign binaries for security." "INFO"
+            $Sign = $true
+            $Thumbprint = $autoDetectedThumbprint
+        } else {
+            Write-Log "No enterprise certificate found - binaries will be unsigned (may be blocked by Defender)." "WARNING"
+        }
+    }
+    catch {
+        Write-Log "Could not check for enterprise certificates: $_" "WARNING"
+    }
+}
+
+if ($NoSign) {
+    Write-Log "NoSign parameter specified - skipping all signing." "INFO"
+    $Sign = $false
+}
+
 if ($Sign) {
     Test-SignTool
     if (-not $Thumbprint) {
@@ -170,11 +202,11 @@ if ($Sign) {
         }
         Write-Log "Auto-selected signing cert $Thumbprint" "INFO"
     } else {
-        Write-Log "Using user-supplied thumbprint $Thumbprint" "INFO"
+        Write-Log "Using signing certificate $Thumbprint" "INFO"
     }
     $env:SIGN_THUMB = $Thumbprint   # used by the two sign* functions
 } else {
-    Write-Log "Sign switch not present – build will be unsigned." "INFO"
+    Write-Log "Build will be unsigned." "INFO"
 }
 
 # ────────────────  SIGNING HELPERS  ────────────────
@@ -222,7 +254,7 @@ function signNuget {
     )
 
     if (-not (Test-Path $Nupkg)) {
-        throw "NuGet package '$Nupkg' not found – cannot sign."
+        throw "NuGet package '$Nupkg' not found - cannot sign."
     }
 
     $tsa = 'http://timestamp.digicert.com'
@@ -358,7 +390,7 @@ if ($wixBin) {
 
 Write-Log "Required tools check and installation completed." "SUCCESS"
 
-# Force environment reload via Chocolatey's refreshenv
+# Force environment reload via Chocolateley's refreshenv
 if ($env:ChocolateyInstall -and (Test-Path "$env:ChocolateyInstall\helpers\refreshenv.cmd")) {
     Write-Log "Forcibly reloading environment with refreshenv.cmd..." "INFO"
     & "$env:ChocolateyInstall\helpers\refreshenv.cmd"
@@ -496,9 +528,7 @@ foreach ($arch in $archs) {
         catch {
             Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
             $branchName = "main"
-        }
-
-        $revision = "unknown"
+        }        $revision = "unknown"
         try {
             $revision = (git rev-parse HEAD)
         }
@@ -517,16 +547,27 @@ foreach ($arch in $archs) {
 
         $env:GOARCH = $goarchMap[$arch]
         $env:GOOS = "windows"
-
+        
         $submoduleGoMod = Join-Path $dir.FullName "go.mod"
         $outputPath = "bin\$arch\$binaryName.exe"
+        
         if (Test-Path $submoduleGoMod) {
             Write-Log "Detected submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
             Push-Location $dir.FullName
             try {
                 go mod tidy
                 go mod download
-                go build -v -o "..\..\$outputPath" -ldflags="$ldflags" .
+                  # Special handling for GUI applications
+                if ($binaryName -eq "cimianstatus") {
+                    # GUI application - enable CGO and use windowsgui flag to hide console
+                    $env:CGO_ENABLED = "1"
+                    go build -v -o "..\..\$outputPath" -ldflags="$ldflags -H windowsgui" .
+                    $env:CGO_ENABLED = "0"  # Reset to disabled for other builds
+                } else {
+                    # Standard console application
+                    go build -v -o "..\..\$outputPath" -ldflags="$ldflags" .
+                }
+                
                 if ($LASTEXITCODE -ne 0) {
                     throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
                 }
@@ -727,7 +768,7 @@ foreach ($arch in $archs) {
 # Step 11.1: Revert `nupkg.nuspec` to its dynamic state
 Write-Log "Reverting build/nupkg.nuspec to dynamic state..." "INFO"
 try {
-    (Get-Content "build\nupkg.nuspec") -replace "$env:SEMANTIC_VERSION", '${{ env.SEMANTIC_VERSION }}' | Set-Content "build\nupkg.nuspec"
+    (Get-Content "build\nupkg.nuspec") -replace "$env:SEMANTIC_VERSION", '{{VERSION}}' | Set-Content "build\nupkg.nuspec"
     Write-Log "Reverted build/nupkg.nuspec to use dynamic placeholder." "SUCCESS"
 }
 catch {
@@ -817,3 +858,77 @@ Get-ChildItem -Path "release" -Filter "*.wixpdb" -File | ForEach-Object {
 }
 
 Write-Log "Temporary files cleanup completed." "SUCCESS"
+
+# Step 2.1: MinGW is no longer needed since CGO is disabled
+# Write-Log "Checking if mingw is already installed..." "INFO"
+Write-Log "Skipping MinGW check - CGO disabled, no GCC dependencies required." "INFO"
+
+$mingwInstalled = $false
+
+# First check if gcc is available in PATH
+if (Test-Command "gcc") {
+    Write-Log "mingw is already installed and gcc is available in PATH." "SUCCESS"
+    $mingwInstalled = $true
+}
+else {
+    # Check common MinGW installation paths first
+    $mingwPaths = @(
+        "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin",
+        "C:\tools\mingw64\bin",
+        "C:\mingw64\bin",
+        "C:\msys64\mingw64\bin",
+        "C:\TDM-GCC-64\bin"
+    )
+    
+    foreach ($path in $mingwPaths) {
+        if (Test-Path (Join-Path $path "gcc.exe")) {
+            Write-Log "Found mingw at '$path'. Adding to PATH." "INFO"
+            $env:Path = "$path;$env:Path"
+            $mingwInstalled = $true
+            break
+        }
+    }
+
+    # If not found in common paths, check Chocolatey registry
+    if (-not $mingwInstalled) {
+        try {
+            $chocoList = choco list --local-only mingw 2>$null
+            if ($chocoList -match "mingw.*(\d+).*package") {
+                Write-Log "mingw is installed via Chocolatey. Searching for binaries..." "INFO"
+                $mingwInstalled = $true
+            }
+        }
+        catch {
+            Write-Log "Could not check Chocolatey package list for mingw." "WARNING"
+        }
+    }
+}
+
+if (-not $mingwInstalled) {
+    Write-Log "mingw is not installed. Installing via Chocolatey..." "INFO"
+    try {
+        choco install mingw --no-progress --yes --force | Out-Null
+        Write-Log "mingw installed successfully." "SUCCESS"
+        
+        # After installation, try to add to PATH
+        $mingwPaths = @(
+            "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin",
+            "C:\tools\mingw64\bin"
+        )
+        
+        foreach ($path in $mingwPaths) {
+            if (Test-Path (Join-Path $path "gcc.exe")) {
+                $env:Path = "$path;$env:Path"
+                Write-Log "Added newly installed mingw path '$path' to PATH." "INFO"
+                break
+            }
+        }
+    }
+    catch {
+        Write-Log "Failed to install mingw. Error: $_" "ERROR"
+        exit 1
+    }
+}
+else {
+    Write-Log "mingw is already available." "SUCCESS"
+}
