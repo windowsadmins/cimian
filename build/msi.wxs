@@ -116,6 +116,14 @@
                   Directory="INSTALLDIR"
                   ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN CimianHourlyRun /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
 
+    <!-- Create Bootstrap Scheduled Task -->
+    <CustomAction Id="CreateBootstrapScheduledTask"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC ONSTART /TN CimianBootstrapCheck /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe --auto --show-status&quot; /RU SYSTEM /RL HIGHEST /DELAY 0000:30" />
+
     <!-- Delete Scheduled Task -->
     <CustomAction Id="DeleteScheduledTask"
                   Execute="deferred"
@@ -124,14 +132,24 @@
                   Directory="INSTALLDIR"
                   ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN CimianHourlyRun" />
 
+    <!-- Delete Bootstrap Scheduled Task -->
+    <CustomAction Id="DeleteBootstrapScheduledTask"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN CimianBootstrapCheck" />
+
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
       <Custom Action="RunCimiImport" After="InstallFiles">NOT CONFIGFILE</Custom>
       <!-- Custom Action for Installation -->
       <Custom Action="CreateScheduledTask" After="InstallFiles">NOT REMOVE</Custom>
+      <Custom Action="CreateBootstrapScheduledTask" After="CreateScheduledTask">NOT REMOVE</Custom>
 
       <!-- Custom Action for Uninstallation -->
       <Custom Action="DeleteScheduledTask" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <Custom Action="DeleteBootstrapScheduledTask" Before="RemoveFiles">REMOVE="ALL"</Custom>
       <RemoveExistingProducts After="InstallInitialize" />
     </InstallExecuteSequence>
 
