@@ -5,15 +5,20 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/spf13/pflag"
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+	"gopkg.in/yaml.v3"
+
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
@@ -24,11 +29,10 @@ import (
 	"github.com/windowsadmins/cimian/pkg/scripts"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/version"
-	"gopkg.in/yaml.v3"
-
-	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 )
+
+// Bootstrap mode flag file - Windows equivalent of Munki's hidden dot file
+const BootstrapFlagFile = `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
 
 var logger *logging.Logger
 
@@ -59,6 +63,10 @@ func main() {
 	auto := pflag.Bool("auto", false, "Perform automatic updates.")
 	showStatus := pflag.Bool("show-status", false, "Show status window during operations (bootstrap mode).")
 	versionFlag := pflag.Bool("version", false, "Print the version and exit.")
+
+	// Bootstrap mode flags - similar to Munki's --set-bootstrap-mode and --clear-bootstrap-mode
+	setBootstrapMode := pflag.Bool("set-bootstrap-mode", false, "Enable bootstrap mode for next boot.")
+	clearBootstrapMode := pflag.Bool("clear-bootstrap-mode", false, "Disable bootstrap mode.")
 
 	// Count the number of -v flags.
 	var verbosity int
@@ -96,6 +104,35 @@ func main() {
 	if *versionFlag {
 		version.Print()
 		os.Exit(0)
+	}
+
+	// Handle bootstrap mode flags first - these exit immediately
+	if *setBootstrapMode {
+		if err := enableBootstrapMode(); err != nil {
+			logger.Error("Failed to enable bootstrap mode: %v", err)
+			os.Exit(1)
+		}
+		logger.Success("Bootstrap mode enabled. System will enter bootstrap mode on next boot.")
+		os.Exit(0)
+	}
+
+	if *clearBootstrapMode {
+		if err := disableBootstrapMode(); err != nil {
+			logger.Error("Failed to disable bootstrap mode: %v", err)
+			os.Exit(1)
+		}
+		logger.Success("Bootstrap mode disabled.")
+		os.Exit(0)
+	}
+
+	// Check if we're in bootstrap mode
+	isBootstrap := isBootstrapModeEnabled()
+	if isBootstrap {
+		logger.Info("Bootstrap mode detected - entering non-interactive installation mode")
+		*showStatus = true   // Always show status window in bootstrap mode
+		*installOnly = false // Bootstrap mode does check + install
+		*checkOnly = false
+		*auto = false
 	}
 
 	catalogsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "catalogs")
@@ -152,7 +189,13 @@ func main() {
 
 	// Determine run type.
 	var runType string
-	if *auto {
+	if isBootstrap {
+		runType = "bootstrap"
+		// Bootstrap mode overrides all other flags
+		*auto = false
+		*checkOnly = false
+		*installOnly = false
+	} else if *auto {
 		runType = "auto"
 		*checkOnly = false
 		*installOnly = false
@@ -306,6 +349,13 @@ func main() {
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
 	logsFolder := `C:\ProgramData\ManagedInstalls\Logs`
 	clearCacheFolderSelective(cacheFolder, logsFolder)
+
+	// Clear bootstrap mode if we completed successfully
+	if isBootstrap {
+		if err := clearBootstrapAfterSuccess(); err != nil {
+			logger.Warning("Failed to clear bootstrap mode: %v", err)
+		}
+	}
 
 	statusReporter.Message("All operations completed successfully!")
 	statusReporter.Percent(100)
@@ -766,7 +816,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 	successSet := make(map[string]bool)
 
 	// Read log files from the logsPath
-	logFiles, err := ioutil.ReadDir(logsPath)
+	logFiles, err := os.ReadDir(logsPath)
 	if err != nil {
 		logger.Warning("Failed to read logs directory: %v", err)
 	} else {
@@ -775,7 +825,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 				continue
 			}
 			logFilePath := filepath.Join(logsPath, entry.Name())
-			data, err := ioutil.ReadFile(logFilePath)
+			data, err := os.ReadFile(logFilePath)
 			if err != nil {
 				logger.Warning("Failed to read log file %s: %v", logFilePath, err)
 				continue
@@ -825,7 +875,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 	}
 
 	// Now iterate through the cache folder.
-	cacheEntries, err := ioutil.ReadDir(cachePath)
+	cacheEntries, err := os.ReadDir(cachePath)
 	if err != nil {
 		logger.Warning("Failed to read cache directory: %v", err)
 		return
@@ -857,4 +907,142 @@ func cleanManifestsCatalogsPreRun(dirPath string) error {
 	}
 	logging.Debug("Cleaned and recreated directory", "dirPath", dirPath)
 	return nil
+}
+
+// Bootstrap mode functions - Windows equivalent of Munki's bootstrap system
+
+// isBootstrapModeEnabled checks if bootstrap mode is enabled by checking for the flag file
+func isBootstrapModeEnabled() bool {
+	if _, err := os.Stat(BootstrapFlagFile); err == nil {
+		return true
+	}
+	return false
+}
+
+// enableBootstrapMode creates the bootstrap flag file - similar to Munki's --set-bootstrap-mode
+func enableBootstrapMode() error {
+	// Create the flag file
+	file, err := os.Create(BootstrapFlagFile)
+	if err != nil {
+		return fmt.Errorf("failed to create bootstrap flag file: %w", err)
+	}
+	defer file.Close()
+
+	// Write creation timestamp to the file
+	timestamp := fmt.Sprintf("Bootstrap mode enabled at: %s\n", time.Now().Format(time.RFC3339))
+	if _, err := file.WriteString(timestamp); err != nil {
+		return fmt.Errorf("failed to write to bootstrap flag file: %w", err)
+	}
+
+	// Update the scheduled task to run at startup if not already configured
+	if err := ensureBootstrapScheduledTask(); err != nil {
+		// Log warning but don't fail - the task might already exist
+		logger.Warning("Failed to update scheduled task for bootstrap mode: %v", err)
+	}
+
+	return nil
+}
+
+// disableBootstrapMode removes the bootstrap flag file - similar to Munki's --clear-bootstrap-mode
+func disableBootstrapMode() error {
+	if _, err := os.Stat(BootstrapFlagFile); os.IsNotExist(err) {
+		// File doesn't exist, nothing to do
+		return nil
+	}
+
+	if err := os.Remove(BootstrapFlagFile); err != nil {
+		return fmt.Errorf("failed to remove bootstrap flag file: %w", err)
+	}
+
+	// Also remove the bootstrap scheduled task when disabling bootstrap mode
+	if err := removeBootstrapScheduledTask(); err != nil {
+		// Log warning but don't fail - the task might not exist
+		logger.Warning("Failed to remove bootstrap scheduled task: %v", err)
+	}
+
+	return nil
+}
+
+// ensureBootstrapScheduledTask ensures the scheduled task is configured for bootstrap mode
+func ensureBootstrapScheduledTask() error {
+	return createBootstrapScheduledTask()
+}
+
+// createBootstrapScheduledTask creates a separate scheduled task specifically for bootstrap mode
+// This task runs at system startup and checks for the bootstrap flag file
+func createBootstrapScheduledTask() error {
+	// Get the current executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Create the bootstrap task that runs at startup
+	// This task will run every time the system starts and check for bootstrap mode
+	taskName := "CimianBootstrapCheck"
+	taskCmd := fmt.Sprintf(`"%s" --auto --show-status`, exePath)
+
+	// First, delete any existing bootstrap task to ensure clean creation
+	deleteCmd := fmt.Sprintf(`SCHTASKS.EXE /DELETE /F /TN "%s"`, taskName)
+	if err := runWindowsCommand(deleteCmd); err != nil {
+		// Ignore errors when deleting - task might not exist
+		logger.Debug("Could not delete existing bootstrap task (this is normal if it doesn't exist): %v", err)
+	}
+
+	// Create the new bootstrap task
+	// This task runs at system startup with HIGHEST privileges as SYSTEM
+	createCmd := fmt.Sprintf(
+		`SCHTASKS.EXE /CREATE /F /SC ONSTART /TN "%s" /TR "%s" /RU SYSTEM /RL HIGHEST /DELAY 0000:30`,
+		taskName, taskCmd)
+
+	if err := runWindowsCommand(createCmd); err != nil {
+		return fmt.Errorf("failed to create bootstrap scheduled task: %w", err)
+	}
+
+	logger.Info("Created bootstrap scheduled task: %s", taskName)
+	return nil
+}
+
+// removeBootstrapScheduledTask removes the bootstrap scheduled task
+func removeBootstrapScheduledTask() error {
+	taskName := "CimianBootstrapCheck"
+	deleteCmd := fmt.Sprintf(`SCHTASKS.EXE /DELETE /F /TN "%s"`, taskName)
+
+	if err := runWindowsCommand(deleteCmd); err != nil {
+		return fmt.Errorf("failed to remove bootstrap scheduled task: %w", err)
+	}
+
+	logger.Info("Removed bootstrap scheduled task: %s", taskName)
+	return nil
+}
+
+// runWindowsCommand executes a Windows command and returns any error
+func runWindowsCommand(command string) error {
+	// Split the command to get the program and arguments
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	cmd := exec.Command(parts[0], parts[1:]...)
+	output, err := cmd.CombinedOutput()
+
+	logger.Debug("Executing command: %s", command)
+	logger.Debug("Command output: %s", string(output))
+
+	if err != nil {
+		return fmt.Errorf("command failed: %s, output: %s, error: %w", command, string(output), err)
+	}
+
+	return nil
+}
+
+// clearBootstrapAfterSuccess removes the bootstrap flag after successful completion
+func clearBootstrapAfterSuccess() error {
+	if !isBootstrapModeEnabled() {
+		return nil
+	}
+
+	logging.Info("Bootstrap process completed successfully - clearing bootstrap mode")
+	return disableBootstrapMode()
 }
