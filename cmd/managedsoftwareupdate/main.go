@@ -980,7 +980,8 @@ func createBootstrapScheduledTask() error {
 	// Create the bootstrap task that runs at startup
 	// This task will run every time the system starts and check for bootstrap mode
 	taskName := "CimianBootstrapCheck"
-	taskCmd := fmt.Sprintf(`"%s" --auto --show-status`, exePath)
+	// The cmd.exe wrapper checks if the bootstrap flag file exists before running
+	taskCmd := fmt.Sprintf(`cmd.exe /c "if exist %s "%s" --auto --show-status"`, BootstrapFlagFile, exePath)
 
 	// First, delete any existing bootstrap task to ensure clean creation
 	deleteCmd := fmt.Sprintf(`SCHTASKS.EXE /DELETE /F /TN "%s"`, taskName)
