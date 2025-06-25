@@ -11,6 +11,31 @@ Cimian simplifies the software lifecycle management process, from creating packa
 - **Automated Package Management**: Streamline software packaging, metadata management, and distribution.
 - **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based config files.
 - **Multi-format Installer Support**: Supports MSI, MSIX, EXE, and NuGet package formats.
+- **Bootstrap Mode**: Windows equivalent of Munki's bootstrap system for zero-touch deployment and system provisioning.
+
+## Bootstrap System
+
+Cimian includes a bootstrap system similar to Munki's, designed for zero-touch deployment scenarios where machines must complete all required software installations before users can log in.
+
+### How Bootstrap Works
+
+1. **Flag File**: `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` - When this file exists, Cimian enters bootstrap mode
+2. **Scheduled Task**: A dedicated scheduled task (`CimianBootstrapCheck`) runs at system startup to check for bootstrap mode
+3. **Non-Interactive Mode**: When in bootstrap mode, Cimian runs with a progress window and installs all required software without user interaction
+4. **Automatic Cleanup**: The bootstrap flag file is automatically removed upon successful completion
+
+### Bootstrap Commands
+
+| Action          | Command                                                |
+| --------------- | ------------------------------------------------------ |
+| Enter bootstrap | `managedsoftwareupdate.exe --set-bootstrap-mode`       |
+| Leave bootstrap | `managedsoftwareupdate.exe --clear-bootstrap-mode`     |
+
+### Use Cases
+
+- **Zero-touch deployment**: Ship Windows machines with only Cimian installed; bootstrap completes the configuration
+- **System rebuilds**: Ensure all required software is installed before first user login
+- **Provisioning automation**: Integrate with deployment tools for fully automated system setup
 
 ## Components
 
