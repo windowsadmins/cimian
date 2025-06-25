@@ -795,8 +795,8 @@ func cimianImport(
 			UpgradeCode: strings.TrimSpace(metadata.UpgradeCode),
 		},
 		Uninstaller:         uninstaller,
-		UnattendedInstall:   true,
-		UnattendedUninstall: true,
+		UnattendedInstall:   false,
+		UnattendedUninstall: false,
 
 		PreinstallScript:     preinstallScriptContent,
 		PostinstallScript:    postinstallScriptContent,
