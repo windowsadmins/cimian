@@ -122,7 +122,7 @@
                   Impersonate="no"
                   Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC ONSTART /TN CimianBootstrapCheck /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe --auto --show-status&quot; /RU SYSTEM /RL HIGHEST /DELAY 0000:30" />
+                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC ONSTART /TN CimianBootstrapCheck /TR &quot;cmd.exe /c if exist C:\ProgramData\ManagedInstalls\.cimian.bootstrap [INSTALLDIR]managedsoftwareupdate.exe --auto --show-status&quot; /RU SYSTEM /RL HIGHEST /DELAY 0000:30" />
 
     <!-- Delete Scheduled Task -->
     <CustomAction Id="DeleteScheduledTask"
