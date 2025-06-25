@@ -76,11 +76,29 @@ func runScript(
 // RunPreflight calls runScript for preflight.
 func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
 	scriptPath := `C:\Program Files\Cimian\preflight.ps1`
+
+	// Check if the script exists before trying to run it
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		if verbosity >= 3 {
+			logInfo("Preflight script not found at %s, skipping", scriptPath)
+		}
+		return nil // Not an error - script is optional
+	}
+
 	return runScript(scriptPath, "Preflight", verbosity, logInfo, logError)
 }
 
 // RunPostflight calls runScript for postflight.
 func RunPostflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
 	scriptPath := `C:\Program Files\Cimian\postflight.ps1`
+
+	// Check if the script exists before trying to run it
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		if verbosity >= 3 {
+			logInfo("Postflight script not found at %s, skipping", scriptPath)
+		}
+		return nil // Not an error - script is optional
+	}
+
 	return runScript(scriptPath, "Postflight", verbosity, logInfo, logError)
 }

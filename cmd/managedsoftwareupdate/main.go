@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"unsafe"
 
 	"github.com/spf13/pflag"
-	"gopkg.in/yaml.v3"
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
@@ -24,6 +24,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/scripts"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/version"
+	"gopkg.in/yaml.v3"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -51,12 +52,12 @@ func enableANSIConsole() {
 
 func main() {
 	enableANSIConsole()
-
 	// Define command-line flags.
 	showConfig := pflag.Bool("show-config", false, "Display the current configuration and exit.")
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")
 	installOnly := pflag.Bool("installonly", false, "Install pending updates without checking for new ones.")
 	auto := pflag.Bool("auto", false, "Perform automatic updates.")
+	showStatus := pflag.Bool("show-status", false, "Show status window during operations (bootstrap mode).")
 	versionFlag := pflag.Bool("version", false, "Print the version and exit.")
 
 	// Count the number of -v flags.
@@ -165,11 +166,23 @@ func main() {
 		runType = "manual"
 	}
 	logger.Printf("Run type: %s", runType)
-
 	// Check administrative privileges.
 	admin, adminErr := adminCheck()
 	if adminErr != nil || !admin {
 		logger.Fatal("Administrative access required. Error: %v, Admin: %v", adminErr, admin)
+	}
+	// Initialize status reporter if requested
+	var statusReporter status.Reporter
+	if *showStatus {
+		statusReporter = status.NewPipeReporter()
+		if err := statusReporter.Start(context.Background()); err != nil {
+			logger.Error("Failed to start status reporter: %v", err)
+			statusReporter = status.NewNoOpReporter() // Fallback to no-op
+		}
+		defer statusReporter.Stop()
+		statusReporter.Message("Initializing Cimian...")
+	} else {
+		statusReporter = status.NewNoOpReporter()
 	}
 
 	// Ensure cache directory exists.
@@ -180,33 +193,43 @@ func main() {
 	}
 
 	// Retrieve manifests.
+	statusReporter.Message("Retrieving manifests...")
 	manifestItems, mErr := manifest.AuthenticatedGet(cfg)
 	if mErr != nil {
+		statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
 		logger.Error("Failed to retrieve manifests: %v", mErr)
 		os.Exit(1)
 	}
+
+	statusReporter.Detail("Loading catalog data...")
 	// Load local catalogs into a map (keys are lowercase names).
 	localCatalogMap, err := loadLocalCatalogItems(cfg)
 	if err != nil {
+		statusReporter.Error(fmt.Errorf("failed to load local catalogs: %v", err))
 		logger.Error("Failed to load local catalogs: %v", err)
 		os.Exit(1)
 	}
 
 	// Convert to the expected format for advanced dependency processing
+	statusReporter.Detail("Processing dependencies...")
 	fullCatalogMap := catalog.AuthenticatedGet(*cfg)
 
 	// If install-only mode, perform installs and exit.
 	if *installOnly {
 		logger.Info("Running in install-only mode")
+		statusReporter.Message("Installing pending updates...")
 		itemsToInstall := prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
-		if err := downloadAndInstallPerItem(itemsToInstall, cfg); err != nil {
+		if err := downloadAndInstallPerItem(itemsToInstall, cfg, statusReporter); err != nil {
+			statusReporter.Error(fmt.Errorf("failed to install pending updates: %v", err))
 			logger.Error("Failed to install pending updates (install-only): %v", err)
 			os.Exit(1)
 		}
+		statusReporter.Message("Installation completed successfully!")
 		os.Exit(0)
 	}
 
 	// Gather actions: updates, new installs, removals.
+	statusReporter.Detail("Analyzing required changes...")
 	var toInstall []catalog.Item
 	var toUpdate []catalog.Item
 	var toUninstall []catalog.Item
@@ -219,6 +242,7 @@ func main() {
 	toUninstall = identifyRemovals(localCatalogMap, cfg)
 
 	// Print summary of planned actions.
+	statusReporter.Detail(fmt.Sprintf("Found %d updates, %d new installs, %d removals", len(toUpdate), len(toInstall), len(toUninstall)))
 	printPendingActions(toInstall, toUninstall, toUpdate)
 
 	// If check-only mode, exit after summary.
@@ -233,19 +257,27 @@ func main() {
 	if strings.TrimSpace(strings.ToLower(response)) != "y" && response != "" {
 		logger.Info("User aborted installation.")
 		os.Exit(0)
-	}	// Combine install and update items and perform installations.
+	} // Combine install and update items and perform installations.
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)
 	allToInstall = append(allToInstall, toUpdate...)
 	if len(allToInstall) > 0 {
-		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg); err != nil {
+		statusReporter.Message("Installing and updating applications...")
+		statusReporter.Percent(0) // Start progress tracking
+		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg, statusReporter); err != nil {
+			statusReporter.Error(fmt.Errorf("failed installing items: %v", err))
 			logger.Error("Failed installing items: %v", err)
+		} else {
+			statusReporter.Percent(50) // Mid-way progress
 		}
 	}
 
 	// Process uninstalls.
 	if len(toUninstall) > 0 {
-		if err := uninstallWithAdvancedLogic(toUninstall, fullCatalogMap, cfg); err != nil {
+		statusReporter.Message("Removing applications...")
+		statusReporter.Percent(75) // Progress at 75%
+		if err := uninstallWithAdvancedLogic(toUninstall, fullCatalogMap, cfg, statusReporter); err != nil {
+			statusReporter.Error(fmt.Errorf("failed uninstalling items: %v", err))
 			logger.Error("Failed uninstalling items: %v", err)
 		}
 	}
@@ -259,17 +291,25 @@ func main() {
 	}
 
 	logger.Info("Software updates completed")
+	statusReporter.Message("Finalizing installation...")
+	statusReporter.Percent(90)
 
 	// Run postflight script.
 	if verbosity > 0 {
 		logger.Debug("Running postflight script with verbosity level: %d", verbosity)
 	}
+	statusReporter.Detail("Running post-installation scripts...")
 	runPostflightIfNeeded(verbosity)
 	logger.Success("Postflight script completed.")
 
+	statusReporter.Detail("Cleaning up temporary files...")
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
 	logsFolder := `C:\ProgramData\ManagedInstalls\Logs`
 	clearCacheFolderSelective(cacheFolder, logsFolder)
+
+	statusReporter.Message("All operations completed successfully!")
+	statusReporter.Percent(100)
+	statusReporter.Stop()
 
 	os.Exit(0)
 }
@@ -285,7 +325,8 @@ func runPreflightIfNeeded(verbosity int) {
 
 	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
 		logger.Error("Preflight script failed: %v", err)
-		os.Exit(1)
+		// Don't exit - preflight script failures should not be fatal
+		// os.Exit(1)
 	}
 }
 
@@ -414,7 +455,7 @@ type catalogWrapper struct {
 }
 
 // loadLocalCatalogItems returns a map[string]catalog.Item, but only the
-// highest-version item if a name appears multiple times.
+// highest-version item if a name appears in multiple times.
 func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, error) {
 	// Make sure the catalogs directory exists (or create it).
 	if err := os.MkdirAll(cfg.CatalogsPath, 0755); err != nil {
@@ -500,7 +541,7 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 
 // downloadAndInstallPerItem handles downloading & installing each catalog item individually,
 // ensuring exact file paths match installer expectations.
-func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) error {
+func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, statusReporter status.Reporter) error {
 	downloadItems := make(map[string]string)
 
 	// Prepare the correct full URLs for each item
@@ -549,8 +590,9 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration) 
 }
 
 // downloadAndInstallWithAdvancedLogic handles downloading & installing with advanced dependency logic
-func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration) error {
+func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration, statusReporter status.Reporter) error {
 	// Get list of currently installed items for dependency checking
+	statusReporter.Detail("Checking currently installed items...")
 	installedItems := getInstalledItemNames()
 
 	// Convert catalog.Item slice to string slice for processing
@@ -558,6 +600,8 @@ func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[in
 	for _, item := range items {
 		itemNames = append(itemNames, item.Name)
 	}
+
+	statusReporter.Detail(fmt.Sprintf("Processing %d items for installation...", len(itemNames)))
 	// Use the new advanced dependency processing
 	process.InstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg)
 
@@ -565,7 +609,7 @@ func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[in
 }
 
 // uninstallWithAdvancedLogic handles uninstalling with advanced dependency logic
-func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration) error {
+func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration, statusReporter status.Reporter) error {
 	// Get list of currently installed items for dependency checking
 	installedItems := getInstalledItemNames()
 
