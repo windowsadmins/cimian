@@ -405,6 +405,31 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					return true, nil
 				}
 			}
+		} else if strings.ToLower(install.Type) == "directory" {
+			dirInfo, err := os.Stat(install.Path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					logging.Info("Required directory is missing, action needed",
+						"item", item.Name, "missingPath", install.Path)
+					return true, nil
+				}
+				logging.Warn("Unexpected error checking directory existence",
+					"item", item.Name, "path", install.Path, "error", err)
+				return false, err
+			}
+
+			// Check if path exists but is not a directory
+			if !dirInfo.IsDir() {
+				logging.Info("Path exists but is not a directory, action needed",
+					"item", item.Name, "path", install.Path)
+				return true, nil
+			}
+
+			if installType == "uninstall" && dirInfo != nil && dirInfo.IsDir() {
+				logging.Info("Directory present, uninstall required",
+					"item", item.Name, "path", install.Path)
+				return true, nil
+			}
 		}
 	}
 	logging.Debug("Install checks explicitly passed, no action needed", "item", item.Name)
