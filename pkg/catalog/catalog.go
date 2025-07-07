@@ -35,11 +35,14 @@ type Item struct {
 }
 
 // InstallItem holds details for the "installs" array.
+// Type can be "file" or "directory"
+// - "file": checks if file exists, optionally validates MD5 checksum and version
+// - "directory": checks if directory exists, if not installation is needed
 type InstallItem struct {
-	Type        string `yaml:"type"`
-	Path        string `yaml:"path"`
-	Version     string `yaml:"version"`
-	MD5Checksum string `yaml:"md5checksum"`
+	Type        string `yaml:"type"`        // "file" or "directory"
+	Path        string `yaml:"path"`        // Path to file or directory
+	Version     string `yaml:"version"`     // Expected version (file type only)
+	MD5Checksum string `yaml:"md5checksum"` // Expected MD5 hash (file type only)
 	ProductCode string `yaml:"product_code"`
 	UpgradeCode string `yaml:"upgrade_code"`
 }
