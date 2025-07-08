@@ -76,7 +76,17 @@ function Get-SigningCertThumbprint {
 # Function to ensure signtool is available
 function Test-SignTool {
 
-    # helper to prepend path only once
+    param(
+        [string[]]$PreferredArchOrder = @(
+            # Automatically pick the host arch first
+            $(if ($Env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'x64' }
+              elseif ($Env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' }
+              else { 'x86' }),
+            # Fallbacks in case the host arch build is missing
+            'x86', 'x64', 'arm64'
+        )
+    )
+
     function Add-ToPath([string]$dir) {
         if (-not [string]::IsNullOrWhiteSpace($dir) -and
             -not ($env:Path -split ';' | Where-Object { $_ -ieq $dir })) {
@@ -84,41 +94,37 @@ function Test-SignTool {
         }
     }
 
-    # already reachable?
-    if (Get-Command signtool.exe -EA SilentlyContinue) { return }
+    if (Get-Command signtool.exe -ErrorAction SilentlyContinue) { return }
 
-    # harvest possible SDK roots
     $roots = @(
         "${env:ProgramFiles}\Windows Kits\10\bin",
         "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
     )
 
-    # add KitsRoot10 from the registry (covers non-standard installs)
     try {
-        $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' `
-                     -EA Stop).KitsRoot10
+        $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -EA Stop).KitsRoot10
         if ($kitsRoot) { $roots += (Join-Path $kitsRoot 'bin') }
     } catch { }
 
     $roots = $roots | Where-Object { Test-Path $_ } | Select-Object -Unique
 
-    # scan every root for any architecture’s signtool.exe
     foreach ($root in $roots) {
-        $exe = Get-ChildItem -Path $root -Recurse -Filter signtool.exe -EA SilentlyContinue |
-               Sort-Object LastWriteTime -Desc | Select-Object -First 1
-        if ($exe) {
-            Add-ToPath $exe.Directory.FullName
-            Write-Log "signtool discovered at $($exe.FullName)" "SUCCESS"
-            return
+        foreach ($arch in $PreferredArchOrder) {
+            $candidate = Get-ChildItem -Path (Join-Path $root "*\$arch\signtool.exe") -EA SilentlyContinue |
+                         Sort-Object LastWriteTime -Desc | Select-Object -First 1
+            if ($candidate) {
+                Add-ToPath $candidate.Directory.FullName
+                Write-Log "signtool discovered at $($candidate.FullName)" "SUCCESS"
+                return
+            }
         }
     }
 
-    # graceful failure
     Write-Log @"
 signtool.exe not found.
 
 Install **any** Windows 10/11 SDK _or_ Visual Studio Build Tools  
-(choose a workload that includes **Windows SDK Signing Tools**),  
+(ensure the **Windows SDK Signing Tools** workload is included),  
 then run the build again.
 "@ "ERROR"
     exit 1
