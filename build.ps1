@@ -14,9 +14,8 @@
 #  ─Binaries      … build and sign only the .exe binaries, skip all packaging
 #
 # Usage examples:
-#   .\build.ps1                     # Full build with auto-signing
-#   .\build.ps1 -Binaries           # Build only binaries with auto-signing
-#   .\build.ps1 -Binaries -NoSign   # Build only binaries without signing
+#   .\build.ps1                      # Full build with auto-signing
+#   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
 param(
     [switch]$Sign,
