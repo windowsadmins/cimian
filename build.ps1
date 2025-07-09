@@ -11,12 +11,20 @@
 #  ─NoSign        … disable auto-signing even if enterprise cert is found
 #  ─Thumbprint XX … override auto-detection
 #  ─Task XX       … run specific task: build, package, all (default: all)
+#  ─Binaries      … build and sign only the .exe binaries, skip all packaging
+#
+# Usage examples:
+#   .\build.ps1                     # Full build with auto-signing
+#   .\build.ps1 -Binaries           # Build only binaries with auto-signing
+#   .\build.ps1 -Binaries -NoSign   # Build only binaries without signing
+#   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
 param(
     [switch]$Sign,
     [switch]$NoSign,
     [string]$Thumbprint,
     [ValidateSet("build", "package", "all")]
-    [string]$Task = "all"
+    [string]$Task = "all",
+    [switch]$Binaries
 )
 
 # ──────────────────────────  GLOBALS  ──────────────────────────
@@ -76,7 +84,17 @@ function Get-SigningCertThumbprint {
 # Function to ensure signtool is available
 function Test-SignTool {
 
-    # helper to prepend path only once
+    param(
+        [string[]]$PreferredArchOrder = @(
+            # Automatically pick the host arch first
+            $(if ($Env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'x64' }
+              elseif ($Env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' }
+              else { 'x86' }),
+            # Fallbacks in case the host arch build is missing
+            'x86', 'x64', 'arm64'
+        )
+    )
+
     function Add-ToPath([string]$dir) {
         if (-not [string]::IsNullOrWhiteSpace($dir) -and
             -not ($env:Path -split ';' | Where-Object { $_ -ieq $dir })) {
@@ -84,41 +102,37 @@ function Test-SignTool {
         }
     }
 
-    # already reachable?
-    if (Get-Command signtool.exe -EA SilentlyContinue) { return }
+    if (Get-Command signtool.exe -ErrorAction SilentlyContinue) { return }
 
-    # harvest possible SDK roots
     $roots = @(
         "${env:ProgramFiles}\Windows Kits\10\bin",
         "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
     )
 
-    # add KitsRoot10 from the registry (covers non-standard installs)
     try {
-        $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' `
-                     -EA Stop).KitsRoot10
+        $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -EA Stop).KitsRoot10
         if ($kitsRoot) { $roots += (Join-Path $kitsRoot 'bin') }
     } catch { }
 
     $roots = $roots | Where-Object { Test-Path $_ } | Select-Object -Unique
 
-    # scan every root for any architecture’s signtool.exe
     foreach ($root in $roots) {
-        $exe = Get-ChildItem -Path $root -Recurse -Filter signtool.exe -EA SilentlyContinue |
-               Sort-Object LastWriteTime -Desc | Select-Object -First 1
-        if ($exe) {
-            Add-ToPath $exe.Directory.FullName
-            Write-Log "signtool discovered at $($exe.FullName)" "SUCCESS"
-            return
+        foreach ($arch in $PreferredArchOrder) {
+            $candidate = Get-ChildItem -Path (Join-Path $root "*\$arch\signtool.exe") -EA SilentlyContinue |
+                         Sort-Object LastWriteTime -Desc | Select-Object -First 1
+            if ($candidate) {
+                Add-ToPath $candidate.Directory.FullName
+                Write-Log "signtool discovered at $($candidate.FullName)" "SUCCESS"
+                return
+            }
         }
     }
 
-    # graceful failure
     Write-Log @"
 signtool.exe not found.
 
 Install **any** Windows 10/11 SDK _or_ Visual Studio Build Tools  
-(choose a workload that includes **Windows SDK Signing Tools**),  
+(ensure the **Windows SDK Signing Tools** workload is included),  
 then run the build again.
 "@ "ERROR"
     exit 1
@@ -185,6 +199,12 @@ if (-not $Sign -and -not $NoSign -and -not $Thumbprint) {
     catch {
         Write-Log "Could not check for enterprise certificates: $_" "WARNING"
     }
+}
+
+# If Binaries flag is set, force Task to "build" and skip all packaging
+if ($Binaries) {
+    Write-Log "Binaries flag detected - will only build and sign .exe files, skipping all packaging." "INFO"
+    $Task = "build"
 }
 
 if ($NoSign) {
@@ -285,6 +305,183 @@ function signNuget {
 # ───────────────────────────────────────────────────
 #  BUILD PROCESS STARTS
 # ───────────────────────────────────────────────────
+
+# Early exit for binaries-only mode after basic setup
+if ($Binaries) {
+    Write-Log "Binaries-only mode: Starting minimal build process..." "INFO"
+    
+    # Only do essential checks for binaries mode
+    if (-not (Test-Command "go")) {
+        Write-Log "Go is not installed or not in PATH. Installing..." "INFO"
+        Install-Chocolatey
+        choco install go --no-progress --yes --force | Out-Null
+        
+        # Force environment reload
+        if ($env:ChocolateyInstall -and (Test-Path "$env:ChocolateyInstall\helpers\refreshenv.cmd")) {
+            & "$env:ChocolateyInstall\helpers\refreshenv.cmd"
+        }
+        
+        # Check common Go paths
+        $possibleGoPaths = @(
+            "C:\Program Files\Go\bin",
+            "C:\Go\bin",
+            "C:\ProgramData\chocolatey\bin"
+        )
+        
+        foreach ($p in $possibleGoPaths) {
+            if (Test-Path (Join-Path $p "go.exe")) {
+                $env:Path = "$p;$env:Path"
+                break
+            }
+        }
+        
+        if (-not (Test-Command "go")) {
+            Write-Log "Go installation failed. Exiting..." "ERROR"
+            exit 1
+        }
+    }
+    
+    # Set version for binaries (inline to avoid function dependency)
+    $fullVersion     = Get-Date -Format "yyyy.MM.dd"
+    $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
+    $env:RELEASE_VERSION   = $fullVersion
+    $env:SEMANTIC_VERSION  = $semanticVersion
+    Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
+    Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
+    
+    # Tidy modules
+    go mod tidy
+    go mod download
+    
+    # Build binaries
+    Write-Log "Building binaries for x64 and arm64..." "INFO"
+    
+    # Clean and create bin directories
+    if (Test-Path "bin") {
+        Remove-Item -Path "bin\*" -Recurse -Force
+    }
+    
+    # Create release directories
+    if (Test-Path "release") {
+        Remove-Item -Path "release\*" -Recurse -Force
+    } else {
+        New-Item -ItemType Directory -Path "release" -Force | Out-Null
+    }
+    
+    $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
+    $archs = @("x64", "arm64")
+    $goarchMap = @{
+        "x64"   = "amd64"
+        "arm64" = "arm64"
+    }
+    
+    foreach ($arch in $archs) {
+        $binArchDir = "bin\$arch"
+        $releaseArchDir = "release\$arch"
+        
+        if (-not (Test-Path $binArchDir)) {
+            New-Item -ItemType Directory -Path $binArchDir | Out-Null
+        }
+        if (-not (Test-Path $releaseArchDir)) {
+            New-Item -ItemType Directory -Path $releaseArchDir | Out-Null
+        }
+        
+        foreach ($dir in $binaryDirs) {
+            $binaryName = $dir.Name
+            Write-Log "Building $binaryName for $arch..." "INFO"
+            
+            # Get build info
+            try {
+                $branchName = (git rev-parse --abbrev-ref HEAD)
+            } catch {
+                $branchName = "main"
+            }
+            
+            try {
+                $revision = (git rev-parse HEAD)
+            } catch {
+                $revision = "unknown"
+            }
+            
+            $buildDate = Get-Date -Format s
+            $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+                "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+                "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+                "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+                "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
+                "-X main.version=$env:RELEASE_VERSION"
+            
+            $env:GOARCH = $goarchMap[$arch]
+            $env:GOOS = "windows"
+            
+            $submoduleGoMod = Join-Path $dir.FullName "go.mod"
+            $outputPath = "bin\$arch\$binaryName.exe"
+            
+            if (Test-Path $submoduleGoMod) {
+                Push-Location $dir.FullName
+                try {
+                    go mod tidy
+                    go mod download
+                    if ($binaryName -eq "cimianstatus") {
+                        $env:CGO_ENABLED = "1"
+                        go build -v -o "..\..\$outputPath" -ldflags="$ldflags -H windowsgui" .
+                        $env:CGO_ENABLED = "0"
+                    } else {
+                        go build -v -o "..\..\$outputPath" -ldflags="$ldflags" .
+                    }
+                    
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
+                    }
+                } catch {
+                    Write-Log "Failed to build submodule $binaryName ($arch). Error: $_" "ERROR"
+                    Pop-Location
+                    exit 1
+                }
+                Pop-Location
+            } else {
+                try {
+                    go build -v -o "$outputPath" -ldflags="$ldflags" "./cmd/$binaryName"
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Build failed for $binaryName ($arch) with exit code $LASTEXITCODE."
+                    }
+                } catch {
+                    Write-Log "Failed to build $binaryName ($arch). Error: $_" "ERROR"
+                    exit 1
+                }
+            }
+            
+            # Copy to release directory
+            Copy-Item "bin\$arch\$binaryName.exe" "release\$arch\$binaryName.exe"
+            Write-Log "$binaryName ($arch) built and copied to release folder." "SUCCESS"
+        }
+    }
+    
+    # Sign binaries if signing is enabled
+    if ($Sign) {
+        Test-SignTool
+        Write-Log "Signing all EXEs in release folders..." "INFO"
+        
+        foreach ($arch in $archs) {
+            Get-ChildItem -Path "release\$arch\*.exe" | ForEach-Object {
+                try {
+                    signPackage -FilePath $_.FullName
+                    Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                } catch {
+                    Write-Log "Failed to sign $($_.FullName). $_" "ERROR"
+                    exit 1
+                }
+            }
+        }
+    }
+    
+    Write-Log "Binaries-only build completed successfully." "SUCCESS"
+    Write-Log "Built binaries are available in:" "INFO"
+    Get-ChildItem -Path "release" -Recurse -Filter "*.exe" | ForEach-Object {
+        Write-Host "  $($_.FullName)"
+    }
+    exit 0
+}
 
 # Step 0: Clean Release Directory Before Build
 Write-Log "Cleaning existing release directory..." "INFO"
