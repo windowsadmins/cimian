@@ -22,6 +22,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
+	"github.com/windowsadmins/cimian/pkg/filter"
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
@@ -99,6 +100,10 @@ func main() {
 		logger.Fatal("Error initializing logger: %v", err)
 	}
 	defer logging.CloseLogger()
+
+	// Initialize item filter
+	itemFilter := filter.NewItemFilter(logger)
+	itemFilter.RegisterFlags()
 
 	// Handle --version flag.
 	if *versionFlag {
@@ -242,6 +247,15 @@ func main() {
 		statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
 		logger.Error("Failed to retrieve manifests: %v", mErr)
 		os.Exit(1)
+	}
+
+	// Apply item filter if specified
+	manifestItems = itemFilter.Apply(manifestItems)
+
+	// Override checkonly mode if item filter is active
+	if itemFilter.ShouldOverrideCheckOnly() {
+		*checkOnly = false
+		logger.Info("--item flag specified, overriding --checkonly mode")
 	}
 
 	statusReporter.Detail("Loading catalog data...")
