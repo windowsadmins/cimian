@@ -96,3 +96,8 @@ func (f *ItemFilter) HasFilter() bool {
 func (f *ItemFilter) ShouldOverrideCheckOnly() bool {
 	return f.HasFilter()
 }
+
+// SetLogger allows updating the logger after initialization
+func (f *ItemFilter) SetLogger(logger *logging.Logger) {
+	f.logger = logger
+}
