@@ -322,24 +322,28 @@ func main() {
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)
 	allToInstall = append(allToInstall, toUpdate...)
+	var installSuccess bool = true
 	if len(allToInstall) > 0 {
 		statusReporter.Message("Installing and updating applications...")
 		statusReporter.Percent(0) // Start progress tracking
 		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg, statusReporter); err != nil {
-			statusReporter.Error(fmt.Errorf("failed installing items: %v", err))
-			logger.Error("Failed installing items: %v", err)
+			statusReporter.Error(fmt.Errorf("some installations failed: %v", err))
+			logger.Warning("Some items failed to install, continuing with remaining operations: %v", err)
+			installSuccess = false
 		} else {
 			statusReporter.Percent(50) // Mid-way progress
 		}
 	}
 
 	// Process uninstalls.
+	var uninstallSuccess bool = true
 	if len(toUninstall) > 0 {
 		statusReporter.Message("Removing applications...")
 		statusReporter.Percent(75) // Progress at 75%
 		if err := uninstallWithAdvancedLogic(toUninstall, fullCatalogMap, cfg, statusReporter); err != nil {
-			statusReporter.Error(fmt.Errorf("failed uninstalling items: %v", err))
-			logger.Error("Failed uninstalling items: %v", err)
+			statusReporter.Error(fmt.Errorf("some uninstalls failed: %v", err))
+			logger.Warning("Some items failed to uninstall, continuing with remaining operations: %v", err)
+			uninstallSuccess = false
 		}
 	}
 
@@ -351,7 +355,17 @@ func main() {
 		}
 	}
 
-	logger.Info("Software updates completed")
+	// Log summary of operations
+	if installSuccess && uninstallSuccess {
+		logger.Info("Software updates completed successfully")
+	} else if !installSuccess && !uninstallSuccess {
+		logger.Warning("Software updates completed with some failures in both installations and uninstalls")
+	} else if !installSuccess {
+		logger.Warning("Software updates completed with some installation failures")
+	} else {
+		logger.Warning("Software updates completed with some uninstall failures")
+	}
+
 	statusReporter.Message("Finalizing installation...")
 	statusReporter.Percent(90)
 
@@ -499,6 +513,7 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 }
 
 // uninstallCatalogItems loops over the items and uninstalls each.
+// Continues with remaining items even if some fail, only returns error if ALL fail
 func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) error {
 	_ = cfg // dummy reference to suppress "unused parameter" warning
 
@@ -506,14 +521,33 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 		logging.Debug("No items to uninstall.")
 		return nil
 	}
+
 	logging.Info("Starting batch uninstall of items", "count", len(items))
+	var failedItems []string
+	var successCount int
+
 	for _, item := range items {
 		_, err := installer.Install(item, "uninstall", "", cfg.CachePath, cfg.CheckOnly, cfg)
 		if err != nil {
-			return fmt.Errorf("failed uninstalling '%s': %w", item.Name, err)
+			logger.Error("Failed to uninstall item, continuing with others: %s, error: %v", item.Name, err)
+			failedItems = append(failedItems, item.Name)
+		} else {
+			logging.Info("Uninstall successful", "item", item.Name)
+			successCount++
 		}
-		logging.Info("Uninstall successful", "item", item.Name)
 	}
+
+	// Log summary of results
+	if len(failedItems) > 0 {
+		logger.Warning("Uninstall summary: %d succeeded, %d failed out of %d total items", successCount, len(failedItems), len(items))
+		// Only return error if ALL items failed
+		if successCount == 0 {
+			return fmt.Errorf("all %d items failed to uninstall: %v", len(items), failedItems)
+		}
+	} else {
+		logger.Info("All %d items uninstalled successfully", successCount)
+	}
+
 	return nil
 }
 
@@ -634,15 +668,20 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 	// Download each item and retrieve precise downloaded file paths
 	downloadedPaths, err := download.InstallPendingUpdates(downloadItems, cfg)
 	if err != nil {
-		logger.Error("Error downloading pending updates: %v", err)
-		return err
+		logger.Warning("Some downloads may have failed, attempting installation with available files: %v", err)
+		// Continue with whatever was downloaded successfully
+		if downloadedPaths == nil {
+			downloadedPaths = make(map[string]string)
+		}
 	}
 
+	var successCount, failCount int
 	// Perform installation for each item using the correct paths
 	for _, cItem := range items {
 		localFile, exists := downloadedPaths[cItem.Name]
 		if !exists {
 			logger.Error("Downloaded path not found for item: %s", cItem.Name)
+			failCount++
 			continue
 		}
 
@@ -650,8 +689,17 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 
 		if err := installOneCatalogItem(cItem, localFile, cfg); err != nil {
 			logger.Error("Installation command failed: %s, error: %v", cItem.Name, err)
+			failCount++
 			continue
 		}
+		successCount++
+	}
+
+	// Log summary
+	if failCount > 0 {
+		logger.Warning("Installation summary: %d succeeded, %d failed out of %d total items", successCount, failCount, len(items))
+	} else {
+		logger.Info("All %d items installed successfully", successCount)
 	}
 
 	return nil
