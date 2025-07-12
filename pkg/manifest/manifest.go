@@ -48,6 +48,9 @@ type Item struct {
 	// The new “installs” array for file checks:
 	Installs []InstallDetail `yaml:"installs,omitempty"`
 
+	// OnDemand functionality - items that can be run multiple times and never considered "installed"
+	OnDemand bool `yaml:"OnDemand,omitempty"`
+
 	// Add a field to record if the item is for install/update/uninstall
 	Action string `yaml:"-"` // internal use
 }
@@ -63,6 +66,10 @@ type CatalogEntry struct {
 		Type     string `yaml:"type"`
 		Size     int64  `yaml:"size"`
 	} `yaml:"installer"`
+
+	// OnDemand functionality - items that can be run multiple times and never considered "installed"
+	OnDemand bool `yaml:"OnDemand,omitempty"`
+
 	// Add fields like category, developer, dependencies, etc. if needed
 }
 
@@ -221,6 +228,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					InstallerLocation: catEntry.Installer.Location,
 					Catalogs:          mf.Catalogs,
 					SupportedArch:     catEntry.SupportedArch,
+					OnDemand:          catEntry.OnDemand,
 					Action:            "install", // or "install"
 				})
 			}
@@ -252,6 +260,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					InstallerLocation: catEntry.Installer.Location,
 					Catalogs:          mf.Catalogs,
 					SupportedArch:     catEntry.SupportedArch,
+					OnDemand:          catEntry.OnDemand,
 					Action:            "update",
 				})
 			}
@@ -283,6 +292,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					InstallerLocation: catEntry.Installer.Location,
 					Catalogs:          mf.Catalogs,
 					SupportedArch:     catEntry.SupportedArch,
+					OnDemand:          catEntry.OnDemand,
 					Action:            "optional",
 				})
 			}
@@ -316,6 +326,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					InstallerLocation: catEntry.Installer.Location, // or catEntry.UninstallerLocation if you store that
 					Catalogs:          mf.Catalogs,
 					SupportedArch:     catEntry.SupportedArch,
+					OnDemand:          catEntry.OnDemand,
 					Action:            "uninstall",
 				})
 			}

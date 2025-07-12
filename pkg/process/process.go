@@ -228,12 +228,20 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 					continue
 				}
 
-				installerInstall(validDependency, "install", "", cachePath, CheckOnly, cfg)
+				if isOnDemandItem(validDependency) {
+					handleOnDemandInstall(validDependency, cachePath, CheckOnly, cfg)
+				} else {
+					installerInstall(validDependency, "install", "", cachePath, CheckOnly, cfg)
+				}
 			}
 		}
 
 		// Install the item
-		installerInstall(validItem, "install", "", cachePath, CheckOnly, cfg)
+		if isOnDemandItem(validItem) {
+			handleOnDemandInstall(validItem, cachePath, CheckOnly, cfg)
+		} else {
+			installerInstall(validItem, "install", "", cachePath, CheckOnly, cfg)
+		}
 	}
 }
 
@@ -271,7 +279,11 @@ func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, _, c
 			logging.Debug("Package installer URL", "url", validItem.Installer.Location)
 		}
 
-		installerInstall(validItem, "update", "", cachePath, CheckOnly, cfg)
+		if isOnDemandItem(validItem) {
+			handleOnDemandInstall(validItem, cachePath, CheckOnly, cfg)
+		} else {
+			installerInstall(validItem, "update", "", cachePath, CheckOnly, cfg)
+		}
 	}
 }
 
@@ -417,13 +429,21 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 				continue
 			}
 
-			installerInstall(validDependency, "install", "", cachePath, checkOnly, cfg)
+			if isOnDemandItem(validDependency) {
+				handleOnDemandInstall(validDependency, cachePath, checkOnly, cfg)
+			} else {
+				installerInstall(validDependency, "install", "", cachePath, checkOnly, cfg)
+			}
 		}
 	}
 
 	// Install the main item
 	logging.Info("Installing main item", "item", itemName)
-	installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+	if isOnDemandItem(item) {
+		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
+	} else {
+		installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+	}
 
 	// Look for updates that should be applied after this install
 	updateList := catalog.LookForUpdates(itemName, catalogsMap)
@@ -668,9 +688,13 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 
 	// Install the main item
 	LogItemSource(itemName, "Installing item with advanced dependency logic")
-	_, err = installerInstall(item, "install", "", cachePath, checkOnly, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to install item %s: %v", itemName, err)
+	if isOnDemandItem(item) {
+		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
+	} else {
+		_, err = installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to install item %s: %v", itemName, err)
+		}
 	}
 
 	// Process 'update_for' items (items that are updates for this item)
@@ -863,4 +887,22 @@ func findUpdateItemsInstalled(itemName string, catalogsMap map[int]map[string]ca
 	}
 
 	return updateItems
+}
+
+// isOnDemandItem checks if an item has the OnDemand flag set
+func isOnDemandItem(item catalog.Item) bool {
+	return item.OnDemand
+}
+
+// handleOnDemandInstall handles the special case of OnDemand item installation
+func handleOnDemandInstall(item catalog.Item, cachePath string, checkOnly bool, cfg *config.Configuration) {
+	logging.Info("Processing OnDemand item", "item", item.Name)
+
+	// OnDemand items are always available for execution
+	_, err := installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+	if err != nil {
+		logging.Error("OnDemand item execution failed", "item", item.Name, "error", err)
+	} else {
+		logging.Info("OnDemand item executed successfully", "item", item.Name)
+	}
 }

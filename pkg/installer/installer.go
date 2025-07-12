@@ -22,6 +22,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/selfservice"
 	"github.com/windowsadmins/cimian/pkg/status"
 )
 
@@ -106,8 +107,19 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			return "", err
 		}
 
-		// On success, store the installed version
-		storeInstalledVersionInRegistry(item)
+		// For OnDemand items, do not store installed version in registry
+		// This allows them to be run repeatedly without being considered "installed"
+		if !item.OnDemand {
+			storeInstalledVersionInRegistry(item)
+		} else {
+			logging.Info("OnDemand item completed successfully (not marking as installed)", "item", item.Name)
+			// Remove OnDemand items from the self-service manifest after successful execution
+			if err := selfservice.RemoveFromSelfServiceInstalls(item.Name); err != nil {
+				logging.Warn("Failed to remove OnDemand item from self-service manifest",
+					"item", item.Name, "error", err)
+			}
+		}
+
 		logging.Info("Installed item successfully", "item", item.Name)
 		return "Installation success", nil
 
