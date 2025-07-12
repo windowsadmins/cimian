@@ -12,18 +12,21 @@
 #  ─Thumbprint XX … override auto-detection
 #  ─Task XX       … run specific task: build, package, all (default: all)
 #  ─Binaries      … build and sign only the .exe binaries, skip all packaging
+#  ─Install       … after building, install the MSI package (requires elevation)
 #
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing
 #   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
+#   .\build.ps1 -Install             # Build and install the MSI package
 param(
     [switch]$Sign,
     [switch]$NoSign,
     [string]$Thumbprint,
     [ValidateSet("build", "package", "all")]
     [string]$Task = "all",
-    [switch]$Binaries
+    [switch]$Binaries,
+    [switch]$Install
 )
 
 # ──────────────────────────  GLOBALS  ──────────────────────────
@@ -206,6 +209,18 @@ if ($Binaries) {
     $Task = "build"
 }
 
+# If Install flag is set with Binaries, show error
+if ($Install -and $Binaries) {
+    Write-Log "Cannot use -Install with -Binaries flag. MSI packages are needed for installation." "ERROR"
+    exit 1
+}
+
+# If Install flag is set, ensure Task includes packaging
+if ($Install -and $Task -eq "build") {
+    Write-Log "Install flag detected - forcing Task to 'all' to ensure MSI packages are built." "INFO"
+    $Task = "all"
+}
+
 if ($NoSign) {
     Write-Log "NoSign parameter specified - skipping all signing." "INFO"
     $Sign = $false
@@ -298,6 +313,83 @@ function signNuget {
 
     if ($LASTEXITCODE) { throw "nuget sign failed ($LASTEXITCODE)" }
     Write-Log "NuGet repo signature complete." "SUCCESS"
+}
+
+# Function to install MSI package with elevation
+function Install-MsiPackage {
+    param (
+        [Parameter(Mandatory)]
+        [string]$MsiPath
+    )
+
+    if (-not (Test-Path $MsiPath)) {
+        Write-Log "MSI package not found at '$MsiPath'" "ERROR"
+        return $false
+    }
+
+    Write-Log "Installing MSI package: $MsiPath" "INFO"
+
+    # Check if we're already running as administrator
+    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")
+
+    if ($isAdmin) {
+        Write-Log "Already running with administrator privileges. Installing directly..." "INFO"
+        try {
+            $installProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$MsiPath`"", "/qn", "/l*v", "`"$env:TEMP\cimian_install.log`"" -Wait -PassThru
+            if ($installProcess.ExitCode -eq 0) {
+                Write-Log "MSI installation completed successfully." "SUCCESS"
+                return $true
+            } else {
+                Write-Log "MSI installation failed with exit code $($installProcess.ExitCode). Check log: $env:TEMP\cimian_install.log" "ERROR"
+                return $false
+            }
+        }
+        catch {
+            Write-Log "Failed to install MSI: $_" "ERROR"
+            return $false
+        }
+    }
+
+    # Not running as admin - try elevation methods
+    Write-Log "Administrator privileges required for installation. Attempting elevation..." "INFO"
+
+    # Method 1: Try sudo (if available)
+    if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
+        Write-Log "Using 'sudo' for elevation..." "INFO"
+        try {
+            $sudoArgs = @("msiexec.exe", "/i", "`"$MsiPath`"", "/qn", "/l*v", "`"$env:TEMP\cimian_install.log`"")
+            $sudoProcess = Start-Process -FilePath "sudo" -ArgumentList $sudoArgs -Wait -PassThru
+            if ($sudoProcess.ExitCode -eq 0) {
+                Write-Log "MSI installation completed successfully via sudo." "SUCCESS"
+                return $true
+            } else {
+                Write-Log "MSI installation via sudo failed with exit code $($sudoProcess.ExitCode)" "WARNING"
+            }
+        }
+        catch {
+            Write-Log "Failed to use sudo for installation: $_" "WARNING"
+        }
+    }
+
+    # Method 2: Launch elevated PowerShell session
+    Write-Log "Launching elevated PowerShell session for installation..." "INFO"
+    try {
+        $installCommand = "Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '`"$MsiPath`"', '/qn', '/l*v', '`"$env:TEMP\cimian_install.log`"' -Wait -PassThru | ForEach-Object { if (`$_.ExitCode -eq 0) { Write-Host 'Installation completed successfully.' } else { Write-Host 'Installation failed with exit code' `$_.ExitCode; exit `$_.ExitCode } }"
+        
+        $elevatedProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $installCommand -Verb RunAs -Wait -PassThru
+        
+        if ($elevatedProcess.ExitCode -eq 0) {
+            Write-Log "MSI installation completed successfully via elevated session." "SUCCESS"
+            return $true
+        } else {
+            Write-Log "MSI installation via elevated session failed with exit code $($elevatedProcess.ExitCode). Check log: $env:TEMP\cimian_install.log" "ERROR"
+            return $false
+        }
+    }
+    catch {
+        Write-Log "Failed to launch elevated session for installation: $_" "ERROR"
+        return $false
+    }
 }
 
 
@@ -986,16 +1078,76 @@ foreach ($arch in $archs) {
         Write-Log "Setup file '$msiFile' does not exist. Skipping IntuneWin package preparation for $arch." "WARNING"
         continue
     }
+
+    Write-Log "Creating IntuneWin package for $arch architecture..." "INFO"
+    
+    # Check if IntuneWinAppUtil is available
+    if (-not (Get-Command "IntuneWinAppUtil.exe" -ErrorAction SilentlyContinue)) {
+        Write-Log "IntuneWinAppUtil.exe not found. Ensure it's installed via Chocolatey." "ERROR"
+        exit 1
+    }
+
+    # Remove any existing .intunewin files that might conflict
+    $existingIntunewin = Get-ChildItem -Path $outputFolder -Filter "Cimian-$arch-*.intunewin" -ErrorAction SilentlyContinue
+    if ($existingIntunewin) {
+        Write-Log "Removing existing .intunewin files for $arch to prevent conflicts..." "INFO"
+        $existingIntunewin | Remove-Item -Force
+    }
+
     try {
-        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "build\intunewin.ps1" -SetupFolder $outputFolder -SetupFile $msiFile -OutputFolder $outputFolder
-        if ($latestIntuneWin -and ($latestIntuneWin.Name -notlike "*$arch*")) {
-            Move-Item $latestIntuneWin.FullName $intunewinOutput -Force
+        # Create the IntuneWin package directly with proper output handling
+        Write-Log "Running IntuneWinAppUtil for $arch MSI..." "INFO"
+        
+        # Use Start-Process with proper output redirection to avoid terminal issues
+        $intuneArgs = @(
+            "-c", "`"$outputFolder`""
+            "-s", "`"$msiFile`""
+            "-o", "`"$outputFolder`""
+            "-q"  # Quiet mode
+        )
+        
+        $intuneProcess = Start-Process -FilePath "IntuneWinAppUtil.exe" -ArgumentList $intuneArgs -Wait -NoNewWindow -PassThru -RedirectStandardOutput "$env:TEMP\intune_$arch.log" -RedirectStandardError "$env:TEMP\intune_$arch_err.log"
+        
+        if ($intuneProcess.ExitCode -eq 0) {
+            Write-Log "IntuneWinAppUtil completed successfully for $arch." "SUCCESS"
+            
+            # Find the generated .intunewin file and rename it if needed
+            $generatedFile = Get-ChildItem -Path $outputFolder -Filter "*.intunewin" | 
+                             Where-Object { $_.Name -like "*$([System.IO.Path]::GetFileNameWithoutExtension($msiFile))*" } |
+                             Sort-Object LastWriteTime -Descending | 
+                             Select-Object -First 1
+            
+            if ($generatedFile -and $generatedFile.FullName -ne $intunewinOutput) {
+                Write-Log "Renaming generated file to match expected naming convention..." "INFO"
+                Move-Item $generatedFile.FullName $intunewinOutput -Force
+            }
+            
+            if (Test-Path $intunewinOutput) {
+                Write-Log "IntuneWin package created successfully: $intunewinOutput" "SUCCESS"
+            } else {
+                Write-Log "IntuneWin package was created but not found at expected location." "WARNING"
+            }
+        } else {
+            Write-Log "IntuneWinAppUtil failed for $arch with exit code $($intuneProcess.ExitCode)" "ERROR"
+            
+            # Show error details if available
+            if (Test-Path "$env:TEMP\intune_$arch_err.log") {
+                $errorContent = Get-Content "$env:TEMP\intune_$arch_err.log" -Raw
+                if ($errorContent.Trim()) {
+                    Write-Log "Error details: $errorContent" "ERROR"
+                }
+            }
+            exit 1
         }
-        Write-Log ("IntuneWin package prepared for {0}: {1}" -f $arch, $intunewinOutput) "SUCCESS"
     }
     catch {
         Write-Log "IntuneWin package preparation failed for $arch. Error: $_" "ERROR"
         exit 1
+    }
+    finally {
+        # Clean up temporary log files
+        Remove-Item "$env:TEMP\intune_$arch.log" -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\intune_$arch_err.log" -ErrorAction SilentlyContinue
     }
 }
 
@@ -1016,6 +1168,47 @@ else {
 Write-Log "Verification complete." "SUCCESS"
 
 Write-Log "Build and packaging process completed successfully." "SUCCESS"
+
+# Step 15: Install MSI Package if requested
+if ($Install) {
+    Write-Log "Install flag detected. Attempting to install MSI package..." "INFO"
+    
+    # Determine the current architecture for installation
+    $currentArch = if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") { "x64" } else { "arm64" }
+    $msiToInstall = "release\Cimian-$currentArch-$env:RELEASE_VERSION.msi"
+    
+    # Check if the MSI for current architecture exists
+    if (-not (Test-Path $msiToInstall)) {
+        Write-Log "MSI package for current architecture ($currentArch) not found at '$msiToInstall'" "WARNING"
+        
+        # Try the other architecture as fallback
+        $fallbackArch = if ($currentArch -eq "x64") { "arm64" } else { "x64" }
+        $fallbackMsi = "release\Cimian-$fallbackArch-$env:RELEASE_VERSION.msi"
+        
+        if (Test-Path $fallbackMsi) {
+            Write-Log "Using fallback MSI for $fallbackArch architecture: $fallbackMsi" "INFO"
+            $msiToInstall = $fallbackMsi
+        } else {
+            Write-Log "No MSI packages found for installation. Available files in release:" "ERROR"
+            Get-ChildItem -Path "release" -Filter "*.msi" | ForEach-Object { 
+                Write-Log "  $($_.Name)" "INFO" 
+            }
+            Write-Log "Installation aborted." "ERROR"
+            exit 1
+        }
+    }
+    
+    # Attempt to install the MSI
+    $installSuccess = Install-MsiPackage -MsiPath $msiToInstall
+    
+    if ($installSuccess) {
+        Write-Log "Cimian has been successfully installed!" "SUCCESS"
+        Write-Log "You can now use the Cimian tools from the command line." "INFO"
+    } else {
+        Write-Log "Installation failed. Please check the installation log at $env:TEMP\cimian_install.log for details." "ERROR"
+        exit 1
+    }
+}
 
 # Step 14: Clean Up Temporary Files
 function Remove-TempFiles {
