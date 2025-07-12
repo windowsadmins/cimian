@@ -38,7 +38,7 @@ type InstallItem struct {
 	Version     string `yaml:"version,omitempty"`
 }
 
-// PkgsInfo matches your updated cimianimport pkginfo schema.// PkgsInfo matches your updated cimianimport pkginfo schema.
+// PkgsInfo matches your updated cimianimport pkginfo schema.
 type PkgsInfo struct {
 	Name                 string              `yaml:"name"`
 	DisplayName          string              `yaml:"display_name,omitempty"`
@@ -52,6 +52,8 @@ type PkgsInfo struct {
 	SupportedArch        []string            `yaml:"supported_architectures"`
 	UnattendedInstall    bool                `yaml:"unattended_install"`
 	UnattendedUninstall  bool                `yaml:"unattended_uninstall"`
+	MinOSVersion         string              `yaml:"minimum_os_version,omitempty"`
+	MaxOSVersion         string              `yaml:"maximum_os_version,omitempty"`
 	Installer            *Installer          `yaml:"installer,omitempty"`
 	Uninstaller          *Installer          `yaml:"uninstaller,omitempty"`
 	PreinstallScript     utils.LiteralString `yaml:"preinstall_script,omitempty"`
