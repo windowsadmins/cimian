@@ -400,6 +400,13 @@ func isNupkgInstalled(pkgID string) (bool, error) {
 
 // uninstallItem decides how to uninstall MSI/EXE/PS1/nupkg/msix.
 func uninstallItem(item catalog.Item, cachePath string) (string, error) {
+	// Check if the item is uninstallable
+	if !item.IsUninstallable() {
+		msg := fmt.Sprintf("Item %s is marked as not uninstallable", item.Name)
+		logging.Info(msg)
+		return msg, fmt.Errorf("%v", msg)
+	}
+
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
 	if _, err := os.Stat(absFile); os.IsNotExist(err) {

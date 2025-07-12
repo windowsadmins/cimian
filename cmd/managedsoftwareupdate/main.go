@@ -475,10 +475,13 @@ func identifyRemovals(localCatalogMap map[string]catalog.Item, _ *config.Configu
 			continue
 		}
 		// Only mark for removal if the catalog explicitly indicates it should be uninstalled.
-		// For example, if the Uninstaller field is non-empty or if an uninstall check is defined.
-		if catItem.Uninstaller.Location != "" || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "") {
+		// For example, if the Uninstaller field is non-empty, if an uninstall check is defined,
+		// or if the item is explicitly marked as uninstallable.
+		if (catItem.Uninstaller.Location != "" || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "")) && catItem.IsUninstallable() {
 			logging.Info("Catalog item marked for removal", "item", catItem.Name)
 			toRemove = append(toRemove, catItem)
+		} else if !catItem.IsUninstallable() {
+			logging.Info("Catalog item marked as not uninstallable, skipping removal", "item", catItem.Name)
 		}
 	}
 

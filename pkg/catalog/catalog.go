@@ -39,6 +39,9 @@ type Item struct {
 	// OnDemand functionality - items that can be run multiple times and never considered "installed"
 	OnDemand bool `yaml:"OnDemand,omitempty"` // If true, item can be run on-demand and is never considered installed
 
+	// Uninstallability - whether the package can be uninstalled
+	Uninstallable *bool `yaml:"uninstallable,omitempty"` // If explicitly false, uninstall will be skipped; if nil, auto-determined
+
 	// Traceability fields - not persisted to YAML, used for runtime tracking
 	SourceManifest string   `yaml:"-"` // Which manifest this item came from
 	SourceType     string   `yaml:"-"` // "managed_installs", "managed_updates", "requires", "update_for", etc.
@@ -437,4 +440,44 @@ func (is ItemSource) GetSourceDescription() string {
 		description += " -> " + is.SourceChain[i]
 	}
 	return description
+}
+
+// IsUninstallable determines if an item can be uninstalled based on Munki-style logic
+// Returns true if the item can be uninstalled, false otherwise
+func (item Item) IsUninstallable() bool {
+	// If explicitly set, honor that setting
+	if item.Uninstallable != nil {
+		return *item.Uninstallable
+	}
+
+	// OnDemand items are never considered "installed" so can't be uninstalled
+	if item.OnDemand {
+		return false
+	}
+
+	// Auto-determine based on available uninstall methods:
+
+	// 1. If there's an explicit uninstaller defined
+	if item.Uninstaller.Location != "" {
+		return true
+	}
+
+	// 2. If installer type supports built-in uninstall (MSI, nupkg, MSIX)
+	switch strings.ToLower(item.Installer.Type) {
+	case "msi", "nupkg", "msix":
+		return true
+	}
+
+	// 3. If there are receipts/registry checks that could be used for removal
+	if item.Check.Registry.Name != "" && item.Check.Registry.Version != "" {
+		return true
+	}
+
+	// 4. If there are install items that could be removed
+	if len(item.Installs) > 0 {
+		return true
+	}
+
+	// Default to not uninstallable if no clear uninstall method available
+	return false
 }
