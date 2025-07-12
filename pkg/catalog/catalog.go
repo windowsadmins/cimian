@@ -36,6 +36,9 @@ type Item struct {
 	Requires  []string `yaml:"requires,omitempty"`   // Prerequisites that must be installed first
 	UpdateFor []string `yaml:"update_for,omitempty"` // Items this package is an update for
 
+	// OnDemand functionality - items that can be run multiple times and never considered "installed"
+	OnDemand bool `yaml:"OnDemand,omitempty"` // If true, item can be run on-demand and is never considered installed
+
 	// Traceability fields - not persisted to YAML, used for runtime tracking
 	SourceManifest string   `yaml:"-"` // Which manifest this item came from
 	SourceType     string   `yaml:"-"` // "managed_installs", "managed_updates", "requires", "update_for", etc.
