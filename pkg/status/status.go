@@ -124,7 +124,20 @@ func normalizeArch(arch string) string {
 //
 // Returns (bool, error) => bool means “true => perform action,” or “false => skip.”
 func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool, error) {
-	logging.Debug("CheckStatus starting", "item", catalogItem.Name, "installType", installType)
+	logging.Debug("CheckStatus starting", "item", catalogItem.Name, "installType", installType, "OnDemand", catalogItem.OnDemand)
+
+	// OnDemand items should always be available for installation/execution
+	// They are never considered "installed" so they can be run repeatedly
+	if catalogItem.OnDemand && (installType == "install" || installType == "update") {
+		logging.Info("OnDemand item requested - always available for execution", "item", catalogItem.Name)
+		return true, nil
+	}
+
+	// OnDemand items cannot be uninstalled since they're never considered "installed"
+	if catalogItem.OnDemand && installType == "uninstall" {
+		logging.Info("OnDemand item cannot be uninstalled (never marked as installed)", "item", catalogItem.Name)
+		return false, nil
+	}
 
 	if catalogItem.Check.Script != "" {
 		logging.Info("Checking status via script", "item", catalogItem.Name)

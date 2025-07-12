@@ -132,6 +132,7 @@ type PkgsInfo struct {
 	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
 	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
 	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
+	OnDemand             bool          `yaml:"OnDemand,omitempty"`
 	Installer            *Installer    `yaml:"installer,omitempty"`
 }
 
@@ -419,6 +420,7 @@ func main() {
 		versionString       string
 		unattendedInstall   bool
 		unattendedUninstall bool
+		onDemand            bool
 		newPkg              bool
 		minOSVersion        string
 		maxOSVersion        string
@@ -443,6 +445,7 @@ func main() {
 	flag.StringVar(&maxOSVersion, "maximum_os_version", "", "Maximum OS version supported")
 	flag.BoolVar(&unattendedInstall, "unattended_install", false, "Set 'unattended_install: true'")
 	flag.BoolVar(&unattendedUninstall, "unattended_uninstall", false, "Set 'unattended_uninstall: true'")
+	flag.BoolVar(&onDemand, "OnDemand", false, "Set 'OnDemand: true' - items that can be run multiple times and are never considered installed")
 	flag.BoolVar(&newPkg, "new", false, "Create a new pkginfo stub")
 	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags allowed)")
 	showMakePkgInfoVersion := flag.Bool("makepkginfo_version", false, "Print the version and exit.")
@@ -528,6 +531,7 @@ func main() {
 		InstallerType:     installerType,
 		Installs:          autoInstalls,
 		UnattendedInstall: unattendedInstall,
+		OnDemand:          onDemand,
 		MinOSVersion:      minOSVersion,
 		MaxOSVersion:      maxOSVersion,
 	}
