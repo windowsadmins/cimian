@@ -242,6 +242,10 @@ func main() {
 
 	// Retrieve manifests.
 	statusReporter.Message("Retrieving manifests...")
+
+	// Clear item sources tracking for this run
+	process.ClearItemSources()
+
 	manifestItems, mErr := manifest.AuthenticatedGet(cfg)
 	if mErr != nil {
 		statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))

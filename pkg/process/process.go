@@ -19,6 +19,48 @@ import (
 	"github.com/windowsadmins/cimian/pkg/manifest"
 )
 
+// Global map to track item sources for debugging and logging
+var itemSources = make(map[string]catalog.ItemSource)
+
+// SetItemSource records the source information for an item
+func SetItemSource(itemName, sourceManifest, sourceType string) {
+	itemSources[strings.ToLower(itemName)] = catalog.CreateItemSource(itemName, sourceManifest, sourceType)
+}
+
+// AddItemSourceChain adds to the source chain for dependency tracking
+func AddItemSourceChain(itemName, sourceType, sourceManifest, parentItem string) {
+	key := strings.ToLower(itemName)
+	if source, exists := itemSources[key]; exists {
+		source.AddToChain(sourceType, sourceManifest, parentItem)
+		itemSources[key] = source
+	} else {
+		// Create new source if it doesn't exist
+		source := catalog.CreateItemSource(itemName, sourceManifest, sourceType)
+		source.ParentItem = parentItem
+		itemSources[key] = source
+	}
+}
+
+// GetItemSource retrieves the source information for an item
+func GetItemSource(itemName string) (catalog.ItemSource, bool) {
+	source, exists := itemSources[strings.ToLower(itemName)]
+	return source, exists
+}
+
+// ClearItemSources clears the global item sources map - should be called at the start of each run
+func ClearItemSources() {
+	itemSources = make(map[string]catalog.ItemSource)
+}
+
+// LogItemSource logs the source information for an item if available
+func LogItemSource(itemName string, logMessage string) {
+	if source, exists := GetItemSource(itemName); exists {
+		logging.Info(logMessage, "item", itemName, "source", source.GetSourceDescription())
+	} else {
+		logging.Info(logMessage, "item", itemName, "source", "unknown")
+	}
+}
+
 // firstItem returns the first occurrence of an item in a map of catalogs
 func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (catalog.Item, error) {
 	// Get the keys in the map and sort them so we can loop over them in order
@@ -42,20 +84,31 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 		}
 	}
 
-	// Return an empty catalog item if we didn't already find and return a match
-	return catalog.Item{}, fmt.Errorf("did not find a valid item in any catalog; Item name: %v", itemName)
+	// Log source information when item is not found
+	if source, exists := GetItemSource(itemName); exists {
+		logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription())
+		return catalog.Item{}, fmt.Errorf("item %s not found in any catalog (source: %s)", itemName, source.GetSourceDescription())
+	}
+
+	// If no source information is available, provide generic error
+	logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing")
+	return catalog.Item{}, fmt.Errorf("item %s not found in any catalog (source: unknown)", itemName)
 }
 
 // Manifests iterates through manifests, processes items from managed arrays, and ensures manifest names are excluded.
 func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog.Item) (installs, uninstalls, updates []string) {
 	processedManifests := make(map[string]bool) // Track processed manifests to avoid loops
 
-	// Helper function to add valid catalog items to the target list
-	addValidItems := func(items []string, target *[]string) {
+	// Helper function to add valid catalog items to the target list and track their sources
+	addValidItems := func(items []string, target *[]string, sourceType, manifestName string) {
 		for _, item := range items {
 			if item == "" {
 				continue
 			}
+
+			// Set the source information for this item
+			SetItemSource(item, manifestName, sourceType)
+
 			// Validate against the catalog
 			valid := false
 			for _, catalog := range catalogsMap {
@@ -66,7 +119,7 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 				}
 			}
 			if !valid {
-				logging.Error("Item not found in catalog", "item", item)
+				LogItemSource(item, "Item not found in catalog")
 			}
 		}
 	}
@@ -80,11 +133,11 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 		}
 		processedManifests[manifestItem.Name] = true
 
-		// Process managed arrays only
-		addValidItems(manifestItem.ManagedInstalls, &installs)
-		addValidItems(manifestItem.ManagedUninstalls, &uninstalls)
-		addValidItems(manifestItem.ManagedUpdates, &updates)
-		addValidItems(manifestItem.OptionalInstalls, &installs)
+		// Process managed arrays with source tracking
+		addValidItems(manifestItem.ManagedInstalls, &installs, "managed_installs", manifestItem.Name)
+		addValidItems(manifestItem.ManagedUninstalls, &uninstalls, "managed_uninstalls", manifestItem.Name)
+		addValidItems(manifestItem.ManagedUpdates, &updates, "managed_updates", manifestItem.Name)
+		addValidItems(manifestItem.OptionalInstalls, &installs, "optional_installs", manifestItem.Name)
 
 		// Recursively process included manifests
 		for _, included := range manifestItem.Includes {
@@ -459,7 +512,7 @@ func InstallsWithDependencies(itemNames []string, catalogsMap map[int]map[string
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg); err != nil {
-			logging.Error("Failed to process install with dependency logic", "item", itemName, "error", err)
+			LogItemSource(itemName, "Failed to process install with advanced dependency logic")
 			return err
 		}
 	}
@@ -473,7 +526,7 @@ func UninstallsWithDependencies(itemNames []string, catalogsMap map[int]map[stri
 	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
 
 	// Track processed items to avoid infinite loops
-	processedUninstalls := make(map[string]bool)	// Process each item recursively with full dependency logic
+	processedUninstalls := make(map[string]bool) // Process each item recursively with full dependency logic
 	for _, itemName := range itemNames {
 		if err := processUninstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedUninstalls, cachePath, checkOnly, cfg); err != nil {
@@ -495,7 +548,7 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg); err != nil {
-			logging.Error("Failed to process install with advanced dependency logic", "item", itemName, "error", err)
+			LogItemSource(itemName, "Failed to process install with advanced dependency logic")
 			return err
 		}
 	}
@@ -513,7 +566,7 @@ func UninstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[str
 	for _, itemName := range itemNames {
 		if err := processUninstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedUninstalls, cachePath, checkOnly, cfg); err != nil {
-			logging.Error("Failed to process uninstall with advanced dependency logic", "item", itemName, "error", err)
+			LogItemSource(itemName, "Failed to process uninstall with advanced dependency logic")
 			return err
 		}
 	}
@@ -532,7 +585,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 		return nil
 	}
 
-	logging.Debug("Processing install with advanced dependency logic", "item", itemName)
+	LogItemSource(itemName, "Processing install with advanced dependency logic")
 
 	// Mark as processed early to avoid infinite recursion
 	processedInstalls[itemName] = true
@@ -540,7 +593,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	// Get the main item
 	item, err := firstItem(itemName, catalogsMap)
 	if err != nil {
-		logging.Error("Item not found in any catalog", "item", itemName)
+		LogItemSource(itemName, "Item not found in any catalog")
 		return fmt.Errorf("item %s not found in any catalog", itemName)
 	}
 
@@ -554,6 +607,9 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 		for _, req := range item.Requires {
 			reqItemName, reqVersion := catalog.SplitNameAndVersion(req)
 
+			// Track that this requirement came from the parent item
+			AddItemSourceChain(reqItemName, "requires", "dependency-chain", itemName)
+
 			// Check if requirement is already satisfied
 			if isRequirementSatisfied(reqItemName, reqVersion, installedItems, scheduledItems) {
 				logging.Debug("Requirement already satisfied", "item", itemName, "requirement", req)
@@ -561,7 +617,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 			}
 
 			// Recursively install the required item
-			logging.Info("Installing required dependency", "dependency", reqItemName, "for", itemName)
+			LogItemSource(reqItemName, "Installing required dependency")
 
 			if err := processInstallWithAdvancedLogic(reqItemName, catalogsMap, installedItems,
 				processedInstalls, cachePath, checkOnly, cfg); err != nil {
@@ -575,7 +631,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	}
 
 	// Install the main item
-	logging.Info("Installing item with advanced dependency logic", "item", itemName)
+	LogItemSource(itemName, "Installing item with advanced dependency logic")
 	_, err = installerInstall(item, "install", "", cachePath, checkOnly, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to install item %s: %v", itemName, err)
@@ -586,7 +642,10 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	if len(updateList) > 0 {
 		logging.Debug("Processing update_for items", "item", itemName, "updates", updateList)
 		for _, updateItem := range updateList {
-			logging.Info("Installing update item", "update", updateItem, "for", itemName)
+			// Track that this update item came from the parent item
+			AddItemSourceChain(updateItem, "update_for", "dependency-chain", itemName)
+
+			LogItemSource(updateItem, "Installing update item")
 
 			if err := processInstallWithAdvancedLogic(updateItem, catalogsMap, installedItems,
 				processedInstalls, cachePath, checkOnly, cfg); err != nil {
@@ -610,7 +669,7 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 		return nil
 	}
 
-	logging.Debug("Processing uninstall with advanced dependency logic", "item", itemName)
+	LogItemSource(itemName, "Processing uninstall with advanced dependency logic")
 
 	// Mark as processed early to avoid infinite recursion
 	processedUninstalls[itemName] = true
@@ -621,7 +680,10 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 		logging.Debug("Processing dependent items for removal", "item", itemName, "dependents", dependentItems)
 
 		for _, depItem := range dependentItems {
-			logging.Info("Removing dependent item first", "dependent", depItem, "required_by", itemName)
+			// Track that this dependent removal came from the parent item
+			AddItemSourceChain(depItem, "dependent_removal", "dependency-chain", itemName)
+
+			LogItemSource(depItem, "Removing dependent item first")
 
 			if err := processUninstallWithAdvancedLogic(depItem, catalogsMap, installedItems,
 				processedUninstalls, cachePath, checkOnly, cfg); err != nil {
@@ -637,7 +699,10 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 		logging.Debug("Processing update items for removal", "item", itemName, "updates", updateItems)
 
 		for _, updateItem := range updateItems {
-			logging.Info("Removing update item", "update", updateItem, "for", itemName)
+			// Track that this update removal came from the parent item
+			AddItemSourceChain(updateItem, "update_removal", "dependency-chain", itemName)
+
+			LogItemSource(updateItem, "Removing update item")
 
 			if err := processUninstallWithAdvancedLogic(updateItem, catalogsMap, installedItems,
 				processedUninstalls, cachePath, checkOnly, cfg); err != nil {

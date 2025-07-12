@@ -35,6 +35,11 @@ type Item struct {
 	// Advanced dependency support
 	Requires  []string `yaml:"requires,omitempty"`   // Prerequisites that must be installed first
 	UpdateFor []string `yaml:"update_for,omitempty"` // Items this package is an update for
+
+	// Traceability fields - not persisted to YAML, used for runtime tracking
+	SourceManifest string   `yaml:"-"` // Which manifest this item came from
+	SourceType     string   `yaml:"-"` // "managed_installs", "managed_updates", "requires", "update_for", etc.
+	SourceChain    []string `yaml:"-"` // Full dependency chain that led to this item
 }
 
 // InstallItem holds details for the "installs" array.
@@ -391,4 +396,42 @@ func SplitNameAndVersion(nameWithVersion string) (string, string) {
 
 	// No version found, return the whole string as name with empty version
 	return strings.TrimSpace(nameWithVersion), ""
+}
+
+// ItemSource tracks where an item came from for better debugging and logging
+type ItemSource struct {
+	ItemName       string   // The actual item name
+	SourceManifest string   // Which manifest file it originated from
+	SourceType     string   // "managed_installs", "managed_updates", "requires", "update_for", etc.
+	SourceChain    []string // Full dependency chain that led to this item
+	ParentItem     string   // If this is a dependency, what item required it
+}
+
+// CreateItemSource creates a new ItemSource for tracking
+func CreateItemSource(itemName, sourceManifest, sourceType string) ItemSource {
+	return ItemSource{
+		ItemName:       itemName,
+		SourceManifest: sourceManifest,
+		SourceType:     sourceType,
+		SourceChain:    []string{sourceType + ":" + sourceManifest},
+	}
+}
+
+// AddToChain adds a new link to the source chain
+func (is *ItemSource) AddToChain(sourceType, sourceManifest, parentItem string) {
+	is.SourceChain = append(is.SourceChain, sourceType+":"+sourceManifest+"->"+parentItem)
+	is.ParentItem = parentItem
+}
+
+// GetSourceDescription returns a human-readable description of the item's source
+func (is ItemSource) GetSourceDescription() string {
+	if len(is.SourceChain) == 1 {
+		return fmt.Sprintf("from %s in manifest '%s'", is.SourceType, is.SourceManifest)
+	}
+
+	description := fmt.Sprintf("from %s in manifest '%s'", is.SourceType, is.SourceManifest)
+	for i := 1; i < len(is.SourceChain); i++ {
+		description += " -> " + is.SourceChain[i]
+	}
+	return description
 }
