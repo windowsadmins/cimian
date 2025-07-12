@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -279,6 +280,9 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 
 // doChocoInstall runs choco install with the given nupkg file.
 func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
+	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
+	extractAndRunChocolateyBeforeInstall(filePath, item)
+
 	chocoLog := filepath.Join(cachePath, fmt.Sprintf("install_choco_%s.log", pkgID))
 	sourceDir := filepath.Dir(filePath)
 	cmdArgs := []string{
@@ -311,6 +315,9 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 
 // doChocoUpgrade runs choco upgrade with the given nupkg file.
 func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
+	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
+	extractAndRunChocolateyBeforeInstall(filePath, item)
+
 	chocoLog := filepath.Join(cachePath, fmt.Sprintf("upgrade_choco_%s.log", pkgID))
 	sourceDir := filepath.Dir(filePath)
 	cmdArgs := []string{
@@ -770,4 +777,90 @@ func hideConsoleWindow(cmd *exec.Cmd) {
 	if runtime.GOOS == "windows" && cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	}
+}
+
+// extractAndRunChocolateyBeforeInstall inspects a .nupkg file for chocolateyBeforeInstall.ps1
+// and runs it if found. This ensures preinstall scripts are always executed before installation,
+// providing consistent behavior regardless of Chocolatey's internal decision tree logic.
+//
+// Unlike Chocolatey's standard behavior which has complex conditions for when to run
+// chocolateyBeforeInstall.ps1, this function treats it as a mandatory preinstall script
+// that should always be executed if present in the package.
+func extractAndRunChocolateyBeforeInstall(nupkgPath string, item catalog.Item) error {
+	// Open the .nupkg file as a zip archive
+	r, err := zip.OpenReader(nupkgPath)
+	if err != nil {
+		logging.Debug("Failed to open .nupkg as zip", "file", nupkgPath, "error", err)
+		return nil // Not fatal - continue with installation
+	}
+	defer r.Close()
+
+	// Look for chocolateyBeforeInstall.ps1 in the tools/ directory
+	var beforeInstallFile *zip.File
+	for _, f := range r.File {
+		if strings.EqualFold(f.Name, "tools/chocolateyBeforeInstall.ps1") {
+			beforeInstallFile = f
+			break
+		}
+	}
+
+	if beforeInstallFile == nil {
+		logging.Debug("No chocolateyBeforeInstall.ps1 found in .nupkg", "file", nupkgPath, "item", item.Name)
+		return nil // No script to run
+	}
+
+	logging.Info("Found chocolateyBeforeInstall.ps1 in .nupkg, extracting and running", "item", item.Name)
+
+	// Extract the script content
+	rc, err := beforeInstallFile.Open()
+	if err != nil {
+		logging.Error("Failed to open chocolateyBeforeInstall.ps1 from .nupkg", "error", err)
+		return nil // Not fatal - continue with installation
+	}
+	defer rc.Close()
+	scriptContent, err := io.ReadAll(rc)
+	if err != nil {
+		logging.Error("Failed to read chocolateyBeforeInstall.ps1 content", "error", err)
+		return nil // Not fatal - continue with installation
+	}
+
+	// Skip empty scripts
+	if len(strings.TrimSpace(string(scriptContent))) == 0 {
+		logging.Debug("chocolateyBeforeInstall.ps1 is empty, skipping execution", "item", item.Name)
+		return nil
+	}
+
+	// Create a temporary script file
+	tempDir := os.TempDir()
+	tempScriptPath := filepath.Join(tempDir, fmt.Sprintf("chocolateyBeforeInstall_%s.ps1", item.Name))
+
+	err = os.WriteFile(tempScriptPath, scriptContent, 0644)
+	if err != nil {
+		logging.Error("Failed to write temporary chocolateyBeforeInstall.ps1 script", "error", err)
+		return nil // Not fatal - continue with installation
+	}
+	defer os.Remove(tempScriptPath) // Clean up
+
+	// Run the PowerShell script
+	logging.Info("Executing chocolateyBeforeInstall.ps1 script", "item", item.Name, "script", tempScriptPath)
+
+	cmdArgs := []string{
+		"-ExecutionPolicy", "Bypass",
+		"-NoProfile",
+		"-NonInteractive",
+		"-File", tempScriptPath,
+	}
+
+	out, err := runCMD(commandPs1, cmdArgs)
+	if err != nil {
+		logging.Error("chocolateyBeforeInstall.ps1 script execution failed",
+			"item", item.Name, "error", err, "output", out)
+		// Continue with installation even if preinstall script fails
+		// This matches Chocolatey's behavior for failed before scripts
+		return nil
+	}
+
+	logging.Info("chocolateyBeforeInstall.ps1 script completed successfully",
+		"item", item.Name, "output", strings.TrimSpace(out))
+	return nil
 }
