@@ -540,17 +540,35 @@ func UninstallsWithDependencies(itemNames []string, catalogsMap map[int]map[stri
 
 // InstallsWithAdvancedLogic processes installation of items with full dependency resolution
 // Recursively handles requires and update_for relationships
+// Returns error only if ALL items fail, continues processing other items if some fail
 func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
 	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
 	// Track processed items to avoid infinite loops
 	processedInstalls := make(map[string]bool)
+	var failedItems []string
+	var successCount int
+
 	// Process each item recursively with full dependency logic
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg); err != nil {
 			LogItemSource(itemName, "Failed to process install with advanced dependency logic")
-			return err
+			logging.Error("Failed to install item, continuing with others", "item", itemName, "error", err)
+			failedItems = append(failedItems, itemName)
+		} else {
+			successCount++
 		}
+	}
+
+	// Log summary of results
+	if len(failedItems) > 0 {
+		logging.Warn("Some items failed to install", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
+		// Only return error if ALL items failed
+		if successCount == 0 {
+			return fmt.Errorf("all %d items failed to install: %v", len(itemNames), failedItems)
+		}
+	} else {
+		logging.Info("All items installed successfully", "count", successCount)
 	}
 
 	return nil
@@ -558,17 +576,35 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 
 // UninstallsWithAdvancedLogic processes uninstalls with full dependency logic
 // This function handles dependency checking and proper removal ordering
+// Returns error only if ALL items fail, continues processing other items if some fail
 func UninstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
 	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
 	// Track processed items to avoid infinite loops
 	processedUninstalls := make(map[string]bool)
+	var failedItems []string
+	var successCount int
+
 	// Process each item recursively with full dependency logic
 	for _, itemName := range itemNames {
 		if err := processUninstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedUninstalls, cachePath, checkOnly, cfg); err != nil {
 			LogItemSource(itemName, "Failed to process uninstall with advanced dependency logic")
-			return err
+			logging.Error("Failed to uninstall item, continuing with others", "item", itemName, "error", err)
+			failedItems = append(failedItems, itemName)
+		} else {
+			successCount++
 		}
+	}
+
+	// Log summary of results
+	if len(failedItems) > 0 {
+		logging.Warn("Some items failed to uninstall", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
+		// Only return error if ALL items failed
+		if successCount == 0 {
+			return fmt.Errorf("all %d items failed to uninstall: %v", len(itemNames), failedItems)
+		}
+	} else {
+		logging.Info("All items uninstalled successfully", "count", successCount)
 	}
 
 	return nil
