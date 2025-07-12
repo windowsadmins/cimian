@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	goversion "github.com/hashicorp/go-version"
+	"github.com/shirou/gopsutil/v3/host"
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
@@ -153,6 +154,20 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			"item", catalogItem.Name,
 			"systemArch", sysArch,
 			"supportedArch", catalogItem.SupportedArch,
+		)
+		return false, nil
+	}
+
+	// Check OS version compatibility
+	osCompatible, err := SupportsOSVersion(catalogItem)
+	if err != nil {
+		logging.Warn("Failed to check OS version compatibility, proceeding anyway",
+			"item", catalogItem.Name, "error", err)
+	} else if !osCompatible {
+		logging.Warn("OS version incompatible, skipping",
+			"item", catalogItem.Name,
+			"minVersion", catalogItem.MinOSVersion,
+			"maxVersion", catalogItem.MaxOSVersion,
 		)
 		return false, nil
 	}
@@ -708,4 +723,100 @@ func checkValues(values []string) bool {
 		}
 	}
 	return haveName && haveVersion && haveUninstall
+}
+
+// GetWindowsVersion returns the Windows OS version in a format suitable for version comparison
+// Returns version strings like "10.0.19041" for Windows 10 build 19041
+func GetWindowsVersion() (string, error) {
+	if runtime.GOOS != "windows" {
+		return "", fmt.Errorf("not running on Windows")
+	}
+
+	info, err := host.Info()
+	if err != nil {
+		return "", fmt.Errorf("failed to get host info: %v", err)
+	}
+
+	// For Windows, gopsutil returns kernel version which maps to Windows version
+	// Windows 10/11 uses kernel version 10.0.x, Windows 8.1 uses 6.3.x, etc.
+	return info.KernelVersion, nil
+}
+
+// SupportsOSVersion checks if the current OS version is compatible with the catalog item
+func SupportsOSVersion(item catalog.Item) (bool, error) {
+	// If no OS version constraints are specified, assume compatible
+	if item.MinOSVersion == "" && item.MaxOSVersion == "" {
+		return true, nil
+	}
+
+	currentVersion, err := GetWindowsVersion()
+	if err != nil {
+		logging.Warn("Failed to get Windows version, assuming compatible",
+			"item", item.Name, "error", err)
+		return true, nil
+	}
+
+	// Check minimum OS version requirement
+	if item.MinOSVersion != "" {
+		compatible, err := isVersionCompatible(currentVersion, item.MinOSVersion, "minimum")
+		if err != nil {
+			logging.Warn("Failed to compare minimum OS version, assuming compatible",
+				"item", item.Name, "currentVersion", currentVersion,
+				"minVersion", item.MinOSVersion, "error", err)
+			return true, nil
+		}
+		if !compatible {
+			logging.Info("OS version too old for package",
+				"item", item.Name, "currentVersion", currentVersion,
+				"minVersion", item.MinOSVersion)
+			return false, nil
+		}
+	}
+
+	// Check maximum OS version requirement
+	if item.MaxOSVersion != "" {
+		compatible, err := isVersionCompatible(currentVersion, item.MaxOSVersion, "maximum")
+		if err != nil {
+			logging.Warn("Failed to compare maximum OS version, assuming compatible",
+				"item", item.Name, "currentVersion", currentVersion,
+				"maxVersion", item.MaxOSVersion, "error", err)
+			return true, nil
+		}
+		if !compatible {
+			logging.Info("OS version too new for package",
+				"item", item.Name, "currentVersion", currentVersion,
+				"maxVersion", item.MaxOSVersion)
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// isVersionCompatible compares current OS version against required version
+// For minimum: returns true if current >= required
+// For maximum: returns true if current <= required
+func isVersionCompatible(current, required, checkType string) (bool, error) {
+	currentNormalized := cimiversion.Normalize(current)
+	requiredNormalized := cimiversion.Normalize(required)
+
+	currentVer, err := goversion.NewVersion(currentNormalized)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse current OS version %s: %v", current, err)
+	}
+
+	requiredVer, err := goversion.NewVersion(requiredNormalized)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse required OS version %s: %v", required, err)
+	}
+
+	if checkType == "minimum" {
+		// For minimum version: current must be >= required
+		return !currentVer.LessThan(requiredVer), nil
+	} else if checkType == "maximum" {
+		// For maximum version: current must be <= required
+		return currentVer.LessThan(requiredVer) || currentVer.Equal(requiredVer), nil
+	}
+
+	return false, fmt.Errorf("invalid check type: %s", checkType)
 }
