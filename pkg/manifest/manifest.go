@@ -106,11 +106,14 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	var allManifests []ManifestFile
 	visitedManifests := make(map[string]bool)
 
-	// Start from just the main “client_identifier”
+	// Start from just the main "client_identifier"
 	manifestsToProcess := []string{cfg.ClientIdentifier}
 
-	// We’ll keep a global map of packageName => CatalogEntry
+	// We'll keep a global map of packageName => CatalogEntry
 	catalogMap := make(map[string]CatalogEntry)
+	
+	// Track all catalog names found in manifests to populate cfg.Catalogs
+	catalogNames := make(map[string]bool)
 
 	// BFS: process each named manifest
 	for len(manifestsToProcess) > 0 {
@@ -165,6 +168,10 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			if catName == "" {
 				continue
 			}
+			
+			// Track this catalog name for updating cfg.Catalogs
+			catalogNames[catName] = true
+			
 			catURL := fmt.Sprintf("%s/catalogs/%s.yaml",
 				strings.TrimRight(cfg.SoftwareRepoURL, "/"),
 				catName)
@@ -188,6 +195,8 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				key := strings.ToLower(ce.Name)
 				catalogMap[key] = ce
 			}
+			// Track the catalog name for final item processing
+			catalogNames[strings.ToLower(catName)] = true
 		}
 	}
 
@@ -332,6 +341,14 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			}
 		}
 	}
+
+	// Populate cfg.Catalogs with all catalog names found in manifests
+	var catalogList []string
+	for catName := range catalogNames {
+		catalogList = append(catalogList, catName)
+	}
+	cfg.Catalogs = catalogList
+	logging.Info("Updated config catalogs from manifests", "catalogs", cfg.Catalogs)
 
 	return finalItems, nil
 }
