@@ -235,6 +235,13 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return false, nil
 
 	case "uninstall":
+		// Check if item is uninstallable
+		if !catalogItem.IsUninstallable() {
+			logging.Info("Item is marked as not uninstallable, skipping",
+				"item", catalogItem.Name)
+			return false, nil
+		}
+
 		needed := localVersion != ""
 		logging.Debug("Uninstall decision based on local version",
 			"item", catalogItem.Name, "installed", needed)
