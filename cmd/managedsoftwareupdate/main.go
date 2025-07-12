@@ -69,6 +69,10 @@ func main() {
 	setBootstrapMode := pflag.Bool("set-bootstrap-mode", false, "Enable bootstrap mode for next boot.")
 	clearBootstrapMode := pflag.Bool("clear-bootstrap-mode", false, "Disable bootstrap mode.")
 
+	// Initialize item filter and register its flags before parsing
+	itemFilter := filter.NewItemFilter(nil) // logger will be set later
+	itemFilter.RegisterFlags()
+
 	// Count the number of -v flags.
 	var verbosity int
 	pflag.CountVarP(&verbosity, "verbose", "v", "Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)")
@@ -101,9 +105,8 @@ func main() {
 	}
 	defer logging.CloseLogger()
 
-	// Initialize item filter
-	itemFilter := filter.NewItemFilter(logger)
-	itemFilter.RegisterFlags()
+	// Update the item filter with the initialized logger
+	itemFilter.SetLogger(logger)
 
 	// Handle --version flag.
 	if *versionFlag {

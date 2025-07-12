@@ -195,8 +195,6 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				key := strings.ToLower(ce.Name)
 				catalogMap[key] = ce
 			}
-			// Track the catalog name for final item processing
-			catalogNames[strings.ToLower(catName)] = true
 		}
 	}
 
