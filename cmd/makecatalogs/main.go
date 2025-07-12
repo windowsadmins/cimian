@@ -199,7 +199,6 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 			return fmt.Errorf("creating %s: %v", outPath, err)
 		}
 
-		// Wrap items in a top-level key "items" => {"items": [...]}
 		catalogWrapper := struct {
 			Items []PkgsInfo `yaml:"items"`
 		}{
