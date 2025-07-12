@@ -125,6 +125,8 @@ type PkgsInfo struct {
 	Developer            string        `yaml:"developer,omitempty"`
 	InstallerType        string        `yaml:"installer_type,omitempty"`
 	UnattendedInstall    bool          `yaml:"unattended_install,omitempty"`
+	MinOSVersion         string        `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
+	MaxOSVersion         string        `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
 	Installs             []InstallItem `yaml:"installs,omitempty"`
 	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
 	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
@@ -398,7 +400,6 @@ func (m *multiStringSlice) Set(value string) error {
 }
 
 // main entry point
-var identifierFlag string
 var logger *logging.Logger
 
 func main() {
@@ -412,12 +413,15 @@ func main() {
 		category            string
 		developer           string
 		pkgName             string
+		identifierFlag      string
 		displayName         string
 		description         string
 		versionString       string
 		unattendedInstall   bool
 		unattendedUninstall bool
 		newPkg              bool
+		minOSVersion        string
+		maxOSVersion        string
 	)
 
 	// Multi-flag for -f
@@ -435,6 +439,8 @@ func main() {
 	flag.StringVar(&displayName, "displayname", "", "Display name override")
 	flag.StringVar(&description, "description", "", "Description")
 	flag.StringVar(&versionString, "version", "", "Version override")
+	flag.StringVar(&minOSVersion, "minimum_os_version", "", "Minimum OS version required")
+	flag.StringVar(&maxOSVersion, "maximum_os_version", "", "Maximum OS version supported")
 	flag.BoolVar(&unattendedInstall, "unattended_install", false, "Set 'unattended_install: true'")
 	flag.BoolVar(&unattendedUninstall, "unattended_uninstall", false, "Set 'unattended_uninstall: true'")
 	flag.BoolVar(&newPkg, "new", false, "Create a new pkginfo stub")
@@ -522,6 +528,8 @@ func main() {
 		InstallerType:     installerType,
 		Installs:          autoInstalls,
 		UnattendedInstall: unattendedInstall,
+		MinOSVersion:      minOSVersion,
+		MaxOSVersion:      maxOSVersion,
 	}
 
 	if installerPath != "" {

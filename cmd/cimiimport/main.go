@@ -46,6 +46,8 @@ type PkgsInfo struct {
 	SupportedArch        []string           `yaml:"supported_architectures"`
 	UnattendedInstall    bool               `yaml:"unattended_install"`
 	UnattendedUninstall  bool               `yaml:"unattended_uninstall"`
+	MinOSVersion         string             `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
+	MaxOSVersion         string             `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
 	Installer            *Installer         `yaml:"installer"`
 	Uninstaller          *Installer         `yaml:"uninstaller,omitempty"`
 	PreinstallScript     string             `yaml:"preinstall_script,omitempty"`
@@ -375,6 +377,10 @@ func main() {
 	// If user typed e.g. -uninstaller="C:\some\path"
 	uninstallerPath := otherFlags["uninstaller"]
 
+	// Extract OS version flags if provided
+	minOSVersion := otherFlags["minimum_os_version"]
+	maxOSVersion := otherFlags["maximum_os_version"]
+
 	// 6) Do the cimianImport
 	success, err := cimianImport(
 		packagePath, // the main installer
@@ -382,6 +388,8 @@ func main() {
 		scripts,     // your script paths
 		uninstallerPath,
 		filePaths, // the array from -i flags
+		minOSVersion,
+		maxOSVersion,
 	)
 	if err != nil {
 		logger.Error("Error in cimianImport: %v", err)
@@ -690,6 +698,8 @@ func cimianImport(
 	scripts ScriptPaths,
 	uninstallerPath string,
 	filePaths []string,
+	minOSVersion string,
+	maxOSVersion string,
 ) (bool, error) {
 
 	// Step 1: check file
@@ -786,6 +796,8 @@ func cimianImport(
 		SupportedArch: metadata.SupportedArch,
 		Catalogs:      metadata.Catalogs,
 		Installs:      []InstallItem{},
+		MinOSVersion:  minOSVersion,
+		MaxOSVersion:  maxOSVersion,
 
 		Installer: &Installer{
 			Hash:        fileHash,
@@ -1454,6 +1466,8 @@ Options:
   --repo_path=<path>            Override the Cimian repo path
   --arch=<arch>                 Override architecture (e.g. x64)
   --uninstaller=<path>          Specify an optional uninstaller
+  --minimum_os_version=<version> Minimum Windows version required (e.g. 10.0.19041)
+  --maximum_os_version=<version> Maximum Windows version supported (e.g. 11.0.22000)
   --install-check-script=<path> ...
   --uninstall-check-script=<path> ...
   --preinstall-script=<path>    ...

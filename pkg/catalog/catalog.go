@@ -29,6 +29,9 @@ type Item struct {
 	PreScript     utils.LiteralString `yaml:"preinstall_script"`
 	PostScript    utils.LiteralString `yaml:"postinstall_script"`
 	SupportedArch []string            `yaml:"supported_architectures"`
+	// OS version compatibility
+	MinOSVersion string `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
+	MaxOSVersion string `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
 	// Advanced dependency support
 	Requires  []string `yaml:"requires,omitempty"`   // Prerequisites that must be installed first
 	UpdateFor []string `yaml:"update_for,omitempty"` // Items this package is an update for
@@ -155,14 +158,14 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 
 // LookForUpdates searches for items that declare they are updates for the given item name.
 // This handles updates that aren't simply later versions of the same item.
-// For example, AdobeCameraRaw is an update for Adobe Photoshop, but doesn't update 
+// For example, AdobeCameraRaw is an update for Adobe Photoshop, but doesn't update
 // the version of Adobe Photoshop itself.
 // Returns a list of catalog item names that are updates for manifestitem.
 func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []string {
 	logging.Debug("Looking for updates for item", "item", itemName)
-	
+
 	var updateList []string
-	
+
 	// Look through all catalogs for items that have update_for pointing to our item
 	for _, catalog := range catalogMap {
 		for _, catalogItem := range catalog {
@@ -176,14 +179,14 @@ func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []strin
 			}
 		}
 	}
-	
+
 	// Remove duplicates
 	updateList = removeDuplicates(updateList)
-	
+
 	if len(updateList) > 0 {
 		logging.Debug("Found updates", "count", len(updateList), "updates", updateList, "for", itemName)
 	}
-	
+
 	return updateList
 }
 
@@ -192,13 +195,13 @@ func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []strin
 func LookForUpdatesForVersion(itemName, itemVersion string, catalogMap map[int]map[string]Item) []string {
 	nameAndVersion := fmt.Sprintf("%s-%s", itemName, itemVersion)
 	altNameAndVersion := fmt.Sprintf("%s--%s", itemName, itemVersion)
-	
+
 	updateList := LookForUpdates(nameAndVersion, catalogMap)
 	updateList = append(updateList, LookForUpdates(altNameAndVersion, catalogMap)...)
-	
+
 	// Remove duplicates
 	updateList = removeDuplicates(updateList)
-	
+
 	return updateList
 }
 
@@ -208,20 +211,20 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 	if len(item.Requires) == 0 {
 		return nil
 	}
-	
+
 	var missingDeps []string
-	
+
 	// Combine installed and scheduled items
 	allAvailableItems := append(installedItems, scheduledItems...)
-	
+
 	for _, reqItem := range item.Requires {
 		// Parse the requirement to handle versioned dependencies
 		reqName, reqVersion := SplitNameAndVersion(reqItem)
-		
+
 		satisfied := false
 		for _, availableItem := range allAvailableItems {
 			availableName, availableVersion := SplitNameAndVersion(availableItem)
-			
+
 			// Check if names match (case-insensitive)
 			if strings.EqualFold(availableName, reqName) {
 				// If no specific version required, any version satisfies
@@ -229,7 +232,7 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 					satisfied = true
 					break
 				}
-				
+
 				// If specific version required, check if it matches
 				if reqVersion != "" && availableVersion != "" {
 					// Simple exact version match for now
@@ -246,12 +249,12 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 				}
 			}
 		}
-		
+
 		if !satisfied {
 			missingDeps = append(missingDeps, reqItem)
 		}
 	}
-	
+
 	return missingDeps
 }
 
@@ -259,19 +262,19 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 // This is used during removal to determine what dependent items also need to be removed.
 func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []Item {
 	var dependentItems []Item
-	
+
 	// Check different name formats that might be used in requires
 	checkNames := []string{
 		itemName,
 		// TODO: Add versioned names if needed based on the item's version
 	}
-	
+
 	for _, catalog := range catalogMap {
 		for _, catalogItem := range catalog {
 			if len(catalogItem.Requires) > 0 {
 				for _, reqItem := range catalogItem.Requires {
 					reqName, _ := SplitNameAndVersion(reqItem)
-					
+
 					for _, checkName := range checkNames {
 						if strings.EqualFold(reqName, checkName) {
 							dependentItems = append(dependentItems, catalogItem)
@@ -283,7 +286,7 @@ func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []I
 			}
 		}
 	}
-	
+
 	return dependentItems
 }
 
@@ -291,7 +294,7 @@ func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []I
 // Returns the item and true if found, or an empty item and false if not found.
 func GetItemByName(itemName string, catalogMap map[int]map[string]Item) (Item, bool) {
 	itemNameLower := strings.ToLower(itemName)
-	
+
 	for _, catalog := range catalogMap {
 		for name, item := range catalog {
 			if strings.ToLower(name) == itemNameLower {
@@ -299,7 +302,7 @@ func GetItemByName(itemName string, catalogMap map[int]map[string]Item) (Item, b
 			}
 		}
 	}
-	
+
 	return Item{}, false
 }
 
@@ -307,14 +310,14 @@ func GetItemByName(itemName string, catalogMap map[int]map[string]Item) (Item, b
 func removeDuplicates(slice []string) []string {
 	keys := make(map[string]bool)
 	var result []string
-	
+
 	for _, item := range slice {
 		if !keys[item] {
 			keys[item] = true
 			result = append(result, item)
 		}
 	}
-	
+
 	return result
 }
 
@@ -323,7 +326,7 @@ func IsItemInstalled(itemName string, installedItems []string) bool {
 	for _, installed := range installedItems {
 		installedName, _ := SplitNameAndVersion(installed)
 		checkName, _ := SplitNameAndVersion(itemName)
-		
+
 		if strings.EqualFold(installedName, checkName) {
 			return true
 		}
@@ -334,13 +337,13 @@ func IsItemInstalled(itemName string, installedItems []string) bool {
 // FilterInstalledItems returns only the items from the input list that are actually installed
 func FilterInstalledItems(itemNames []string, installedItems []string) []string {
 	var result []string
-	
+
 	for _, itemName := range itemNames {
 		if IsItemInstalled(itemName, installedItems) {
 			result = append(result, itemName)
 		}
 	}
-	
+
 	return result
 }
 
@@ -349,7 +352,7 @@ func GetVersionFromInstalledItems(itemName string, installedItems []string) stri
 	for _, installed := range installedItems {
 		installedName, installedVersion := SplitNameAndVersion(installed)
 		checkName, _ := SplitNameAndVersion(itemName)
-		
+
 		if strings.EqualFold(installedName, checkName) {
 			return installedVersion
 		}
@@ -368,7 +371,7 @@ func SplitNameAndVersion(nameWithVersion string) (string, string) {
 			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 		}
 	}
-	
+
 	// Handle the single dash format (itemname-version)
 	// We need to be careful here as some item names might contain dashes
 	// A simple heuristic: if the last part after the last dash looks like a version, split there
@@ -377,15 +380,15 @@ func SplitNameAndVersion(nameWithVersion string) (string, string) {
 		if len(parts) >= 2 {
 			lastPart := parts[len(parts)-1]
 			// Simple version detection: contains digits and dots/underscores
-			if strings.ContainsAny(lastPart, "0123456789") && 
-			   (strings.Contains(lastPart, ".") || strings.Contains(lastPart, "_")) {
+			if strings.ContainsAny(lastPart, "0123456789") &&
+				(strings.Contains(lastPart, ".") || strings.Contains(lastPart, "_")) {
 				// Reconstruct name without the version part
 				name := strings.Join(parts[:len(parts)-1], "-")
 				return strings.TrimSpace(name), strings.TrimSpace(lastPart)
 			}
 		}
 	}
-	
+
 	// No version found, return the whole string as name with empty version
 	return strings.TrimSpace(nameWithVersion), ""
 }
