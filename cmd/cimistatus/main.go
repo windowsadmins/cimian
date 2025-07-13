@@ -370,7 +370,26 @@ func (app *CimianStatusApp) showLogs() {
 	app.state.mu.RUnlock()
 
 	if logPath == "" {
-		logPath = `C:\ProgramData\ManagedInstalls\logs\install.log`
+		// Find the latest timestamped log directory
+		logsBaseDir := `C:\ProgramData\ManagedInstalls\logs`
+		entries, err := os.ReadDir(logsBaseDir)
+		if err == nil {
+			var latestDir string
+			for _, entry := range entries {
+				if entry.IsDir() && len(entry.Name()) == 15 { // YYYY-MM-DD-HHmmss format
+					if latestDir == "" || entry.Name() > latestDir {
+						latestDir = entry.Name()
+					}
+				}
+			}
+			if latestDir != "" {
+				logPath = filepath.Join(logsBaseDir, latestDir, "install.log")
+			} else {
+				logPath = `C:\ProgramData\ManagedInstalls\logs\install.log` // fallback
+			}
+		} else {
+			logPath = `C:\ProgramData\ManagedInstalls\logs\install.log` // fallback
+		}
 	}
 	// Try to open with notepad
 	exec.Command("notepad.exe", logPath).Start()
