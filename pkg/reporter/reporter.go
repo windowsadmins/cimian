@@ -52,13 +52,13 @@ func NewPipeReporter() *PipeReporter {
 	}
 }
 
-// Start initializes the reporter and launches CimianStatus.exe
+// Start initializes the reporter and launches cimistatus.exe
 func (r *PipeReporter) Start(ctx context.Context) error {
 	r.ctx, r.cancel = context.WithCancel(ctx)
-	
-	// Launch CimianStatus.exe
+
+	// Launch cimistatus.exe
 	if err := r.launchGUI(); err != nil {
-		logging.Warn("Failed to launch CimianStatus GUI, continuing without UI", "error", err)
+		logging.Warn("Failed to launch cimistatus GUI, continuing without UI", "error", err)
 		return nil // Don't fail completely if GUI can't start
 	}
 
@@ -75,13 +75,13 @@ func (r *PipeReporter) Start(ctx context.Context) error {
 	return nil
 }
 
-// launchGUI starts the CimianStatus.exe process
+// launchGUI starts the cimistatus.exe process
 func (r *PipeReporter) launchGUI() error {
-	// Look for CimianStatus.exe in common locations
+	// Look for cimistatus.exe in common locations
 	possiblePaths := []string{
-		filepath.Join(os.Getenv("ProgramFiles"), "Cimian", "CimianStatus.exe"),
-		filepath.Join(filepath.Dir(os.Args[0]), "CimianStatus.exe"),
-		"CimianStatus.exe", // Assume it's in PATH
+		filepath.Join(os.Getenv("ProgramFiles"), "Cimian", "cimistatus.exe"),
+		filepath.Join(filepath.Dir(os.Args[0]), "cimistatus.exe"),
+		"cimistatus.exe", // Assume it's in PATH
 	}
 
 	var guiPath string
@@ -93,14 +93,14 @@ func (r *PipeReporter) launchGUI() error {
 	}
 
 	if guiPath == "" {
-		return fmt.Errorf("CimianStatus.exe not found in any expected location")
+		return fmt.Errorf("cimistatus.exe not found in any expected location")
 	}
 
 	cmd := exec.Command(guiPath)
-	
+
 	// Start the process but don't wait for it
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start CimianStatus.exe: %v", err)
+		return fmt.Errorf("failed to start cimistatus.exe: %v", err)
 	}
 
 	r.guiProcess = cmd.Process
@@ -251,9 +251,9 @@ func NewNoOpReporter() *NoOpReporter {
 }
 
 func (r *NoOpReporter) Start(ctx context.Context) error { return nil }
-func (r *NoOpReporter) Message(txt string)             {}
-func (r *NoOpReporter) Detail(txt string)              {}
-func (r *NoOpReporter) Percent(pct int)                {}
-func (r *NoOpReporter) ShowLog(path string)            {}
-func (r *NoOpReporter) Error(err error)                {}
-func (r *NoOpReporter) Stop()                          {}
+func (r *NoOpReporter) Message(txt string)              {}
+func (r *NoOpReporter) Detail(txt string)               {}
+func (r *NoOpReporter) Percent(pct int)                 {}
+func (r *NoOpReporter) ShowLog(path string)             {}
+func (r *NoOpReporter) Error(err error)                 {}
+func (r *NoOpReporter) Stop()                           {}

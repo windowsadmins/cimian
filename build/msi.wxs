@@ -74,12 +74,12 @@
 
           <!-- CimianStatus GUI for bootstrap progress -->
           <Component Id="Binary7" Guid="BF855CDE-1234-5678-9ABC-26091DE9B83C" Win64="yes">
-            <File Id="BinaryFile7" Source="$(var.BIN_DIR)\cimianstatus.exe" KeyPath="yes" />
+            <File Id="BinaryFile7" Source="$(var.BIN_DIR)\cimistatus.exe" KeyPath="yes" />
           </Component>
 
           <!-- CimianWatcher service for responsive bootstrap monitoring -->
           <Component Id="Binary8" Guid="CF855CDE-1234-5678-9ABC-26091DE9B83D" Win64="yes">
-            <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimianwatcher.exe" KeyPath="yes" />
+            <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimiwatcher.exe" KeyPath="yes" />
           </Component>
 
           <!-- Component to Modify PATH Environment Variable -->
@@ -132,14 +132,14 @@
                   Impersonate="no"
                   Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimianwatcher.exe&quot; install" />
+                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; install" />
 
     <CustomAction Id="StartCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimianwatcher.exe&quot; start" />
+                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; start" />
 
     <!-- Remove the CimianWatcher service on uninstall -->
     <CustomAction Id="StopCimianWatcherService"
@@ -147,14 +147,14 @@
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimianwatcher.exe&quot; stop" />
+                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; stop" />
 
     <CustomAction Id="RemoveCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimianwatcher.exe&quot; remove" />
+                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; remove" />
 
     <!-- Remove the scheduled task on uninstall -->
     <CustomAction Id="DeleteScheduledTask"
