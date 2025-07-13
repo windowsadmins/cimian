@@ -827,7 +827,7 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 
 	// If we get here => success
 	logger.Info("Install output: %s, output: %s", cItem.Name, installedOutput)
-	logger.Info("Installed item successfully: %s", cItem.Name)
+	logger.Info("Installed item successfully: %s, file: %s", cItem.Name, localFile)
 
 	// If you want to remove it from cache here, do so:
 	// os.Remove(localFile)
@@ -912,18 +912,9 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 			// Split the log file into lines
 			lines := strings.Split(string(data), "\n")
 			for _, line := range lines {
-				// Look for lines where an installer was successfully downloaded
-				if strings.Contains(line, "Downloaded item successfully:") {
-					// Expect a pattern like: "file: C:\ProgramData\ManagedInstalls\cache\SomeApp-x64-1.2.3.exe"
-					idx := strings.Index(line, "file:")
-					if idx != -1 {
-						filePart := strings.TrimSpace(line[idx+len("file:"):])
-						baseName := filepath.Base(filePart)
-						successSet[baseName] = true
-					}
-				}
-				// Also check for an explicit "Installed item successfully:" log line.
-				if strings.Contains(line, "Installed item successfully:") {
+				// Look for successful installation completion with file path
+				if strings.Contains(line, "Installed item successfully:") && strings.Contains(line, "file:") {
+					// Expect a pattern like: "Installed item successfully: Chrome, file: C:\ProgramData\ManagedInstalls\cache\apps\browsers\Chrome-x64-135.0.7023.0.exe"
 					idx := strings.Index(line, "file:")
 					if idx != -1 {
 						filePart := strings.TrimSpace(line[idx+len("file:"):])
@@ -962,7 +953,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 
 	for _, entry := range cacheEntries {
 		fullPath := filepath.Join(cachePath, entry.Name())
-		// Only remove the file if its base name is in the success set.
+		// Only remove the file if its base name is in the success set and marked as true (successfully installed).
 		if successSet[entry.Name()] {
 			err := os.RemoveAll(fullPath)
 			if err != nil {
