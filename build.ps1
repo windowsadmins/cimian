@@ -13,12 +13,14 @@
 #  ─Task XX       … run specific task: build, package, all (default: all)
 #  ─Binaries      … build and sign only the .exe binaries, skip all packaging
 #  ─Install       … after building, install the MSI package (requires elevation)
+#  ─IntuneWin     … create .intunewin packages (adds build time, only needed for deployment)
 #
 # Usage examples:
-#   .\build.ps1                      # Full build with auto-signing
+#   .\build.ps1                      # Full build with auto-signing (no .intunewin)
 #   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
 #   .\build.ps1 -Install             # Build and install the MSI package
+#   .\build.ps1 -IntuneWin           # Full build including .intunewin packages
 param(
     [switch]$Sign,
     [switch]$NoSign,
@@ -26,7 +28,8 @@ param(
     [ValidateSet("build", "package", "all")]
     [string]$Task = "all",
     [switch]$Binaries,
-    [switch]$Install
+    [switch]$Install,
+    [switch]$IntuneWin
 )
 
 # ──────────────────────────  GLOBALS  ──────────────────────────
@@ -513,7 +516,7 @@ if ($Binaries) {
                 try {
                     go mod tidy
                     go mod download
-                    if ($binaryName -eq "cimianstatus") {
+                    if ($binaryName -eq "cimistatus") {
                         $env:CGO_ENABLED = "1"
                         go build -v -o "..\..\$outputPath" -ldflags="$ldflags -H windowsgui" .
                         $env:CGO_ENABLED = "0"
@@ -640,9 +643,13 @@ Write-Log "Checking and installing required tools..." "INFO"
 
 $tools = @(
     @{ Name = "nuget.commandline"; Command = "nuget" },
-    @{ Name = "intunewinapputil"; Command = "intunewinapputil" },
     @{ Name = "go"; Command = "go" }
 )
+
+# Add IntuneWinAppUtil only if IntuneWin flag is specified
+if ($IntuneWin) {
+    $tools += @{ Name = "intunewinapputil"; Command = "intunewinapputil" }
+}
 
 foreach ($tool in $tools) {
     $toolName    = $tool.Name
@@ -846,7 +853,7 @@ foreach ($arch in $archs) {
                 go mod tidy
                 go mod download
                   # Special handling for GUI applications
-                if ($binaryName -eq "cimianstatus") {
+                if ($binaryName -eq "cimistatus") {
                     # GUI application - enable CGO and use windowsgui flag to hide console
                     $env:CGO_ENABLED = "1"
                     go build -v -o "..\..\$outputPath" -ldflags="$ldflags -H windowsgui" .
@@ -1066,89 +1073,95 @@ catch {
 
 Write-Log "NuGet packaging for all architectures completed." "SUCCESS"
 
-# Step 12: Prepare IntuneWin Packages for both x64 and arm64
-Write-Log "Preparing IntuneWin packages for x64 and arm64..." "INFO"
+# Step 12: Prepare IntuneWin Packages for both x64 and arm64 (Optional)
+if ($IntuneWin) {
+    Write-Log "IntuneWin flag detected - preparing IntuneWin packages for x64 and arm64..." "INFO"
 
-foreach ($arch in $archs) {
-    $msiFile = "release\Cimian-$arch-$env:RELEASE_VERSION.msi"
-    $outputFolder = "release"
-    $intunewinOutput = "release\Cimian-$arch-$env:RELEASE_VERSION.intunewin"
+    foreach ($arch in $archs) {
+        $msiFile = "release\Cimian-$arch-$env:RELEASE_VERSION.msi"
+        $outputFolder = "release"
+        $intunewinOutput = "release\Cimian-$arch-$env:RELEASE_VERSION.intunewin"
 
-    if (-not (Test-Path $msiFile)) {
-        Write-Log "Setup file '$msiFile' does not exist. Skipping IntuneWin package preparation for $arch." "WARNING"
-        continue
-    }
+        if (-not (Test-Path $msiFile)) {
+            Write-Log "Setup file '$msiFile' does not exist. Skipping IntuneWin package preparation for $arch." "WARNING"
+            continue
+        }
 
-    Write-Log "Creating IntuneWin package for $arch architecture..." "INFO"
-    
-    # Check if IntuneWinAppUtil is available
-    if (-not (Get-Command "IntuneWinAppUtil.exe" -ErrorAction SilentlyContinue)) {
-        Write-Log "IntuneWinAppUtil.exe not found. Ensure it's installed via Chocolatey." "ERROR"
-        exit 1
-    }
-
-    # Remove any existing .intunewin files that might conflict
-    $existingIntunewin = Get-ChildItem -Path $outputFolder -Filter "Cimian-$arch-*.intunewin" -ErrorAction SilentlyContinue
-    if ($existingIntunewin) {
-        Write-Log "Removing existing .intunewin files for $arch to prevent conflicts..." "INFO"
-        $existingIntunewin | Remove-Item -Force
-    }
-
-    try {
-        # Create the IntuneWin package directly with proper output handling
-        Write-Log "Running IntuneWinAppUtil for $arch MSI..." "INFO"
+        Write-Log "Creating IntuneWin package for $arch architecture..." "INFO"
         
-        # Use Start-Process with proper output redirection to avoid terminal issues
-        $intuneArgs = @(
-            "-c", "`"$outputFolder`""
-            "-s", "`"$msiFile`""
-            "-o", "`"$outputFolder`""
-            "-q"  # Quiet mode
-        )
-        
-        $intuneProcess = Start-Process -FilePath "IntuneWinAppUtil.exe" -ArgumentList $intuneArgs -Wait -NoNewWindow -PassThru -RedirectStandardOutput "$env:TEMP\intune_$arch.log" -RedirectStandardError "$env:TEMP\intune_$arch_err.log"
-        
-        if ($intuneProcess.ExitCode -eq 0) {
-            Write-Log "IntuneWinAppUtil completed successfully for $arch." "SUCCESS"
-            
-            # Find the generated .intunewin file and rename it if needed
-            $generatedFile = Get-ChildItem -Path $outputFolder -Filter "*.intunewin" | 
-                             Where-Object { $_.Name -like "*$([System.IO.Path]::GetFileNameWithoutExtension($msiFile))*" } |
-                             Sort-Object LastWriteTime -Descending | 
-                             Select-Object -First 1
-            
-            if ($generatedFile -and $generatedFile.FullName -ne $intunewinOutput) {
-                Write-Log "Renaming generated file to match expected naming convention..." "INFO"
-                Move-Item $generatedFile.FullName $intunewinOutput -Force
-            }
-            
-            if (Test-Path $intunewinOutput) {
-                Write-Log "IntuneWin package created successfully: $intunewinOutput" "SUCCESS"
-            } else {
-                Write-Log "IntuneWin package was created but not found at expected location." "WARNING"
-            }
-        } else {
-            Write-Log "IntuneWinAppUtil failed for $arch with exit code $($intuneProcess.ExitCode)" "ERROR"
-            
-            # Show error details if available
-            if (Test-Path "$env:TEMP\intune_$arch_err.log") {
-                $errorContent = Get-Content "$env:TEMP\intune_$arch_err.log" -Raw
-                if ($errorContent.Trim()) {
-                    Write-Log "Error details: $errorContent" "ERROR"
-                }
-            }
+        # Check if IntuneWinAppUtil is available
+        if (-not (Get-Command "IntuneWinAppUtil.exe" -ErrorAction SilentlyContinue)) {
+            Write-Log "IntuneWinAppUtil.exe not found. Ensure it's installed via Chocolatey." "ERROR"
             exit 1
         }
+
+        # Remove any existing .intunewin files that might conflict
+        $existingIntunewin = Get-ChildItem -Path $outputFolder -Filter "Cimian-$arch-*.intunewin" -ErrorAction SilentlyContinue
+        if ($existingIntunewin) {
+            Write-Log "Removing existing .intunewin files for $arch to prevent conflicts..." "INFO"
+            $existingIntunewin | Remove-Item -Force
+        }
+
+        try {
+            # Create the IntuneWin package directly with proper output handling
+            Write-Log "Running IntuneWinAppUtil for $arch MSI..." "INFO"
+            
+            # Use Start-Process with proper output redirection to avoid terminal issues
+            $intuneArgs = @(
+                "-c", "`"$outputFolder`""
+                "-s", "`"$msiFile`""
+                "-o", "`"$outputFolder`""
+                "-q"  # Quiet mode
+            )
+            
+            $intuneProcess = Start-Process -FilePath "IntuneWinAppUtil.exe" -ArgumentList $intuneArgs -Wait -NoNewWindow -PassThru -RedirectStandardOutput "$env:TEMP\intune_$arch.log" -RedirectStandardError "$env:TEMP\intune_$arch_err.log"
+            
+            if ($intuneProcess.ExitCode -eq 0) {
+                Write-Log "IntuneWinAppUtil completed successfully for $arch." "SUCCESS"
+                
+                # Find the generated .intunewin file and rename it if needed
+                $generatedFile = Get-ChildItem -Path $outputFolder -Filter "*.intunewin" | 
+                                 Where-Object { $_.Name -like "*$([System.IO.Path]::GetFileNameWithoutExtension($msiFile))*" } |
+                                 Sort-Object LastWriteTime -Descending | 
+                                 Select-Object -First 1
+                
+                if ($generatedFile -and $generatedFile.FullName -ne $intunewinOutput) {
+                    Write-Log "Renaming generated file to match expected naming convention..." "INFO"
+                    Move-Item $generatedFile.FullName $intunewinOutput -Force
+                }
+                
+                if (Test-Path $intunewinOutput) {
+                    Write-Log "IntuneWin package created successfully: $intunewinOutput" "SUCCESS"
+                } else {
+                    Write-Log "IntuneWin package was created but not found at expected location." "WARNING"
+                }
+            } else {
+                Write-Log "IntuneWinAppUtil failed for $arch with exit code $($intuneProcess.ExitCode)" "ERROR"
+                
+                # Show error details if available
+                if (Test-Path "$env:TEMP\intune_$arch_err.log") {
+                    $errorContent = Get-Content "$env:TEMP\intune_$arch_err.log" -Raw
+                    if ($errorContent.Trim()) {
+                        Write-Log "Error details: $errorContent" "ERROR"
+                    }
+                }
+                exit 1
+            }
+        }
+        catch {
+            Write-Log "IntuneWin package preparation failed for $arch. Error: $_" "ERROR"
+            exit 1
+        }
+        finally {
+            # Clean up temporary log files
+            Remove-Item "$env:TEMP\intune_$arch.log" -ErrorAction SilentlyContinue
+            Remove-Item "$env:TEMP\intune_$arch_err.log" -ErrorAction SilentlyContinue
+        }
     }
-    catch {
-        Write-Log "IntuneWin package preparation failed for $arch. Error: $_" "ERROR"
-        exit 1
-    }
-    finally {
-        # Clean up temporary log files
-        Remove-Item "$env:TEMP\intune_$arch.log" -ErrorAction SilentlyContinue
-        Remove-Item "$env:TEMP\intune_$arch_err.log" -ErrorAction SilentlyContinue
-    }
+    
+    Write-Log "IntuneWin packaging completed." "SUCCESS"
+} else {
+    Write-Log "Skipping IntuneWin package creation. Use -IntuneWin flag to create .intunewin packages." "INFO"
 }
 
 # Step 13: Verify Generated Files
