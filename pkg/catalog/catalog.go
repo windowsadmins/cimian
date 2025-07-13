@@ -9,7 +9,6 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
-	"github.com/windowsadmins/cimian/pkg/report"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	"gopkg.in/yaml.v3"
 )
@@ -103,8 +102,7 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 	// Catch unexpected failures
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Println(r)
-			report.End()
+			logging.Error("Catalog processing failed with panic", "error", r)
 			os.Exit(1)
 		}
 	}()

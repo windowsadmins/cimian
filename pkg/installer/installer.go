@@ -447,11 +447,12 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 
 func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 	// Base MSI installation arguments
+	logPath := filepath.Join(logging.GetCurrentLogDir(), "msi_install.log")
 	args := []string{
 		"/i", localFile,
 		"/quiet",
 		"/norestart",
-		"/l*v", `C:\ProgramData\ManagedInstalls\logs\install.log`,
+		"/l*v", logPath,
 	}
 
 	// Add installer switches (/ style arguments)

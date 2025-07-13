@@ -8,11 +8,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
-	"github.com/windowsadmins/cimian/pkg/config"
-	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/selfservice"
 	"github.com/windowsadmins/cimian/pkg/version"
 	"gopkg.in/yaml.v3"
@@ -24,6 +20,7 @@ type Manifest struct {
 	ManagedInstalls   []string `yaml:"managed_installs"`
 	ManagedUninstalls []string `yaml:"managed_uninstalls"`
 	ManagedUpdates    []string `yaml:"managed_updates"`
+	OptionalInstalls  []string `yaml:"optional_installs"`
 	IncludedManifests []string `yaml:"included_manifests"`
 	Catalogs          []string `yaml:"catalogs"`
 }
@@ -110,6 +107,7 @@ func CreateNewManifest(manifestPath, name string) error {
 		ManagedInstalls:   nil,
 		ManagedUninstalls: nil,
 		ManagedUpdates:    nil,
+		OptionalInstalls:  nil,
 		IncludedManifests: nil,
 		Catalogs:          nil,
 	}
@@ -125,6 +123,8 @@ func AddPackageToManifest(manifest *Manifest, pkg, section string) {
 		manifest.ManagedUninstalls = append(manifest.ManagedUninstalls, pkg)
 	case "managed_updates":
 		manifest.ManagedUpdates = append(manifest.ManagedUpdates, pkg)
+	case "optional_installs":
+		manifest.OptionalInstalls = append(manifest.OptionalInstalls, pkg)
 	default:
 		fmt.Printf("Invalid section: %s\n", section)
 	}
@@ -139,6 +139,8 @@ func RemovePackageFromManifest(manifest *Manifest, pkg, section string) {
 		manifest.ManagedUninstalls = removeItem(manifest.ManagedUninstalls, pkg)
 	case "managed_updates":
 		manifest.ManagedUpdates = removeItem(manifest.ManagedUpdates, pkg)
+	case "optional_installs":
+		manifest.OptionalInstalls = removeItem(manifest.OptionalInstalls, pkg)
 	default:
 		fmt.Printf("Invalid section: %s\n", section)
 	}
@@ -154,199 +156,33 @@ func removeItem(slice []string, item string) []string {
 	return slice
 }
 
-// Self-service handler functions
+// Simple self-service handler functions
 
-func handleSelfServiceListAvailable() {
-	fmt.Println("Fetching available packages...")
-
-	// Load configuration
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Get manifest items to find optional_installs
-	items, err := manifest.AuthenticatedGet(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching manifests: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Filter for optional items
-	var optionalItems []manifest.Item
-	for _, item := range items {
-		if item.Action == "optional" {
-			optionalItems = append(optionalItems, item)
-		}
-	}
-
-	if len(optionalItems) == 0 {
-		fmt.Println("No optional packages available for self-service installation.")
-		return
-	}
-
-	fmt.Println("\nAvailable packages for self-service installation:")
-	fmt.Println("=" + strings.Repeat("=", 50))
-
-	// Sort by name for consistent output
-	sort.Slice(optionalItems, func(i, j int) bool {
-		return optionalItems[i].Name < optionalItems[j].Name
-	})
-
-	for _, item := range optionalItems {
-		status := ""
-		// Check if already in self-service manifest
-		inSelfService, err := selfservice.IsItemInSelfServiceManifest(item.Name)
-		if err == nil && inSelfService {
-			status = " [SELECTED]"
-		}
-
-		fmt.Printf("  %s", item.Name)
-		if item.Version != "" {
-			fmt.Printf(" (v%s)", item.Version)
-		}
-		fmt.Printf("%s\n", status)
-	}
-
-	fmt.Printf("\nTotal: %d packages available\n", len(optionalItems))
-	fmt.Println("\nUse 'manifestutil --selfservice-install PACKAGE' to request installation.")
-}
-
-func handleSelfServiceListInstalled() {
-	manifest, err := selfservice.GetSelfServiceItems()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading self-service manifest: %v\n", err)
-		os.Exit(1)
-	}
-
-	allItems := append(manifest.ManagedInstalls, manifest.OptionalInstalls...)
-
-	if len(allItems) == 0 {
-		fmt.Println("No packages currently selected for installation.")
-		return
-	}
-
-	fmt.Println("Packages selected for installation:")
-	fmt.Println("=" + strings.Repeat("=", 35))
-
-	sort.Strings(allItems)
-	for _, item := range allItems {
-		fmt.Printf("  %s\n", item)
-	}
-
-	fmt.Printf("\nTotal: %d packages selected\n", len(allItems))
-	fmt.Println("\nRun 'managedsoftwareupdate' to install selected packages.")
-}
-
-func handleSelfServiceInstall(packageName string) {
-	fmt.Printf("Requesting installation of: %s\n", packageName)
-
-	// Load configuration
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
-		os.Exit(1)
-	}
-
-	// First verify the package is available as optional install
-	items, err := manifest.AuthenticatedGet(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching manifests: %v\n", err)
-		os.Exit(1)
-	}
-
-	packageAvailable := false
-	for _, item := range items {
-		if item.Action == "optional" && strings.EqualFold(item.Name, packageName) {
-			packageAvailable = true
-			packageName = item.Name // Use exact case from manifest
-			break
-		}
-	}
-
-	if !packageAvailable {
-		fmt.Printf("Error: Package '%s' is not available for self-service installation.\n", packageName)
-		fmt.Println("Use 'manifestutil --list-available' to see available packages.")
-		os.Exit(1)
-	}
-
-	// Check if already selected
-	inSelfService, err := selfservice.IsItemInSelfServiceManifest(packageName)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking self-service manifest: %v\n", err)
-		os.Exit(1)
-	}
-
-	if inSelfService {
-		fmt.Printf("Package '%s' is already selected for installation.\n", packageName)
-		return
-	}
+func handleSelfServiceRequest(packageName string) {
+	fmt.Printf("Adding package '%s' to self-service manifest...\n", packageName)
 
 	// Add to self-service manifest
-	err = selfservice.AddToSelfServiceInstalls(packageName)
+	err := selfservice.AddToSelfServiceInstalls(packageName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error adding package to self-service manifest: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✓ Successfully requested installation of '%s'\n", packageName)
-	fmt.Println("Run 'managedsoftwareupdate' to install the package.")
+	fmt.Printf("✓ Successfully added '%s' to self-service manifest\n", packageName)
+	fmt.Println("Package will be processed on next 'managedsoftwareupdate' run.")
 }
 
 func handleSelfServiceRemove(packageName string) {
-	fmt.Printf("Removing installation request for: %s\n", packageName)
-
-	// Check if package is in self-service manifest
-	inSelfService, err := selfservice.IsItemInSelfServiceManifest(packageName)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error checking self-service manifest: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !inSelfService {
-		fmt.Printf("Package '%s' is not currently selected for installation.\n", packageName)
-		return
-	}
+	fmt.Printf("Removing package '%s' from self-service manifest...\n", packageName)
 
 	// Remove from self-service manifest
-	err = selfservice.RemoveFromSelfServiceInstalls(packageName)
+	err := selfservice.RemoveFromSelfServiceInstalls(packageName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error removing package from self-service manifest: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✓ Successfully removed installation request for '%s'\n", packageName)
-}
-
-func handleSelfServiceStatus() {
-	fmt.Println("Cimian Self-Service Status")
-	fmt.Println("=" + strings.Repeat("=", 26))
-
-	manifest, err := selfservice.GetSelfServiceItems()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading self-service manifest: %v\n", err)
-		os.Exit(1)
-	}
-
-	allItems := append(manifest.ManagedInstalls, manifest.OptionalInstalls...)
-
-	fmt.Printf("Self-service manifest: %s\n", selfservice.SelfServiceManifestPath)
-
-	if len(allItems) == 0 {
-		fmt.Printf("Selected packages: None\n")
-	} else {
-		fmt.Printf("Selected packages: %d\n", len(allItems))
-		for _, item := range allItems {
-			fmt.Printf("  - %s\n", item)
-		}
-	}
-
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("- Run 'manifestutil --list-available' to see available packages")
-	fmt.Println("- Run 'manifestutil --selfservice-install PACKAGE' to request packages")
-	fmt.Println("- Run 'managedsoftwareupdate' to install selected packages")
+	fmt.Printf("✓ Successfully removed '%s' from self-service manifest\n", packageName)
 }
 
 func main() {
@@ -354,17 +190,14 @@ func main() {
 	listManifests := flag.Bool("list-manifests", false, "List available manifests")
 	newManifest := flag.String("new-manifest", "", "Create a new manifest")
 	addPackage := flag.String("add-pkg", "", "Package to add to manifest")
-	section := flag.String("section", "managed_installs", "Manifest section (managed_installs, managed_uninstalls, managed_updates)")
+	section := flag.String("section", "managed_installs", "Manifest section (managed_installs, managed_uninstalls, managed_updates, optional_installs)")
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
 	removePackage := flag.String("remove-pkg", "", "Package to remove from manifest")
 	showManifestUtilVersion := flag.Bool("manifestutil_version", false, "Print the version and exit.")
 
 	// Self-service flags
-	listAvailable := flag.Bool("list-available", false, "List packages available for self-service installation")
-	listSelfService := flag.Bool("list-selfservice", false, "List packages in self-service manifest")
-	selfServiceInstall := flag.String("selfservice-install", "", "Request package for self-service installation")
-	selfServiceRemove := flag.String("selfservice-remove", "", "Remove package from self-service installation queue")
-	selfServiceStatus := flag.Bool("selfservice-status", false, "Show self-service status")
+	selfServiceRequest := flag.String("selfservice-request", "", "Add package to self-service manifest for installation")
+	selfServiceRemove := flag.String("selfservice-remove", "", "Remove package from self-service manifest")
 
 	flag.Parse()
 
@@ -374,22 +207,13 @@ func main() {
 		return
 	}
 
-	// Handle self-service commands first (they use different config loading)
+	// Handle self-service commands first (simple functionality)
 	switch {
-	case *listAvailable:
-		handleSelfServiceListAvailable()
-		return
-	case *listSelfService:
-		handleSelfServiceListInstalled()
-		return
-	case *selfServiceInstall != "":
-		handleSelfServiceInstall(*selfServiceInstall)
+	case *selfServiceRequest != "":
+		handleSelfServiceRequest(*selfServiceRequest)
 		return
 	case *selfServiceRemove != "":
 		handleSelfServiceRemove(*selfServiceRemove)
-		return
-	case *selfServiceStatus:
-		handleSelfServiceStatus()
 		return
 	}
 
