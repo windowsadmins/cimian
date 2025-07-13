@@ -259,10 +259,12 @@ func main() {
 	// Apply item filter if specified
 	manifestItems = itemFilter.Apply(manifestItems)
 
-	// Override checkonly mode if item filter is active
-	if itemFilter.ShouldOverrideCheckOnly() {
+	// Override checkonly mode if item filter is active, but only if --checkonly wasn't explicitly set
+	if itemFilter.ShouldOverrideCheckOnly() && !pflag.CommandLine.Changed("checkonly") {
 		*checkOnly = false
-		logger.Info("--item flag specified, overriding --checkonly mode")
+		logger.Info("--item flag specified, overriding default checkonly mode")
+	} else if itemFilter.HasFilter() && *checkOnly {
+		logger.Info("--item flag with explicit --checkonly: will check only specified items")
 	}
 
 	statusReporter.Detail("Loading catalog data...")
@@ -314,13 +316,18 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Prompt user for confirmation.
-	fmt.Print("Proceed with installations/updates/uninstalls? (Y/n): ")
-	var response string
-	fmt.Scanln(&response)
-	if strings.TrimSpace(strings.ToLower(response)) != "y" && response != "" {
-		logger.Info("User aborted installation.")
-		os.Exit(0)
+	// Skip user confirmation in auto mode
+	if !*auto {
+		// Prompt user for confirmation.
+		fmt.Print("Proceed with installations/updates/uninstalls? (Y/n): ")
+		var response string
+		fmt.Scanln(&response)
+		if strings.TrimSpace(strings.ToLower(response)) != "y" && response != "" {
+			logger.Info("User aborted installation.")
+			os.Exit(0)
+		}
+	} else {
+		logger.Info("Auto mode enabled - proceeding with installation without confirmation")
 	} // Combine install and update items and perform installations.
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)

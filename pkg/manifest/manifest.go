@@ -111,7 +111,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 	// We'll keep a global map of packageName => CatalogEntry
 	catalogMap := make(map[string]CatalogEntry)
-	
+
 	// Track all catalog names found in manifests to populate cfg.Catalogs
 	catalogNames := make(map[string]bool)
 
@@ -168,10 +168,10 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			if catName == "" {
 				continue
 			}
-			
+
 			// Track this catalog name for updating cfg.Catalogs
 			catalogNames[catName] = true
-			
+
 			catURL := fmt.Sprintf("%s/catalogs/%s.yaml",
 				strings.TrimRight(cfg.SoftwareRepoURL, "/"),
 				catName)
