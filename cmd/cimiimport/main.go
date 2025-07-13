@@ -820,10 +820,12 @@ func cimianImport(
 
 	// ─── decide architecture tag ────────────────────────────────────────────────
 	archTag := ""
-	if len(pkgsInfo.SupportedArch) > 0 {
+	if len(pkgsInfo.SupportedArch) == 1 {
+		// Only include arch tag when there's exactly one architecture
 		primaryArch := strings.ToLower(pkgsInfo.SupportedArch[0])
 		archTag = "-" + primaryArch + "-"
 	}
+	// When multiple architectures are specified, omit the arch tag entirely
 
 	// Step 9: prompt user for subdir
 	repoSubPath, err := promptInstallerItemPath(metadata.RepoPath)
