@@ -451,7 +451,7 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 		"/i", localFile,
 		"/quiet",
 		"/norestart",
-		"/l*v", `C:\ProgramData\ManagedInstalls\Logs\install.log`,
+		"/l*v", `C:\ProgramData\ManagedInstalls\logs\install.log`,
 	}
 
 	// Add installer switches (/ style arguments)

@@ -370,7 +370,7 @@ func (app *CimianStatusApp) showLogs() {
 	app.state.mu.RUnlock()
 
 	if logPath == "" {
-		logPath = `C:\ProgramData\ManagedInstalls\Logs\install.log`
+		logPath = `C:\ProgramData\ManagedInstalls\logs\install.log`
 	}
 	// Try to open with notepad
 	exec.Command("notepad.exe", logPath).Start()
