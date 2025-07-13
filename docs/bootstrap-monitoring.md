@@ -14,7 +14,7 @@ The original bootstrap system relied on a scheduled task that runs on system sta
 
 **The recommended and only supported approach**
 
-- **Service**: `CimianWatcher.exe` - Native Windows service written in Go
+- **Service**: `cimiwatcher.exe` - Native Windows service written in Go
 - **Monitoring**: Polls the bootstrap flag file every 10 seconds
 - **Response Time**: 10-15 seconds maximum
 - **Reliability**: Highest - native Windows service with automatic restart
@@ -34,7 +34,7 @@ The original bootstrap system relied on a scheduled task that runs on system sta
 
 The MSI installer automatically sets up the Windows Service monitor:
 
-1. Installs the `CimianWatcher.exe` service executable
+1. Installs the `cimiwatcher.exe` service executable
 2. Registers the service with Windows Service Manager
 3. Configures the service to start automatically at boot
 4. Starts the service immediately after installation
@@ -48,16 +48,16 @@ You can manually manage the CimianWatcher service using standard Windows service
 
 ```cmd
 # Install the service
-"C:\Program Files\Cimian\cimianwatcher.exe" install
+"C:\Program Files\Cimian\cimiwatcher.exe" install
 
 # Start the service
-"C:\Program Files\Cimian\cimianwatcher.exe" start
+"C:\Program Files\Cimian\cimiwatcher.exe" start
 
 # Stop the service
-"C:\Program Files\Cimian\cimianwatcher.exe" stop
+"C:\Program Files\Cimian\cimiwatcher.exe" stop
 
 # Remove the service
-"C:\Program Files\Cimian\cimianwatcher.exe" remove
+"C:\Program Files\Cimian\cimiwatcher.exe" remove
 ```
 
 Or using Windows Service Manager:
@@ -173,7 +173,7 @@ For troubleshooting, you can run the service in debug mode:
 
 ```cmd
 # Run in debug mode (console output)
-"C:\Program Files\Cimian\cimianwatcher.exe" debug
+"C:\Program Files\Cimian\cimiwatcher.exe" debug
 ```
 
 ## Performance Impact
