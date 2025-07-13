@@ -1,0 +1,25 @@
+[2025-01-12 14:30:52] INFO  Cimian session started session_id=cimian-1736689852-20250112-143052 run_type=manual version=2025.07.12
+[2025-01-12 14:30:52] INFO  Configuration loaded successfully
+        config_path: C:\ProgramData\ManagedInstalls\config.yaml
+        log_level: INFO
+        cache_enabled: true
+        update_check_interval: 3600
+[2025-01-12 14:30:53] INFO  Package inventory started package_count=5 source=catalog
+[2025-01-12 14:30:53] INFO  Package installation started package=Firefox version=119.0.1 installer_type=MSI
+[2025-01-12 14:30:58] INFO  Package installation completed package=Firefox duration_ms=5000 exit_code=0 success=true
+[2025-01-12 14:30:58] WARN  Package signature verification skipped package=Chrome reason=no_certificate_available
+[2025-01-12 14:30:59] INFO  Package installation started package=Chrome version=120.0.6099.129 installer_type=EXE
+
+----------------------------------------
+[2025-01-12 14:31:15] ERROR Package installation failed
+        package: Chrome
+        version: 120.0.6099.129
+        exit_code: 1603
+        error_message: The installer encountered an error
+        installer_log: C:\Windows\Temp\chrome_install.log
+        retry_count: 3
+        final_attempt: true
+
+[2025-01-12 14:31:15] INFO  Rolling back failed installation package=Chrome
+[2025-01-12 14:31:16] INFO  Cleanup completed temp_files_removed=5 disk_space_freed=125MB
+[2025-01-12 14:31:16] INFO  Cimian session completed total_duration_ms=24000 packages_installed=1 packages_failed=1
