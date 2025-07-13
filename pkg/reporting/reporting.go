@@ -1,6 +1,6 @@
-// pkg/logging/reporting.go - Data reporting functionality for external monitoring tools
+// pkg/reporting/reporting.go - Data reporting functionality for external monitoring tools
 
-package logging
+package reporting
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/windowsadmins/cimian/pkg/logging"
 )
 
 // DataTables defines the table schemas for external monitoring tool integration
@@ -91,7 +93,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 	for _, sessionDir := range sessions {
 		sessionPath := filepath.Join(exp.baseDir, sessionDir, "session.json")
 
-		var session LogSession
+		var session logging.LogSession
 		if err := exp.readJSONFile(sessionPath, &session); err != nil {
 			continue // Skip corrupted sessions
 		}
@@ -149,7 +151,7 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 
 	decoder := json.NewDecoder(file)
 	for decoder.More() {
-		var event LogEvent
+		var event logging.LogEvent
 		if err := decoder.Decode(&event); err != nil {
 			continue // Skip malformed events
 		}

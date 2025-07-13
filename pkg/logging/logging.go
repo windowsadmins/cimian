@@ -110,7 +110,6 @@ type Logger struct {
 
 	// Structured logging integration
 	structuredLogger *StructuredLogger
-	dataExporter     *DataExporter
 	currentSessionID string
 }
 
@@ -241,9 +240,6 @@ func newLoggerWithConfig(cfg LoggerConfig) (*Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize structured logger: %w", err)
 	}
-
-	// Initialize data exporter
-	logger.dataExporter = NewDataExporter(cfg.BaseDir)
 
 	// Set up console output
 	if cfg.EnableConsole {
@@ -469,15 +465,19 @@ func (l *Logger) writeMainLog(entry LogEntry, keyValues []interface{}) {
 	if len(keyValues) > 0 {
 		if len(keyValues)/2 > 4 {
 			for i := 0; i < len(keyValues); i += 2 {
-				key := fmt.Sprintf("%v", keyValues[i])
-				val := keyValues[i+1]
-				baseLine += fmt.Sprintf("\n        %s: %v", key, val)
+				if i+1 < len(keyValues) {
+					key := fmt.Sprintf("%v", keyValues[i])
+					val := keyValues[i+1]
+					baseLine += fmt.Sprintf("\n        %s: %v", key, val)
+				}
 			}
 		} else {
 			for i := 0; i < len(keyValues); i += 2 {
-				key := fmt.Sprintf("%v", keyValues[i])
-				val := keyValues[i+1]
-				baseLine += fmt.Sprintf(" %s=%v", key, val)
+				if i+1 < len(keyValues) {
+					key := fmt.Sprintf("%v", keyValues[i])
+					val := keyValues[i+1]
+					baseLine += fmt.Sprintf(" %s=%v", key, val)
+				}
 			}
 		}
 	}
@@ -835,7 +835,7 @@ func RunPostflight(verbosity int, logError func(string, ...interface{})) error {
 // StartSession begins a new structured logging session
 func (l *Logger) StartSession(runType string, metadata map[string]interface{}) error {
 	if l.structuredLogger == nil {
-		return fmt.Errorf("structured logger not initialized")
+		return nil // Gracefully handle when structured logging is disabled
 	}
 
 	sessionID, err := l.structuredLogger.StartSession(runType, metadata)
@@ -884,7 +884,7 @@ func (l *Logger) LogEvent(eventType, action, status, message string, opts ...Eve
 // EndSession completes the current structured logging session
 func (l *Logger) EndSession(status string, summary SessionSummary) error {
 	if l.structuredLogger == nil || l.currentSessionID == "" {
-		return nil
+		return nil // Gracefully handle when structured logging is disabled
 	}
 
 	err := l.structuredLogger.EndSession(status, summary, l.sessionStart)
@@ -893,12 +893,9 @@ func (l *Logger) EndSession(status string, summary SessionSummary) error {
 }
 
 // ExportForOSQuery generates osquery-compatible JSON export
+// Note: This function is deprecated. Use the reporting package directly.
 func (l *Logger) ExportForOSQuery(outputPath string, limitDays int) error {
-	if l.dataExporter == nil {
-		return fmt.Errorf("data exporter not initialized")
-	}
-
-	return l.dataExporter.ExportDataJSON(outputPath, limitDays)
+	return fmt.Errorf("ExportForOSQuery is deprecated - use github.com/windowsadmins/cimian/pkg/reporting.NewDataExporter() directly")
 }
 
 // GetSessionDirs returns all available session directories
