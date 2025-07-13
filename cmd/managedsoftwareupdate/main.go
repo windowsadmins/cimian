@@ -389,7 +389,7 @@ func main() {
 
 	statusReporter.Detail("Cleaning up temporary files...")
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
-	logsFolder := `C:\ProgramData\ManagedInstalls\Logs`
+	logsFolder := `C:\ProgramData\ManagedInstalls\logs`
 	clearCacheFolderSelective(cacheFolder, logsFolder)
 
 	// Clear bootstrap mode if we completed successfully
@@ -886,7 +886,7 @@ func isUserActive() bool {
 	return idleSeconds < 300
 }
 
-// clearCacheFolderSelective reads log files from logsPath (e.g. "C:\ProgramData\ManagedInstalls\Logs")
+// clearCacheFolderSelective reads log files from logsPath (e.g. "C:\ProgramData\ManagedInstalls\logs")
 // and only deletes files in cachePath (e.g. "C:\ProgramData\ManagedInstalls\Cache")
 // that are associated with a successful installation.
 func clearCacheFolderSelective(cachePath, logsPath string) {

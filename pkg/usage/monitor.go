@@ -78,7 +78,7 @@ var (
 // the first call activates the goroutine.
 //
 //	interval   – sampling frequency (e.g. 1 min)
-//	outDir     – directory for jsonl mirror ("" = ProgramData\ManagedInstalls\Logs)
+//	outDir     – directory for jsonl mirror ("" = ProgramData\ManagedInstalls\logs)
 //	ignoreList – exe names to *exclude* (case‑insensitive)
 func Start(ctx context.Context, interval time.Duration, outDir string, ignoreList []string) {
 	once.Do(func() {
