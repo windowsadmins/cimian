@@ -120,6 +120,10 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			}
 		}
 
+		// Attempt immediate cleanup if item has installs array for verification
+		// This provides faster cache cleanup than waiting for the next run
+		immediateCleanupAfterInstall(item, localFile)
+
 		logging.Info("Installed item successfully", "item", item.Name)
 		return "Installation success", nil
 
@@ -321,6 +325,10 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 		Name:    item.Name,
 		Version: pkgVer,
 	})
+
+	// Attempt immediate cleanup if item has installs array for verification
+	immediateCleanupAfterInstall(item, filePath)
+
 	logging.Info("Choco install succeeded", "pkgID", pkgID)
 	return out, nil
 }
@@ -356,6 +364,10 @@ func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 		Name:    item.Name,
 		Version: pkgVer,
 	})
+
+	// Attempt immediate cleanup if item has installs array for verification
+	immediateCleanupAfterInstall(item, filePath)
+
 	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
 	return out, nil
 }
@@ -882,4 +894,44 @@ func extractAndRunChocolateyBeforeInstall(nupkgPath string, item catalog.Item) e
 	logging.Info("chocolateyBeforeInstall.ps1 script completed successfully",
 		"item", item.Name, "output", strings.TrimSpace(out))
 	return nil
+}
+
+// immediateCleanupAfterInstall verifies installation using the installs array
+// and immediately removes the cached installer file if verification passes.
+// This provides instant cleanup for items with trackable installation verification.
+func immediateCleanupAfterInstall(item catalog.Item, localFile string) {
+	// Only proceed if the item has an installs array for verification
+	if len(item.Installs) == 0 {
+		logging.Debug("No installs array found, skipping immediate cleanup", "item", item.Name)
+		return
+	}
+
+	// Verify the installation was successful using the installs array
+	needsAction, err := status.CheckStatus(item, "install", "")
+	if err != nil {
+		logging.Warn("Error verifying installation for immediate cleanup",
+			"item", item.Name, "error", err)
+		return
+	}
+
+	// If needsAction is false, it means the installation is properly detected
+	if !needsAction {
+		logging.Info("Installation verified via installs array, performing cache cleanup",
+			"item", item.Name, "cachedFile", localFile)
+
+		// Remove the cached installer file
+		if localFile != "" && localFile != "." {
+			err := os.Remove(localFile)
+			if err != nil {
+				logging.Warn("Failed to remove cached installer file",
+					"item", item.Name, "file", localFile, "error", err)
+			} else {
+				logging.Info("Successfully removed cached installer file after installation verification",
+					"item", item.Name, "file", localFile)
+			}
+		}
+	} else {
+		logging.Warn("Installation verification failed, retaining cached file for troubleshooting",
+			"item", item.Name, "cachedFile", localFile)
+	}
 }
