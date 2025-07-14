@@ -118,14 +118,6 @@
                   Return="check"
                   Impersonate="no" />
 
-    <!-- Create the regular hourly scheduled task for periodic software checks -->
-    <CustomAction Id="CreateScheduledTask"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="check"
-                  Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /CREATE /F /SC MINUTE /MO 60 /TN CimianHourlyRun /TR &quot;[INSTALLDIR]managedsoftwareupdate.exe /silent&quot; /RU SYSTEM /RL HIGHEST" />
-
     <!-- Install and start the CimianWatcher service -->
     <CustomAction Id="InstallCimianWatcherService"
                   Execute="deferred"
@@ -156,26 +148,16 @@
                   Directory="INSTALLDIR"
                   ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; remove" />
 
-    <!-- Remove the scheduled task on uninstall -->
-    <CustomAction Id="DeleteScheduledTask"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="ignore"
-                  Directory="INSTALLDIR"
-                  ExeCommand="[SystemFolder]SCHTASKS.EXE /DELETE /F /TN CimianHourlyRun" />
-
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
       <Custom Action="RunCimiImport" After="InstallFiles">NOT CONFIGFILE</Custom>
       <!-- Custom Action for Installation -->
-      <Custom Action="CreateScheduledTask" After="InstallFiles">NOT REMOVE</Custom>
-      <Custom Action="InstallCimianWatcherService" After="CreateScheduledTask">NOT REMOVE</Custom>
+      <Custom Action="InstallCimianWatcherService" After="InstallFiles">NOT REMOVE</Custom>
       <Custom Action="StartCimianWatcherService" After="InstallCimianWatcherService">NOT REMOVE</Custom>
 
       <!-- Custom Action for Uninstallation -->
       <Custom Action="StopCimianWatcherService" Before="RemoveFiles">REMOVE="ALL"</Custom>
       <Custom Action="RemoveCimianWatcherService" After="StopCimianWatcherService">REMOVE="ALL"</Custom>
-      <Custom Action="DeleteScheduledTask" Before="RemoveFiles">REMOVE="ALL"</Custom>
       <RemoveExistingProducts After="InstallInitialize" />
     </InstallExecuteSequence>
 
