@@ -9,7 +9,7 @@
   <?endif?>
 
   <!-- Product Definition -->
-  <Product Id="*"
+  <Product Id="9127064A-3536-42A1-BDE4-131AA5DBE458"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
            Version="$(var.ProductVersion)"
@@ -36,7 +36,7 @@
                       Property="OLDPRODUCTS"
                       Minimum="0.0.0"
                       IncludeMinimum="yes"
-                      Maximum="25.2.14"
+                      Maximum="99.99.99"
                       IncludeMaximum="no" />
     </Upgrade>
 
