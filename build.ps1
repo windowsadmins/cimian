@@ -484,34 +484,84 @@ if ($Binaries) {
             $binaryName = $dir.Name
             Write-Log "Building $binaryName for $arch..." "INFO"
             
-            # Get build info
-            try {
-                $branchName = (git rev-parse --abbrev-ref HEAD)
-            } catch {
-                $branchName = "main"
-            }
-            
-            try {
-                $revision = (git rev-parse HEAD)
-            } catch {
-                $revision = "unknown"
-            }
-            
-            $buildDate = Get-Date -Format s
-            $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
-                "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
-                "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
-                "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
-                "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
-                "-X main.version=$env:RELEASE_VERSION"
-            
-            $env:GOARCH = $goarchMap[$arch]
-            $env:GOOS = "windows"
-            
+            # Check if this is a C# project
+            $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
+            $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
             $submoduleGoMod = Join-Path $dir.FullName "go.mod"
             $outputPath = "bin\$arch\$binaryName.exe"
             
-            if (Test-Path $submoduleGoMod) {
+            if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject)) {
+                # This is a C# project - build with dotnet
+                Write-Log "Detected C# project for $binaryName" "INFO"
+                
+                # Determine which project file to use
+                $projectFile = if (Test-Path $csharpAltProject) { $csharpAltProject } else { $csharpProject }
+                
+                # Map architecture for .NET runtime identifiers
+                $dotnetRid = switch ($arch) {
+                    "x64" { "win-x64" }
+                    "arm64" { "win-arm64" }
+                }
+                
+                Push-Location $dir.FullName
+                try {
+                    # Publish the C# project for specific architecture (self-contained single file)
+                    dotnet publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\net8.0-windows\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
+                    
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
+                    }
+                    
+                    # Find the built executable (should now be named cimistatus.exe)
+                    $builtExePath = "bin\Release\net8.0-windows\$dotnetRid\cimistatus.exe"
+                    if (-not (Test-Path $builtExePath)) {
+                        # Fallback: look for any .exe in the output directory
+                        $builtExePath = Get-ChildItem "bin\Release\net8.0-windows\$dotnetRid\*.exe" | Select-Object -First 1 -ExpandProperty FullName
+                    }
+                    $builtExe = Get-ChildItem $builtExePath | Select-Object -First 1
+                    
+                    if (-not $builtExe) {
+                        throw "Could not find built executable for $binaryName ($arch)"
+                    }
+                    
+                    # Copy to the expected output location
+                    Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
+                    
+                } catch {
+                    Write-Log "Failed to build C# project $binaryName ($arch). Error: $_" "ERROR"
+                    Pop-Location
+                    exit 1
+                }
+                Pop-Location
+                
+            } elseif (Test-Path $submoduleGoMod) {
+                # This is a Go submodule project
+                Write-Log "Detected Go submodule for $binaryName" "INFO"
+                
+                # Get build info for Go projects
+                try {
+                    $branchName = (git rev-parse --abbrev-ref HEAD)
+                } catch {
+                    $branchName = "main"
+                }
+                
+                try {
+                    $revision = (git rev-parse HEAD)
+                } catch {
+                    $revision = "unknown"
+                }
+                
+                $buildDate = Get-Date -Format s
+                $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
+                    "-X main.version=$env:RELEASE_VERSION"
+                
+                $env:GOARCH = $goarchMap[$arch]
+                $env:GOOS = "windows"
+                
                 Push-Location $dir.FullName
                 try {
                     go mod tidy
@@ -525,22 +575,50 @@ if ($Binaries) {
                     }
                     
                     if ($LASTEXITCODE -ne 0) {
-                        throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
+                        throw "Build failed for Go submodule $binaryName ($arch) with exit code $LASTEXITCODE."
                     }
                 } catch {
-                    Write-Log "Failed to build submodule $binaryName ($arch). Error: $_" "ERROR"
+                    Write-Log "Failed to build Go submodule $binaryName ($arch). Error: $_" "ERROR"
                     Pop-Location
                     exit 1
                 }
                 Pop-Location
+                
             } else {
+                # This is a standard Go project
+                Write-Log "Detected standard Go project for $binaryName" "INFO"
+                
+                # Get build info for Go projects
+                try {
+                    $branchName = (git rev-parse --abbrev-ref HEAD)
+                } catch {
+                    $branchName = "main"
+                }
+                
+                try {
+                    $revision = (git rev-parse HEAD)
+                } catch {
+                    $revision = "unknown"
+                }
+                
+                $buildDate = Get-Date -Format s
+                $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+                    "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
+                    "-X main.version=$env:RELEASE_VERSION"
+                
+                $env:GOARCH = $goarchMap[$arch]
+                $env:GOOS = "windows"
+                
                 try {
                     go build -v -o "$outputPath" -ldflags="$ldflags" "./cmd/$binaryName"
                     if ($LASTEXITCODE -ne 0) {
-                        throw "Build failed for $binaryName ($arch) with exit code $LASTEXITCODE."
+                        throw "Build failed for Go project $binaryName ($arch) with exit code $LASTEXITCODE."
                     }
                 } catch {
-                    Write-Log "Failed to build $binaryName ($arch). Error: $_" "ERROR"
+                    Write-Log "Failed to build Go project $binaryName ($arch). Error: $_" "ERROR"
                     exit 1
                 }
             }
@@ -643,7 +721,8 @@ Write-Log "Checking and installing required tools..." "INFO"
 
 $tools = @(
     @{ Name = "nuget.commandline"; Command = "nuget" },
-    @{ Name = "go"; Command = "go" }
+    @{ Name = "go"; Command = "go" },
+    @{ Name = "dotnet"; Command = "dotnet" }
 )
 
 # Add IntuneWinAppUtil only if IntuneWin flag is specified
@@ -815,44 +894,96 @@ foreach ($arch in $archs) {
         $binaryName = $dir.Name
         Write-Log "Building $binaryName for $arch..." "INFO"
 
-        # Retrieve the current Git branch name
-        try {
-            $branchName = (git rev-parse --abbrev-ref HEAD)
-            Write-Log "Current Git branch: $branchName" "INFO"
-        }
-        catch {
-            Write-Log "Unable to retrieve Git branch name. Defaulting to 'main'." "WARNING"
-            $branchName = "main"
-        }        $revision = "unknown"
-        try {
-            $revision = (git rev-parse HEAD)
-        }
-        catch {
-            Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
-        }
-
-        $buildDate = Get-Date -Format s
-
-        $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
-            "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
-            "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
-            "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
-            "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
-            "-X main.version=$env:RELEASE_VERSION"
-
-        $env:GOARCH = $goarchMap[$arch]
-        $env:GOOS = "windows"
-        
+        # Check if this is a C# project
+        $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
+        $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
         $submoduleGoMod = Join-Path $dir.FullName "go.mod"
         $outputPath = "bin\$arch\$binaryName.exe"
         
-        if (Test-Path $submoduleGoMod) {
-            Write-Log "Detected submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
+        if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject)) {
+            # This is a C# project - build with dotnet
+            Write-Log "Detected C# project for $binaryName" "INFO"
+            
+            # Determine which project file to use
+            $projectFile = if (Test-Path $csharpAltProject) { $csharpAltProject } else { $csharpProject }
+            
+            # Map architecture for .NET runtime identifiers
+            $dotnetRid = switch ($arch) {
+                "x64" { "win-x64" }
+                "arm64" { "win-arm64" }
+            }
+            
+            Push-Location $dir.FullName
+            try {
+                # Build the C# project for specific architecture
+                dotnet build $projectFile --configuration Release --runtime $dotnetRid --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --verbosity minimal
+                
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Build failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
+                }
+                
+                # Find the built executable (should now be named cimistatus.exe)
+                $builtExePath = "bin\Release\net8.0-windows\$dotnetRid\cimistatus.exe"
+                if (-not (Test-Path $builtExePath)) {
+                    # Fallback: look for any .exe in the output directory
+                    $builtExePath = "bin\Release\net8.0-windows*\$dotnetRid\*.exe"
+                    $builtExe = Get-ChildItem $builtExePath | Select-Object -First 1
+                } else {
+                    $builtExe = Get-Item $builtExePath
+                }
+                
+                if (-not $builtExe) {
+                    throw "Could not find built executable for $binaryName ($arch)"
+                }
+                
+                # Copy to the expected output location
+                Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
+                Write-Log "$binaryName ($arch, C#) built successfully." "SUCCESS"
+                
+            } catch {
+                Write-Log "Failed to build C# project $binaryName ($arch). Error: $_" "ERROR"
+                Pop-Location
+                exit 1
+            }
+            Pop-Location
+            
+        } elseif (Test-Path $submoduleGoMod) {
+            # This is a Go submodule project
+            Write-Log "Detected Go submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
+            
+            # Retrieve the current Git branch name
+            try {
+                $branchName = (git rev-parse --abbrev-ref HEAD)
+            }
+            catch {
+                $branchName = "main"
+            }
+            
+            $revision = "unknown"
+            try {
+                $revision = (git rev-parse HEAD)
+            }
+            catch {
+                Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
+            }
+
+            $buildDate = Get-Date -Format s
+
+            $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+                "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+                "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+                "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+                "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
+                "-X main.version=$env:RELEASE_VERSION"
+
+            $env:GOARCH = $goarchMap[$arch]
+            $env:GOOS = "windows"
+            
             Push-Location $dir.FullName
             try {
                 go mod tidy
                 go mod download
-                  # Special handling for GUI applications
+                # Special handling for GUI applications
                 if ($binaryName -eq "cimistatus") {
                     # GUI application - enable CGO and use windowsgui flag to hide console
                     $env:CGO_ENABLED = "1"
@@ -866,26 +997,56 @@ foreach ($arch in $archs) {
                 if ($LASTEXITCODE -ne 0) {
                     throw "Build failed for submodule $binaryName with exit code $LASTEXITCODE."
                 }
-                Write-Log "$binaryName ($arch, submodule) built successfully." "SUCCESS"
+                Write-Log "$binaryName ($arch, Go submodule) built successfully." "SUCCESS"
             }
             catch {
-                Write-Log "Failed to build submodule $binaryName ($arch). Error: $_" "ERROR"
+                Write-Log "Failed to build Go submodule $binaryName ($arch). Error: $_" "ERROR"
                 Pop-Location
                 exit 1
             }
             Pop-Location
-        }
-        else {
-            Write-Log "Building $binaryName ($arch) from main module..." "INFO"
+            
+        } else {
+            # This is a standard Go project
+            Write-Log "Building $binaryName ($arch) from main Go module..." "INFO"
+            
+            # Retrieve the current Git branch name
+            try {
+                $branchName = (git rev-parse --abbrev-ref HEAD)
+            }
+            catch {
+                $branchName = "main"
+            }
+            
+            $revision = "unknown"
+            try {
+                $revision = (git rev-parse HEAD)
+            }
+            catch {
+                Write-Log "Unable to retrieve Git revision. Using 'unknown'." "WARNING"
+            }
+
+            $buildDate = Get-Date -Format s
+
+            $ldflags = "-X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName " +
+                "-X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION " +
+                "-X github.com/windowsadmins/cimian/pkg/version.branch=$branchName " +
+                "-X github.com/windowsadmins/cimian/pkg/version.buildDate=$buildDate " +
+                "-X github.com/windowsadmins/cimian/pkg/version.revision=$revision " +
+                "-X main.version=$env:RELEASE_VERSION"
+
+            $env:GOARCH = $goarchMap[$arch]
+            $env:GOOS = "windows"
+            
             try {
                 go build -v -o "$outputPath" -ldflags="$ldflags" "./cmd/$binaryName"
                 if ($LASTEXITCODE -ne 0) {
                     throw "Build failed for $binaryName ($arch) with exit code $LASTEXITCODE."
                 }
-                Write-Log "$binaryName ($arch) built successfully." "SUCCESS"
+                Write-Log "$binaryName ($arch, Go) built successfully." "SUCCESS"
             }
             catch {
-                Write-Log "Failed to build $binaryName ($arch). Error: $_" "ERROR"
+                Write-Log "Failed to build Go project $binaryName ($arch). Error: $_" "ERROR"
                 exit 1
             }
         }
