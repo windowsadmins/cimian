@@ -4,21 +4,24 @@ This document describes the Windows Service-based bootstrap monitoring system in
 
 ## Problem Statement
 
-The original bootstrap system relied on a scheduled task that runs on system startup and checks for the presence of the `.cimian.bootstrap` file. However, this approach has limitations:
+The original bootstrap system relied on a scheduled task that runs on system startup and checks for the presence of the `.cimian.bootstrap` file. However, this approach had significant limitations:
 
 - Only runs at system startup
 - No real-time monitoring capability
 - Cannot respond to MDM triggers outside of reboot cycles
+- Complex command-line escaping issues with SCHTASKS
+
+**As of version 2025.07.14, the scheduled task system has been eliminated entirely** in favor of the superior CimianWatcher service approach.
 
 ## Solution: Windows Service Monitor
 
-**The recommended and only supported approach**
+**The only supported approach**
 
 - **Service**: `cimiwatcher.exe` - Native Windows service written in Go
 - **Monitoring**: Polls the bootstrap flag file every 10 seconds
 - **Response Time**: 10-15 seconds maximum
 - **Reliability**: Highest - native Windows service with automatic restart
-- **Requirements**: Administrative privileges for service installation
+- **Requirements**: Administrative privileges for service installation (handled automatically by MSI)
 
 **Features:**
 - Automatic installation during MSI setup
@@ -195,6 +198,12 @@ The Windows Service monitor is designed to be lightweight:
 
 ## Backwards Compatibility
 
-This system is fully backwards compatible with existing bootstrap implementations. The traditional scheduled task approach is still supported as a fallback, but the Windows Service approach provides superior responsiveness and reliability.
+This system maintains backwards compatibility with existing bootstrap implementations that rely on the flag file approach. The `--set-bootstrap-mode` and `--clear-bootstrap-mode` commands continue to work exactly as before, but now only manage the flag file - no scheduled task creation or management.
 
-The original scheduled task bootstrap system remains in place as a fallback, ensuring compatibility with existing deployments that rely on the startup-based bootstrap check.
+Existing installations that have the legacy `CimianBootstrapCheck` scheduled task will continue to work during transition, but administrators should run the provided cleanup script to remove these legacy components:
+
+```cmd
+cleanup-legacy-bootstrap.bat
+```
+
+The CimianWatcher service provides superior responsiveness and reliability compared to the previous scheduled task approach.
