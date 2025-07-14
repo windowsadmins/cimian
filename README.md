@@ -20,7 +20,7 @@ Cimian includes a bootstrap system similar to Munki's, designed for zero-touch d
 ### How Bootstrap Works
 
 1. **Flag File**: `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` - When this file exists, Cimian enters bootstrap mode
-2. **Scheduled Task**: A dedicated scheduled task (`CimianBootstrapCheck`) runs at system startup to check for bootstrap mode
+2. **CimianWatcher Service**: A Windows service monitors the bootstrap flag file continuously and triggers installation automatically
 3. **Non-Interactive Mode**: When in bootstrap mode, Cimian runs with a progress window and installs all required software without user interaction
 4. **Automatic Cleanup**: The bootstrap flag file is automatically removed upon successful completion
 
