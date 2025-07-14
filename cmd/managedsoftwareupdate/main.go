@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -316,18 +315,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Skip user confirmation in auto mode
-	if !*auto {
-		// Prompt user for confirmation.
-		fmt.Print("Proceed with installations/updates/uninstalls? (Y/n): ")
-		var response string
-		fmt.Scanln(&response)
-		if strings.TrimSpace(strings.ToLower(response)) != "y" && response != "" {
-			logger.Info("User aborted installation.")
-			os.Exit(0)
-		}
-	} else {
+	// Proceed with installations without user confirmation
+	if *auto {
 		logger.Info("Auto mode enabled - proceeding with installation without confirmation")
+	} else {
+		logger.Info("Proceeding with installation without confirmation")
 	} // Combine install and update items and perform installations.
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)
@@ -1004,12 +996,7 @@ func enableBootstrapMode() error {
 		return fmt.Errorf("failed to write to bootstrap flag file: %w", err)
 	}
 
-	// Update the scheduled task to run at startup if not already configured
-	if err := ensureBootstrapScheduledTask(); err != nil {
-		// Log warning but don't fail - the task might already exist
-		logger.Warning("Failed to update scheduled task for bootstrap mode: %v", err)
-	}
-
+	logger.Info("Bootstrap mode enabled - CimianWatcher service will detect and respond")
 	return nil
 }
 
@@ -1024,87 +1011,7 @@ func disableBootstrapMode() error {
 		return fmt.Errorf("failed to remove bootstrap flag file: %w", err)
 	}
 
-	// Also remove the bootstrap scheduled task when disabling bootstrap mode
-	if err := removeBootstrapScheduledTask(); err != nil {
-		// Log warning but don't fail - the task might not exist
-		logger.Warning("Failed to remove bootstrap scheduled task: %v", err)
-	}
-
-	return nil
-}
-
-// ensureBootstrapScheduledTask ensures the scheduled task is configured for bootstrap mode
-func ensureBootstrapScheduledTask() error {
-	return createBootstrapScheduledTask()
-}
-
-// createBootstrapScheduledTask creates a separate scheduled task specifically for bootstrap mode
-// This task runs at system startup and checks for the bootstrap flag file
-func createBootstrapScheduledTask() error {
-	// Get the current executable path
-	exePath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	// Create the bootstrap task that runs at startup
-	// This task will run every time the system starts and check for bootstrap mode
-	taskName := "CimianBootstrapCheck"
-	// The cmd.exe wrapper checks if the bootstrap flag file exists before running
-	taskCmd := fmt.Sprintf(`cmd.exe /c "if exist %s "%s" --auto --show-status"`, BootstrapFlagFile, exePath)
-
-	// First, delete any existing bootstrap task to ensure clean creation
-	deleteCmd := fmt.Sprintf(`SCHTASKS.EXE /DELETE /F /TN "%s"`, taskName)
-	if err := runWindowsCommand(deleteCmd); err != nil {
-		// Ignore errors when deleting - task might not exist
-		logger.Debug("Could not delete existing bootstrap task (this is normal if it doesn't exist): %v", err)
-	}
-
-	// Create the new bootstrap task
-	// This task runs at system startup with HIGHEST privileges as SYSTEM
-	createCmd := fmt.Sprintf(
-		`SCHTASKS.EXE /CREATE /F /SC ONSTART /TN "%s" /TR "%s" /RU SYSTEM /RL HIGHEST /DELAY 0000:30`,
-		taskName, taskCmd)
-
-	if err := runWindowsCommand(createCmd); err != nil {
-		return fmt.Errorf("failed to create bootstrap scheduled task: %w", err)
-	}
-
-	logger.Info("Created bootstrap scheduled task: %s", taskName)
-	return nil
-}
-
-// removeBootstrapScheduledTask removes the bootstrap scheduled task
-func removeBootstrapScheduledTask() error {
-	taskName := "CimianBootstrapCheck"
-	deleteCmd := fmt.Sprintf(`SCHTASKS.EXE /DELETE /F /TN "%s"`, taskName)
-
-	if err := runWindowsCommand(deleteCmd); err != nil {
-		return fmt.Errorf("failed to remove bootstrap scheduled task: %w", err)
-	}
-
-	logger.Info("Removed bootstrap scheduled task: %s", taskName)
-	return nil
-}
-
-// runWindowsCommand executes a Windows command and returns any error
-func runWindowsCommand(command string) error {
-	// Split the command to get the program and arguments
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return fmt.Errorf("empty command")
-	}
-
-	cmd := exec.Command(parts[0], parts[1:]...)
-	output, err := cmd.CombinedOutput()
-
-	logger.Debug("Executing command: %s", command)
-	logger.Debug("Command output: %s", string(output))
-
-	if err != nil {
-		return fmt.Errorf("command failed: %s, output: %s, error: %w", command, string(output), err)
-	}
-
+	logger.Info("Bootstrap mode disabled")
 	return nil
 }
 
