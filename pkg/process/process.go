@@ -14,6 +14,7 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
@@ -231,7 +232,13 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 				if isOnDemandItem(validDependency) {
 					handleOnDemandInstall(validDependency, cachePath, CheckOnly, cfg)
 				} else {
-					installerInstall(validDependency, "install", "", cachePath, CheckOnly, cfg)
+					// Download the file first for dependencies
+					localFile, err := downloadItemFile(validDependency, cfg)
+					if err != nil {
+						logging.Error("Failed to download dependency", "dependency", validDependency.Name, "error", err)
+						continue
+					}
+					installerInstall(validDependency, "install", localFile, cachePath, CheckOnly, cfg)
 				}
 			}
 		}
@@ -240,7 +247,13 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 		if isOnDemandItem(validItem) {
 			handleOnDemandInstall(validItem, cachePath, CheckOnly, cfg)
 		} else {
-			installerInstall(validItem, "install", "", cachePath, CheckOnly, cfg)
+			// Download the file first
+			localFile, err := downloadItemFile(validItem, cfg)
+			if err != nil {
+				logging.Error("Failed to download item", "item", validItem.Name, "error", err)
+				continue
+			}
+			installerInstall(validItem, "install", localFile, cachePath, CheckOnly, cfg)
 		}
 	}
 }
@@ -432,7 +445,13 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 			if isOnDemandItem(validDependency) {
 				handleOnDemandInstall(validDependency, cachePath, checkOnly, cfg)
 			} else {
-				installerInstall(validDependency, "install", "", cachePath, checkOnly, cfg)
+				// Download the file first for dependencies too
+				localFile, err := downloadItemFile(validDependency, cfg)
+				if err != nil {
+					logging.Error("Failed to download dependency", "dependency", validDependency.Name, "error", err)
+					continue
+				}
+				installerInstall(validDependency, "install", localFile, cachePath, checkOnly, cfg)
 			}
 		}
 	}
@@ -442,7 +461,12 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 	if isOnDemandItem(item) {
 		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
 	} else {
-		installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+		// Download the file first
+		localFile, err := downloadItemFile(item, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to download item %s: %v", itemName, err)
+		}
+		installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 	}
 
 	// Look for updates that should be applied after this install
@@ -691,7 +715,13 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	if isOnDemandItem(item) {
 		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
 	} else {
-		_, err = installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+		// Download the file first, then install it
+		localFile, err := downloadItemFile(item, cfg)
+		if err != nil {
+			return fmt.Errorf("failed to download item %s: %v", itemName, err)
+		}
+
+		_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 		if err != nil {
 			return fmt.Errorf("failed to install item %s: %v", itemName, err)
 		}
@@ -898,11 +928,69 @@ func isOnDemandItem(item catalog.Item) bool {
 func handleOnDemandInstall(item catalog.Item, cachePath string, checkOnly bool, cfg *config.Configuration) {
 	logging.Info("Processing OnDemand item", "item", item.Name)
 
+	// Download the file first for OnDemand items too
+	localFile, err := downloadItemFile(item, cfg)
+	if err != nil {
+		logging.Error("Failed to download OnDemand item", "item", item.Name, "error", err)
+		return
+	}
+
 	// OnDemand items are always available for execution
-	_, err := installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+	_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 	if err != nil {
 		logging.Error("OnDemand item execution failed", "item", item.Name, "error", err)
 	} else {
 		logging.Info("OnDemand item executed successfully", "item", item.Name)
 	}
+}
+
+// downloadItemFile downloads the installer file for a single catalog item and returns the local file path
+func downloadItemFile(item catalog.Item, cfg *config.Configuration) (string, error) {
+	if item.Installer.Location == "" {
+		return "", fmt.Errorf("no installer location found for item: %s", item.Name)
+	}
+
+	// Construct the full URL (same logic as in managedsoftwareupdate/main.go)
+	fullURL := item.Installer.Location
+	if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
+		fullURL = strings.ReplaceAll(fullURL, "\\", "/")
+		if !strings.HasPrefix(fullURL, "/") {
+			fullURL = "/" + fullURL
+		}
+		fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
+	}
+
+	logging.Debug("Downloading file for item", "item", item.Name, "url", fullURL)
+
+	// Download the file
+	if err := download.DownloadFile(fullURL, "", cfg); err != nil {
+		return "", fmt.Errorf("failed to download %s: %v", item.Name, err)
+	}
+
+	// Reconstruct the local file path (same logic as in download.InstallPendingUpdates)
+	subPath := getSubPathFromURL(fullURL, cfg)
+	localFilePath := filepath.Join(cfg.CachePath, subPath)
+	localFilePath = filepath.Clean(localFilePath)
+
+	logging.Debug("Downloaded file", "item", item.Name, "path", localFilePath)
+	return localFilePath, nil
+}
+
+// getSubPathFromURL mirrors the logic in download.getSubPathFromURL
+func getSubPathFromURL(url string, cfg *config.Configuration) string {
+	lowerURL := strings.ToLower(url)
+	var subPath string
+
+	switch {
+	case strings.Contains(lowerURL, "/catalogs/"):
+		subPath = strings.SplitN(url, "/catalogs/", 2)[1]
+	case strings.Contains(lowerURL, "/manifests/"):
+		subPath = strings.SplitN(url, "/manifests/", 2)[1]
+	case strings.Contains(lowerURL, "/pkgs/"):
+		idx := strings.Index(lowerURL, "/pkgs/")
+		subPath = url[idx+len("/pkgs/"):]
+	default:
+		subPath = filepath.Base(url)
+	}
+	return filepath.FromSlash(subPath)
 }
