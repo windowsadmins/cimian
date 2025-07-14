@@ -1,0 +1,222 @@
+<Window x:Class="Cimian.Status.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
+        xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        Title="Cimian Status" 
+        Height="300" 
+        Width="600"
+        MinHeight="350"
+        MinWidth="500"
+        ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen"
+        Icon="../cimian.ico"
+        Background="{DynamicResource ApplicationPageBackgroundThemeBrush}">
+
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+    </Window.Resources>
+
+    <Window.RenderTransform>
+        <TranslateTransform/>
+    </Window.RenderTransform>
+
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard>
+                <Storyboard>
+                    <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                   From="0" To="1" Duration="0:0:0.4">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut"/>
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                    <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                   From="20" To="0" Duration="0:0:0.5">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut"/>
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+            </BeginStoryboard>
+        </EventTrigger>
+    </Window.Triggers>
+
+    <Grid Margin="32">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header Section with Modern Design -->
+        <Grid Grid.Row="0" Margin="0,0,0,32">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- App Icon with Glow Effect -->
+            <Border Grid.Column="0" 
+                    Width="64" Height="64" 
+                    CornerRadius="12"
+                    Background="{DynamicResource ControlFillColorDefaultBrush}">
+                <Border.Effect>
+                    <DropShadowEffect Color="{StaticResource AccentColor}" 
+                                    Direction="270" 
+                                    ShadowDepth="0" 
+                                    BlurRadius="12" 
+                                    Opacity="0.3"/>
+                </Border.Effect>
+                <Image Source="../../../icon.png" 
+                       Width="48" Height="48"/>
+            </Border>
+
+            <!-- Title Section -->
+            <StackPanel Grid.Column="1" 
+                        VerticalAlignment="Center" 
+                        Margin="20,0,0,0">
+                <TextBlock Text="Cimian Management" 
+                          Style="{StaticResource TitleTextStyle}"/>
+                <TextBlock Text="Software Update Monitor" 
+                          Style="{StaticResource CaptionTextStyle}"/>
+            </StackPanel>
+
+            <!-- Connection Status Indicator -->
+            <Border Grid.Column="2" 
+                    VerticalAlignment="Center"
+                    Background="{Binding ConnectionStatusBrush}"
+                    CornerRadius="12"
+                    Padding="12,6">
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="8" Height="8" 
+                            Fill="{Binding ConnectionStatusBrush}"
+                            Margin="0,0,6,0">
+                        <Ellipse.Effect>
+                            <DropShadowEffect Color="{Binding ConnectionStatusColor}" 
+                                            Direction="270" 
+                                            ShadowDepth="0" 
+                                            BlurRadius="8" 
+                                            Opacity="0.8"/>
+                        </Ellipse.Effect>
+                    </Ellipse>
+                    <TextBlock Text="{Binding ConnectionStatusText}" 
+                              Style="{StaticResource CaptionTextStyle}"
+                              Foreground="White"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Main Status Card -->
+        <Border Grid.Row="1" 
+                Style="{StaticResource ModernCardStyle}"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Status Header -->
+                <TextBlock Grid.Row="0"
+                          Text="{Binding StatusText}" 
+                          Style="{StaticResource SubtitleTextStyle}"
+                          Foreground="{Binding StatusBrush}"
+                          TextAlignment="Center"
+                          Margin="0,0,0,16"
+                          TextWrapping="Wrap"/>
+
+                <!-- Detail Information -->
+                <TextBlock Grid.Row="1"
+                          Text="{Binding DetailText}" 
+                          Style="{StaticResource BodyTextStyle}"
+                          TextAlignment="Center"
+                          Margin="0,0,0,24"
+                          TextWrapping="Wrap"/>
+
+                <!-- Progress Section -->
+                <StackPanel Grid.Row="2" Margin="0,0,0,16"
+                           Visibility="{Binding ShowProgress, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <!-- Progress Bar -->
+                    <ProgressBar Value="{Binding ProgressValue}"
+                                Style="{StaticResource ModernProgressStyle}"
+                                Margin="0,0,0,8"
+                                IsIndeterminate="{Binding IsRunning}">
+                        <ProgressBar.Foreground>
+                            <SolidColorBrush Color="{Binding ProgressColor}"/>
+                        </ProgressBar.Foreground>
+                    </ProgressBar>
+
+                    <!-- Progress Text -->
+                    <Grid>
+                        <TextBlock Text="{Binding ProgressText}"
+                                  Style="{StaticResource CaptionTextStyle}"
+                                  HorizontalAlignment="Left"/>
+                        <TextBlock Style="{StaticResource CaptionTextStyle}"
+                                  HorizontalAlignment="Right">
+                            <TextBlock.Text>
+                                <MultiBinding StringFormat="{}{0}%">
+                                    <Binding Path="ProgressValue"/>
+                                </MultiBinding>
+                            </TextBlock.Text>
+                        </TextBlock>
+                    </Grid>
+                </StackPanel>
+
+                <!-- Spacer -->
+                <Grid Grid.Row="3"/>
+
+                <!-- Last Run Information -->
+                <Border Grid.Row="4" 
+                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                        CornerRadius="6"
+                        Padding="16,12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        
+                        <TextBlock Grid.Column="0"
+                                  Text="Last run:" 
+                                  Style="{StaticResource CaptionTextStyle}"
+                                  VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1"
+                                  Text="{Binding LastRunTime}" 
+                                  Style="{StaticResource CaptionTextStyle}"
+                                  TextAlignment="Right"
+                                  VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- Action Buttons -->
+        <StackPanel Grid.Row="2" 
+                    Orientation="Horizontal" 
+                    HorizontalAlignment="Center" 
+                    Margin="0,32,0,0">
+            
+            <Button Content="📄 Show Logs" 
+                    Click="ShowLogs_Click"
+                    Style="{StaticResource SecondaryButtonStyle}"/>
+            
+            <Button Content="{Binding RunButtonText}" 
+                    Click="RunNow_Click"
+                    IsEnabled="{Binding CanRunNow}"
+                    Style="{StaticResource PrimaryButtonStyle}"
+                    Margin="16,0,0,0">
+                <i:Interaction.Triggers>
+                    <i:EventTrigger EventName="Click">
+                        <i:InvokeCommandAction Command="{Binding RunNowCommand}"/>
+                    </i:EventTrigger>
+                </i:Interaction.Triggers>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>
