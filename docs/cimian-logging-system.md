@@ -8,7 +8,7 @@ Cimian's enhanced logging system provides structured, timestamped logging design
 
 ```
 C:\ProgramData\ManagedInstalls\logs\
-├── 20250712-140530/          # Individual session data (YYYY-MM-DD-HHmmss)
+├── 20250712-140530/          # Individual session data (YYYY-MM-DD-HHMMss)
 │   ├── session.json          # Session metadata
 │   ├── events.jsonl          # Streaming event log (JSON Lines)
 │   ├── summary.json          # Session summary
@@ -26,7 +26,7 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
 ## Key Features
 
 ### 🗂️ Timestamped Directory Structure
-- **Format**: `YYYY-MM-DD-HHmmss` subdirectories
+- **Format**: `YYYY-MM-DD-HHMMss` subdirectories
 - **Retention**: Last 10 days (daily) + Last 24 hours (hourly)
 - **Organization**: Automatic cleanup of old logs
 
