@@ -20,6 +20,13 @@ namespace Cimian.Status.Services
         void SaveLastRunTime();
         void OpenLogsDirectory();
         string GetLatestLogDirectory();
+        
+        // Live log tailing functionality
+        event EventHandler<string>? LogLineReceived;
+        Task StartLogTailingAsync();
+        Task StopLogTailingAsync();
+        bool IsLogTailing { get; }
+        string GetCurrentLogFilePath();
     }
 
     public interface IStatusServer

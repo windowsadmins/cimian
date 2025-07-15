@@ -10,20 +10,31 @@ namespace Cimian.Status.Services
     public class UpdateService : IUpdateService
     {
         private readonly ILogger<UpdateService> _logger;
+        private readonly IStatusServer _statusServer;
 
         public event EventHandler<ProgressEventArgs>? ProgressChanged;
         public event EventHandler<StatusEventArgs>? StatusChanged;
         public event EventHandler<UpdateCompletedEventArgs>? Completed;
 
-        public UpdateService(ILogger<UpdateService> logger)
+        private volatile bool _isExecutingUpdate = false;
+        private volatile bool _updateCompleted = false;
+
+        public UpdateService(ILogger<UpdateService> logger, IStatusServer statusServer)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _statusServer = statusServer ?? throw new ArgumentNullException(nameof(statusServer));
+            
+            // Subscribe to status server messages to get real progress from managedsoftwareupdate.exe
+            _statusServer.MessageReceived += OnStatusMessageReceived;
         }
 
         public async Task ExecuteUpdateAsync()
         {
             try
             {
+                _isExecutingUpdate = true;
+                _updateCompleted = false;
+
                 // Immediately show that we're starting
                 StatusChanged?.Invoke(this, new StatusEventArgs 
                 { 
@@ -31,7 +42,7 @@ namespace Cimian.Status.Services
                 });
                 ProgressChanged?.Invoke(this, new ProgressEventArgs 
                 { 
-                    Percentage = 10, 
+                    Percentage = 5, 
                     Message = "Starting update..." 
                 });
 
@@ -58,6 +69,10 @@ namespace Cimian.Status.Services
                     Success = false, 
                     ErrorMessage = ex.Message 
                 });
+            }
+            finally
+            {
+                _isExecutingUpdate = false;
             }
         }
 
@@ -215,27 +230,19 @@ namespace Cimian.Status.Services
 
             StatusChanged?.Invoke(this, new StatusEventArgs { Message = "Update process running with administrator privileges..." });
 
-            // Simulate progress during the wait period
-            var progressTask = Task.Run(async () =>
-            {
-                for (int i = 30; i <= 90 && !process.HasExited; i += 10)
-                {
-                    await Task.Delay(30000); // Update every 30 seconds
-                    if (!process.HasExited)
-                    {
-                        ProgressChanged?.Invoke(this, new ProgressEventArgs 
-                        { 
-                            Percentage = i, 
-                            Message = $"Update in progress... ({i}%)" 
-                        });
-                    }
-                }
+            // Wait for the real progress from TCP messages instead of simulating
+            // The OnStatusMessageReceived method will handle progress updates from managedsoftwareupdate.exe
+            ProgressChanged?.Invoke(this, new ProgressEventArgs 
+            { 
+                Percentage = 35, 
+                Message = "Connected to update process, waiting for progress..." 
             });
 
-            // Wait for completion with timeout (10 minutes for real operations)
-            var completed = await Task.Run(() => process.WaitForExit(600000));
+            // Wait for completion with timeout (15 minutes for real operations)
+            var completed = await Task.Run(() => process.WaitForExit(900000));
 
-            if (completed)
+            // If we didn't receive a "quit" message but the process completed, handle it
+            if (completed && !_updateCompleted)
             {
                 var exitCode = process.ExitCode;
                 _logger.LogInformation("Process completed with exit code: {ExitCode}", exitCode);
@@ -248,6 +255,12 @@ namespace Cimian.Status.Services
 
                 var success = exitCode == 0;
                 var errorMessage = success ? null : $"Process exit code: {exitCode}";
+
+                StatusChanged?.Invoke(this, new StatusEventArgs 
+                { 
+                    Message = success ? "Update completed successfully" : $"Update failed with exit code {exitCode}",
+                    IsError = !success
+                });
 
                 Completed?.Invoke(this, new UpdateCompletedEventArgs 
                 { 
@@ -319,6 +332,73 @@ namespace Cimian.Status.Services
 
             _logger.LogWarning("managedsoftwareupdate.exe not found in any expected location");
             return null;
+        }
+
+        private void OnStatusMessageReceived(object? sender, StatusMessage message)
+        {
+            // Only process messages when we're actively running an update
+            if (!_isExecutingUpdate) return;
+
+            try
+            {
+                switch (message.Type?.ToLowerInvariant())
+                {
+                    case "statusmessage":
+                        StatusChanged?.Invoke(this, new StatusEventArgs 
+                        { 
+                            Message = message.Data, 
+                            IsError = message.Error 
+                        });
+                        break;
+
+                    case "detailmessage":
+                        ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                        { 
+                            Percentage = -1, // Keep current percentage
+                            Message = message.Data 
+                        });
+                        break;
+
+                    case "percentprogress":
+                    case "percentProgress": // Handle both case variations
+                        if (message.Percent >= 0)
+                        {
+                            ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                            { 
+                                Percentage = message.Percent,
+                                Message = $"Progress: {message.Percent}%"
+                            });
+                        }
+                        break;
+
+                    case "quit":
+                        _logger.LogInformation("Received quit message from managedsoftwareupdate");
+                        _updateCompleted = true;
+                        
+                        // Assume success if we got a quit message (process completed normally)
+                        ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                        { 
+                            Percentage = 100,
+                            Message = "Update completed"
+                        });
+                        
+                        StatusChanged?.Invoke(this, new StatusEventArgs 
+                        { 
+                            Message = "Update process completed successfully"
+                        });
+                        
+                        Completed?.Invoke(this, new UpdateCompletedEventArgs 
+                        { 
+                            Success = true,
+                            ExitCode = 0
+                        });
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing status message in UpdateService: {MessageType}", message.Type);
+            }
         }
     }
 }
