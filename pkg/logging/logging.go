@@ -5,7 +5,7 @@
 // - Timestamped subdirectories (YYYY-MM-DD-HHMMss format)
 // - Automatic log rotation and retention policies
 // - Structured data formats for external tool integration
-// - Multiple output formats (JSON, YAML, plain text)
+// - Multiple output formats (JSON, plain text)
 // - Background cleanup of old log directories
 
 package logging
@@ -27,7 +27,6 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"golang.org/x/sys/windows"
-	"gopkg.in/yaml.v3"
 )
 
 // LogLevel represents the severity of the log message.
@@ -59,19 +58,19 @@ func (ll LogLevel) String() string {
 
 // LogEntry represents a structured log entry compatible with external monitoring tools
 type LogEntry struct {
-	Time       int64                  `json:"time" yaml:"time"`                                 // Unix timestamp (BIGINT)
-	Timestamp  string                 `json:"timestamp" yaml:"timestamp"`                       // ISO 8601 formatted time
-	Level      string                 `json:"level" yaml:"level"`                               // Log level (TEXT)
-	Message    string                 `json:"message" yaml:"message"`                           // Log message (TEXT)
-	Component  string                 `json:"component" yaml:"component"`                       // Component/module name (TEXT)
-	Process    string                 `json:"process" yaml:"process"`                           // Process name (TEXT)
-	PID        int64                  `json:"pid" yaml:"pid"`                                   // Process ID (BIGINT)
-	Thread     string                 `json:"thread" yaml:"thread"`                             // Thread identifier (TEXT)
-	Hostname   string                 `json:"hostname" yaml:"hostname"`                         // System hostname (TEXT)
-	Version    string                 `json:"version" yaml:"version"`                           // Cimian version (TEXT)
-	SessionID  string                 `json:"session_id" yaml:"session_id"`                     // Unique session identifier (TEXT)
-	RunType    string                 `json:"run_type" yaml:"run_type"`                         // manual, scheduled, auto (TEXT)
-	Properties map[string]interface{} `json:"properties,omitempty" yaml:"properties,omitempty"` // Additional structured data
+	Time       int64                  `json:"time"`                 // Unix timestamp (BIGINT)
+	Timestamp  string                 `json:"timestamp"`            // ISO 8601 formatted time
+	Level      string                 `json:"level"`                // Log level (TEXT)
+	Message    string                 `json:"message"`              // Log message (TEXT)
+	Component  string                 `json:"component"`            // Component/module name (TEXT)
+	Process    string                 `json:"process"`              // Process name (TEXT)
+	PID        int64                  `json:"pid"`                  // Process ID (BIGINT)
+	Thread     string                 `json:"thread"`               // Thread identifier (TEXT)
+	Hostname   string                 `json:"hostname"`             // System hostname (TEXT)
+	Version    string                 `json:"version"`              // Cimian version (TEXT)
+	SessionID  string                 `json:"session_id"`           // Unique session identifier (TEXT)
+	RunType    string                 `json:"run_type"`             // manual, scheduled, auto (TEXT)
+	Properties map[string]interface{} `json:"properties,omitempty"` // Additional structured data
 }
 
 // RetentionPolicy defines log retention rules
@@ -90,7 +89,6 @@ type LoggerConfig struct {
 	Retention        RetentionPolicy // Retention policy
 	EnableStructured bool            // Enable structured JSON output
 	EnableJSON       bool            // Enable JSON output
-	EnableYAML       bool            // Enable YAML output
 	EnableConsole    bool            // Enable console output
 }
 
@@ -101,7 +99,6 @@ type Logger struct {
 	logLevel     LogLevel
 	logFile      *os.File
 	jsonFile     *os.File
-	yamlFile     *os.File
 	config       LoggerConfig
 	sessionStart time.Time
 	logDir       string // Current timestamped log directory
@@ -177,7 +174,6 @@ func newLogger(cfg *config.Configuration) (*Logger, error) {
 		Retention:        DefaultRetentionPolicy(),
 		EnableStructured: true,
 		EnableJSON:       true,
-		EnableYAML:       true,
 		EnableConsole:    true,
 	}
 
@@ -272,15 +268,6 @@ func (l *Logger) initializeLogFiles() error {
 		l.jsonFile, err = os.OpenFile(jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to open JSON log file: %w", err)
-		}
-	}
-
-	// YAML log file for structured logging
-	if l.config.EnableYAML {
-		yamlPath := filepath.Join(l.logDir, "cimian.yaml")
-		l.yamlFile, err = os.OpenFile(yamlPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return fmt.Errorf("failed to open YAML log file: %w", err)
 		}
 	}
 
@@ -403,14 +390,6 @@ func CloseLogger() {
 		}
 		instance.jsonFile = nil
 	}
-
-	// Close YAML log file
-	if instance.yamlFile != nil {
-		if err := instance.yamlFile.Close(); err != nil {
-			fmt.Printf("Failed to close YAML log file: %v\n", err)
-		}
-		instance.yamlFile = nil
-	}
 }
 
 // logMessage is the core logging method that writes to all configured outputs
@@ -445,10 +424,6 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 	// Write to structured formats if enabled
 	if l.config.EnableJSON && l.jsonFile != nil {
 		l.writeJSONLog(entry)
-	}
-
-	if l.config.EnableYAML && l.yamlFile != nil {
-		l.writeYAMLLog(entry)
 	}
 
 	// Force sync all files
@@ -497,13 +472,6 @@ func (l *Logger) writeJSONLog(entry LogEntry) {
 	}
 }
 
-// writeYAMLLog writes structured YAML log entry
-func (l *Logger) writeYAMLLog(entry LogEntry) {
-	if data, err := yaml.Marshal(entry); err == nil {
-		l.yamlFile.WriteString("---\n" + string(data))
-	}
-}
-
 // syncFiles forces sync on all open log files
 func (l *Logger) syncFiles() {
 	if l.logFile != nil {
@@ -511,9 +479,6 @@ func (l *Logger) syncFiles() {
 	}
 	if l.jsonFile != nil {
 		l.jsonFile.Sync()
-	}
-	if l.yamlFile != nil {
-		l.yamlFile.Sync()
 	}
 }
 
@@ -681,10 +646,6 @@ func ReInit(cfg *config.Configuration) error {
 		instance.jsonFile.Close()
 		instance.jsonFile = nil
 	}
-	if instance.yamlFile != nil {
-		instance.yamlFile.Close()
-		instance.yamlFile = nil
-	}
 
 	// Create new logger
 	newLogger, err := newLogger(cfg)
@@ -697,7 +658,6 @@ func ReInit(cfg *config.Configuration) error {
 	instance.logLevel = newLogger.logLevel
 	instance.logFile = newLogger.logFile
 	instance.jsonFile = newLogger.jsonFile
-	instance.yamlFile = newLogger.yamlFile
 	instance.config = newLogger.config
 	instance.sessionStart = newLogger.sessionStart
 	instance.logDir = newLogger.logDir
@@ -909,7 +869,7 @@ func (l *Logger) EndSession(status string, summary SessionSummary) error {
 }
 
 // ExportForOSQuery generates osquery-compatible JSON export
-// Note: This function is deprecated. Use the reporting package directly.
+// Note: This function is deprecated. Use the reporting package directly
 func (l *Logger) ExportForOSQuery(outputPath string, limitDays int) error {
 	return fmt.Errorf("ExportForOSQuery is deprecated - use github.com/windowsadmins/cimian/pkg/reporting.NewDataExporter() directly")
 }

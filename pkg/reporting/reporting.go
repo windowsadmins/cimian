@@ -920,25 +920,6 @@ func (exp *DataExporter) extractPackageFromMessage(message string) string {
 
 // inferItemType attempts to determine the item type from session data or context
 func (exp *DataExporter) inferItemType(packageName, sessionDir string, event EventRecord) string {
-	// Try to read session manifest data if available
-	sessionPath := filepath.Join(exp.baseDir, sessionDir, "cimian.yaml")
-	if data, err := os.ReadFile(sessionPath); err == nil {
-		content := string(data)
-		if strings.Contains(content, "managed_installs:") && strings.Contains(content, packageName) {
-			return "managed_installs"
-		}
-		if strings.Contains(content, "managed_updates:") && strings.Contains(content, packageName) {
-			return "managed_updates"
-		}
-		if strings.Contains(content, "optional_installs:") && strings.Contains(content, packageName) {
-			return "optional_installs"
-		}
-		if strings.Contains(content, "managed_uninstalls:") && strings.Contains(content, packageName) {
-			return "managed_uninstalls"
-		}
-	}
-
-	// Fallback to inferring from event type
 	switch event.EventType {
 	case "install":
 		return "managed_installs"
