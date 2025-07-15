@@ -5,11 +5,11 @@
         xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
         ui:WindowHelper.UseModernWindowStyle="True"
         Title="Cimian Status" 
-        Height="300" 
+        Height="450" 
         Width="600"
-        MinHeight="350"
+        MinHeight="450"
         MinWidth="500"
-        ResizeMode="CanMinimize"
+        ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         Icon="../cimian.ico"
         Background="{DynamicResource ApplicationPageBackgroundThemeBrush}">
@@ -46,7 +46,7 @@
     <Grid Margin="32">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="150" MinHeight="100"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -78,35 +78,25 @@
             <StackPanel Grid.Column="1" 
                         VerticalAlignment="Center" 
                         Margin="20,0,0,0">
-                <TextBlock Text="Cimian Management" 
+                <TextBlock Text="Managed Software Update" 
                           Style="{StaticResource TitleTextStyle}"/>
-                <TextBlock Text="Software Update Monitor" 
-                          Style="{StaticResource CaptionTextStyle}"/>
             </StackPanel>
 
-            <!-- Connection Status Indicator -->
-            <Border Grid.Column="2" 
+            <!-- Run Now Button (Pill-shaped) -->
+            <Button Grid.Column="2" 
                     VerticalAlignment="Center"
-                    Background="{Binding ConnectionStatusBrush}"
-                    CornerRadius="12"
-                    Padding="12,6">
-                <StackPanel Orientation="Horizontal">
-                    <Ellipse Width="8" Height="8" 
-                            Fill="{Binding ConnectionStatusBrush}"
-                            Margin="0,0,6,0">
-                        <Ellipse.Effect>
-                            <DropShadowEffect Color="{Binding ConnectionStatusColor}" 
-                                            Direction="270" 
-                                            ShadowDepth="0" 
-                                            BlurRadius="8" 
-                                            Opacity="0.8"/>
-                        </Ellipse.Effect>
-                    </Ellipse>
-                    <TextBlock Text="{Binding ConnectionStatusText}" 
-                              Style="{StaticResource CaptionTextStyle}"
-                              Foreground="White"/>
-                </StackPanel>
-            </Border>
+                    Content="{Binding RunButtonText}"
+                    Click="RunNow_Click"
+                    IsEnabled="{Binding CanRunNow}"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Padding="16,8"
+                    FontWeight="SemiBold">
+                <i:Interaction.Triggers>
+                    <i:EventTrigger EventName="Click">
+                        <i:InvokeCommandAction Command="{Binding RunNowCommand}"/>
+                    </i:EventTrigger>
+                </i:Interaction.Triggers>
+            </Button>
         </Grid>
 
         <!-- Main Status Card -->
@@ -116,37 +106,22 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- Status Header -->
-                <TextBlock Grid.Row="0"
-                          Text="{Binding StatusText}" 
-                          Style="{StaticResource SubtitleTextStyle}"
-                          Foreground="{Binding StatusBrush}"
-                          TextAlignment="Center"
-                          Margin="0,0,0,16"
-                          TextWrapping="Wrap"/>
-
-                <!-- Detail Information -->
-                <TextBlock Grid.Row="1"
-                          Text="{Binding DetailText}" 
-                          Style="{StaticResource BodyTextStyle}"
-                          TextAlignment="Center"
-                          Margin="0,0,0,24"
-                          TextWrapping="Wrap"/>
-
-                <!-- Progress Section -->
-                <StackPanel Grid.Row="2" Margin="0,0,0,16"
-                           Visibility="{Binding ShowProgress, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <!-- Progress Section (Always visible) -->
+                <StackPanel Grid.Row="0" Margin="0,0,0,16">
+                    <!-- Status Text -->
+                    <TextBlock Text="{Binding StatusText}"
+                              Style="{StaticResource SubtitleTextStyle}"
+                              Margin="0,0,0,8"
+                              HorizontalAlignment="Center"/>
+                    
                     <!-- Progress Bar -->
                     <ProgressBar Value="{Binding ProgressValue}"
                                 Style="{StaticResource ModernProgressStyle}"
                                 Margin="0,0,0,8"
-                                IsIndeterminate="{Binding IsRunning}">
+                                IsIndeterminate="{Binding IsIndeterminate}">
                         <ProgressBar.Foreground>
                             <SolidColorBrush Color="{Binding ProgressColor}"/>
                         </ProgressBar.Foreground>
@@ -169,54 +144,102 @@
                 </StackPanel>
 
                 <!-- Spacer -->
-                <Grid Grid.Row="3"/>
-
-                <!-- Last Run Information -->
-                <Border Grid.Row="4" 
-                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
-                        CornerRadius="6"
-                        Padding="16,12">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        
-                        <TextBlock Grid.Column="0"
-                                  Text="Last run:" 
-                                  Style="{StaticResource CaptionTextStyle}"
-                                  VerticalAlignment="Center"/>
-                        <TextBlock Grid.Column="1"
-                                  Text="{Binding LastRunTime}" 
-                                  Style="{StaticResource CaptionTextStyle}"
-                                  TextAlignment="Right"
-                                  VerticalAlignment="Center"/>
-                    </Grid>
-                </Border>
+                <Grid Grid.Row="1"/>
             </Grid>
         </Border>
 
-        <!-- Action Buttons -->
-        <StackPanel Grid.Row="2" 
-                    Orientation="Horizontal" 
-                    HorizontalAlignment="Center" 
-                    Margin="0,32,0,0">
-            
-            <Button Content="📄 Show Logs" 
-                    Click="ShowLogs_Click"
-                    Style="{StaticResource SecondaryButtonStyle}"/>
-            
-            <Button Content="{Binding RunButtonText}" 
-                    Click="RunNow_Click"
-                    IsEnabled="{Binding CanRunNow}"
-                    Style="{StaticResource PrimaryButtonStyle}"
-                    Margin="16,0,0,0">
-                <i:Interaction.Triggers>
-                    <i:EventTrigger EventName="Click">
-                        <i:InvokeCommandAction Command="{Binding RunNowCommand}"/>
-                    </i:EventTrigger>
-                </i:Interaction.Triggers>
-            </Button>
-        </StackPanel>
+        <!-- Live Log Viewer Section (Collapsible) -->
+        <Border Grid.Row="2" 
+                Style="{StaticResource ModernCardStyle}"
+                Background="{DynamicResource CardBackgroundFillColorSecondaryBrush}"
+                Margin="0,16,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Log Viewer Header (Always Visible) -->
+                <Button Grid.Row="0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="16,12"
+                        HorizontalContentAlignment="Center"
+                        Click="ToggleLogViewer_Click">
+                    <Grid HorizontalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                  Text="Live Installation Log"
+                                  Style="{StaticResource SubtitleTextStyle}"
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Center"/>
+
+                        <TextBlock Grid.Column="1"
+                                  VerticalAlignment="Center"
+                                  Margin="12,0,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="True">
+                                            <Setter Property="Text" Value="▲"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="False">
+                                            <Setter Property="Text" Value="▼"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </Button>
+
+                <!-- Log Viewer Content (Collapsible) -->
+                <Border Grid.Row="1"
+                        Background="{DynamicResource ControlFillColorTertiaryBrush}"
+                        CornerRadius="6"
+                        Margin="12,0,12,12"
+                        MaxHeight="300">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+
+                    <ScrollViewer x:Name="LogScrollViewer"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  Padding="12">
+                        <ItemsControl ItemsSource="{Binding LogLines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}"
+                                             FontFamily="Consolas"
+                                             FontSize="11"
+                                             Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                             TextWrapping="NoWrap"
+                                             Margin="0,1"/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                            <ItemsControl.Template>
+                                <ControlTemplate TargetType="ItemsControl">
+                                    <StackPanel IsItemsHost="True"/>
+                                </ControlTemplate>
+                            </ItemsControl.Template>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </Border>
     </Grid>
 </Window>
