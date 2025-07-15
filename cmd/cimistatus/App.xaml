@@ -84,6 +84,24 @@
             </Style>
 
             <!-- Enhanced Button Style -->
+            <Style x:Key="AccentButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Padding" Value="24,12"/>
+                <Setter Property="MinWidth" Value="120"/>
+                <Setter Property="MinHeight" Value="40"/>
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect Color="{StaticResource AccentColor}" 
+                                        Direction="270" 
+                                        ShadowDepth="1" 
+                                        BlurRadius="4" 
+                                        Opacity="0.3"/>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
                 <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
                 <Setter Property="Foreground" Value="White"/>
