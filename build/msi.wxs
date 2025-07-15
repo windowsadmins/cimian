@@ -30,15 +30,11 @@
       </DirectorySearch>
     </Property>
 
-    <!-- Major Upgrade Settings -->
-    <Upgrade Id="d61005bf-a182-4583-810d-8c33b056b8be">
-      <UpgradeVersion OnlyDetect="no"
-                      Property="OLDPRODUCTS"
-                      Minimum="0.0.0"
-                      IncludeMinimum="yes"
-                      Maximum="99.99.99"
-                      IncludeMaximum="no" />
-    </Upgrade>
+    <!-- Major Upgrade Settings - Automatically handle upgrades and same-version reinstalls -->
+    <MajorUpgrade UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
+                  AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  Schedule="afterInstallInitialize" />
 
     <!-- Media Definition -->
     <Media Id="1"
@@ -129,7 +125,7 @@
     <CustomAction Id="StartCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="ignore"
+                  Return="check"
                   Directory="INSTALLDIR"
                   ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; start" />
 
@@ -158,7 +154,6 @@
       <!-- Custom Action for Uninstallation -->
       <Custom Action="StopCimianWatcherService" Before="RemoveFiles">REMOVE="ALL"</Custom>
       <Custom Action="RemoveCimianWatcherService" After="StopCimianWatcherService">REMOVE="ALL"</Custom>
-      <RemoveExistingProducts After="InstallInitialize" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->
