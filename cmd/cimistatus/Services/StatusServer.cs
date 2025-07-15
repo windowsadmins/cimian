@@ -28,9 +28,9 @@ namespace Cimian.Status.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task StartAsync()
+        public Task StartAsync()
         {
-            if (_isRunning) return;
+            if (_isRunning) return Task.CompletedTask;
 
             try
             {
@@ -44,6 +44,8 @@ namespace Cimian.Status.Services
 
                 // Start accepting connections in background
                 _ = Task.Run(async () => await AcceptConnectionsAsync(_cancellationTokenSource.Token));
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -52,9 +54,9 @@ namespace Cimian.Status.Services
             }
         }
 
-        public async Task StopAsync()
+        public Task StopAsync()
         {
-            if (!_isRunning) return;
+            if (!_isRunning) return Task.CompletedTask;
 
             try
             {
@@ -63,10 +65,13 @@ namespace Cimian.Status.Services
                 _tcpListener?.Stop();
 
                 _logger.LogInformation("Status server stopped");
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error stopping status server");
+                return Task.CompletedTask;
             }
         }
 
