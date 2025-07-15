@@ -191,6 +191,7 @@ func (t *tracker) flushToFile() error {
 	defer f.Close()
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
 	for _, s := range finished {
 		if err := enc.Encode(s); err != nil {
 			log.Printf("usage‑monitor encode: %v", err)

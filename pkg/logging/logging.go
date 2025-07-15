@@ -2,7 +2,7 @@
 //
 // This package provides structured logging with timestamped directories
 // compatible with external monitoring and reporting tools. Features include:
-// - Timestamped subdirectories (YYYY-MM-DD-HHmmss format)
+// - Timestamped subdirectories (YYYY-MM-DD-HHMMss format)
 // - Automatic log rotation and retention policies
 // - Structured data formats for external tool integration
 // - Multiple output formats (JSON, YAML, plain text)
@@ -150,12 +150,12 @@ func InitWithConfig(logCfg LoggerConfig) error {
 // generateSessionID creates a unique session identifier
 func generateSessionID() string {
 	return fmt.Sprintf("cimian-%d-%s", time.Now().Unix(),
-		time.Now().Format("20060102-150405"))
+		time.Now().Format("2006-01-02-150405"))
 }
 
 // createTimestampedLogDir creates a timestamped log directory
 func createTimestampedLogDir(baseDir string, sessionStart time.Time) (string, error) {
-	// Format: YYYY-MM-DD-HHmmss
+	// Format: YYYY-MM-DD-HHMMss
 	timestamp := sessionStart.Format("2006-01-02-150405")
 	logDir := filepath.Join(baseDir, timestamp)
 
@@ -268,7 +268,7 @@ func (l *Logger) initializeLogFiles() error {
 
 	// JSON log file for structured logging
 	if l.config.EnableJSON {
-		jsonPath := filepath.Join(l.logDir, "cimian.jsonl")
+		jsonPath := filepath.Join(l.logDir, "events.jsonl")
 		l.jsonFile, err = os.OpenFile(jsonPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to open JSON log file: %w", err)
@@ -311,7 +311,7 @@ func (l *Logger) performCleanup() {
 	// Filter for log directories (timestamped format)
 	for _, entry := range entries {
 		if entry.IsDir() {
-			// Check if directory name matches timestamp format YYYY-MM-DD-HHmmss
+			// Check if directory name matches timestamp format YYYY-MM-DD-HHMMss
 			if len(entry.Name()) == 17 && strings.Count(entry.Name(), "-") == 3 {
 				logDirs = append(logDirs, entry)
 			}
@@ -735,6 +735,22 @@ func SetRunType(runType string) {
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
 	instance.config.RunType = runType
+}
+
+// StartSession begins a new structured logging session (package-level function)
+func StartSession(runType string, metadata map[string]interface{}) error {
+	if instance == nil {
+		return fmt.Errorf("logging not initialized")
+	}
+	return instance.StartSession(runType, metadata)
+}
+
+// EndSession completes the current structured logging session (package-level function)
+func EndSession(status string, summary SessionSummary) error {
+	if instance == nil {
+		return fmt.Errorf("logging not initialized")
+	}
+	return instance.EndSession(status, summary)
 }
 
 // LogStructured logs a structured message with explicit properties (useful for osquery compatibility)

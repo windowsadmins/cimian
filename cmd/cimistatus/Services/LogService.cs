@@ -118,7 +118,7 @@ namespace Cimian.Status.Services
                     return string.Empty;
                 }
 
-                // Find directories matching the timestamped format: YYYY-MM-DD-HHMMSS
+                // Find directories matching the timestamped format: YYYY-MM-DD-HHMMss
                 var sessionDirectories = Directory.GetDirectories(_logsBaseDirectory)
                     .Where(d => 
                     {
