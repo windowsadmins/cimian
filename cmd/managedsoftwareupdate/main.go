@@ -277,6 +277,32 @@ func main() {
 	// Apply item filter if specified
 	manifestItems = itemFilter.Apply(manifestItems)
 
+	// Clear and set up source tracking for all manifest items
+	process.ClearItemSources()
+	for _, manifestItem := range manifestItems {
+		// Track source information for each type of managed item
+		for _, item := range manifestItem.ManagedInstalls {
+			if item != "" {
+				process.SetItemSource(item, manifestItem.Name, "managed_installs")
+			}
+		}
+		for _, item := range manifestItem.ManagedUpdates {
+			if item != "" {
+				process.SetItemSource(item, manifestItem.Name, "managed_updates")
+			}
+		}
+		for _, item := range manifestItem.ManagedUninstalls {
+			if item != "" {
+				process.SetItemSource(item, manifestItem.Name, "managed_uninstalls")
+			}
+		}
+		for _, item := range manifestItem.OptionalInstalls {
+			if item != "" {
+				process.SetItemSource(item, manifestItem.Name, "optional_installs")
+			}
+		}
+	}
+
 	// Override checkonly mode if item filter is active, but only if --checkonly wasn't explicitly set
 	if itemFilter.ShouldOverrideCheckOnly() && !pflag.CommandLine.Changed("checkonly") {
 		*checkOnly = false
