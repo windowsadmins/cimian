@@ -26,6 +26,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/process"
+	"github.com/windowsadmins/cimian/pkg/reporting"
 	"github.com/windowsadmins/cimian/pkg/scripts"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/version"
@@ -216,6 +217,21 @@ func main() {
 		runType = "manual"
 	}
 	logger.Printf("Run type: %s", runType)
+
+	// Start structured logging session
+	sessionMetadata := map[string]interface{}{
+		"verbosity": verbosity,
+		"bootstrap": isBootstrap,
+		"flags": map[string]bool{
+			"checkonly":   *checkOnly,
+			"installonly": *installOnly,
+			"auto":        *auto,
+		},
+	}
+	if err := logging.StartSession(runType, sessionMetadata); err != nil {
+		logger.Warning("Failed to start structured logging session: %v", err)
+	}
+
 	// Check administrative privileges.
 	admin, adminErr := adminCheck()
 	if adminErr != nil || !admin {
@@ -379,6 +395,15 @@ func main() {
 	runPostflightIfNeeded(verbosity)
 	logger.Success("Postflight script completed.")
 
+	// Generate reports for external monitoring tools
+	statusReporter.Detail("Generating system reports...")
+	exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
+	if err := exporter.ExportToReportsDirectory(7); err != nil { // Export last 7 days
+		logger.Warning("Failed to generate reports: %v", err)
+	} else {
+		logger.Info("Reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
+	}
+
 	statusReporter.Detail("Cleaning up temporary files...")
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
 	logsFolder := `C:\ProgramData\ManagedInstalls\logs`
@@ -394,6 +419,19 @@ func main() {
 	statusReporter.Message("All operations completed successfully!")
 	statusReporter.Percent(100)
 	statusReporter.Stop()
+
+	// End structured logging session
+	summary := logging.SessionSummary{
+		TotalActions: 0, // TODO: Track actual counts during execution
+		Installs:     0,
+		Updates:      0,
+		Removals:     0,
+		Successes:    0,
+		Failures:     0,
+	}
+	if err := logging.EndSession("completed", summary); err != nil {
+		logger.Warning("Failed to end structured logging session: %v", err)
+	}
 
 	os.Exit(0)
 }
