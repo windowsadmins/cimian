@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,7 +224,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			return true, err
 		}
 		if needed {
-			logging.Info("File/install checks indicate action needed",
+			logging.Info("Installation verification checks indicate reinstallation needed",
 				"item", catalogItem.Name,
 			)
 			return true, nil
@@ -380,7 +379,10 @@ func checkPath(catalogItem catalog.Item) (bool, error) {
 	return false, nil
 }
 
-// checkInstalls loops through catalogItem.Installs to see if the item needs an action.
+// checkInstalls verifies installation by checking files/directories listed in the "installs" array.
+// This is used for installation verification, not dependency checking.
+// For "install"/"update": returns true if any tracked file is missing/outdated (reinstallation needed)
+// For "uninstall": returns true if any tracked file exists (uninstallation needed)
 func checkInstalls(item catalog.Item, installType string) (bool, error) {
 	if len(item.Installs) == 0 {
 		return false, nil
@@ -391,9 +393,15 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 			fileInfo, err := os.Stat(install.Path)
 			if err != nil {
 				if os.IsNotExist(err) {
-					logging.Info("Required file is missing, action needed",
-						"item", item.Name, "missingPath", install.Path)
-					return true, nil
+					if installType == "uninstall" {
+						logging.Info("Tracked file not found, item may already be uninstalled",
+							"item", item.Name, "missingPath", install.Path)
+						return false, nil
+					} else {
+						logging.Info("Installs array verification failed - tracked file missing, reinstallation needed",
+							"item", item.Name, "missingPath", install.Path)
+						return true, nil
+					}
 				}
 				logging.Warn("Unexpected error checking file existence",
 					"item", item.Name, "path", install.Path, "error", err)
@@ -414,7 +422,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					return true, err
 				}
 				if !match {
-					logging.Info("MD5 mismatch, action required",
+					logging.Info("Installs array verification failed - MD5 mismatch, reinstallation needed",
 						"item", item.Name,
 						"path", install.Path,
 						"localHash", computedMD5,
@@ -432,10 +440,10 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					return true, nil
 				}
 				if IsOlderVersion(fileVersion, install.Version) {
-					logging.Info("Installed file version outdated, action needed",
+					logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
 						"item", item.Name, "path", install.Path,
 						"fileVersion", fileVersion,
-						"requiredVersion", install.Version,
+						"expectedVersion", install.Version,
 					)
 					return true, nil
 				}
@@ -444,9 +452,15 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 			dirInfo, err := os.Stat(install.Path)
 			if err != nil {
 				if os.IsNotExist(err) {
-					logging.Info("Required directory is missing, action needed",
-						"item", item.Name, "missingPath", install.Path)
-					return true, nil
+					if installType == "uninstall" {
+						logging.Info("Tracked directory not found, item may already be uninstalled",
+							"item", item.Name, "missingPath", install.Path)
+						return false, nil
+					} else {
+						logging.Info("Installs array verification failed - tracked directory missing, reinstallation needed",
+							"item", item.Name, "missingPath", install.Path)
+						return true, nil
+					}
 				}
 				logging.Warn("Unexpected error checking directory existence",
 					"item", item.Name, "path", install.Path, "error", err)
@@ -467,7 +481,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 			}
 		}
 	}
-	logging.Debug("Install checks explicitly passed, no action needed", "item", item.Name)
+	logging.Debug("Installation verification checks passed, no action needed", "item", item.Name)
 	return false, nil
 }
 
@@ -640,7 +654,7 @@ func checkRegistry(catalogItem catalog.Item, _ string) (bool, error) {
 // checkScript runs a PowerShell script to decide if an item is installed.
 func checkScript(catalogItem catalog.Item, cachePath string, installType string) (bool, error) {
 	tmpScript := filepath.Join(cachePath, "tmpCheckScript.ps1")
-	if err := ioutil.WriteFile(tmpScript, []byte(catalogItem.Check.Script), 0755); err != nil {
+	if err := os.WriteFile(tmpScript, []byte(catalogItem.Check.Script), 0755); err != nil {
 		return true, fmt.Errorf("failed to write check script: %w", err)
 	}
 	defer os.Remove(tmpScript)
