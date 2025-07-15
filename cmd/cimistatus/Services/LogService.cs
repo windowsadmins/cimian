@@ -150,10 +150,10 @@ namespace Cimian.Status.Services
             return File.Exists(installLogPath) ? installLogPath : string.Empty;
         }
 
-        public async Task StartLogTailingAsync()
+        public Task StartLogTailingAsync()
         {
             if (IsLogTailing)
-                return;
+                return Task.CompletedTask;
 
             try
             {
@@ -161,7 +161,7 @@ namespace Cimian.Status.Services
                 if (string.IsNullOrEmpty(_currentLogFile))
                 {
                     _logger.LogWarning("No current log file found for tailing");
-                    return;
+                    return Task.CompletedTask;
                 }
 
                 _cancellationTokenSource = new CancellationTokenSource();
@@ -190,18 +190,21 @@ namespace Cimian.Status.Services
                 _pollTimer = new Timer(PollLogFile, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
                 _logger.LogInformation("Started log tailing for: {LogFile}", _currentLogFile);
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to start log tailing");
                 IsLogTailing = false;
+                return Task.CompletedTask;
             }
         }
 
-        public async Task StopLogTailingAsync()
+        public Task StopLogTailingAsync()
         {
             if (!IsLogTailing)
-                return;
+                return Task.CompletedTask;
 
             try
             {
@@ -225,10 +228,13 @@ namespace Cimian.Status.Services
                 _cancellationTokenSource = null;
 
                 _logger.LogInformation("Stopped log tailing");
+                
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error stopping log tailing");
+                return Task.CompletedTask;
             }
         }
 
