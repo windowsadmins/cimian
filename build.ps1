@@ -595,8 +595,13 @@ if ($Binaries -or $Binary) {
                 
                 Push-Location $dir.FullName
                 try {
-                    # Publish the C# project for specific architecture (self-contained single file)
-                    dotnet publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\net8.0-windows\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
+                    # Publish the C# project for specific architecture (self-contained single file) using hardcoded system dotnet path
+                    $dotnetPath = "C:\Program Files\dotnet\dotnet.exe"
+                    if (-not (Test-Path $dotnetPath)) {
+                        # Fallback to PATH-based dotnet if system path doesn't exist
+                        $dotnetPath = "dotnet"
+                    }
+                    & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\net8.0-windows\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
                     
                     if ($LASTEXITCODE -ne 0) {
                         throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
@@ -1013,8 +1018,13 @@ foreach ($arch in $archs) {
             
             Push-Location $dir.FullName
             try {
-                # Build the C# project for specific architecture
-                dotnet build $projectFile --configuration Release --runtime $dotnetRid --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --verbosity minimal
+                # Build the C# project for specific architecture using hardcoded system dotnet path
+                $dotnetPath = "C:\Program Files\dotnet\dotnet.exe"
+                if (-not (Test-Path $dotnetPath)) {
+                    # Fallback to PATH-based dotnet if system path doesn't exist
+                    $dotnetPath = "dotnet"
+                }
+                & $dotnetPath build $projectFile --configuration Release --runtime $dotnetRid --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --verbosity minimal
                 
                 if ($LASTEXITCODE -ne 0) {
                     throw "Build failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
