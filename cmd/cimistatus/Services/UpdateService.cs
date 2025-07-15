@@ -91,7 +91,7 @@ namespace Cimian.Status.Services
                 var managedInstallsPath = Path.GetDirectoryName(bootstrapFlagPath);
 
                 // Ensure the directory exists
-                if (!Directory.Exists(managedInstallsPath))
+                if (!string.IsNullOrEmpty(managedInstallsPath) && !Directory.Exists(managedInstallsPath))
                 {
                     Directory.CreateDirectory(managedInstallsPath);
                 }
