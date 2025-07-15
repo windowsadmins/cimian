@@ -103,7 +103,7 @@ func NewStructuredLogger(baseDir string, config RetentionConfig) (*StructuredLog
 // StartSession begins a new logging session with timestamped directory
 func (sl *StructuredLogger) StartSession(runType string, metadata map[string]interface{}) (string, error) {
 	now := time.Now()
-	sessionID := now.Format("20060102-150405") // YYYYMMDD-HHMMSS
+	sessionID := now.Format("2006-01-02-150405") // YYYY-MM-DD-HHMMss
 
 	// Create session directory
 	sessionDir := filepath.Join(sl.baseDir, sessionID)
@@ -276,13 +276,13 @@ func (sl *StructuredLogger) performRetentionCleanup() error {
 			continue
 		}
 
-		// Parse directory name as timestamp (YYYYMMDD-HHMMSS)
+		// Parse directory name as timestamp (YYYY-MM-DD-HHMMss)
 		dirName := entry.Name()
-		if len(dirName) != 15 || dirName[8] != '-' {
+		if len(dirName) != 17 || dirName[4] != '-' || dirName[7] != '-' || dirName[10] != '-' {
 			continue // Skip non-timestamped directories
 		}
 
-		timestamp, err := time.Parse("20060102-150405", dirName)
+		timestamp, err := time.Parse("2006-01-02-150405", dirName)
 		if err != nil {
 			continue // Skip directories that don't match our format
 		}
@@ -332,7 +332,7 @@ func (sl *StructuredLogger) isDailyKeeper(timestamp time.Time, entries []os.DirE
 			continue
 		}
 
-		if entryTime, err := time.Parse("20060102-150405", entry.Name()); err == nil {
+		if entryTime, err := time.Parse("2006-01-02-150405", entry.Name()); err == nil {
 			if entryTime.After(dayStart) && entryTime.Before(dayEnd) {
 				if firstSession == nil || entryTime.Before(*firstSession) {
 					firstSession = &entryTime
@@ -353,8 +353,8 @@ func (sl *StructuredLogger) GetSessionDirs() ([]string, error) {
 
 	var sessions []string
 	for _, entry := range entries {
-		if entry.IsDir() && len(entry.Name()) == 15 && entry.Name()[8] == '-' {
-			if _, err := time.Parse("20060102-150405", entry.Name()); err == nil {
+		if entry.IsDir() && len(entry.Name()) == 17 && entry.Name()[4] == '-' && entry.Name()[7] == '-' && entry.Name()[10] == '-' {
+			if _, err := time.Parse("2006-01-02-150405", entry.Name()); err == nil {
 				sessions = append(sessions, entry.Name())
 			}
 		}
