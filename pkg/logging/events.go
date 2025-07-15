@@ -192,14 +192,31 @@ func (sl *StructuredLogger) EndSession(status string, summary SessionSummary, st
 	now := time.Now()
 	summary.Duration = now.Sub(startTime)
 
-	session := LogSession{
-		SessionID: sl.currentSession,
-		EndTime:   &now,
-		Status:    status,
-		Summary:   summary,
+	// Read existing session data to preserve all original fields
+	_, err := sl.sessionFile.Seek(0, 0)
+	if err != nil {
+		return fmt.Errorf("failed to seek session file: %w", err)
 	}
 
-	if err := sl.writeSession(session); err != nil {
+	var existingSession LogSession
+	decoder := json.NewDecoder(sl.sessionFile)
+	if err := decoder.Decode(&existingSession); err != nil {
+		// If we can't read existing session, create a new one with basic info
+		existingSession = LogSession{
+			SessionID:   sl.currentSession,
+			StartTime:   startTime,
+			RunType:     "unknown",
+			Environment: sl.gatherEnvironmentInfo(),
+			Metadata:    make(map[string]interface{}),
+		}
+	}
+
+	// Update the fields that change at session end
+	existingSession.EndTime = &now
+	existingSession.Status = status
+	existingSession.Summary = summary
+
+	if err := sl.writeSession(existingSession); err != nil {
 		return fmt.Errorf("failed to write final session: %w", err)
 	}
 

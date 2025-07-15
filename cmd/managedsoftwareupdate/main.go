@@ -218,6 +218,9 @@ func main() {
 	}
 	logger.Printf("Run type: %s", runType)
 
+	// Update the logger's run type for consistent logging
+	logging.SetRunType(runType)
+
 	// Start structured logging session
 	sessionMetadata := map[string]interface{}{
 		"verbosity": verbosity,
@@ -328,6 +331,28 @@ func main() {
 
 	// If check-only mode, exit after summary.
 	if *checkOnly {
+		// End structured logging session before exit
+		summary := logging.SessionSummary{
+			TotalActions:    len(toInstall) + len(toUpdate) + len(toUninstall),
+			Installs:        len(toInstall),
+			Updates:         len(toUpdate),
+			Removals:        len(toUninstall),
+			Successes:       0, // No actions performed in check-only mode
+			Failures:        0,
+			PackagesHandled: extractPackageNames(toInstall, toUpdate, toUninstall),
+		}
+		if err := logging.EndSession("completed", summary); err != nil {
+			logger.Warning("Failed to end structured logging session: %v", err)
+		}
+
+		// Generate reports for external monitoring tools
+		logger.Info("Generating reports for external monitoring tools...")
+		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
+		exporter := reporting.NewDataExporter(baseDir)
+		if err := exporter.ExportToReportsDirectory(48); err != nil {
+			logger.Warning("Failed to export reports: %v", err)
+		}
+
 		os.Exit(0)
 	}
 
@@ -422,18 +447,41 @@ func main() {
 
 	// End structured logging session
 	summary := logging.SessionSummary{
-		TotalActions: 0, // TODO: Track actual counts during execution
-		Installs:     0,
-		Updates:      0,
-		Removals:     0,
-		Successes:    0,
-		Failures:     0,
+		TotalActions:    len(toInstall) + len(toUpdate) + len(toUninstall), // Use actual counts
+		Installs:        len(toInstall),
+		Updates:         len(toUpdate),
+		Removals:        len(toUninstall),
+		Successes:       0, // TODO: Track actual success/failure counts during execution
+		Failures:        0,
+		PackagesHandled: extractPackageNames(toInstall, toUpdate, toUninstall),
 	}
 	if err := logging.EndSession("completed", summary); err != nil {
 		logger.Warning("Failed to end structured logging session: %v", err)
 	}
 
 	os.Exit(0)
+}
+
+// extractPackageNames extracts package names from catalog items for session tracking
+func extractPackageNames(installs, updates, uninstalls []catalog.Item) []string {
+	var packages []string
+
+	// Add install packages
+	for _, item := range installs {
+		packages = append(packages, item.Name)
+	}
+
+	// Add update packages
+	for _, item := range updates {
+		packages = append(packages, item.Name)
+	}
+
+	// Add uninstall packages
+	for _, item := range uninstalls {
+		packages = append(packages, item.Name)
+	}
+
+	return packages
 }
 
 // runPreflightIfNeeded runs the preflight script.
