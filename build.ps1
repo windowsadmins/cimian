@@ -12,12 +12,14 @@
 #  ─Thumbprint XX … override auto-detection
 #  ─Task XX       … run specific task: build, package, all (default: all)
 #  ─Binaries      … build and sign only the .exe binaries, skip all packaging
+#  ─Binary XX     … build and sign only a specific binary (e.g., cimistatus)
 #  ─Install       … after building, install the MSI package (requires elevation)
 #  ─IntuneWin     … create .intunewin packages (adds build time, only needed for deployment)
 #
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing (no .intunewin)
 #   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
+#   .\build.ps1 -Binary cimistatus -Sign # Build and sign only cimistatus binary
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
 #   .\build.ps1 -Install             # Build and install the MSI package
 #   .\build.ps1 -IntuneWin           # Full build including .intunewin packages
@@ -28,6 +30,7 @@ param(
     [ValidateSet("build", "package", "all")]
     [string]$Task = "all",
     [switch]$Binaries,
+    [string]$Binary,
     [switch]$Install,
     [switch]$IntuneWin
 )
@@ -212,9 +215,22 @@ if ($Binaries) {
     $Task = "build"
 }
 
-# If Install flag is set with Binaries, show error
-if ($Install -and $Binaries) {
-    Write-Log "Cannot use -Install with -Binaries flag. MSI packages are needed for installation." "ERROR"
+# If Binary parameter is set, force Task to "build" and skip all packaging
+if ($Binary) {
+    Write-Log "Binary parameter detected - will only build and sign '$Binary' binary, skipping all packaging." "INFO"
+    $Task = "build"
+    # Validate that the specified binary exists in cmd directory
+    $binaryPath = "cmd\$Binary"
+    if (-not (Test-Path $binaryPath)) {
+        Write-Log "Specified binary '$Binary' does not exist in cmd directory. Available binaries:" "ERROR"
+        Get-ChildItem -Directory -Path "cmd" | ForEach-Object { Write-Log "  $($_.Name)" "INFO" }
+        exit 1
+    }
+}
+
+# If Install flag is set with Binaries or Binary, show error
+if ($Install -and ($Binaries -or $Binary)) {
+    Write-Log "Cannot use -Install with -Binaries or -Binary flag. MSI packages are needed for installation." "ERROR"
     exit 1
 }
 
@@ -400,9 +416,13 @@ function Install-MsiPackage {
 #  BUILD PROCESS STARTS
 # ───────────────────────────────────────────────────
 
-# Early exit for binaries-only mode after basic setup
-if ($Binaries) {
-    Write-Log "Binaries-only mode: Starting minimal build process..." "INFO"
+# Early exit for binaries-only mode or single binary mode after basic setup
+if ($Binaries -or $Binary) {
+    if ($Binary) {
+        Write-Log "Single binary mode: Starting minimal build process for '$Binary'..." "INFO"
+    } else {
+        Write-Log "Binaries-only mode: Starting minimal build process..." "INFO"
+    }
     
     # Only do essential checks for binaries mode
     if (-not (Test-Command "go")) {
@@ -463,6 +483,18 @@ if ($Binaries) {
     }
     
     $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
+    
+    # Filter to specific binary if -Binary parameter is specified
+    if ($Binary) {
+        $binaryDirs = $binaryDirs | Where-Object { $_.Name -eq $Binary }
+        if (-not $binaryDirs) {
+            Write-Log "Specified binary '$Binary' not found in cmd directory." "ERROR"
+            exit 1
+        }
+        Write-Log "Building only binary: $Binary" "INFO"
+    } else {
+        Write-Log "Building all binaries" "INFO"
+    }
     $archs = @("x64", "arm64")
     $goarchMap = @{
         "x64"   = "amd64"
@@ -647,7 +679,11 @@ if ($Binaries) {
         }
     }
     
-    Write-Log "Binaries-only build completed successfully." "SUCCESS"
+    if ($Binary) {
+        Write-Log "Single binary build completed successfully for '$Binary'." "SUCCESS"
+    } else {
+        Write-Log "Binaries-only build completed successfully." "SUCCESS"
+    }
     Write-Log "Built binaries are available in:" "INFO"
     Get-ChildItem -Path "release" -Recurse -Filter "*.exe" | ForEach-Object {
         Write-Host "  $($_.FullName)"
