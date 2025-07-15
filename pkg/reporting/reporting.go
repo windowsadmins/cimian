@@ -23,22 +23,23 @@ type DataTables struct {
 
 // SessionRecord represents a row in the sessions table
 type SessionRecord struct {
-	SessionID    string `json:"session_id"`
-	StartTime    string `json:"start_time"`
-	EndTime      string `json:"end_time,omitempty"`
-	RunType      string `json:"run_type"`
-	Status       string `json:"status"`
-	Duration     int64  `json:"duration_seconds"`
-	TotalActions int    `json:"total_actions"`
-	Installs     int    `json:"installs"`
-	Updates      int    `json:"updates"`
-	Removals     int    `json:"removals"`
-	Successes    int    `json:"successes"`
-	Failures     int    `json:"failures"`
-	Hostname     string `json:"hostname"`
-	User         string `json:"user"`
-	ProcessID    int    `json:"process_id"`
-	LogVersion   string `json:"log_version"`
+	SessionID       string   `json:"session_id"`
+	StartTime       string   `json:"start_time"`
+	EndTime         string   `json:"end_time,omitempty"`
+	RunType         string   `json:"run_type"`
+	Status          string   `json:"status"`
+	Duration        int64    `json:"duration_seconds"`
+	TotalActions    int      `json:"total_actions"`
+	Installs        int      `json:"installs"`
+	Updates         int      `json:"updates"`
+	Removals        int      `json:"removals"`
+	Successes       int      `json:"successes"`
+	Failures        int      `json:"failures"`
+	Hostname        string   `json:"hostname"`
+	User            string   `json:"user"`
+	ProcessID       int      `json:"process_id"`
+	LogVersion      string   `json:"log_version"`
+	PackagesHandled []string `json:"packages_handled,omitempty"`
 }
 
 // EventRecord represents a row in the events table
@@ -119,35 +120,59 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 		if err := exp.readJSONFile(sessionPath, &session); err == nil {
 			// New format with session.json
 			record := SessionRecord{
-				SessionID:    session.SessionID,
-				StartTime:    session.StartTime.Format(time.RFC3339),
-				RunType:      session.RunType,
-				Status:       session.Status,
-				TotalActions: session.Summary.TotalActions,
-				Installs:     session.Summary.Installs,
-				Updates:      session.Summary.Updates,
-				Removals:     session.Summary.Removals,
-				Successes:    session.Summary.Successes,
-				Failures:     session.Summary.Failures,
+				SessionID:       session.SessionID,
+				StartTime:       session.StartTime.Format(time.RFC3339),
+				RunType:         session.RunType,
+				Status:          session.Status,
+				TotalActions:    session.Summary.TotalActions,
+				Installs:        session.Summary.Installs,
+				Updates:         session.Summary.Updates,
+				Removals:        session.Summary.Removals,
+				Successes:       session.Summary.Successes,
+				Failures:        session.Summary.Failures,
+				PackagesHandled: session.Summary.PackagesHandled,
 			}
 
+			// Calculate duration
 			if session.EndTime != nil {
 				record.EndTime = session.EndTime.Format(time.RFC3339)
-				record.Duration = int64(session.Summary.Duration.Seconds())
+				if !session.StartTime.IsZero() {
+					record.Duration = int64(session.EndTime.Sub(session.StartTime).Seconds())
+				} else {
+					record.Duration = int64(session.Summary.Duration.Seconds())
+				}
 			}
 
-			// Extract environment info
-			if hostname, ok := session.Environment["hostname"].(string); ok {
-				record.Hostname = hostname
+			// Extract environment info - handle both map types
+			if session.Environment != nil {
+				if hostname, ok := session.Environment["hostname"].(string); ok {
+					record.Hostname = hostname
+				}
+				if user, ok := session.Environment["user"].(string); ok {
+					record.User = user
+				}
+				if logVersion, ok := session.Environment["log_version"].(string); ok {
+					record.LogVersion = logVersion
+				}
+				if processID, ok := session.Environment["process_id"].(float64); ok {
+					record.ProcessID = int(processID)
+				}
 			}
-			if user, ok := session.Environment["user"].(string); ok {
-				record.User = user
+
+			// If start_time is missing or zero, try to get it from first event
+			if session.StartTime.IsZero() || record.StartTime == "0001-01-01T00:00:00Z" {
+				if startTime := exp.getSessionStartTimeFromEvents(sessionDir); !startTime.IsZero() {
+					record.StartTime = startTime.Format(time.RFC3339)
+					// Recalculate duration with correct start time
+					if session.EndTime != nil {
+						record.Duration = int64(session.EndTime.Sub(startTime).Seconds())
+					}
+				}
 			}
-			if pid, ok := session.Environment["process_id"].(float64); ok {
-				record.ProcessID = int(pid)
-			}
-			if version, ok := session.Environment["log_version"].(string); ok {
-				record.LogVersion = version
+
+			// Fill missing environment data from events if needed
+			if record.Hostname == "" || record.User == "" || record.LogVersion == "" || record.ProcessID == 0 || record.RunType == "" {
+				exp.fillMissingSessionData(&record, sessionDir)
 			}
 
 			records = append(records, record)
@@ -232,20 +257,21 @@ func (exp *DataExporter) generateSessionFromEvents(sessionDir string) *SessionRe
 	}
 
 	record := &SessionRecord{
-		SessionID:    sessionDir,
-		StartTime:    startTime.Format(time.RFC3339),
-		RunType:      runType,
-		Status:       "completed", // Assume completed for old format
-		TotalActions: 0,           // Could be calculated by counting events
-		Installs:     0,
-		Updates:      0,
-		Removals:     0,
-		Successes:    0,
-		Failures:     0,
-		Hostname:     hostname,
-		User:         user,
-		ProcessID:    processID,
-		LogVersion:   logVersion,
+		SessionID:       sessionDir,
+		StartTime:       startTime.Format(time.RFC3339),
+		RunType:         runType,
+		Status:          "completed", // Assume completed for old format
+		TotalActions:    0,           // Could be calculated by counting events
+		Installs:        0,
+		Updates:         0,
+		Removals:        0,
+		Successes:       0,
+		Failures:        0,
+		Hostname:        hostname,
+		User:            user,
+		ProcessID:       processID,
+		LogVersion:      logVersion,
+		PackagesHandled: []string{}, // Old format doesn't have this data
 	}
 
 	if !endTime.IsZero() {
@@ -685,12 +711,13 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to generate items table: %w", err)
 	}
 
-	// Generate events table (last few days for better coverage)
+	// Generate events table (last 48 hours for performance)
 	var allEvents []EventRecord
-	recentSessions, err := exp.getRecentSessions(3) // Last 3 days for events
+	recentSessions, err := exp.getRecentSessions(3) // Last 3 days for session coverage
 	if err == nil {
 		for _, sessionDir := range recentSessions {
-			events, err := exp.GenerateEventsTable(sessionDir, 0) // No time limit on events within sessions
+			// Limit events to 48 hours to prevent huge files
+			events, err := exp.GenerateEventsTable(sessionDir, 48)
 			if err == nil {
 				allEvents = append(allEvents, events...)
 			}
@@ -996,4 +1023,189 @@ func (exp *DataExporter) detectInstallLoop(attempts []ItemAttempt) bool {
 	}
 
 	return false
+}
+
+// getSessionStartTimeFromEvents extracts the start time from the first event in events.jsonl
+func (exp *DataExporter) getSessionStartTimeFromEvents(sessionDir string) time.Time {
+	eventsPath := filepath.Join(exp.baseDir, sessionDir, "events.jsonl")
+
+	content, err := os.ReadFile(eventsPath)
+	if err != nil {
+		return time.Time{}
+	}
+
+	// Handle multi-line JSON format - get the first complete JSON object
+	var currentJSON strings.Builder
+	var braceCount int
+	var inString bool
+	var escapeNext bool
+
+	for _, char := range string(content) {
+		if escapeNext {
+			escapeNext = false
+			currentJSON.WriteRune(char)
+			continue
+		}
+
+		switch char {
+		case '\\':
+			escapeNext = true
+			currentJSON.WriteRune(char)
+		case '"':
+			if !escapeNext {
+				inString = !inString
+			}
+			currentJSON.WriteRune(char)
+		case '{':
+			if !inString {
+				braceCount++
+			}
+			currentJSON.WriteRune(char)
+		case '}':
+			if !inString {
+				braceCount--
+			}
+			currentJSON.WriteRune(char)
+		default:
+			currentJSON.WriteRune(char)
+		}
+
+		// If braces are balanced and we have the first complete JSON object
+		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
+			jsonStr := strings.TrimSpace(currentJSON.String())
+			if jsonStr != "" {
+				var event map[string]interface{}
+				if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
+					if timestampStr, ok := event["timestamp"].(string); ok {
+						if timestamp, err := time.Parse(time.RFC3339, timestampStr); err == nil {
+							return timestamp
+						}
+					}
+				}
+			}
+			// Return after first event
+			break
+		}
+	}
+
+	return time.Time{}
+}
+
+// fillMissingSessionData fills in missing environment data from events.jsonl
+func (exp *DataExporter) fillMissingSessionData(record *SessionRecord, sessionDir string) {
+	eventsPath := filepath.Join(exp.baseDir, sessionDir, "events.jsonl")
+
+	content, err := os.ReadFile(eventsPath)
+	if err != nil {
+		return
+	}
+
+	// Handle multi-line JSON format (pretty-printed JSON objects)
+	var currentJSON strings.Builder
+	var braceCount int
+	var inString bool
+	var escapeNext bool
+
+	for _, char := range string(content) {
+		if escapeNext {
+			escapeNext = false
+			currentJSON.WriteRune(char)
+			continue
+		}
+
+		switch char {
+		case '\\':
+			escapeNext = true
+			currentJSON.WriteRune(char)
+		case '"':
+			if !escapeNext {
+				inString = !inString
+			}
+			currentJSON.WriteRune(char)
+		case '{':
+			if !inString {
+				braceCount++
+			}
+			currentJSON.WriteRune(char)
+		case '}':
+			if !inString {
+				braceCount--
+			}
+			currentJSON.WriteRune(char)
+		default:
+			currentJSON.WriteRune(char)
+		}
+
+		// If braces are balanced and we have a complete JSON object
+		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
+			jsonStr := strings.TrimSpace(currentJSON.String())
+			if jsonStr != "" {
+				var event map[string]interface{}
+				if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
+					// Extract environment data from event properties
+					if props, ok := event["properties"].(map[string]interface{}); ok {
+						if record.Hostname == "" {
+							if hostname, ok := props["hostname"].(string); ok && hostname != "" {
+								record.Hostname = hostname
+							}
+						}
+						if record.User == "" {
+							if user, ok := props["user"].(string); ok && user != "" {
+								record.User = user
+							}
+						}
+						if record.LogVersion == "" {
+							if version, ok := props["log_version"].(string); ok && version != "" {
+								record.LogVersion = version
+							}
+						}
+						if record.ProcessID == 0 {
+							if processID, ok := props["process_id"].(float64); ok && processID > 0 {
+								record.ProcessID = int(processID)
+							}
+						}
+					}
+
+					// Also check direct event fields (correct field names)
+					if record.Hostname == "" {
+						if hostname, ok := event["hostname"].(string); ok && hostname != "" {
+							record.Hostname = hostname
+						}
+					}
+					if record.User == "" {
+						if user, ok := event["user"].(string); ok && user != "" {
+							record.User = user
+						}
+					}
+					if record.LogVersion == "" {
+						if version, ok := event["version"].(string); ok && version != "" {
+							record.LogVersion = version
+						}
+					}
+					if record.ProcessID == 0 {
+						if processID, ok := event["pid"].(float64); ok && processID > 0 {
+							record.ProcessID = int(processID)
+						}
+					}
+					if record.RunType == "" {
+						if runType, ok := event["run_type"].(string); ok && runType != "" {
+							record.RunType = runType
+						}
+					}
+
+					// Stop once we have all the data we need
+					if record.Hostname != "" && record.LogVersion != "" && record.ProcessID != 0 && record.RunType != "" {
+						// If user is still missing, try to get it from the environment
+						if record.User == "" {
+							if user := os.Getenv("USERNAME"); user != "" {
+								record.User = user
+							}
+						}
+						return
+					}
+				}
+			}
+			currentJSON.Reset()
+		}
+	}
 }
