@@ -12,7 +12,7 @@
 #  ─Thumbprint XX … override auto-detection
 #  ─Task XX       … run specific task: build, package, all (default: all)
 #  ─Binaries      … build and sign only the .exe binaries, skip all packaging
-#  ─Binary XX     … build and sign only a specific binary (e.g., cimianstatus)
+#  ─Binary XX     … build and sign only a specific binary (e.g., cimistatus)
 #  ─Install       … after building, install the MSI package (requires elevation)
 #  ─IntuneWin     … create .intunewin packages (adds build time, only needed for deployment)
 #  ─Dev           … development mode: stops services, faster iteration
@@ -20,7 +20,7 @@
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing (no .intunewin)
 #   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
-#   .\build.ps1 -Binary cimianstatus # Build and sign only cimianstatus.exe
+#   .\build.ps1 -Binary cimistatus -Sign # Build and sign only cimistatus binary
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
 #   .\build.ps1 -Install             # Build and install the MSI package
 #   .\build.ps1 -IntuneWin           # Full build including .intunewin packages
@@ -32,7 +32,7 @@ param(
     [ValidateSet("build", "package", "all")]
     [string]$Task = "all",
     [switch]$Binaries,
-    [string]$Binary,  # New parameter for single binary builds
+    [string]$Binary,
     [switch]$Install,
     [switch]$IntuneWin,
     [switch]$Dev  # Development mode - stops services, skips signing, faster iteration
@@ -218,21 +218,16 @@ if ($Binaries) {
     $Task = "build"
 }
 
-# If Binary parameter is set, force Task to "build" and enable signing
+# If Binary parameter is set, force Task to "build" and skip all packaging
 if ($Binary) {
-    Write-Log "Binary parameter detected - will only build and sign '$Binary.exe', skipping all packaging." "INFO"
+    Write-Log "Binary parameter detected - will only build and sign '$Binary' binary, skipping all packaging." "INFO"
     $Task = "build"
-    # Validate that the binary directory exists
-    $binaryDir = "cmd\$Binary"
-    if (-not (Test-Path $binaryDir)) {
-        Write-Log "Binary directory '$binaryDir' not found. Available binaries:" "ERROR"
-        Get-ChildItem -Directory -Path "cmd" | ForEach-Object { Write-Log "  - $($_.Name)" "INFO" }
+    # Validate that the specified binary exists in cmd directory
+    $binaryPath = "cmd\$Binary"
+    if (-not (Test-Path $binaryPath)) {
+        Write-Log "Specified binary '$Binary' does not exist in cmd directory. Available binaries:" "ERROR"
+        Get-ChildItem -Directory -Path "cmd" | ForEach-Object { Write-Log "  $($_.Name)" "INFO" }
         exit 1
-    }
-    # Force signing for single binary builds (since they're for development/testing)
-    if (-not $Sign -and -not $NoSign) {
-        Write-Log "Enabling signing for single binary build..." "INFO"
-        $Sign = $true
     }
 }
 
@@ -538,19 +533,18 @@ if ($Binaries -or $Binary) {
         New-Item -ItemType Directory -Path "release" -Force | Out-Null
     }
     
-    # Determine which binaries to build
+    $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
+    
+    # Filter to specific binary if -Binary parameter is specified
     if ($Binary) {
-        # Single binary mode - only build the specified binary
-        $binaryDirs = Get-ChildItem -Directory -Path "./cmd" | Where-Object { $_.Name -eq $Binary }
+        $binaryDirs = $binaryDirs | Where-Object { $_.Name -eq $Binary }
         if (-not $binaryDirs) {
-            Write-Log "Binary '$Binary' not found in cmd directory." "ERROR"
+            Write-Log "Specified binary '$Binary' not found in cmd directory." "ERROR"
             exit 1
         }
-        Write-Log "Building only: $Binary" "INFO"
+        Write-Log "Building only binary: $Binary" "INFO"
     } else {
-        # Build all binaries
-        $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
-        Write-Log "Building all binaries..." "INFO"
+        Write-Log "Building all binaries" "INFO"
     }
     $archs = @("x64", "arm64")
     $goarchMap = @{
@@ -749,11 +743,10 @@ if ($Binaries -or $Binary) {
     
     if ($Binary) {
         Write-Log "Single binary build completed successfully for '$Binary'." "SUCCESS"
-        Write-Log "Built binary is available in:" "INFO"
     } else {
         Write-Log "Binaries-only build completed successfully." "SUCCESS"
-        Write-Log "Built binaries are available in:" "INFO"
     }
+    Write-Log "Built binaries are available in:" "INFO"
     Get-ChildItem -Path "release" -Recurse -Filter "*.exe" | ForEach-Object {
         Write-Host "  $($_.FullName)"
     }
