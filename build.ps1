@@ -343,12 +343,13 @@ function signPackage {
 
         if ($LASTEXITCODE -eq 0) {
             Write-Log  "signtool succeeded with $tsa" "SUCCESS"
-            return
+            return $true
         }
         Write-Log "signtool failed with $tsa (exit $LASTEXITCODE)" "WARNING"
     }
 
-    throw "signtool failed with all timestamp authorities."
+    Write-Log "signtool failed with all timestamp authorities for '$FilePath' - continuing build without signature" "WARNING"
+    return $false
 }
 
 function signNuget {
@@ -372,7 +373,7 @@ function signNuget {
 
     if (-not $Thumbprint) {
         Write-Log "No enterprise code-signing cert present – skipping NuGet repo sign." "WARNING"
-        return
+        return $false
     }
 
     & nuget.exe sign `
@@ -381,8 +382,12 @@ function signNuget {
     -CertificateSubjectName $Global:EnterpriseCertCN `
     -Timestamper            $tsa
 
-    if ($LASTEXITCODE) { throw "nuget sign failed ($LASTEXITCODE)" }
+    if ($LASTEXITCODE) { 
+        Write-Log "nuget sign failed ($LASTEXITCODE) for '$Nupkg' - continuing build" "WARNING"
+        return $false
+    }
     Write-Log "NuGet repo signature complete." "SUCCESS"
+    return $true
 }
 
 # Function to install MSI package with elevation
@@ -736,11 +741,14 @@ if ($Binaries -or $Binary) {
         foreach ($arch in $archs) {
             Get-ChildItem -Path "release\$arch\*.exe" | ForEach-Object {
                 try {
-                    signPackage -FilePath $_.FullName
-                    Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                    $signResult = signPackage -FilePath $_.FullName
+                    if ($signResult) {
+                        Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                    } else {
+                        Write-Log "Failed to sign $($_.FullName) - continuing build" "WARNING"
+                    }
                 } catch {
-                    Write-Log "Failed to sign $($_.FullName). $_" "ERROR"
-                    exit 1
+                    Write-Log "Failed to sign $($_.FullName). $_ - continuing build" "WARNING"
                 }
             }
         }
@@ -1196,12 +1204,15 @@ if ($Sign) {
                     return
                 }
                 
-                signPackage -FilePath $_.FullName   # ← uses $env:SIGN_THUMB, adds RFC 3161 timestamp
-                Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                $signResult = signPackage -FilePath $_.FullName   # ← uses $env:SIGN_THUMB, adds RFC 3161 timestamp
+                if ($signResult) {
+                    Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                } else {
+                    Write-Log "Failed to sign $($_.FullName) - continuing build" "WARNING"
+                }
             }
             catch {
-                Write-Log "Failed to sign $($_.FullName). $_" "ERROR"
-                exit 1
+                Write-Log "Failed to sign $($_.FullName). $_ - continuing build" "WARNING"
             }
         }
     }
@@ -1295,7 +1306,14 @@ foreach ($msiArch in $msiArchs) {
         exit 1
     }
 
-    if ($Sign) { signPackage $msiOutput $env:SIGN_THUMB }
+    if ($Sign) { 
+        $signResult = signPackage $msiOutput $env:SIGN_THUMB 
+        if ($signResult) {
+            Write-Log "MSI package signed successfully: $msiOutput" "SUCCESS"
+        } else {
+            Write-Log "Failed to sign MSI package: $msiOutput - continuing build" "WARNING"
+        }
+    }
 
     # Clean up temp folder
     Remove-Item -Path "$msiTempDir\*" -Recurse -Force
@@ -1341,7 +1359,14 @@ foreach ($arch in $archs) {
              Sort-Object LastWriteTime -Desc | Select-Object -First 1
     Move-Item $built.FullName $nupkgOut -Force
 
-    if ($Sign) { signNuget $nupkgOut }
+    if ($Sign) { 
+        $signResult = signNuget $nupkgOut 
+        if ($signResult) {
+            Write-Log "NuGet package signed successfully: $nupkgOut" "SUCCESS"
+        } else {
+            Write-Log "Failed to sign NuGet package: $nupkgOut - continuing build" "WARNING"
+        }
+    }
 
     # cleanup
     Remove-Item $pkgTempDir -Recurse -Force
