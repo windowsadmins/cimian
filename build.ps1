@@ -325,6 +325,30 @@ function signPackage {
         [string]$Thumbprint = $env:SIGN_THUMB
     )
 
+    # Verify file exists and is accessible
+    if (-not (Test-Path $FilePath)) {
+        Write-Log "File not found for signing: $FilePath" "WARNING"
+        return $false
+    }
+
+    # Check if file is locked by trying to open it exclusively
+    try {
+        $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
+        $fileStream.Close()
+    }
+    catch {
+        Write-Log "File appears to be locked: $FilePath. Waiting and retrying..." "WARNING"
+        Start-Sleep -Seconds 3
+        try {
+            $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
+            $fileStream.Close()
+        }
+        catch {
+            Write-Log "File still locked after retry: $FilePath. Skipping signing." "WARNING"
+            return $false
+        }
+    }
+
     $tsaList = @(
         'http://timestamp.digicert.com',
         'http://timestamp.sectigo.com',
@@ -333,6 +357,11 @@ function signPackage {
 
     foreach ($tsa in $tsaList) {
         Write-Log "Signing '$FilePath' using $tsa …" "INFO"
+        
+        # Force garbage collection before signing to release any handles
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        
         & signtool.exe sign `
             /sha1  $Thumbprint `
             /fd    SHA256 `
@@ -410,9 +439,13 @@ function Install-MsiPackage {
     if ($isAdmin) {
         Write-Log "Already running with administrator privileges. Installing directly..." "INFO"
         try {
-            $installProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$MsiPath`"", "/qn", "/l*v", "`"$env:TEMP\cimian_install.log`"" -Wait -PassThru
+            # Ensure we use absolute path for MSI installation
+            $absoluteMsiPath = (Resolve-Path $MsiPath).Path
+            Write-Log "Installing MSI from absolute path: $absoluteMsiPath" "INFO"
+            
+            $installProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "`"$absoluteMsiPath`"", "/qn", "/l*v", "`"$env:TEMP\cimian_install.log`"" -Wait -PassThru
             if ($installProcess.ExitCode -eq 0) {
-                Write-Log "MSI installation completed successfully." "SUCCESS"
+                Write-Log "MSI installation completed successfully. Exit code: $($installProcess.ExitCode)" "SUCCESS"
                 return $true
             } else {
                 Write-Log "MSI installation failed with exit code $($installProcess.ExitCode). Check log: $env:TEMP\cimian_install.log" "ERROR"
@@ -449,12 +482,16 @@ function Install-MsiPackage {
     # Method 2: Launch elevated PowerShell session
     Write-Log "Launching elevated PowerShell session for installation..." "INFO"
     try {
-        $installCommand = "Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '`"$MsiPath`"', '/qn', '/l*v', '`"$env:TEMP\cimian_install.log`"' -Wait -PassThru | ForEach-Object { if (`$_.ExitCode -eq 0) { Write-Host 'Installation completed successfully.' } else { Write-Host 'Installation failed with exit code' `$_.ExitCode; exit `$_.ExitCode } }"
+        # Ensure we use absolute path for MSI installation
+        $absoluteMsiPath = (Resolve-Path $MsiPath).Path
+        Write-Log "Installing MSI from absolute path via elevation: $absoluteMsiPath" "INFO"
+        
+        $installCommand = "Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i', '`"$absoluteMsiPath`"', '/qn', '/l*v', '`"$env:TEMP\cimian_install.log`"' -Wait -PassThru | ForEach-Object { if (`$_.ExitCode -eq 0) { Write-Host 'Installation completed successfully. Exit code:' `$_.ExitCode } else { Write-Host 'Installation failed with exit code' `$_.ExitCode; exit `$_.ExitCode } }"
         
         $elevatedProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $installCommand -Verb RunAs -Wait -PassThru
         
         if ($elevatedProcess.ExitCode -eq 0) {
-            Write-Log "MSI installation completed successfully via elevated session." "SUCCESS"
+            Write-Log "MSI installation completed successfully via elevated session. Exit code: $($elevatedProcess.ExitCode)" "SUCCESS"
             return $true
         } else {
             Write-Log "MSI installation via elevated session failed with exit code $($elevatedProcess.ExitCode). Check log: $env:TEMP\cimian_install.log" "ERROR"
@@ -467,6 +504,26 @@ function Install-MsiPackage {
     }
 }
 
+# Function to test if a file is locked
+function Test-FileLocked {
+    param (
+        [Parameter(Mandatory)]
+        [string]$FilePath
+    )
+    
+    if (-not (Test-Path $FilePath)) {
+        return $false
+    }
+    
+    try {
+        $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
+        $fileStream.Close()
+        return $false  # File is not locked
+    }
+    catch {
+        return $true   # File is locked
+    }
+}
 
 # ───────────────────────────────────────────────────
 #  BUILD PROCESS STARTS
@@ -571,12 +628,6 @@ if ($Binaries -or $Binary) {
         foreach ($dir in $binaryDirs) {
             $binaryName = $dir.Name
             
-            # Skip ARM64 cimistatus.exe during development to avoid signing issues
-            if ($Dev -and $arch -eq "arm64" -and $binaryName -eq "cimistatus") {
-                Write-Log "Development mode: Skipping ARM64 cimistatus.exe build (cross-platform signing limitation)" "WARNING"
-                continue
-            }
-            
             Write-Log "Building $binaryName for $arch..." "INFO"
             
             # Check if this is a C# project
@@ -624,8 +675,48 @@ if ($Binaries -or $Binary) {
                         throw "Could not find built executable for $binaryName ($arch)"
                     }
                     
-                    # Copy to the expected output location
-                    Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
+                    # Copy to the expected output location with retry mechanism for file locking issues
+                    $copySuccess = $false
+                    $maxRetries = 5
+                    $retryDelay = 2
+                    
+                    for ($retry = 1; $retry -le $maxRetries; $retry++) {
+                        try {
+                            # Force garbage collection to release any file handles
+                            [System.GC]::Collect()
+                            [System.GC]::WaitForPendingFinalizers()
+                            
+                            # Use robocopy for more reliable file copying with locked files
+                            & robocopy (Split-Path $builtExe.FullName) (Split-Path "..\..\$outputPath") (Split-Path $builtExe.FullName -Leaf) /R:3 /W:1 /NP /NDL /NJH /NJS | Out-Null
+                            
+                            # Robocopy exit codes 0-7 are success, 8+ are errors
+                            if ($LASTEXITCODE -le 7 -and (Test-Path "..\..\$outputPath")) {
+                                $copySuccess = $true
+                                Write-Log "Successfully copied $binaryName ($arch) on attempt $retry" "SUCCESS"
+                                break
+                            } else {
+                                throw "Robocopy succeeded but file not found at destination"
+                            }
+                        } catch {
+                            if ($retry -lt $maxRetries) {
+                                Write-Log "Copy attempt $retry failed for $binaryName ($arch): $_. Retrying in $retryDelay seconds..." "WARNING"
+                                Start-Sleep -Seconds $retryDelay
+                                $retryDelay += 1  # Exponential backoff
+                            } else {
+                                Write-Log "All copy attempts failed for $binaryName ($arch). Falling back to standard copy..." "WARNING"
+                                try {
+                                    Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
+                                    $copySuccess = $true
+                                } catch {
+                                    throw "Final fallback copy also failed: $_"
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (-not $copySuccess) {
+                        throw "Failed to copy built executable after all retry attempts"
+                    }
                     
                 } catch {
                     Write-Log "Failed to build C# project $binaryName ($arch). Error: $_" "ERROR"
@@ -1188,21 +1279,33 @@ foreach ($arch in $archs) {
 # ───────────── SIGN EVERY EXE (once) IN ITS OWN ARCH FOLDER ─────────────
 if ($Sign) {
     Write-Log "Signing all EXEs in each release\<arch>\ folder..." "INFO"
+    
+    # Force a comprehensive garbage collection before signing to release any lingering file handles
+    Write-Log "Performing garbage collection to release file handles before signing..." "INFO"
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+    
+    # Give the system a moment to fully release handles
+    Start-Sleep -Seconds 3
 
     foreach ($arch in $archs) {
         Get-ChildItem -Path ("release\{0}\*.exe" -f $arch) | ForEach-Object {
             try {
-                # Skip signing ARM64 cimistatus.exe due to cross-platform signing limitations
-                if ($arch -eq "arm64" -and $_.Name -eq "cimistatus.exe") {
-                    Write-Log "Skipping ARM64 cimistatus.exe signing (cross-platform limitation) ⚠" "WARNING"
-                    return
-                }
-                
                 # Additional check: Skip if file doesn't exist (shouldn't happen but defensive)
                 if (-not (Test-Path $_.FullName)) {
                     Write-Log "File not found for signing: $($_.FullName)" "WARNING"
                     return
                 }
+                
+                # Force garbage collection and wait for finalizers to release file handles
+                [System.GC]::Collect()
+                [System.GC]::WaitForPendingFinalizers()
+                [System.GC]::Collect()
+                
+                # Add a small delay to ensure file handles are fully released
+                Start-Sleep -Milliseconds 500
                 
                 $signResult = signPackage -FilePath $_.FullName   # ← uses $env:SIGN_THUMB, adds RFC 3161 timestamp
                 if ($signResult) {
@@ -1218,29 +1321,41 @@ if ($Sign) {
     }
 }
 
-# Compress release directory with retry mechanism (excluding problematic ARM64 cimistatus.exe)
+# Compress release directory with retry mechanism
 Write-Log "Compressing release directory into release.zip..." "INFO"
 
 try {
-    # Create temporary directory for compression without problematic file
-    $tempCompressDir = "release_temp_compress"
-    if (Test-Path $tempCompressDir) { Remove-Item $tempCompressDir -Recurse -Force }
+    # Force garbage collection to release any file handles before compression
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+    [System.GC]::Collect()
     
-    # Copy all files except ARM64 cimistatus.exe
-    Copy-Item "release" $tempCompressDir -Recurse
-    $problematicFile = Join-Path $tempCompressDir "arm64\cimistatus.exe"
-    if (Test-Path $problematicFile) {
-        Remove-Item $problematicFile -Force
-        Write-Log "Excluded ARM64 cimistatus.exe from compression (file lock issue)" "WARNING"
-    }
+    # Add a delay to ensure all file handles are released
+    Start-Sleep -Seconds 2
     
-    Compress-Archive -Path "$tempCompressDir\*" -DestinationPath "release.zip" -Force
-    Remove-Item $tempCompressDir -Recurse -Force
-    Write-Log "Compressed binaries into release.zip (excluding locked ARM64 cimistatus.exe)." "SUCCESS"
+    Compress-Archive -Path "release\*" -DestinationPath "release.zip" -Force
+    Write-Log "Compressed all binaries into release.zip successfully." "SUCCESS"
 }
 catch {
     Write-Log "Failed to compress release directory: $($_.Exception.Message)" "ERROR"
-    Write-Log "Continuing without zip archive..." "WARNING"
+    Write-Log "Attempting compression with temporary copy to avoid file locks..." "WARNING"
+    
+    try {
+        # Create temporary directory for compression without file locks
+        $tempCompressDir = "release_temp_compress"
+        if (Test-Path $tempCompressDir) { Remove-Item $tempCompressDir -Recurse -Force }
+        
+        # Copy all files to temporary location
+        Copy-Item "release" $tempCompressDir -Recurse
+        
+        Compress-Archive -Path "$tempCompressDir\*" -DestinationPath "release.zip" -Force
+        Remove-Item $tempCompressDir -Recurse -Force
+        Write-Log "Compressed binaries into release.zip using temporary copy method." "SUCCESS"
+    }
+    catch {
+        Write-Log "All compression attempts failed: $($_.Exception.Message)" "ERROR"
+        Write-Log "Continuing without zip archive..." "WARNING"
+    }
 }
 
 # Step 10: Build MSI Packages with WiX for both x64 and arm64
@@ -1286,6 +1401,11 @@ foreach ($msiArch in $msiArchs) {
             "build\msi.wxs"
         )
         & $candlePath @candleArgs
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "Candle compilation failed for $msiArch with exit code $LASTEXITCODE"
+        }
+        Write-Log "Candle compilation completed successfully for $msiArch" "SUCCESS"
 
         Write-Log "Linking and creating MSI with light for $msiArch..." "INFO"
         # Use argument splatting for light
@@ -1298,6 +1418,11 @@ foreach ($msiArch in $msiArchs) {
             "build\msi.$msiArch.wixobj"
         )
         & $lightPath @lightArgs
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "Light linking failed for $msiArch with exit code $LASTEXITCODE"
+        }
+        Write-Log "Light linking completed successfully for $msiArch" "SUCCESS"
 
         Write-Log "MSI package built at $msiOutput." "SUCCESS"
     }
