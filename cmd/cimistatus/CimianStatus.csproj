@@ -40,6 +40,7 @@
   <ItemGroup>
     <Resource Include="Assets\**\*" />
     <Resource Include="cimian.ico" />
+    <Resource Include="cimian.png" />
   </ItemGroup>
 
   <ItemGroup>

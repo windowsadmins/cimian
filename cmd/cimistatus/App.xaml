@@ -29,40 +29,40 @@
             <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}"/>
             <SolidColorBrush x:Key="CardBrush" Color="{StaticResource CardColor}"/>
 
-            <!-- Typography Styles -->
+            <!-- Typography Styles with theme-aware colors -->
             <Style x:Key="DisplayTextStyle" TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Display"/>
+                <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Display"/>
                 <Setter Property="FontSize" Value="28"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
             </Style>
             
             <Style x:Key="TitleTextStyle" TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Text"/>
+                <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Text"/>
                 <Setter Property="FontSize" Value="20"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
             </Style>
             
             <Style x:Key="SubtitleTextStyle" TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Text"/>
+                <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Text"/>
                 <Setter Property="FontSize" Value="16"/>
                 <Setter Property="FontWeight" Value="Normal"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
             </Style>
             
             <Style x:Key="BodyTextStyle" TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Text"/>
+                <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Text"/>
                 <Setter Property="FontSize" Value="14"/>
                 <Setter Property="FontWeight" Value="Normal"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
             </Style>
             
             <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
-                <Setter Property="FontFamily" Value="Segoe UI Variable Text"/>
+                <Setter Property="FontFamily" Value="Aptos, Segoe UI Variable Text"/>
                 <Setter Property="FontSize" Value="12"/>
                 <Setter Property="FontWeight" Value="Normal"/>
-                <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
             </Style>
 
             <!-- Card Style -->
