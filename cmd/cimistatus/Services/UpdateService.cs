@@ -209,7 +209,7 @@ namespace Cimian.Status.Services
             var processInfo = new ProcessStartInfo
             {
                 FileName = execPath,
-                Arguments = "--auto --show-status",  // Enable status reporting to our TCP server
+                Arguments = "--auto --show-status -vv",  // Enable max verbosity for detailed logging
                 UseShellExecute = true,              // Required for elevation
                 Verb = "runas",                      // Request elevation
                 CreateNoWindow = false,              // Show window for elevated process
@@ -398,6 +398,72 @@ namespace Cimian.Status.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error processing status message in UpdateService: {MessageType}", message.Type);
+            }
+        }
+
+        /// <summary>
+        /// Launches managedsoftwareupdate.exe with output capture for live logging
+        /// This method is specifically designed to work with LogService for live output tailing
+        /// </summary>
+        public Process? LaunchWithOutputCapture(Action<string> onOutputReceived, Action<string> onErrorReceived)
+        {
+            try
+            {
+                var execPath = FindExecutable();
+                if (execPath == null)
+                {
+                    _logger.LogError("Could not find managedsoftwareupdate.exe for output capture");
+                    return null;
+                }
+
+                _logger.LogInformation("Launching managedsoftwareupdate.exe with output capture: {ExecutablePath}", execPath);
+
+                var processInfo = new ProcessStartInfo
+                {
+                    FileName = execPath,
+                    Arguments = "--auto --show-status -vv --check-only",  // Check-only mode + max verbosity for detailed logging
+                    UseShellExecute = false,             // Required for output capture
+                    RedirectStandardOutput = true,       // Capture stdout
+                    RedirectStandardError = true,        // Capture stderr
+                    CreateNoWindow = true,               // No window needed
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+
+                var process = Process.Start(processInfo);
+                if (process == null)
+                {
+                    _logger.LogError("Failed to start process for output capture");
+                    return null;
+                }
+
+                // Set up output capture
+                process.OutputDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        onOutputReceived?.Invoke(e.Data);
+                    }
+                };
+
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        onErrorReceived?.Invoke(e.Data);
+                    }
+                };
+
+                // Start async reading
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                _logger.LogInformation("Started process with output capture (PID: {ProcessId})", process.Id);
+                return process;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to launch process with output capture");
+                return null;
             }
         }
     }

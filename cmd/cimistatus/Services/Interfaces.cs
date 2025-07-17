@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Cimian.Status.Models;
 
@@ -12,6 +13,7 @@ namespace Cimian.Status.Services
 
         Task ExecuteUpdateAsync();
         bool IsExecutableFound();
+        Process? LaunchWithOutputCapture(Action<string> onOutputReceived, Action<string> onErrorReceived);
     }
 
     public interface ILogService
@@ -27,6 +29,9 @@ namespace Cimian.Status.Services
         Task StopLogTailingAsync();
         bool IsLogTailing { get; }
         string GetCurrentLogFilePath();
+        
+        // Manual process start for testing
+        Task<bool> StartProcessWithLiveMonitoringAsync();
     }
 
     public interface IStatusServer
