@@ -1,6 +1,9 @@
 using System;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Extensions.Logging;
 using Cimian.Status.ViewModels;
 using Cimian.Status.Services;
@@ -12,8 +15,8 @@ namespace Cimian.Status.Views
         private readonly MainViewModel _viewModel;
         private readonly IStatusServer _statusServer;
         private readonly ILogger<MainWindow> _logger;
-        private readonly double _baseHeight = 300;
-        private readonly double _expandedHeight = 600;
+        private readonly double _baseHeight = 450;
+        private readonly double _expandedHeight = 700;
 
         public MainWindow(MainViewModel viewModel, IStatusServer statusServer, ILogger<MainWindow> logger)
         {
@@ -24,9 +27,6 @@ namespace Cimian.Status.Views
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             
             DataContext = _viewModel;
-
-            // Subscribe to log lines collection changes for auto-scroll
-            _viewModel.LogLines.CollectionChanged += OnLogLinesChanged;
 
             // Subscribe to status server events
             _statusServer.MessageReceived += OnStatusMessageReceived;
@@ -85,19 +85,89 @@ namespace Cimian.Status.Views
             });
         }
 
-        private async void RunNow_Click(object sender, RoutedEventArgs e)
-        {
-            // The actual work is handled by the ViewModel's command
-            // This is just a backup for direct button clicks
-            if (_viewModel.RunNowCommand.CanExecute(null))
-            {
-                await _viewModel.RunNowAsync();
-            }
-        }
-
         private async void ToggleLogViewer_Click(object sender, RoutedEventArgs e)
         {
             await _viewModel.ToggleLogViewerAsync();
+        }
+
+        private void CopyLog_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(_viewModel.LogText))
+                {
+                    Clipboard.SetText(_viewModel.LogText);
+                    _logger.LogInformation("Log text copied to clipboard");
+                    
+                    // Show a brief feedback by changing button text
+                    if (sender is Button button)
+                    {
+                        var originalContent = button.Content;
+                        button.Content = "Copied!";
+                        
+                        // Reset button text after 1 second
+                        var timer = new System.Windows.Threading.DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromSeconds(1)
+                        };
+                        timer.Tick += (s, args) =>
+                        {
+                            button.Content = originalContent;
+                            timer.Stop();
+                        };
+                        timer.Start();
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("No log text to copy");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to copy log text to clipboard");
+            }
+        }
+
+        private void CloseWindow_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Terminate any running managedsoftwareupdate.exe processes
+                var processes = Process.GetProcessesByName("managedsoftwareupdate");
+                foreach (var process in processes)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Terminating managedsoftwareupdate.exe process (PID: {ProcessId})", process.Id);
+                        process.Kill();
+                        process.WaitForExit(5000); // Wait up to 5 seconds for clean exit
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("Failed to terminate managedsoftwareupdate.exe process (PID: {ProcessId}): {Error}", 
+                            process.Id, ex.Message);
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("Error while terminating processes: {Error}", ex.Message);
+            }
+
+            Close();
+        }
+
+        private void Window_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
+            {
+                DragMove();
+            }
         }
 
         private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -107,6 +177,18 @@ namespace Cimian.Status.Views
                 // Animate window height change
                 var targetHeight = _viewModel.IsLogViewerExpanded ? _expandedHeight : _baseHeight;
                 AnimateWindowHeight(targetHeight);
+            }
+            else if (e.PropertyName == nameof(_viewModel.ShouldScrollToBottom))
+            {
+                // Auto-scroll to bottom when log text changes
+                Dispatcher.BeginInvoke(() =>
+                {
+                    var scrollViewer = FindName("LogScrollViewer") as ScrollViewer;
+                    if (scrollViewer != null && _viewModel.IsLogViewerExpanded)
+                    {
+                        scrollViewer.ScrollToEnd();
+                    }
+                });
             }
         }
 
@@ -124,16 +206,6 @@ namespace Cimian.Status.Views
             };
 
             BeginAnimation(HeightProperty, animation);
-        }
-
-        // Auto-scroll to bottom when new log lines are added
-        private void OnLogLinesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        {
-            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add)
-            {
-                // Scroll to bottom when new items are added
-                LogScrollViewer.ScrollToBottom();
-            }
         }
 
         private async void OnLoaded(object sender, RoutedEventArgs e)

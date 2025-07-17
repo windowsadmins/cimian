@@ -5,12 +5,14 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using System.Text;
 
 namespace Cimian.Status.Services
 {
     public class LogService : ILogService
     {
         private readonly ILogger<LogService> _logger;
+        private readonly IUpdateService _updateService;
         private readonly string _lastRunTimeFile;
         private readonly string _logsBaseDirectory;
         
@@ -23,12 +25,18 @@ namespace Cimian.Status.Services
         private readonly object _lockObject = new();
         private CancellationTokenSource? _cancellationTokenSource;
 
+        // Process output tailing fields
+        private Process? _liveProcess;
+        private bool _isProcessTailing;
+        private readonly StringBuilder _processOutput = new();
+
         public event EventHandler<string>? LogLineReceived;
         public bool IsLogTailing { get; private set; }
 
-        public LogService(ILogger<LogService> logger)
+        public LogService(ILogger<LogService> logger, IUpdateService updateService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _updateService = updateService ?? throw new ArgumentNullException(nameof(updateService));
             
             var programDataPath = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
             var managedInstallsPath = Path.Combine(programDataPath, "ManagedInstalls");
@@ -157,15 +165,32 @@ namespace Cimian.Status.Services
 
             try
             {
+                _cancellationTokenSource = new CancellationTokenSource();
+                IsLogTailing = true;
+
+                // First priority: Try to tail a running managedsoftwareupdate.exe process
+                if (TryAttachToRunningProcess())
+                {
+                    _logger.LogInformation("Started tailing live managedsoftwareupdate.exe process output");
+                    return Task.CompletedTask;
+                }
+
+                // If we're in live process mode, don't fall back to file monitoring
+                if (_isProcessTailing)
+                {
+                    _logger.LogInformation("Live process monitoring active");
+                    return Task.CompletedTask;
+                }
+
+                // Fallback: Tail the log file as before
                 _currentLogFile = GetCurrentLogFilePath();
                 if (string.IsNullOrEmpty(_currentLogFile))
                 {
                     _logger.LogWarning("No current log file found for tailing");
+                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] No current log file found - waiting for process...");
+                    IsLogTailing = false;
                     return Task.CompletedTask;
                 }
-
-                _cancellationTokenSource = new CancellationTokenSource();
-                IsLogTailing = true;
 
                 // Start with existing content if file exists
                 if (File.Exists(_currentLogFile))
@@ -222,6 +247,27 @@ namespace Cimian.Status.Services
                 {
                     _logReader?.Dispose();
                     _logReader = null;
+                }
+
+                // Stop process tailing if active
+                if (_isProcessTailing && _liveProcess != null)
+                {
+                    try
+                    {
+                        _liveProcess.OutputDataReceived -= OnProcessOutputReceived;
+                        _liveProcess.ErrorDataReceived -= OnProcessErrorReceived;
+                        if (!_liveProcess.HasExited)
+                        {
+                            _liveProcess.CancelOutputRead();
+                            _liveProcess.CancelErrorRead();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error stopping process output monitoring");
+                    }
+                    _liveProcess = null;
+                    _isProcessTailing = false;
                 }
 
                 _cancellationTokenSource?.Dispose();
@@ -296,6 +342,216 @@ namespace Cimian.Status.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error reading log file content");
+            }
+        }
+
+        /// <summary>
+        /// Attempts to attach to a running managedsoftwareupdate.exe process to capture live output
+        /// </summary>
+        private bool TryAttachToRunningProcess()
+        {
+            try
+            {
+                var processes = Process.GetProcessesByName("managedsoftwareupdate");
+                if (processes.Length == 0)
+                {
+                    // No running process - try to start one with output capture
+                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] No running managedsoftwareupdate.exe process found");
+                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Attempting to start process with live output capture...");
+                    
+                    return TryStartProcessWithCapture();
+                }
+
+                // Use the first (most likely only) process
+                _liveProcess = processes[0];
+                
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Found running managedsoftwareupdate.exe process (PID: {_liveProcess.Id})");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Note: Cannot capture output from already running process");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Use 'Run Now' button for live output capture, or monitor log file...");
+                
+                // Fall back to file monitoring since we can't capture output from existing process
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to attach to running process");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Attempts to start a new managedsoftwareupdate.exe process with live output capture
+        /// </summary>
+        private bool TryStartProcessWithCapture()
+        {
+            try
+            {
+                if (!_updateService.IsExecutableFound())
+                {
+                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] ERROR: managedsoftwareupdate.exe not found");
+                    return false;
+                }
+
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Starting managedsoftwareupdate.exe with live output capture (-vv)...");
+
+                _liveProcess = _updateService.LaunchWithOutputCapture(
+                    output => {
+                        var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                        LogLineReceived?.Invoke(this, $"[{timestamp}] {output}");
+                    },
+                    error => {
+                        var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                        LogLineReceived?.Invoke(this, $"[{timestamp}] ERROR: {error}");
+                    }
+                );
+
+                if (_liveProcess != null)
+                {
+                    _isProcessTailing = true;
+                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Successfully started process with live output capture (PID: {_liveProcess.Id})");
+                    
+                    // Monitor for process exit
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _liveProcess.WaitForExitAsync();
+                            var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                            LogLineReceived?.Invoke(this, $"[{timestamp}] Process completed with exit code: {_liveProcess.ExitCode}");
+                            _isProcessTailing = false;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Error monitoring process exit");
+                        }
+                    });
+                    
+                    return true;
+                }
+                
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Failed to start process with output capture");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to start process with output capture");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] ERROR: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Manually start a process with live monitoring for testing
+        /// </summary>
+        public Task<bool> StartProcessWithLiveMonitoringAsync()
+        {
+            if (_isProcessTailing)
+            {
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Process monitoring already active");
+                return Task.FromResult(true);
+            }
+
+            LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Manually starting process with live monitoring...");
+            
+            var result = TryStartProcessWithCapture();
+            if (result)
+            {
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Live process monitoring started successfully");
+            }
+            else
+            {
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Failed to start live process monitoring");
+            }
+            
+            return Task.FromResult(result);
+        }
+
+        /// <summary>
+        /// Starts monitoring for new managedsoftwareupdate.exe processes to capture their output
+        /// </summary>
+        private void StartProcessMonitoring()
+        {
+            // Start a background task to monitor for process launches
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (IsLogTailing && !_cancellationTokenSource!.Token.IsCancellationRequested)
+                    {
+                        var processes = Process.GetProcessesByName("managedsoftwareupdate");
+                        foreach (var process in processes)
+                        {
+                            if (!_isProcessTailing)
+                            {
+                                // Try to capture output if this is a newly started process
+                                if (TryCaptureFutureProcessOutput(process))
+                                {
+                                    break; // Successfully attached to one process
+                                }
+                            }
+                        }
+                        
+                        await Task.Delay(2000, _cancellationTokenSource.Token); // Check every 2 seconds
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when stopping
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error in process monitoring");
+                }
+            });
+        }
+
+        /// <summary>
+        /// Attempts to capture output from newly started managedsoftwareupdate.exe processes
+        /// </summary>
+        private bool TryCaptureFutureProcessOutput(Process process)
+        {
+            try
+            {
+                // We can only capture output if we start the process ourselves
+                // For existing processes, we'll provide helpful info and fall back to file tailing
+                
+                if (process.HasExited)
+                    return false;
+
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Monitoring process PID {process.Id}");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Note: Live console output capture requires launching the process with cimistatus");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Falling back to log file monitoring...");
+                
+                return false; // Return false to fall back to file tailing
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not capture output from process {ProcessId}", process.Id);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Event handler for process stdout output
+        /// </summary>
+        private void OnProcessOutputReceived(object sender, DataReceivedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+            {
+                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                LogLineReceived?.Invoke(this, $"[{timestamp}] {e.Data}");
+            }
+        }
+
+        /// <summary>
+        /// Event handler for process stderr output
+        /// </summary>
+        private void OnProcessErrorReceived(object sender, DataReceivedEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(e.Data))
+            {
+                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                LogLineReceived?.Invoke(this, $"[{timestamp}] ERROR: {e.Data}");
             }
         }
     }
