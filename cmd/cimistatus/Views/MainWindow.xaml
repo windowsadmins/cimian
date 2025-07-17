@@ -3,19 +3,57 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.modernwpf.com/2019"
         xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
-        ui:WindowHelper.UseModernWindowStyle="True"
+        ui:WindowHelper.UseModernWindowStyle="False"
         Title="Cimian Status" 
-        Height="450" 
+        Height="550" 
         Width="600"
-        MinHeight="450"
+        MinHeight="550"
         MinWidth="500"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         Icon="../cimian.ico"
-        Background="{DynamicResource ApplicationPageBackgroundThemeBrush}">
+        Background="{DynamicResource ApplicationPageBackgroundThemeBrush}"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown"
+        WindowStyle="None"
+        AllowsTransparency="True">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+        
+        <!-- Close Button Style with Hover Effect -->
+        <Style x:Key="CloseButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="24"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}"/>
+            <Setter Property="Width" Value="40"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="HoverBorder" 
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                BorderThickness="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HoverBorder" Property="Background" Value="#E81123"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HoverBorder" Property="Background" Value="#C50E1F"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Window.RenderTransform>
@@ -51,18 +89,14 @@
         </Grid.RowDefinitions>
 
         <!-- Header Section with Modern Design -->
-        <Grid Grid.Row="0" Margin="0,0,0,32">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- App Icon with Glow Effect -->
-            <Border Grid.Column="0" 
-                    Width="64" Height="64" 
+        <Grid Grid.Row="0" Margin="0,40,0,32">
+            <!-- App Icon with 30px padding -->
+            <Border Width="64" Height="64" 
                     CornerRadius="12"
-                    Background="{DynamicResource ControlFillColorDefaultBrush}">
+                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    Margin="30,0,0,0"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center">
                 <Border.Effect>
                     <DropShadowEffect Color="{StaticResource AccentColor}" 
                                     Direction="270" 
@@ -70,33 +104,25 @@
                                     BlurRadius="12" 
                                     Opacity="0.3"/>
                 </Border.Effect>
-                <Image Source="../../../icon.png" 
-                       Width="48" Height="48"/>
+                <Image Source="../cimian.png" 
+                       Width="64" Height="64"
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
             </Border>
 
-            <!-- Title Section -->
-            <StackPanel Grid.Column="1" 
-                        VerticalAlignment="Center" 
-                        Margin="20,0,0,0">
-                <TextBlock Text="Managed Software Update" 
-                          Style="{StaticResource TitleTextStyle}"/>
-            </StackPanel>
+            <!-- Centered Title Section (spans entire window width) -->
+            <TextBlock Text="Managed Software Update" 
+                      Style="{StaticResource TitleTextStyle}"
+                      VerticalAlignment="Center" 
+                      HorizontalAlignment="Center"/>
 
-            <!-- Run Now Button (Pill-shaped) -->
-            <Button Grid.Column="2" 
-                    VerticalAlignment="Center"
-                    Content="{Binding RunButtonText}"
-                    Click="RunNow_Click"
-                    IsEnabled="{Binding CanRunNow}"
-                    Style="{StaticResource AccentButtonStyle}"
-                    Padding="16,8"
-                    FontWeight="SemiBold">
-                <i:Interaction.Triggers>
-                    <i:EventTrigger EventName="Click">
-                        <i:InvokeCommandAction Command="{Binding RunNowCommand}"/>
-                    </i:EventTrigger>
-                </i:Interaction.Triggers>
-            </Button>
+            <!-- Close Button -->
+            <Button VerticalAlignment="Center"
+                    HorizontalAlignment="Right"
+                    Content="×"
+                    Click="CloseWindow_Click"
+                    Style="{StaticResource CloseButtonStyle}"
+                    ToolTip="Close and stop updates"
+                    Margin="0,0,40,0"/>
         </Grid>
 
         <!-- Main Status Card -->
@@ -115,7 +141,7 @@
                     <TextBlock Text="{Binding StatusText}"
                               Style="{StaticResource SubtitleTextStyle}"
                               Margin="0,0,0,8"
-                              HorizontalAlignment="Center"/>
+                              HorizontalAlignment="Left"/>
                     
                     <!-- Progress Bar -->
                     <ProgressBar Value="{Binding ProgressValue}"
@@ -173,14 +199,16 @@
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Grid.Column="0"
-                                  Text="Live Installation Log"
+                                  Text="Log"
                                   Style="{StaticResource SubtitleTextStyle}"
                                   VerticalAlignment="Center"
-                                  HorizontalAlignment="Center"/>
+                                  HorizontalAlignment="Center"
+                                  Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
 
                         <TextBlock Grid.Column="1"
                                   VerticalAlignment="Center"
-                                  Margin="12,0,0,0">
+                                  Margin="12,0,0,0"
+                                  Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
                                     <Style.Triggers>
@@ -202,7 +230,8 @@
                         Background="{DynamicResource ControlFillColorTertiaryBrush}"
                         CornerRadius="6"
                         Margin="12,0,12,12"
-                        MaxHeight="300">
+                        MinHeight="120"
+                        MaxHeight="350">
                     <Border.Style>
                         <Style TargetType="Border">
                             <Style.Triggers>
@@ -216,28 +245,45 @@
                         </Style>
                     </Border.Style>
 
-                    <ScrollViewer x:Name="LogScrollViewer"
-                                  VerticalScrollBarVisibility="Auto"
-                                  HorizontalScrollBarVisibility="Auto"
-                                  Padding="12">
-                        <ItemsControl ItemsSource="{Binding LogLines}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding}"
-                                             FontFamily="Consolas"
-                                             FontSize="11"
-                                             Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                             TextWrapping="NoWrap"
-                                             Margin="0,1"/>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                            <ItemsControl.Template>
-                                <ControlTemplate TargetType="ItemsControl">
-                                    <StackPanel IsItemsHost="True"/>
-                                </ControlTemplate>
-                            </ItemsControl.Template>
-                        </ItemsControl>
-                    </ScrollViewer>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" MinHeight="80"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Log Text Area -->
+                        <ScrollViewer x:Name="LogScrollViewer"
+                                      Grid.Row="0"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      Padding="12,12,12,8"
+                                      CanContentScroll="False">
+                            <TextBox x:Name="LogTextBox"
+                                     Text="{Binding LogText, Mode=OneWay}"
+                                     FontFamily="Consolas"
+                                     FontSize="11"
+                                     Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     IsReadOnly="True"
+                                     TextWrapping="NoWrap"
+                                     AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Disabled"
+                                     HorizontalScrollBarVisibility="Disabled"
+                                     SelectionBrush="{DynamicResource AccentColorBrush}"
+                                     IsReadOnlyCaretVisible="True"/>
+                        </ScrollViewer>
+
+                        <!-- Copy Button -->
+                        <Button Grid.Row="1"
+                                Content="Copy Log"
+                                HorizontalAlignment="Right"
+                                Margin="12,4,12,8"
+                                Padding="12,6"
+                                Click="CopyLog_Click"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                FontSize="12"/>
+                    </Grid>
                 </Border>
             </Grid>
         </Border>
