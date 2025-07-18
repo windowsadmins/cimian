@@ -9,7 +9,7 @@
   <?endif?>
 
   <!-- Product Definition -->
-  <Product Id="9127064A-3536-42A1-BDE4-131AA5DBE458"
+  <Product Id="*"
            UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
            Name="Cimian"
            Version="$(var.ProductVersion)"
@@ -21,7 +21,8 @@
              Compressed="yes"
              Comments="Windows Installer Package"
              InstallScope="perMachine"
-             Platform="x64" />
+             Platform="x64"
+             Id="*" />
 
     <!-- Search for the config file -->
     <Property Id="CONFIGFILE">
@@ -30,8 +31,10 @@
       </DirectorySearch>
     </Property>
 
-    <!-- Major Upgrade Settings - Automatically handle upgrades and same-version reinstalls -->
-    <MajorUpgrade AllowSameVersionUpgrades="yes"
+    <!-- Major Upgrade Settings - Handle version upgrades and force reinstallation -->
+    <MajorUpgrade AllowSameVersionUpgrades="no" 
+                  AllowDowngrades="no"
+                  MigrateFeatures="yes"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   Schedule="afterInstallInitialize" />
 
@@ -106,17 +109,12 @@
     </Directory>
 
     <!-- Custom Actions -->
-    <SetProperty Id="RunCimiImport"
-                 Value="&quot;[INSTALLDIR]cimiimport.exe&quot; --config-auto"
-                 Sequence="execute"
-                 Before="RunCimiImport">NOT CONFIGFILE</SetProperty>
-                 
     <CustomAction Id="RunCimiImport"
-                  BinaryKey="WixCA"
-                  DllEntry="CAQuietExec64"
                   Execute="deferred"
+                  Impersonate="no"
                   Return="check"
-                  Impersonate="no" />
+                  Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]cimiimport.exe&quot; --config-auto" />
 
     <!-- Install and start the CimianWatcher service -->
     <CustomAction Id="InstallCimianWatcherService"
