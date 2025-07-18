@@ -31,8 +31,7 @@
     </Property>
 
     <!-- Major Upgrade Settings - Automatically handle upgrades and same-version reinstalls -->
-    <MajorUpgrade UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
-                  AllowSameVersionUpgrades="yes"
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of [ProductName] is already installed."
                   Schedule="afterInstallInitialize" />
 
@@ -76,6 +75,11 @@
           <!-- CimianWatcher service for responsive bootstrap monitoring -->
           <Component Id="Binary8" Guid="CF855CDE-1234-5678-9ABC-26091DE9B83D" Win64="yes">
             <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimiwatcher.exe" KeyPath="yes" />
+          </Component>
+
+          <!-- CimiTrigger CLI for manual update triggering -->
+          <Component Id="Binary9" Guid="DF855CDE-1234-5678-9ABC-26091DE9B83E" Win64="yes">
+            <File Id="BinaryFile9" Source="$(var.BIN_DIR)\cimitrigger.exe" KeyPath="yes" />
           </Component>
 
           <!-- Component to Modify PATH Environment Variable -->
@@ -166,6 +170,7 @@
       <ComponentRef Id="Binary6" />
       <ComponentRef Id="Binary7" />
       <ComponentRef Id="Binary8" />
+      <ComponentRef Id="Binary9" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="Component_Config" />
     </Feature>
