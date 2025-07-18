@@ -251,19 +251,27 @@ namespace Cimian.Status.ViewModels
 
         private void OnProgressChanged(object? sender, ProgressEventArgs e)
         {
-            // Only update percentage if it's a valid value (>= 0)
-            if (e.Percentage >= 0)
+            try
             {
-                ProgressValue = e.Percentage;
-                ShowProgress = true;
-                IsIndeterminate = false; // Switch to determinate mode when we have real progress
+                // Only update percentage if it's a valid value (>= 0)
+                if (e.Percentage >= 0)
+                {
+                    ProgressValue = e.Percentage;
+                    ShowProgress = true;
+                    IsIndeterminate = false; // Switch to determinate mode when we have real progress
+                }
+                
+                // Always update the message if provided - only in ProgressText to avoid duplication
+                if (!string.IsNullOrEmpty(e.Message))
+                {
+                    ProgressText = e.Message;
+                    // Don't set DetailText here to avoid showing the same message twice
+                }
             }
-            
-            // Always update the message if provided - only in ProgressText to avoid duplication
-            if (!string.IsNullOrEmpty(e.Message))
+            catch (Exception ex)
             {
-                ProgressText = e.Message;
-                // Don't set DetailText here to avoid showing the same message twice
+                // Log error but don't crash the app
+                System.Diagnostics.Debug.WriteLine($"Error in OnProgressChanged: {ex.Message}");
             }
         }
 
