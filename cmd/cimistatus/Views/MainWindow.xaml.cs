@@ -47,6 +47,9 @@ namespace Cimian.Status.Views
             {
                 try
                 {
+                    _logger.LogDebug("Status message received: Type={Type}, Data={Data}, Percent={Percent}, Error={Error}", 
+                        message.Type, message.Data, message.Percent, message.Error);
+                    
                     switch (message.Type?.ToLowerInvariant())
                     {
                         case "statusmessage":
@@ -60,11 +63,18 @@ namespace Cimian.Status.Views
 
                         case "percentprogress":
                         case "percentProgress": // Handle both case variations
+                            // Forward to UpdateService to handle via proper event system
                             if (message.Percent >= 0)
                             {
+                                // Create a ProgressEventArgs and trigger the event via the UpdateService
+                                _logger.LogDebug("Progress received: {Percent}%", message.Percent);
+                                
+                                // This should go through the UpdateService event system instead
                                 _viewModel.ProgressValue = message.Percent;
+                                _viewModel.ShowProgress = true;
+                                _viewModel.IsIndeterminate = false;
+                                _viewModel.ProgressText = $"Progress: {message.Percent}%";
                             }
-                            // Note: ShowProgress is now always true, so no need to toggle visibility
                             break;
 
                         case "displaylog":
@@ -74,7 +84,11 @@ namespace Cimian.Status.Views
 
                         case "quit":
                             _logger.LogInformation("Quit message received from managedsoftwareupdate");
-                            Application.Current.Shutdown();
+                            // Don't immediately shutdown - let the update process complete gracefully
+                            _viewModel.ProgressValue = 100;
+                            _viewModel.ProgressText = "Update completed successfully";
+                            _viewModel.StatusText = "All operations completed";
+                            // Allow user to manually close the window instead of auto-shutdown
                             break;
                     }
                 }

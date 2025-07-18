@@ -78,6 +78,12 @@ namespace Cimian.Status.Services
 
         private async Task<bool> TryTriggerViaBootstrapAsync()
         {
+            // Default to GUI mode when called from the UI
+            return await TryTriggerViaBootstrapAsync(true);
+        }
+
+        private async Task<bool> TryTriggerViaBootstrapAsync(bool withGui)
+        {
             try
             {
                 ProgressChanged?.Invoke(this, new ProgressEventArgs 
@@ -86,8 +92,11 @@ namespace Cimian.Status.Services
                     Message = "Checking for system service..." 
                 });
 
-                // Create the bootstrap flag file to trigger CimianWatcher service
-                var bootstrapFlagPath = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
+                // Choose the appropriate bootstrap flag file
+                var bootstrapFlagPath = withGui 
+                    ? @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap"
+                    : @"C:\ProgramData\ManagedInstalls\.cimian.headless";
+                
                 var managedInstallsPath = Path.GetDirectoryName(bootstrapFlagPath);
 
                 // Ensure the directory exists
@@ -104,15 +113,16 @@ namespace Cimian.Status.Services
 
                 // Create the bootstrap flag file
                 var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-                var content = $"Bootstrap triggered at: {timestamp}\nTriggered by: CimianStatus UI";
+                var triggerType = withGui ? "GUI" : "headless";
+                var content = $"Bootstrap triggered at: {timestamp}\nMode: {triggerType}\nTriggered by: CimianStatus UI";
                 
                 await File.WriteAllTextAsync(bootstrapFlagPath, content);
                 
-                _logger.LogInformation("Created bootstrap flag file: {FilePath}", bootstrapFlagPath);
+                _logger.LogInformation("Created {Mode} bootstrap flag file: {FilePath}", triggerType, bootstrapFlagPath);
                 
                 StatusChanged?.Invoke(this, new StatusEventArgs 
                 { 
-                    Message = "Triggered software update via system service..." 
+                    Message = $"Triggered {triggerType} software update via system service..." 
                 });
 
                 ProgressChanged?.Invoke(this, new ProgressEventArgs 
@@ -137,7 +147,7 @@ namespace Cimian.Status.Services
                 {
                     StatusChanged?.Invoke(this, new StatusEventArgs 
                     { 
-                        Message = "Update process initiated by system service" 
+                        Message = $"Update process initiated by system service ({triggerType} mode)" 
                     });
 
                     ProgressChanged?.Invoke(this, new ProgressEventArgs 
@@ -156,7 +166,7 @@ namespace Cimian.Status.Services
                 }
                 else
                 {
-                    _logger.LogWarning("Bootstrap flag file was not processed by CimianWatcher service");
+                    _logger.LogWarning("{Mode} bootstrap flag file was not processed by CimianWatcher service", triggerType);
                     ProgressChanged?.Invoke(this, new ProgressEventArgs 
                     { 
                         Percentage = 50, 
@@ -464,6 +474,24 @@ namespace Cimian.Status.Services
             {
                 _logger.LogError(ex, "Failed to launch process with output capture");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Triggers a headless update via the CimianWatcher service (no GUI will be shown)
+        /// </summary>
+        /// <returns>True if the headless update was successfully triggered</returns>
+        public async Task<bool> TriggerHeadlessUpdateAsync()
+        {
+            try
+            {
+                _logger.LogInformation("Triggering headless update via CimianWatcher service");
+                return await TryTriggerViaBootstrapAsync(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to trigger headless update");
+                return false;
             }
         }
     }
