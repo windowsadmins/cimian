@@ -21,24 +21,26 @@ import (
 const (
 	serviceName        = "CimianWatcher"
 	serviceDisplayName = "Cimian Bootstrap File Watcher"
-	serviceDescription = "Monitors for Cimian bootstrap flag file and triggers software updates"
+	serviceDescription = "Monitors for Cimian bootstrap flag files and triggers software updates"
 
-	// Bootstrap flag file path
-	bootstrapFlagFile = `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
+	// Bootstrap flag file paths
+	bootstrapFlagFile = `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` // With GUI
+	headlessFlagFile  = `C:\ProgramData\ManagedInstalls\.cimian.headless`  // Without GUI
 	// Cimian executable path
 	cimianExePath = `C:\Program Files\Cimian\managedsoftwareupdate.exe`
-	// Polling interval for checking the flag file
+	// Polling interval for checking the flag files
 	pollInterval = 10 * time.Second
 )
 
 var logger debug.Log
 
 type cimianWatcherService struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	isRunning bool
-	mu        sync.Mutex
-	lastSeen  time.Time
+	ctx              context.Context
+	cancel           context.CancelFunc
+	isRunning        bool
+	mu               sync.Mutex
+	lastSeenGUI      time.Time // For bootstrap file with GUI
+	lastSeenHeadless time.Time // For headless bootstrap file
 }
 
 func main() {
@@ -160,22 +162,28 @@ loop:
 }
 
 func (m *cimianWatcherService) startMonitoring() error {
-	// Check if bootstrap file already exists at startup
+	// Check if bootstrap files already exist at startup
 	if fileInfo, err := os.Stat(bootstrapFlagFile); err == nil {
-		logger.Info(1, "Bootstrap flag file exists at startup - triggering update")
-		m.lastSeen = fileInfo.ModTime()
-		go m.triggerBootstrapUpdate()
+		logger.Info(1, "Bootstrap flag file (GUI) exists at startup - triggering update with GUI")
+		m.lastSeenGUI = fileInfo.ModTime()
+		go m.triggerBootstrapUpdate(true) // true = with GUI
+	}
+
+	if fileInfo, err := os.Stat(headlessFlagFile); err == nil {
+		logger.Info(1, "Headless flag file exists at startup - triggering update without GUI")
+		m.lastSeenHeadless = fileInfo.ModTime()
+		go m.triggerBootstrapUpdate(false) // false = without GUI
 	}
 
 	// Start the polling goroutine
-	go m.pollBootstrapFile()
+	go m.pollBootstrapFiles()
 
 	m.isRunning = true
-	logger.Info(1, fmt.Sprintf("Started monitoring bootstrap flag file: %s", bootstrapFlagFile))
+	logger.Info(1, fmt.Sprintf("Started monitoring bootstrap flag files: %s and %s", bootstrapFlagFile, headlessFlagFile))
 	return nil
 }
 
-func (m *cimianWatcherService) pollBootstrapFile() {
+func (m *cimianWatcherService) pollBootstrapFiles() {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
@@ -186,17 +194,26 @@ func (m *cimianWatcherService) pollBootstrapFile() {
 				continue
 			}
 
+			// Check GUI bootstrap file
 			fileInfo, err := os.Stat(bootstrapFlagFile)
-			if err != nil {
-				// File doesn't exist, continue polling
-				continue
+			if err == nil {
+				// File exists, check if this is a new file or if it was modified since last seen
+				if m.lastSeenGUI.IsZero() || fileInfo.ModTime().After(m.lastSeenGUI) {
+					logger.Info(1, "Bootstrap flag file (GUI) detected - triggering update with GUI")
+					m.lastSeenGUI = fileInfo.ModTime()
+					go m.triggerBootstrapUpdate(true) // true = with GUI
+				}
 			}
 
-			// Check if this is a new file or if it was modified since last seen
-			if m.lastSeen.IsZero() || fileInfo.ModTime().After(m.lastSeen) {
-				logger.Info(1, "Bootstrap flag file detected - triggering update")
-				m.lastSeen = fileInfo.ModTime()
-				go m.triggerBootstrapUpdate()
+			// Check headless bootstrap file
+			fileInfo, err = os.Stat(headlessFlagFile)
+			if err == nil {
+				// File exists, check if this is a new file or if it was modified since last seen
+				if m.lastSeenHeadless.IsZero() || fileInfo.ModTime().After(m.lastSeenHeadless) {
+					logger.Info(1, "Headless flag file detected - triggering update without GUI")
+					m.lastSeenHeadless = fileInfo.ModTime()
+					go m.triggerBootstrapUpdate(false) // false = without GUI
+				}
 			}
 
 		case <-m.ctx.Done():
@@ -205,33 +222,58 @@ func (m *cimianWatcherService) pollBootstrapFile() {
 	}
 }
 
-func (m *cimianWatcherService) triggerBootstrapUpdate() {
+func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	var flagFile string
+	var updateType string
+
+	if withGUI {
+		flagFile = bootstrapFlagFile
+		updateType = "GUI"
+	} else {
+		flagFile = headlessFlagFile
+		updateType = "headless"
+	}
+
 	// Verify the file still exists (race condition protection)
-	if _, err := os.Stat(bootstrapFlagFile); os.IsNotExist(err) {
-		logger.Info(1, "Bootstrap flag file no longer exists - skipping update")
+	if _, err := os.Stat(flagFile); os.IsNotExist(err) {
+		logger.Info(1, fmt.Sprintf("%s flag file no longer exists - skipping update", updateType))
 		return
 	}
 
 	// Execute the bootstrap update
-	logger.Info(1, "Starting bootstrap update process")
+	logger.Info(1, fmt.Sprintf("Starting %s bootstrap update process", updateType))
 
-	cmd := exec.Command(cimianExePath, "--auto", "--show-status")
+	var cmd *exec.Cmd
+	if withGUI {
+		// Run with GUI (cimistatus)
+		cmd = exec.Command(cimianExePath, "--auto", "--show-status")
+	} else {
+		// Run without GUI (headless)
+		cmd = exec.Command(cimianExePath, "--auto")
+	}
 
 	// Set up the command to run in the background
 	if err := cmd.Start(); err != nil {
-		logger.Error(1, fmt.Sprintf("Failed to start bootstrap update: %v", err))
+		logger.Error(1, fmt.Sprintf("Failed to start %s bootstrap update: %v", updateType, err))
 		return
 	}
 
 	// Monitor the process in a separate goroutine
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			logger.Error(1, fmt.Sprintf("Bootstrap update process failed: %v", err))
+			logger.Error(1, fmt.Sprintf("%s bootstrap update process failed: %v", updateType, err))
 		} else {
-			logger.Info(1, "Bootstrap update process completed successfully")
+			logger.Info(1, fmt.Sprintf("%s bootstrap update process completed successfully", updateType))
+		}
+
+		// Clean up the flag file after completion
+		if err := os.Remove(flagFile); err != nil {
+			logger.Error(1, fmt.Sprintf("Failed to remove %s flag file: %v", updateType, err))
+		} else {
+			logger.Info(1, fmt.Sprintf("Removed %s flag file after completion", updateType))
 		}
 	}()
 }
