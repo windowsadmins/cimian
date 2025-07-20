@@ -536,7 +536,9 @@ func gatherSystemFacts() map[string]interface{} {
 	}
 
 	// Architecture
-	facts["architecture"] = getSystemArchitecture()
+	arch := getSystemArchitecture()
+	facts["arch"] = arch         // Primary key as requested
+	facts["architecture"] = arch // Keep for backward compatibility
 
 	// Domain and Username from environment
 	if domain, exists := os.LookupEnv("USERDOMAIN"); exists {
