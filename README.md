@@ -12,6 +12,7 @@ Cimian simplifies the software lifecycle management process, from creating packa
 - **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based config files.
 - **Multi-format Installer Support**: Supports MSI, MSIX, EXE, and NuGet package formats.
 - **Bootstrap Mode**: Windows equivalent of Munki's bootstrap system for zero-touch deployment and system provisioning.
+- **Conditional Items**: NSPredicate-style conditional evaluation for dynamic software deployment based on system facts (hostname, architecture, OS version, domain, etc.).
 
 ## Bootstrap System
 
