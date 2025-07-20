@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 	"gopkg.in/yaml.v3"
 
+	"github.com/windowsadmins/cimian/pkg/blocking"
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
@@ -387,7 +388,9 @@ func main() {
 		logger.Info("Auto mode enabled - proceeding with installation without confirmation")
 	} else {
 		logger.Info("Proceeding with installation without confirmation")
-	} // Combine install and update items and perform installations.
+	}
+
+	// Combine install and update items and perform installations.
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)
 	allToInstall = append(allToInstall, toUpdate...)
@@ -644,6 +647,15 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 	var successCount int
 
 	for _, item := range items {
+		// Check for blocking applications before unattended uninstalls
+		if blocking.BlockingApplicationsRunning(item) {
+			runningApps := blocking.GetRunningBlockingApps(item)
+			logger.Warning("Blocking applications are running for %s: %v", item.Name, runningApps)
+			logger.Info("Skipping unattended uninstall of %s due to blocking applications", item.Name)
+			failedItems = append(failedItems, fmt.Sprintf("%s (blocked by: %v)", item.Name, runningApps))
+			continue
+		}
+
 		_, err := installer.Install(item, "uninstall", "", cfg.CachePath, cfg.CheckOnly, cfg)
 		if err != nil {
 			logger.Error("Failed to uninstall item, continuing with others: %s, error: %v", item.Name, err)
@@ -921,6 +933,17 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 	sysArch := status.GetSystemArchitecture()
 	logging.Debug("Detected system architecture: %s", sysArch)
 	logging.Debug("Supported architectures for item: %s, supported_arch: %v", cItem.Name, cItem.SupportedArch)
+
+	// Check for blocking applications before unattended installs (following Munki's behavior)
+	// Only applies to items marked as unattended_install or in auto/bootstrap mode
+	if blocking.BlockingApplicationsRunning(cItem) {
+		runningApps := blocking.GetRunningBlockingApps(cItem)
+		logger.Warning("Blocking applications are running for %s: %v", cItem.Name, runningApps)
+		logger.Info("Skipping unattended install of %s due to blocking applications", cItem.Name)
+
+		// Return a special error to indicate this was skipped due to blocking applications
+		return fmt.Errorf("skipped install of %s due to blocking applications: %v", cItem.Name, runningApps)
+	}
 
 	// Actually install
 	installedOutput, installErr := installer.Install(cItem, "install", localFile, cfg.CachePath, cfg.CheckOnly, cfg)
