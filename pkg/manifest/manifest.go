@@ -82,6 +82,29 @@ type ManifestFile struct {
 	ManagedUpdates    []string `yaml:"managed_updates"`
 	OptionalInstalls  []string `yaml:"optional_installs"`
 	IncludedManifests []string `yaml:"included_manifests"`
+
+	// Conditional Items - NSPredicate-style conditional evaluation
+	ConditionalItems []*ConditionalItem `yaml:"conditional_items,omitempty"`
+}
+
+// Condition represents a single predicate condition
+type Condition struct {
+	Key      string      `yaml:"key" json:"key"`           // The fact key to evaluate (e.g., "hostname", "os_version")
+	Operator string      `yaml:"operator" json:"operator"` // Comparison operator (==, !=, >, <, >=, <=, LIKE, IN, CONTAINS)
+	Value    interface{} `yaml:"value" json:"value"`       // The value to compare against
+}
+
+// ConditionalItem represents an item with conditional evaluation
+type ConditionalItem struct {
+	Condition     *Condition   `yaml:"condition,omitempty" json:"condition,omitempty"`           // Single condition
+	Conditions    []*Condition `yaml:"conditions,omitempty" json:"conditions,omitempty"`         // Multiple conditions (AND logic)
+	ConditionType string       `yaml:"condition_type,omitempty" json:"condition_type,omitempty"` // "AND" or "OR" for multiple conditions
+
+	// The actual items to include when conditions are met
+	ManagedInstalls   []string `yaml:"managed_installs,omitempty" json:"managed_installs,omitempty"`
+	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty" json:"managed_uninstalls,omitempty"`
+	ManagedUpdates    []string `yaml:"managed_updates,omitempty" json:"managed_updates,omitempty"`
+	OptionalInstalls  []string `yaml:"optional_installs,omitempty" json:"optional_installs,omitempty"`
 }
 
 // -----------------------------------------------------------------------------
@@ -204,6 +227,22 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	deduplicateCheck := make(map[string]bool) // key = action + pkgName (case-insensitive)
 
 	for _, mf := range allManifests {
+		// Process conditional items first
+		if len(mf.ConditionalItems) > 0 {
+			logging.Debug("Processing conditional items", "count", len(mf.ConditionalItems))
+			conditionalInstalls, conditionalUninstalls, conditionalUpdates, conditionalOptional, err := EvaluateConditionalItems(mf.ConditionalItems)
+			if err != nil {
+				logging.Warn("Error evaluating conditional items", "error", err)
+			} else {
+				// Add conditional items to the manifest temporarily for processing
+				mf.ManagedInstalls = append(mf.ManagedInstalls, conditionalInstalls...)
+				mf.ManagedUninstalls = append(mf.ManagedUninstalls, conditionalUninstalls...)
+				mf.ManagedUpdates = append(mf.ManagedUpdates, conditionalUpdates...)
+				mf.OptionalInstalls = append(mf.OptionalInstalls, conditionalOptional...)
+				logging.Debug("Added conditional items", "installs", len(conditionalInstalls), "uninstalls", len(conditionalUninstalls), "updates", len(conditionalUpdates), "optional", len(conditionalOptional))
+			}
+		}
+
 		// For each array, we create an item for each pkg, merging with the catalog
 		// (Below we do “install” or “update” items in the same array—just set Action if you want.)
 		for _, pkgName := range mf.ManagedInstalls {
@@ -457,4 +496,272 @@ func parseCatalogFile(path string) ([]CatalogEntry, error) {
 	}
 
 	return wrapper.Items, nil
+}
+
+// EvaluateConditionalItems processes conditional items and returns items that match system facts
+func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []string, []string, []string, error) {
+	var managedInstalls, managedUninstalls, managedUpdates, optionalInstalls []string
+
+	// Gather system facts
+	facts := gatherSystemFacts()
+
+	for _, item := range conditionalItems {
+		matches, err := evaluateConditionalItem(item, facts)
+		if err != nil {
+			logging.Warn("Error evaluating conditional item", "error", err)
+			continue
+		}
+
+		if matches {
+			logging.Debug("Conditional item matched, including items")
+			managedInstalls = append(managedInstalls, item.ManagedInstalls...)
+			managedUninstalls = append(managedUninstalls, item.ManagedUninstalls...)
+			managedUpdates = append(managedUpdates, item.ManagedUpdates...)
+			optionalInstalls = append(optionalInstalls, item.OptionalInstalls...)
+		} else {
+			logging.Debug("Conditional item did not match, skipping")
+		}
+	}
+
+	return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, nil
+}
+
+// gatherSystemFacts collects system information for predicate evaluation
+func gatherSystemFacts() map[string]interface{} {
+	facts := make(map[string]interface{})
+
+	// Hostname
+	if hostname, err := os.Hostname(); err == nil {
+		facts["hostname"] = hostname
+	}
+
+	// Architecture
+	facts["architecture"] = getSystemArchitecture()
+
+	// Domain and Username from environment
+	if domain, exists := os.LookupEnv("USERDOMAIN"); exists {
+		facts["domain"] = domain
+	}
+	if username, exists := os.LookupEnv("USERNAME"); exists {
+		facts["username"] = username
+	}
+
+	// OS Version (basic implementation without import cycle)
+	facts["os_version"] = getWindowsVersionBasic()
+
+	return facts
+}
+
+// getSystemArchitecture returns the system architecture
+func getSystemArchitecture() string {
+	if arch := os.Getenv("PROCESSOR_ARCHITECTURE"); arch != "" {
+		switch strings.ToLower(arch) {
+		case "amd64", "x86_64":
+			return "x64"
+		case "x86", "386":
+			return "x86"
+		case "arm64":
+			return "arm64"
+		default:
+			return arch
+		}
+	}
+	return "unknown"
+}
+
+// getWindowsVersionBasic gets basic Windows version info without complex dependencies
+func getWindowsVersionBasic() string {
+	// This is a simplified version - could be enhanced with Windows API calls
+	return "10.0" // Default fallback
+}
+
+// evaluateConditionalItem evaluates a single conditional item
+func evaluateConditionalItem(item *ConditionalItem, facts map[string]interface{}) (bool, error) {
+	if item == nil {
+		return true, nil
+	}
+
+	// Handle single condition
+	if item.Condition != nil {
+		return evaluateCondition(item.Condition, facts)
+	}
+
+	// Handle multiple conditions
+	if len(item.Conditions) == 0 {
+		return true, nil // No conditions means always true
+	}
+
+	conditionType := strings.ToUpper(item.ConditionType)
+	if conditionType == "" {
+		conditionType = "AND" // Default to AND logic
+	}
+
+	switch conditionType {
+	case "AND":
+		return evaluateConditionsAnd(item.Conditions, facts)
+	case "OR":
+		return evaluateConditionsOr(item.Conditions, facts)
+	default:
+		return false, fmt.Errorf("unknown condition type: %s", conditionType)
+	}
+}
+
+// evaluateCondition evaluates a single condition
+func evaluateCondition(condition *Condition, facts map[string]interface{}) (bool, error) {
+	if condition == nil {
+		return true, nil
+	}
+
+	factValue, exists := facts[condition.Key]
+	if !exists {
+		return false, fmt.Errorf("fact key '%s' not found", condition.Key)
+	}
+
+	return compareValues(factValue, condition.Operator, condition.Value)
+}
+
+// evaluateConditionsAnd evaluates multiple conditions with AND logic
+func evaluateConditionsAnd(conditions []*Condition, facts map[string]interface{}) (bool, error) {
+	for _, condition := range conditions {
+		result, err := evaluateCondition(condition, facts)
+		if err != nil {
+			return false, err
+		}
+		if !result {
+			return false, nil // Short-circuit on first false
+		}
+	}
+	return true, nil
+}
+
+// evaluateConditionsOr evaluates multiple conditions with OR logic
+func evaluateConditionsOr(conditions []*Condition, facts map[string]interface{}) (bool, error) {
+	for _, condition := range conditions {
+		result, err := evaluateCondition(condition, facts)
+		if err != nil {
+			logging.Warn("Error evaluating condition in OR group", "error", err)
+			continue // Continue with other conditions in OR group
+		}
+		if result {
+			return true, nil // Short-circuit on first true
+		}
+	}
+	return false, nil
+}
+
+// compareValues performs the actual comparison between fact value and condition value
+func compareValues(factValue interface{}, operator string, conditionValue interface{}) (bool, error) {
+	operator = strings.ToUpper(operator)
+
+	switch operator {
+	case "==", "EQUALS":
+		return compareEquals(factValue, conditionValue), nil
+	case "!=", "NOT_EQUALS":
+		return !compareEquals(factValue, conditionValue), nil
+	case ">", "GREATER_THAN":
+		return compareGreater(factValue, conditionValue), nil
+	case "<", "LESS_THAN":
+		return compareLess(factValue, conditionValue), nil
+	case ">=", "GREATER_THAN_OR_EQUAL":
+		return compareEquals(factValue, conditionValue) || compareGreater(factValue, conditionValue), nil
+	case "<=", "LESS_THAN_OR_EQUAL":
+		return compareEquals(factValue, conditionValue) || compareLess(factValue, conditionValue), nil
+	case "LIKE":
+		return compareLike(factValue, conditionValue), nil
+	case "IN":
+		return compareIn(factValue, conditionValue), nil
+	case "CONTAINS":
+		return compareContains(factValue, conditionValue), nil
+	case "BEGINSWITH":
+		return compareBeginsWith(factValue, conditionValue), nil
+	case "ENDSWITH":
+		return compareEndsWith(factValue, conditionValue), nil
+	default:
+		return false, fmt.Errorf("unknown operator: %s", operator)
+	}
+}
+
+// Helper comparison functions
+func compareEquals(factValue, conditionValue interface{}) bool {
+	return valueToString(factValue) == valueToString(conditionValue)
+}
+
+func compareGreater(factValue, conditionValue interface{}) bool {
+	return valueToString(factValue) > valueToString(conditionValue)
+}
+
+func compareLess(factValue, conditionValue interface{}) bool {
+	return valueToString(factValue) < valueToString(conditionValue)
+}
+
+func compareLike(factValue, conditionValue interface{}) bool {
+	factStr := strings.ToLower(valueToString(factValue))
+	pattern := strings.ToLower(valueToString(conditionValue))
+	pattern = strings.ReplaceAll(pattern, "*", "")
+	return strings.Contains(factStr, pattern)
+}
+
+func compareIn(factValue, conditionValue interface{}) bool {
+	factStr := valueToString(factValue)
+
+	switch cv := conditionValue.(type) {
+	case []interface{}:
+		for _, item := range cv {
+			if factStr == valueToString(item) {
+				return true
+			}
+		}
+	case []string:
+		for _, item := range cv {
+			if factStr == item {
+				return true
+			}
+		}
+	case string:
+		items := strings.Split(cv, ",")
+		for _, item := range items {
+			if factStr == strings.TrimSpace(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func compareContains(factValue, conditionValue interface{}) bool {
+	factStr := strings.ToLower(valueToString(factValue))
+	conditionStr := strings.ToLower(valueToString(conditionValue))
+	return strings.Contains(factStr, conditionStr)
+}
+
+func compareBeginsWith(factValue, conditionValue interface{}) bool {
+	factStr := strings.ToLower(valueToString(factValue))
+	conditionStr := strings.ToLower(valueToString(conditionValue))
+	return strings.HasPrefix(factStr, conditionStr)
+}
+
+func compareEndsWith(factValue, conditionValue interface{}) bool {
+	factStr := strings.ToLower(valueToString(factValue))
+	conditionStr := strings.ToLower(valueToString(conditionValue))
+	return strings.HasSuffix(factStr, conditionStr)
+}
+
+func valueToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int, int8, int16, int32, int64:
+		return fmt.Sprintf("%d", v)
+	case uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		return fmt.Sprintf("%f", v)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
