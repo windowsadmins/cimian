@@ -19,10 +19,17 @@ Cimian automatically gathers the following system facts for conditional evaluati
 
 ### Core Facts
 - **hostname**: System hostname
-- **architecture**: System architecture (x64, arm64, x86)
+- **arch**: System architecture (x64, arm64, x86) - *Primary architecture fact*
+- **architecture**: System architecture (x64, arm64, x86) - *Kept for backward compatibility*
 - **os_version**: Windows OS version
 - **domain**: Windows domain name
 - **username**: Current username
+- **machine_type**: Type of machine ("laptop" or "desktop")
+- **machine_model**: Computer model (e.g., "Dell OptiPlex 7070")
+- **joined_type**: Domain join status ("domain", "hybrid", "entra", or "workgroup")
+- **catalogs**: Available catalogs from configuration (array of strings)
+- **battery_state**: Battery state information
+- **date**: Current date and time
 
 ### Available Operators
 
@@ -68,7 +75,7 @@ conditional_items:
 ```yaml
 conditional_items:
   - condition:
-      key: "architecture"
+      key: "arch"
       operator: "=="
       value: "x64"
     managed_installs:
@@ -83,7 +90,7 @@ conditional_items:
       - key: "domain"
         operator: "=="
         value: "CORPORATE"
-      - key: "architecture"
+      - key: "arch"
         operator: "=="
         value: "x64"
     condition_type: "AND"  # Default is AND
@@ -126,19 +133,76 @@ conditional_items:
 ### 2. Architecture-Specific Software
 
 ```yaml
-# Install x64-specific software
+# Install x64-specific software (using primary 'arch' fact)
 conditional_items:
   - condition:
-      key: "architecture"
+      key: "arch"
       operator: "=="
       value: "x64"
     managed_installs:
       - x64Application
     managed_uninstalls:
       - LegacyX86App
+
+# Multi-architecture support
+  - condition:
+      key: "arch"
+      operator: "IN"
+      value: ["x64", "arm64"]
+    managed_installs:
+      - ModernApplication
 ```
 
-### 3. Role-Based Installation
+### 3. Machine Model-Specific Software
+
+```yaml
+# Install specific drivers for Dell OptiPlex machines
+conditional_items:
+  - condition:
+      key: "machine_model"
+      operator: "CONTAINS"
+      value: "OptiPlex"
+    managed_installs:
+      - DellManagementSoftware
+      - OptiPlexDrivers
+```
+
+### 4. Domain Join Type Deployment
+
+```yaml
+# Install different software based on domain join type
+conditional_items:
+  - condition:
+      key: "joined_type"
+      operator: "=="
+      value: "entra"
+    managed_installs:
+      - EntraIDTools
+      - AzureADSync
+  - condition:
+      key: "joined_type"
+      operator: "=="
+      value: "domain"
+    managed_installs:
+      - TraditionalDomainTools
+```
+
+### 5. Catalog-Based Conditional Deployment
+
+```yaml
+# Install development tools only if 'development' catalog is configured
+conditional_items:
+  - condition:
+      key: "catalogs"
+      operator: "CONTAINS"
+      value: "development"
+    managed_installs:
+      - VisualStudio
+      - GitTools
+      - DeveloperUtilities
+```
+
+### 6. Role-Based Installation
 
 ```yaml
 # Different software for different machine roles
@@ -201,7 +265,7 @@ conditional_items:
       - key: "hostname"
         operator: "BEGINSWITH"
         value: "WS"
-      - key: "architecture"
+      - key: "arch"
         operator: "=="
         value: "x64"
     condition_type: "AND"
@@ -340,7 +404,7 @@ conditional_items:
       
   # x64 systems get modern applications
   - condition:
-      key: "architecture"
+      key: "arch"
       operator: "=="
       value: "x64"
     managed_installs:

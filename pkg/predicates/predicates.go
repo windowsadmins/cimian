@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/yusufpapurcu/wmi"
@@ -32,8 +33,10 @@ type SystemFacts struct {
 	BatteryState string    `json:"battery_state,omitempty"`
 	Domain       string    `json:"domain,omitempty"`
 	Username     string    `json:"username,omitempty"`
-	MachineType  string    `json:"machine_type,omitempty"` // "laptop" or "desktop"
-	JoinedType   string    `json:"joined_type,omitempty"`  // "domain", "hybrid", "entra", or "workgroup"
+	MachineType  string    `json:"machine_type,omitempty"`  // "laptop" or "desktop"
+	MachineModel string    `json:"machine_model,omitempty"` // Computer model (e.g., "Dell OptiPlex 7070")
+	JoinedType   string    `json:"joined_type,omitempty"`   // "domain", "hybrid", "entra", or "workgroup"
+	Catalogs     []string  `json:"catalogs,omitempty"`      // Available catalogs from configuration
 }
 
 // CustomFacts allows for user-defined facts to extend the predicate system
@@ -76,23 +79,31 @@ type Win32_ComputerSystem struct {
 	PartOfDomain bool   `wmi:"PartOfDomain"`
 	Workgroup    string `wmi:"Workgroup"`
 	DomainRole   uint16 `wmi:"DomainRole"`
+	Model        string `wmi:"Model"`
+	Manufacturer string `wmi:"Manufacturer"`
 }
 
 // NewFactsCollector creates a new facts collector with system facts populated
 func NewFactsCollector() *FactsCollector {
+	return NewFactsCollectorWithConfig(nil)
+}
+
+// NewFactsCollectorWithConfig creates a new facts collector with system facts populated,
+// including configuration-based facts like catalogs
+func NewFactsCollectorWithConfig(cfg interface{}) *FactsCollector {
 	fc := &FactsCollector{
 		customFacts: make(CustomFacts),
 		providers:   make([]FactsProvider, 0),
 	}
 
 	// Populate system facts
-	fc.gatherSystemFacts()
+	fc.gatherSystemFacts(cfg)
 
 	return fc
 }
 
 // gatherSystemFacts collects core system information
-func (fc *FactsCollector) gatherSystemFacts() {
+func (fc *FactsCollector) gatherSystemFacts(cfg interface{}) {
 	// Hostname
 	if hostname, err := os.Hostname(); err == nil {
 		fc.systemFacts.Hostname = hostname
@@ -123,8 +134,18 @@ func (fc *FactsCollector) gatherSystemFacts() {
 	// Machine type (laptop vs desktop)
 	fc.systemFacts.MachineType = fc.getMachineType()
 
+	// Machine model
+	fc.systemFacts.MachineModel = fc.getMachineModel()
+
 	// Domain join type
 	fc.systemFacts.JoinedType = fc.getJoinedType()
+
+	// Catalogs from configuration
+	if cfg != nil {
+		if config, ok := cfg.(*config.Configuration); ok && config != nil {
+			fc.systemFacts.Catalogs = config.Catalogs
+		}
+	}
 }
 
 // getBatteryState attempts to determine battery state (placeholder implementation)
@@ -166,6 +187,33 @@ func (fc *FactsCollector) getMachineType() string {
 	// Default to desktop if we can't determine
 	logging.Debug("Unknown chassis type, defaulting to desktop", "chassisTypes", enclosures[0].ChassisTypes)
 	return "desktop"
+}
+
+// getMachineModel determines the computer model and manufacturer
+func (fc *FactsCollector) getMachineModel() string {
+	var systems []Win32_ComputerSystem
+
+	err := wmi.Query("SELECT Model, Manufacturer FROM Win32_ComputerSystem", &systems)
+	if err != nil {
+		logging.Warn("Failed to query computer system model information", "error", err)
+		return "unknown"
+	}
+
+	if len(systems) == 0 {
+		logging.Warn("No computer system model information available")
+		return "unknown"
+	}
+
+	system := systems[0]
+	if system.Manufacturer != "" && system.Model != "" {
+		return fmt.Sprintf("%s %s", system.Manufacturer, system.Model)
+	} else if system.Model != "" {
+		return system.Model
+	} else if system.Manufacturer != "" {
+		return system.Manufacturer
+	}
+
+	return "unknown"
 }
 
 // getJoinedType determines the domain join status of the machine
@@ -262,13 +310,16 @@ func (fc *FactsCollector) GetAllFacts() map[string]interface{} {
 	// Add system facts
 	facts["hostname"] = fc.systemFacts.Hostname
 	facts["os_version"] = fc.systemFacts.OSVersion
-	facts["architecture"] = fc.systemFacts.Architecture
+	facts["arch"] = fc.systemFacts.Architecture         // Changed from "architecture" to "arch"
+	facts["architecture"] = fc.systemFacts.Architecture // Keep both for backward compatibility
 	facts["date"] = fc.systemFacts.Date
 	facts["battery_state"] = fc.systemFacts.BatteryState
 	facts["domain"] = fc.systemFacts.Domain
 	facts["username"] = fc.systemFacts.Username
 	facts["machine_type"] = fc.systemFacts.MachineType
+	facts["machine_model"] = fc.systemFacts.MachineModel
 	facts["joined_type"] = fc.systemFacts.JoinedType
+	facts["catalogs"] = fc.systemFacts.Catalogs
 
 	// Add custom facts
 	for key, value := range fc.customFacts {
@@ -624,9 +675,36 @@ func OSVersionGreaterThan(version string) *Condition {
 // ArchitectureIn creates a condition to match specific architectures
 func ArchitectureIn(architectures []string) *Condition {
 	return &Condition{
-		Key:      "architecture",
+		Key:      "arch",
 		Operator: "IN",
 		Value:    architectures,
+	}
+}
+
+// MachineModelIs creates a condition to match a specific machine model
+func MachineModelIs(model string) *Condition {
+	return &Condition{
+		Key:      "machine_model",
+		Operator: "==",
+		Value:    model,
+	}
+}
+
+// MachineModelContains creates a condition to match machine model containing a string
+func MachineModelContains(substring string) *Condition {
+	return &Condition{
+		Key:      "machine_model",
+		Operator: "CONTAINS",
+		Value:    substring,
+	}
+}
+
+// CatalogsContain creates a condition to check if catalogs contain a specific catalog
+func CatalogsContain(catalog string) *Condition {
+	return &Condition{
+		Key:      "catalogs",
+		Operator: "CONTAINS",
+		Value:    catalog,
 	}
 }
 
