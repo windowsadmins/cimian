@@ -237,10 +237,10 @@ func (fc *FactsCollector) getJoinedType() string {
 		return "workgroup"
 	}
 
-	// If part of a domain, we need to determine if it's traditional domain join or Azure AD
-	// Check for Azure AD indicators
+	// If part of a domain, we need to determine if it's traditional domain join or Entra
+	// Check for Entra indicators
 	if fc.isAzureADJoined() {
-		// Check if it's hybrid joined (both domain and Azure AD)
+		// Check if it's hybrid joined (both domain and Entra)
 		if system.PartOfDomain && !strings.EqualFold(system.Domain, system.Workgroup) {
 			return "hybrid"
 		}
@@ -255,15 +255,15 @@ func (fc *FactsCollector) getJoinedType() string {
 	return "workgroup"
 }
 
-// isAzureADJoined checks for Azure AD join indicators
+// isAzureADJoined checks for Entra join indicators
 func (fc *FactsCollector) isAzureADJoined() bool {
-	// Check for Azure AD device certificate (common indicator)
+	// Check for Entra device certificate (common indicator)
 	// This is a simplified check - in production you might want to check registry keys:
 	// HKLM\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo
 	// or use dsregcmd /status output
 
 	// For now, we'll use a simple heuristic based on domain name patterns
-	// Azure AD joined devices often have domain names ending with .onmicrosoft.com
+	// Entra joined devices often have domain names ending with .onmicrosoft.com
 	// or specific registry entries
 
 	var systems []Win32_ComputerSystem
@@ -274,7 +274,7 @@ func (fc *FactsCollector) isAzureADJoined() bool {
 
 	domain := strings.ToLower(systems[0].Domain)
 
-	// Check for common Azure AD domain patterns
+	// Check for common Entra domain patterns
 	azurePatterns := []string{
 		".onmicrosoft.com",
 		"azuread",
@@ -287,7 +287,7 @@ func (fc *FactsCollector) isAzureADJoined() bool {
 		}
 	}
 
-	// Additional check: Look for Azure AD registry indicators
+	// Additional check: Look for Entra registry indicators
 	// This would require registry access, which we'll implement as a future enhancement
 
 	return false
@@ -750,12 +750,12 @@ func IsDomainJoined() *Condition {
 	return JoinedTypeIs("domain")
 }
 
-// IsHybridJoined creates a condition to match hybrid Azure AD joined machines
+// IsHybridJoined creates a condition to match hybrid Entra joined machines
 func IsHybridJoined() *Condition {
 	return JoinedTypeIs("hybrid")
 }
 
-// IsEntraJoined creates a condition to match Entra ID (Azure AD) joined machines
+// IsEntraJoined creates a condition to match Entra ID (Entra) joined machines
 func IsEntraJoined() *Condition {
 	return JoinedTypeIs("entra")
 }
