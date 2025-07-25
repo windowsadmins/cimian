@@ -469,17 +469,48 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 		}
 	}
 
-	// Add installer flags (-- style arguments)
+	// Smart installer-aware flag processing for MSI
 	for _, flag := range item.Installer.Flags {
+		flag = strings.TrimSpace(flag)
+
+		// Split flag on first equals sign
+		var key, val string
 		if strings.Contains(flag, "=") {
 			parts := strings.SplitN(flag, "=", 2)
-			key, value := parts[0], parts[1]
-			if strings.ContainsAny(value, " ") {
-				value = fmt.Sprintf("\"%s\"", value)
-			}
-			args = append(args, fmt.Sprintf("--%s=%s", key, value))
+			key, val = parts[0], parts[1]
 		} else {
-			args = append(args, fmt.Sprintf("--%s", flag))
+			key = flag
+		}
+
+		// If user already specified dashes, preserve them exactly
+		if strings.HasPrefix(key, "--") || strings.HasPrefix(key, "-") {
+			if val != "" {
+				if strings.ContainsAny(val, " ") {
+					val = fmt.Sprintf("\"%s\"", val)
+				}
+				args = append(args, fmt.Sprintf("%s=%s", key, val))
+			} else {
+				args = append(args, key)
+			}
+			continue
+		}
+
+		// For MSI, most flags work with single dash (msiexec standard)
+		// but some custom properties work better with no prefix at all for PROPERTY=VALUE
+		flagPrefix := detectMSIFlagStyle(key, val)
+
+		if val != "" {
+			if strings.ContainsAny(val, " ") {
+				val = fmt.Sprintf("\"%s\"", val)
+			}
+			if flagPrefix == "" {
+				// MSI property format: PROPERTY=VALUE (no prefix)
+				args = append(args, fmt.Sprintf("%s=%s", key, val))
+			} else {
+				args = append(args, fmt.Sprintf("%s%s=%s", flagPrefix, key, val))
+			}
+		} else {
+			args = append(args, fmt.Sprintf("%s%s", flagPrefix, key))
 		}
 	}
 
@@ -586,19 +617,47 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 		}
 	}
 
-	// Enhanced logic for flags (-- style arguments), supporting "key value" syntax
+	// Smart installer-aware flag processing
 	for _, flag := range item.Installer.Flags {
 		flag = strings.TrimSpace(flag)
 
-		// Split flags only on the first whitespace
-		parts := strings.SplitN(flag, " ", 2)
-
-		if len(parts) == 2 {
-			key := strings.TrimLeft(parts[0], "-") // removes accidental "--" or "-" prefix if included
-			val := strings.TrimSpace(parts[1])
-			args = append(args, fmt.Sprintf("--%s", key), quoteIfNeeded(val))
+		// Split flags only on the first whitespace or equals sign
+		var key, val string
+		if strings.Contains(flag, "=") {
+			parts := strings.SplitN(flag, "=", 2)
+			key, val = parts[0], parts[1]
+		} else if strings.Contains(flag, " ") {
+			parts := strings.SplitN(flag, " ", 2)
+			key, val = parts[0], strings.TrimSpace(parts[1])
 		} else {
-			args = append(args, fmt.Sprintf("--%s", strings.TrimLeft(parts[0], "-")))
+			key = flag
+		}
+
+		// If user already specified dashes, preserve them exactly
+		if strings.HasPrefix(key, "--") || strings.HasPrefix(key, "-") {
+			if val != "" {
+				if strings.Contains(flag, "=") {
+					args = append(args, fmt.Sprintf("%s=%s", key, quoteIfNeeded(val)))
+				} else {
+					args = append(args, key, quoteIfNeeded(val))
+				}
+			} else {
+				args = append(args, key)
+			}
+			continue
+		}
+
+		// Smart detection based on installer patterns and flag characteristics
+		flagPrefix := detectFlagStyle(installerPath, key)
+
+		if val != "" {
+			if shouldUseEqualsFormat(key, val) {
+				args = append(args, fmt.Sprintf("%s%s=%s", flagPrefix, key, quoteIfNeeded(val)))
+			} else {
+				args = append(args, fmt.Sprintf("%s%s", flagPrefix, key), quoteIfNeeded(val))
+			}
+		} else {
+			args = append(args, fmt.Sprintf("%s%s", flagPrefix, key))
 		}
 	}
 
@@ -614,6 +673,83 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	}
 	logging.Info("EXE installer executed successfully", "output", string(output))
 	return string(output), nil
+}
+
+// detectMSIFlagStyle determines the correct flag format for MSI installers
+func detectMSIFlagStyle(key, value string) string {
+	// MSI properties (ALL_CAPS with underscores) typically use no prefix
+	// These get passed directly to the MSI as PROPERTY=VALUE
+	if isEnvironmentStyleFlag(key) {
+		return "" // No prefix for MSI properties
+	}
+
+	// Standard msiexec flags use forward slash
+	standardMSIFlags := map[string]bool{
+		"quiet": true, "passive": true, "norestart": true, "forcerestart": true,
+		"promptrestart": true, "uninstall": true, "repair": true, "advertise": true,
+		"update": true, "package": true, "log": true, "logfile": true,
+	}
+
+	if standardMSIFlags[strings.ToLower(key)] {
+		return "/"
+	}
+
+	// For other flags, use forward slash (msiexec standard)
+	return "/"
+}
+
+// detectFlagStyle determines the correct flag prefix based on flag name analysis
+func detectFlagStyle(installerPath, flagName string) string {
+	// Flag name pattern analysis
+	switch {
+	// Environment-style variables (ALL_CAPS with underscores) use single dash
+	case isEnvironmentStyleFlag(flagName):
+		return "-"
+
+	// Long descriptive flags use double-dash
+	case len(flagName) > 8 && strings.Contains(flagName, "_"):
+		return "--"
+
+	// Short flags (≤3 chars) use single dash
+	case len(flagName) <= 3:
+		return "-"
+	}
+
+	// Default to double-dash for unknown patterns
+	return "--"
+}
+
+// shouldUseEqualsFormat determines if flag should use KEY=VALUE or KEY VALUE format
+func shouldUseEqualsFormat(key, value string) bool {
+	// Environment-style variables (like LICENSE_METHOD) typically use equals
+	if isEnvironmentStyleFlag(key) {
+		return true
+	}
+
+	// If value contains spaces, prefer equals format to avoid parsing issues
+	if strings.Contains(value, " ") {
+		return true
+	}
+
+	// Short values without spaces can use either format, prefer equals for consistency
+	return true
+}
+
+// isEnvironmentStyleFlag checks if flag looks like an environment variable
+func isEnvironmentStyleFlag(flagName string) bool {
+	// Check for ALL_CAPS with underscores pattern
+	if !strings.Contains(flagName, "_") {
+		return false
+	}
+
+	// Must be all uppercase letters, numbers, and underscores
+	for _, r := range flagName {
+		if !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return false
+		}
+	}
+
+	return true
 }
 
 // quoteIfNeeded adds double quotes if the string contains spaces and doesn't already have them.
