@@ -847,8 +847,44 @@ if (Test-Path "release") {
         Write-Log "Existing release directory cleaned." "SUCCESS"
     }
     catch {
-        Write-Log "Failed to clean release directory. Error: $_" "ERROR"
-        exit 1
+        Write-Log "Standard cleanup failed: $($_.Exception.Message)" "WARNING"
+        Write-Log "Attempting cleanup with elevated permissions..." "INFO"
+        
+        # Try using sudo if available
+        if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
+            try {
+                Write-Log "Using 'sudo' for elevated directory cleanup..." "INFO"
+                $sudoResult = sudo powershell -Command "Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force"
+                Write-Log "Release directory cleaned successfully using sudo." "SUCCESS"
+            }
+            catch {
+                Write-Log "Sudo cleanup failed: $_" "WARNING"
+                # Continue to try elevation method
+                $sudoFailed = $true
+            }
+        } else {
+            $sudoFailed = $true
+        }
+        
+        # If sudo failed or isn't available, try elevated PowerShell
+        if ($sudoFailed -ne $false) {
+            try {
+                Write-Log "Launching elevated PowerShell session for directory cleanup..." "INFO"
+                $cleanupScript = "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force; Write-Host 'Cleanup completed successfully'"
+                $elevatedProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $cleanupScript -Verb RunAs -Wait -PassThru
+                if ($elevatedProcess.ExitCode -eq 0) {
+                    Write-Log "Release directory cleaned successfully via elevated session." "SUCCESS"
+                } else {
+                    Write-Log "Elevated cleanup failed with exit code $($elevatedProcess.ExitCode)" "ERROR"
+                    Write-Log "You may need to manually delete locked files in the release directory." "WARNING"
+                    Write-Log "Continuing with build - some files may remain..." "INFO"
+                }
+            }
+            catch {
+                Write-Log "Failed to launch elevated session: $_" "ERROR"
+                Write-Log "Continuing with build - some files may remain in release directory..." "WARNING"
+            }
+        }
     }
 }
 else {
