@@ -241,8 +241,35 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			return false, nil
 		}
 
+		// First check if we have an uninstaller array - use it for more precise uninstall detection
+		if len(catalogItem.Uninstaller) > 0 {
+			needed, err := checkUninstaller(catalogItem, installType)
+			if err != nil {
+				logging.Warn("Error in uninstaller array checks, falling back to registry check",
+					"item", catalogItem.Name, "error", err)
+			} else {
+				logging.Debug("Uninstall decision based on uninstaller array",
+					"item", catalogItem.Name, "needed", needed)
+				return needed, nil
+			}
+		}
+
+		// Fall back to checking installs array if no uninstaller array is defined
+		if len(catalogItem.Installs) > 0 {
+			needed, err := checkInstalls(catalogItem, installType)
+			if err != nil {
+				logging.Warn("Error in installs array checks for uninstall, falling back to registry check",
+					"item", catalogItem.Name, "error", err)
+			} else {
+				logging.Debug("Uninstall decision based on installs array",
+					"item", catalogItem.Name, "needed", needed)
+				return needed, nil
+			}
+		}
+
+		// Final fallback to registry-based check
 		needed := localVersion != ""
-		logging.Debug("Uninstall decision based on local version",
+		logging.Debug("Uninstall decision based on local version registry check",
 			"item", catalogItem.Name, "installed", needed)
 		return needed, nil
 
@@ -482,6 +509,66 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 		}
 	}
 	logging.Debug("Installation verification checks passed, no action needed", "item", item.Name)
+	return false, nil
+}
+
+// checkUninstaller verifies uninstallation by checking files/directories listed in the "uninstaller" array.
+// This is used for uninstall verification - returns true if any tracked file exists (uninstallation needed)
+// The uninstaller array allows specifying different files/paths than the installs array for removal
+func checkUninstaller(item catalog.Item, installType string) (bool, error) {
+	if len(item.Uninstaller) == 0 {
+		return false, nil
+	}
+
+	// For uninstall operations, check if any file in the uninstaller array exists
+	if installType == "uninstall" {
+		for _, uninstall := range item.Uninstaller {
+			if strings.ToLower(uninstall.Type) == "file" {
+				_, err := os.Stat(uninstall.Path)
+				if err != nil {
+					if os.IsNotExist(err) {
+						logging.Debug("Uninstaller array file not found, continuing check",
+							"item", item.Name, "missingPath", uninstall.Path)
+						continue
+					}
+					logging.Warn("Unexpected error checking uninstaller file existence",
+						"item", item.Name, "path", uninstall.Path, "error", err)
+					continue
+				}
+
+				// File exists, uninstall is needed
+				logging.Info("Uninstaller array file present, uninstall required",
+					"item", item.Name, "path", uninstall.Path)
+				return true, nil
+
+			} else if strings.ToLower(uninstall.Type) == "directory" {
+				dirInfo, err := os.Stat(uninstall.Path)
+				if err != nil {
+					if os.IsNotExist(err) {
+						logging.Debug("Uninstaller array directory not found, continuing check",
+							"item", item.Name, "missingPath", uninstall.Path)
+						continue
+					}
+					logging.Warn("Unexpected error checking uninstaller directory existence",
+						"item", item.Name, "path", uninstall.Path, "error", err)
+					continue
+				}
+
+				// Directory exists and is actually a directory, uninstall is needed
+				if dirInfo.IsDir() {
+					logging.Info("Uninstaller array directory present, uninstall required",
+						"item", item.Name, "path", uninstall.Path)
+					return true, nil
+				}
+			}
+		}
+
+		// No files/directories from uninstaller array were found
+		logging.Debug("No uninstaller array items found, item may already be uninstalled", "item", item.Name)
+		return false, nil
+	}
+
+	// For install/update operations, the uninstalls array is not used
 	return false, nil
 }
 

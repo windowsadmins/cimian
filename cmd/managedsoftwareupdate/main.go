@@ -592,9 +592,9 @@ func identifyRemovals(localCatalogMap map[string]catalog.Item, _ *config.Configu
 			continue
 		}
 		// Only mark for removal if the catalog explicitly indicates it should be uninstalled.
-		// For example, if the Uninstaller field is non-empty, if an uninstall check is defined,
+		// For example, if the Uninstaller array is non-empty, if an uninstall check is defined,
 		// or if the item is explicitly marked as uninstallable.
-		if (catItem.Uninstaller.Location != "" || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "")) && catItem.IsUninstallable() {
+		if (len(catItem.Uninstaller) > 0 || (catItem.Check.Registry.Name != "" && catItem.Check.Registry.Version != "")) && catItem.IsUninstallable() {
 			logging.Info("Catalog item marked for removal", "item", catItem.Name)
 			toRemove = append(toRemove, catItem)
 		} else if !catItem.IsUninstallable() {
@@ -920,7 +920,13 @@ func printPendingActions(toInstall, toUninstall, toUpdate []catalog.Item) {
 		logger.Info("Will remove these items:")
 		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "InstalledVersion", "Uninstaller"))
 		for _, item := range toUninstall {
-			logger.Info("%-20s %-20s %s", item.Name, "?", item.Uninstaller.Location)
+			uninstallerInfo := "Multiple uninstallers"
+			if len(item.Uninstaller) == 1 {
+				uninstallerInfo = fmt.Sprintf("%s:%s", item.Uninstaller[0].Type, item.Uninstaller[0].Path)
+			} else if len(item.Uninstaller) == 0 {
+				uninstallerInfo = "Auto-detected"
+			}
+			logger.Info("%-20s %-20s %s", item.Name, "?", uninstallerInfo)
 		}
 		logger.Info("")
 	}

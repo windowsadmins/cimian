@@ -20,9 +20,9 @@ type Item struct {
 	DisplayName   string              `yaml:"display_name"`
 	Identifier    string              `yaml:"identifier,omitempty"`
 	Installer     InstallerItem       `yaml:"installer"`
+	Uninstaller   []InstallItem       `yaml:"uninstaller"`
 	Check         InstallCheck        `yaml:"check"`
 	Installs      []InstallItem       `yaml:"installs"`
-	Uninstaller   InstallerItem       `yaml:"uninstaller"`
 	Version       string              `yaml:"version"`
 	BlockingApps  []string            `yaml:"blocking_apps"`
 	PreScript     utils.LiteralString `yaml:"preinstall_script"`
@@ -52,15 +52,15 @@ type Item struct {
 // - "file": checks if file exists, optionally validates MD5 checksum and version
 // - "directory": checks if directory exists, if not installation is needed
 type InstallItem struct {
-	Type        string `yaml:"type"`        // "file" or "directory"
-	Path        string `yaml:"path"`        // Path to file or directory
-	Version     string `yaml:"version"`     // Expected version (file type only)
-	MD5Checksum string `yaml:"md5checksum"` // Expected MD5 hash (file type only)
-	ProductCode string `yaml:"product_code"`
-	UpgradeCode string `yaml:"upgrade_code"`
-}
-
-// InstallerItem holds information about how to install a catalog item.
+	Type        string   `yaml:"type"`        // "file" or "directory"
+	Path        string   `yaml:"path"`        // Path to file or directory
+	Version     string   `yaml:"version"`     // Expected version (file type only)
+	MD5Checksum string   `yaml:"md5checksum"` // Expected MD5 hash (file type only)
+	ProductCode string   `yaml:"product_code"`
+	UpgradeCode string   `yaml:"upgrade_code"`
+	Switches    []string `yaml:"switches,omitempty"` // / style arguments (e.g., /silent)
+	Flags       []string `yaml:"flags,omitempty"`    // - style arguments (e.g., --quiet)
+} // InstallerItem holds information about how to install a catalog item.
 type InstallerItem struct {
 	Type        string   `yaml:"type"`
 	Location    string   `yaml:"location"`
@@ -455,8 +455,8 @@ func (item Item) IsUninstallable() bool {
 
 	// Auto-determine based on available uninstall methods:
 
-	// 1. If there's an explicit uninstaller defined
-	if item.Uninstaller.Location != "" {
+	// 1. If there's an explicit uninstaller array defined
+	if len(item.Uninstaller) > 0 {
 		return true
 	}
 

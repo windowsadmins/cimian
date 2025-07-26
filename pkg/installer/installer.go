@@ -419,6 +419,312 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 		return msg, fmt.Errorf("%v", msg)
 	}
 
+	// If uninstaller array is defined, use it for advanced uninstall operations
+	if len(item.Uninstaller) > 0 {
+		return processUninstallerArray(item, cachePath)
+	}
+
+	// Fall back to traditional uninstaller logic
+	return processTraditionalUninstall(item, cachePath)
+}
+
+// processUninstallerArray handles uninstall operations using the uninstaller array
+func processUninstallerArray(item catalog.Item, cachePath string) (string, error) {
+	logging.Info("Processing uninstall using uninstaller array", "item", item.Name, "items", len(item.Uninstaller))
+
+	var results []string
+	var errors []string
+
+	for _, uninstallItem := range item.Uninstaller {
+		result, err := processUninstallItem(uninstallItem, item, cachePath)
+		if err != nil {
+			errorMsg := fmt.Sprintf("Failed to process uninstall item %s: %v", uninstallItem.Path, err)
+			errors = append(errors, errorMsg)
+			logging.Warn("Uninstall item failed", "item", item.Name, "path", uninstallItem.Path, "error", err)
+		} else {
+			results = append(results, result)
+			logging.Info("Successfully processed uninstall item", "item", item.Name, "path", uninstallItem.Path)
+		}
+	}
+
+	// Combine results
+	finalResult := strings.Join(results, "; ")
+
+	if len(errors) > 0 {
+		if len(results) == 0 {
+			// All items failed
+			return finalResult, fmt.Errorf("all uninstall items failed: %s", strings.Join(errors, "; "))
+		} else {
+			// Some items succeeded, some failed - log warnings but don't fail entirely
+			logging.Warn("Some uninstall items failed", "item", item.Name, "errors", errors)
+		}
+	}
+
+	return finalResult, nil
+}
+
+// processUninstallItem handles a single item from the uninstaller array
+func processUninstallItem(uninstallItem catalog.InstallItem, item catalog.Item, cachePath string) (string, error) {
+	switch strings.ToLower(uninstallItem.Type) {
+	case "file":
+		return processUninstallFile(uninstallItem, item)
+	case "directory":
+		return processUninstallDirectory(uninstallItem, item)
+	case "registry":
+		return processUninstallRegistry(uninstallItem, item)
+	case "msi":
+		return processUninstallMSI(uninstallItem, item)
+	case "exe":
+		return processUninstallEXE(uninstallItem, item, cachePath)
+	case "ps1", "powershell":
+		return processUninstallPowerShell(uninstallItem, item, cachePath)
+	default:
+		return "", fmt.Errorf("unsupported uninstall item type: %s", uninstallItem.Type)
+	}
+}
+
+// processUninstallFile removes a specific file
+func processUninstallFile(uninstallItem catalog.InstallItem, item catalog.Item) (string, error) {
+	path := uninstallItem.Path
+
+	// Check if file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		logging.Debug("File already removed or doesn't exist", "item", item.Name, "path", path)
+		return fmt.Sprintf("File already removed: %s", path), nil
+	}
+
+	// Remove the file
+	err := os.Remove(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to remove file %s: %v", path, err)
+	}
+
+	logging.Info("Successfully removed file", "item", item.Name, "path", path)
+	return fmt.Sprintf("Removed file: %s", path), nil
+}
+
+// processUninstallDirectory removes a specific directory
+func processUninstallDirectory(uninstallItem catalog.InstallItem, item catalog.Item) (string, error) {
+	path := uninstallItem.Path
+
+	// Check if directory exists
+	if info, err := os.Stat(path); os.IsNotExist(err) {
+		logging.Debug("Directory already removed or doesn't exist", "item", item.Name, "path", path)
+		return fmt.Sprintf("Directory already removed: %s", path), nil
+	} else if err != nil {
+		return "", fmt.Errorf("error checking directory %s: %v", path, err)
+	} else if !info.IsDir() {
+		return "", fmt.Errorf("path exists but is not a directory: %s", path)
+	}
+
+	// Remove the directory and all contents
+	err := os.RemoveAll(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to remove directory %s: %v", path, err)
+	}
+
+	logging.Info("Successfully removed directory", "item", item.Name, "path", path)
+	return fmt.Sprintf("Removed directory: %s", path), nil
+}
+
+// processUninstallRegistry removes registry keys/values
+func processUninstallRegistry(uninstallItem catalog.InstallItem, item catalog.Item) (string, error) {
+	// This would implement registry key removal
+	// For now, return a placeholder - this can be enhanced later
+	logging.Info("Registry uninstall operation", "item", item.Name, "path", uninstallItem.Path)
+	return fmt.Sprintf("Registry operation: %s", uninstallItem.Path), nil
+}
+
+// processUninstallMSI handles MSI-specific uninstall operations
+func processUninstallMSI(uninstallItem catalog.InstallItem, item catalog.Item) (string, error) {
+	productCode := uninstallItem.ProductCode
+	if productCode == "" {
+		return "", fmt.Errorf("ProductCode required for MSI uninstall operation")
+	}
+
+	// Base MSI uninstall arguments
+	args := []string{"/x", productCode, "/qn", "/norestart"}
+
+	// Add switches (/ style arguments)
+	for _, sw := range uninstallItem.Switches {
+		if strings.Contains(sw, "=") {
+			parts := strings.SplitN(sw, "=", 2)
+			key, value := parts[0], parts[1]
+			if strings.ContainsAny(value, " ") {
+				value = fmt.Sprintf("\"%s\"", value)
+			}
+			args = append(args, fmt.Sprintf("/%s=%s", key, value))
+		} else {
+			args = append(args, fmt.Sprintf("/%s", sw))
+		}
+	}
+
+	// Add flags with MSI-aware processing
+	for _, flag := range uninstallItem.Flags {
+		flag = strings.TrimSpace(flag)
+
+		// Split flag on first equals sign
+		var key, val string
+		if strings.Contains(flag, "=") {
+			parts := strings.SplitN(flag, "=", 2)
+			key, val = parts[0], parts[1]
+		} else {
+			key = flag
+		}
+
+		// If user already specified dashes, preserve them exactly
+		if strings.HasPrefix(key, "--") || strings.HasPrefix(key, "-") {
+			if val != "" {
+				if strings.ContainsAny(val, " ") {
+					val = fmt.Sprintf("\"%s\"", val)
+				}
+				args = append(args, fmt.Sprintf("%s=%s", key, val))
+			} else {
+				args = append(args, key)
+			}
+			continue
+		}
+
+		// For MSI, detect appropriate flag style
+		flagPrefix := detectMSIFlagStyle(key, val)
+
+		if val != "" {
+			if strings.ContainsAny(val, " ") {
+				val = fmt.Sprintf("\"%s\"", val)
+			}
+			if flagPrefix == "" {
+				// MSI property format: PROPERTY=VALUE (no prefix)
+				args = append(args, fmt.Sprintf("%s=%s", key, val))
+			} else {
+				args = append(args, fmt.Sprintf("%s%s=%s", flagPrefix, key, val))
+			}
+		} else {
+			args = append(args, fmt.Sprintf("%s%s", flagPrefix, key))
+		}
+	}
+
+	logging.Debug("Running MSI uninstall", "item", item.Name, "productCode", productCode, "args", args)
+	return runCMD(commandMsi, args)
+}
+
+// processUninstallEXE handles EXE-specific uninstall operations
+func processUninstallEXE(uninstallItem catalog.InstallItem, item catalog.Item, cachePath string) (string, error) {
+	exePath := uninstallItem.Path
+
+	// Check if uninstaller exists
+	if _, err := os.Stat(exePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("uninstaller executable not found: %s", exePath)
+	}
+
+	// Build arguments from switches, flags, and fallback to item uninstaller arguments
+	var args []string
+
+	// Add switches (/ style arguments)
+	for _, sw := range uninstallItem.Switches {
+		if strings.Contains(sw, "=") {
+			parts := strings.SplitN(sw, "=", 2)
+			args = append(args, fmt.Sprintf("/%s=%s", parts[0], quoteIfNeeded(parts[1])))
+		} else if strings.Contains(sw, " ") {
+			parts := strings.SplitN(sw, " ", 2)
+			args = append(args, fmt.Sprintf("/%s", parts[0]), quoteIfNeeded(parts[1]))
+		} else {
+			args = append(args, fmt.Sprintf("/%s", sw))
+		}
+	}
+
+	// Add flags (- style arguments)
+	for _, flag := range uninstallItem.Flags {
+		flag = strings.TrimSpace(flag)
+
+		// Split flags only on the first whitespace or equals sign
+		var key, val string
+		if strings.Contains(flag, "=") {
+			parts := strings.SplitN(flag, "=", 2)
+			key, val = parts[0], parts[1]
+		} else if strings.Contains(flag, " ") {
+			parts := strings.SplitN(flag, " ", 2)
+			key, val = parts[0], strings.TrimSpace(parts[1])
+		} else {
+			key = flag
+		}
+
+		// If user already specified dashes, preserve them exactly
+		if strings.HasPrefix(key, "--") || strings.HasPrefix(key, "-") {
+			if val != "" {
+				if strings.Contains(flag, "=") {
+					args = append(args, fmt.Sprintf("%s=%s", key, quoteIfNeeded(val)))
+				} else {
+					args = append(args, key, quoteIfNeeded(val))
+				}
+			} else {
+				args = append(args, key)
+			}
+		} else {
+			// Smart detection based on installer patterns and flag characteristics
+			flagPrefix := detectFlagStyle(exePath, key)
+
+			if val != "" {
+				if shouldUseEqualsFormat(key, val) {
+					args = append(args, fmt.Sprintf("%s%s=%s", flagPrefix, key, quoteIfNeeded(val)))
+				} else {
+					args = append(args, fmt.Sprintf("%s%s", flagPrefix, key), quoteIfNeeded(val))
+				}
+			} else {
+				args = append(args, fmt.Sprintf("%s%s", flagPrefix, key))
+			}
+		}
+	}
+
+	// Note: Legacy single uninstaller arguments are not supported
+	// Use uninstaller array for complex argument handling
+
+	logging.Debug("Running EXE uninstaller", "item", item.Name, "exe", exePath, "args", args)
+	return runCMD(exePath, args)
+}
+
+// processUninstallPowerShell handles PowerShell script uninstall operations
+func processUninstallPowerShell(uninstallItem catalog.InstallItem, item catalog.Item, cachePath string) (string, error) {
+	scriptPath := uninstallItem.Path
+
+	// Check if script exists
+	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("PowerShell uninstall script not found: %s", scriptPath)
+	}
+
+	// Build PowerShell arguments starting with basic execution policy
+	psArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath}
+
+	// Add switches and flags as script parameters
+	for _, sw := range uninstallItem.Switches {
+		if strings.Contains(sw, "=") {
+			parts := strings.SplitN(sw, "=", 2)
+			psArgs = append(psArgs, fmt.Sprintf("-%s", parts[0]), parts[1])
+		} else {
+			psArgs = append(psArgs, fmt.Sprintf("-%s", sw))
+		}
+	}
+
+	for _, flag := range uninstallItem.Flags {
+		flag = strings.TrimSpace(flag)
+
+		// Split flags on equals or space
+		if strings.Contains(flag, "=") {
+			parts := strings.SplitN(flag, "=", 2)
+			psArgs = append(psArgs, fmt.Sprintf("-%s", parts[0]), parts[1])
+		} else if strings.Contains(flag, " ") {
+			parts := strings.SplitN(flag, " ", 2)
+			psArgs = append(psArgs, fmt.Sprintf("-%s", parts[0]), strings.TrimSpace(parts[1]))
+		} else {
+			psArgs = append(psArgs, fmt.Sprintf("-%s", flag))
+		}
+	}
+
+	logging.Debug("Running PowerShell uninstall script", "item", item.Name, "script", scriptPath, "args", psArgs)
+	return runCMD(commandPs1, psArgs)
+}
+
+// processTraditionalUninstall handles the original uninstaller logic
+func processTraditionalUninstall(item catalog.Item, cachePath string) (string, error) {
 	relPath, fileName := path.Split(item.Installer.Location)
 	absFile := filepath.Join(cachePath, relPath, fileName)
 	if _, err := os.Stat(absFile); os.IsNotExist(err) {
@@ -549,7 +855,8 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 
 func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 	args := []string{"/x", absFile, "/qn", "/norestart"}
-	args = append(args, item.Uninstaller.Arguments...)
+	// Note: Legacy single uninstaller arguments are not supported
+	// Use uninstaller array for complex argument handling
 
 	logging.Debug("runMSIUninstaller => final command",
 		"exe", commandMsi, "args", strings.Join(args, " "))
@@ -577,7 +884,8 @@ func runMSIXInstaller(item catalog.Item, localFile string) (string, error) {
 
 func runMSIXUninstaller(_ string, item catalog.Item) (string, error) {
 	args := []string{}
-	args = append(args, item.Uninstaller.Arguments...)
+	// Note: Legacy single uninstaller arguments are not supported
+	// Use uninstaller array for complex argument handling
 
 	logging.Info("Invoking MSIX uninstaller for", "item", item.Name)
 	logging.Debug("runMSIXUninstaller => final command",
@@ -762,7 +1070,9 @@ func quoteIfNeeded(s string) string {
 }
 
 func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
-	args := item.Uninstaller.Arguments
+	args := []string{}
+	// Note: Legacy single uninstaller arguments are not supported
+	// Use uninstaller array for complex argument handling
 
 	logging.Debug("runEXEUninstaller => final command",
 		"exe", absFile, "args", strings.Join(args, " "))
