@@ -24,9 +24,6 @@ func runScript(
 	// 1. Find the PowerShell executable.
 	psExe, err := exec.LookPath("pwsh.exe")
 	if err != nil {
-		if verbosity >= 3 {
-			logInfo("pwsh.exe not found; falling back to Windows PowerShell (v5)")
-		}
 		psExe, err = exec.LookPath("powershell.exe")
 		if err != nil {
 			return fmt.Errorf("neither pwsh.exe nor powershell.exe were found: %v", err)
