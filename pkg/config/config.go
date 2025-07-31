@@ -15,24 +15,26 @@ const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 
 // Configuration holds the configurable options for Cimian in YAML format
 type Configuration struct {
-	Catalogs         []string `yaml:"Catalogs"`
-	CatalogsPath     string   `yaml:"CatalogsPath"`
-	CachePath        string   `yaml:"CachePath"`
-	CheckOnly        bool     `yaml:"CheckOnly"`
-	ClientIdentifier string   `yaml:"ClientIdentifier"`
-	CloudBucket      string   `yaml:"CloudBucket"`
-	CloudProvider    string   `yaml:"CloudProvider"`
-	Debug            bool     `yaml:"Debug"`
-	DefaultArch      string   `yaml:"DefaultArch"`
-	DefaultCatalog   string   `yaml:"DefaultCatalog"`
-	ForceBasicAuth   bool     `yaml:"ForceBasicAuth"`
-	InstallPath      string   `yaml:"InstallPath"`
-	LocalManifests   []string `yaml:"LocalManifests"`
-	LogLevel         string   `yaml:"LogLevel"`
-	OpenImportedYaml bool     `yaml:"OpenImportedYaml"`
-	RepoPath         string   `yaml:"RepoPath"`
-	SoftwareRepoURL  string   `yaml:"SoftwareRepoURL"`
-	Verbose          bool     `yaml:"Verbose"`
+	Catalogs          []string `yaml:"Catalogs"`
+	CatalogsPath      string   `yaml:"CatalogsPath"`
+	CachePath         string   `yaml:"CachePath"`
+	CheckOnly         bool     `yaml:"CheckOnly"`
+	ClientIdentifier  string   `yaml:"ClientIdentifier"`
+	CloudBucket       string   `yaml:"CloudBucket"`
+	CloudProvider     string   `yaml:"CloudProvider"`
+	Debug             bool     `yaml:"Debug"`
+	DefaultArch       string   `yaml:"DefaultArch"`
+	DefaultCatalog    string   `yaml:"DefaultCatalog"`
+	ForceBasicAuth    bool     `yaml:"ForceBasicAuth"`
+	InstallPath       string   `yaml:"InstallPath"`
+	LocalManifests    []string `yaml:"LocalManifests"`
+	LocalOnlyManifest string   `yaml:"LocalOnlyManifest"` // Munki-compatible: path to local-only manifest
+	LogLevel          string   `yaml:"LogLevel"`
+	NoPreflight       bool     `yaml:"NoPreflight"` // Munki-compatible: skip preflight script
+	OpenImportedYaml  bool     `yaml:"OpenImportedYaml"`
+	RepoPath          string   `yaml:"RepoPath"`
+	SoftwareRepoURL   string   `yaml:"SoftwareRepoURL"`
+	Verbose           bool     `yaml:"Verbose"`
 }
 
 // LoadConfig loads the configuration from a YAML file.
