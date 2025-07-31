@@ -70,6 +70,13 @@ func main() {
 	setBootstrapMode := pflag.Bool("set-bootstrap-mode", false, "Enable bootstrap mode for next boot.")
 	clearBootstrapMode := pflag.Bool("clear-bootstrap-mode", false, "Disable bootstrap mode.")
 
+	// Munki-compatible flags for preflight bypass and manifest override
+	noPreflight := pflag.Bool("no-preflight", false, "Skip preflight script execution.")
+	localOnlyManifest := pflag.String("local-only-manifest", "", "Use specified local manifest file instead of server manifest.")
+
+	// Manifest targeting flag - process only a specific manifest from server
+	manifestTarget := pflag.String("manifest", "", "Process only the specified manifest from server (e.g., 'Shared/Curriculum/RenderingFarm'). Automatically skips preflight.")
+
 	// Initialize item filter and register its flags before parsing
 	itemFilter := filter.NewItemFilter(nil) // logger will be set later
 	itemFilter.RegisterFlags()
@@ -166,8 +173,19 @@ func main() {
 		os.Exit(1)
 	}()
 
-	// Run preflight script.
-	runPreflightIfNeeded(verbosity)
+	// Run preflight script (unless bypassed by flag or config).
+	skipPreflight := *noPreflight || cfg.NoPreflight || (*manifestTarget != "")
+	if !skipPreflight {
+		runPreflightIfNeeded(verbosity)
+	} else {
+		if *noPreflight {
+			logger.Info("Preflight script execution bypassed by --no-preflight flag")
+		} else if *manifestTarget != "" {
+			logger.Info("Preflight script execution bypassed by --manifest flag")
+		} else {
+			logger.Info("Preflight script execution bypassed by NoPreflight configuration setting")
+		}
+	}
 
 	// Optionally update configuration based on verbosity.
 	if verbosity > 0 {
@@ -268,11 +286,40 @@ func main() {
 	// Clear item sources tracking for this run
 	process.ClearItemSources()
 
-	manifestItems, mErr := manifest.AuthenticatedGet(cfg)
-	if mErr != nil {
-		statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
-		logger.Error("Failed to retrieve manifests: %v", mErr)
-		os.Exit(1)
+	var manifestItems []manifest.Item
+	var mErr error
+
+	// Check for local-only manifest override (Munki-compatible)
+	// Command-line flag takes precedence over configuration setting
+	localManifestPath := *localOnlyManifest
+	if localManifestPath == "" && cfg.LocalOnlyManifest != "" {
+		localManifestPath = cfg.LocalOnlyManifest
+	}
+
+	// Check for specific manifest target (--manifest flag)
+	if *manifestTarget != "" {
+		logger.Info("Processing specific manifest: %s", *manifestTarget)
+		manifestItems, mErr = loadSpecificManifest(*manifestTarget, cfg)
+		if mErr != nil {
+			statusReporter.Error(fmt.Errorf("failed to load specific manifest: %v", mErr))
+			logger.Error("Failed to load specific manifest '%s': %v", *manifestTarget, mErr)
+			os.Exit(1)
+		}
+	} else if localManifestPath != "" {
+		logger.Info("Using local-only manifest: %s", localManifestPath)
+		manifestItems, mErr = loadLocalOnlyManifest(localManifestPath)
+		if mErr != nil {
+			statusReporter.Error(fmt.Errorf("failed to load local-only manifest: %v", mErr))
+			logger.Error("Failed to load local-only manifest: %v", mErr)
+			os.Exit(1)
+		}
+	} else {
+		manifestItems, mErr = manifest.AuthenticatedGet(cfg)
+		if mErr != nil {
+			statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
+			logger.Error("Failed to retrieve manifests: %v", mErr)
+			os.Exit(1)
+		}
 	}
 
 	// Apply item filter if specified
@@ -514,6 +561,7 @@ func extractPackageNames(installs, updates, uninstalls []catalog.Item) []string 
 }
 
 // runPreflightIfNeeded runs the preflight script.
+// If the preflight script fails, execution is aborted (like Munki behavior).
 func runPreflightIfNeeded(verbosity int) {
 	logInfo := func(format string, args ...interface{}) {
 		logger.Debug(format, args...)
@@ -524,9 +572,77 @@ func runPreflightIfNeeded(verbosity int) {
 
 	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
 		logger.Error("Preflight script failed: %v", err)
-		// Don't exit - preflight script failures should not be fatal
-		// os.Exit(1)
+		logger.Error("managedsoftwareupdate run aborted by preflight script failure")
+		// Exit like Munki does when preflight fails
+		os.Exit(1)
 	}
+}
+
+// loadLocalOnlyManifest loads a local manifest file for processing.
+// This implements Munki-compatible LocalOnlyManifest functionality.
+func loadLocalOnlyManifest(manifestPath string) ([]manifest.Item, error) {
+	logger.Info("Loading local-only manifest from: %s", manifestPath)
+
+	// Check if the file exists
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("local manifest file does not exist: %s", manifestPath)
+	}
+
+	// Read the manifest file
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read local manifest file: %v", err)
+	}
+
+	// Parse the manifest
+	var manifestFile manifest.ManifestFile
+	if err := yaml.Unmarshal(data, &manifestFile); err != nil {
+		return nil, fmt.Errorf("failed to parse local manifest YAML: %v", err)
+	}
+
+	// Convert to Item format (similar to what manifest.AuthenticatedGet returns)
+	var items []manifest.Item
+
+	// Create a single item representing this local manifest
+	item := manifest.Item{
+		Name:              manifestFile.Name,
+		ManagedInstalls:   manifestFile.ManagedInstalls,
+		ManagedUninstalls: manifestFile.ManagedUninstalls,
+		ManagedUpdates:    manifestFile.ManagedUpdates,
+		OptionalInstalls:  manifestFile.OptionalInstalls,
+		Catalogs:          manifestFile.Catalogs,
+		Includes:          manifestFile.IncludedManifests,
+	}
+
+	items = append(items, item)
+
+	logger.Info("Successfully loaded local-only manifest with %d managed_installs, %d managed_uninstalls, %d managed_updates",
+		len(item.ManagedInstalls), len(item.ManagedUninstalls), len(item.ManagedUpdates))
+
+	return items, nil
+}
+
+// loadSpecificManifest loads a specific manifest from the server.
+// This allows targeting a specific manifest path instead of using ClientIdentifier.
+func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]manifest.Item, error) {
+	logger.Info("Loading specific manifest from server: %s", manifestName)
+
+	// Temporarily override the ClientIdentifier to target the specific manifest
+	originalClientIdentifier := cfg.ClientIdentifier
+	cfg.ClientIdentifier = manifestName
+	defer func() {
+		cfg.ClientIdentifier = originalClientIdentifier
+	}()
+
+	// Use the standard manifest.AuthenticatedGet with the overridden ClientIdentifier
+	manifestItems, err := manifest.AuthenticatedGet(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load specific manifest '%s': %v", manifestName, err)
+	}
+
+	logger.Info("Successfully loaded specific manifest '%s' with %d items", manifestName, len(manifestItems))
+
+	return manifestItems, nil
 }
 
 // runPostflightIfNeeded runs the postflight script.
