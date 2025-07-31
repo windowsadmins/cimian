@@ -100,7 +100,8 @@
 
           <!-- Component for Configuration File (config.yaml) - Only install if it doesn't exist -->
           <Component Id="Component_Config" Guid="D4E5F6A7-B8C9-0D1E-2F3A-4B5C6D7E8F9A" Win64="yes">
-            <File Id="File_Config" Source="build\config.yaml" KeyPath="yes" NeverOverwrite="yes" />
+            <Condition>NOT CONFIGFILE</Condition>
+            <File Id="File_Config" Source="build\config.yaml" KeyPath="yes" />
           </Component>
 
         </Directory>
