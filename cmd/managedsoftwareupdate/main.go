@@ -629,9 +629,12 @@ func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]man
 
 	// Temporarily override the ClientIdentifier to target the specific manifest
 	originalClientIdentifier := cfg.ClientIdentifier
+	originalSkipSelfService := cfg.SkipSelfService
 	cfg.ClientIdentifier = manifestName
+	cfg.SkipSelfService = true // Skip self-service manifest when using --manifest flag
 	defer func() {
 		cfg.ClientIdentifier = originalClientIdentifier
+		cfg.SkipSelfService = originalSkipSelfService
 	}()
 
 	// Use the standard manifest.AuthenticatedGet with the overridden ClientIdentifier
@@ -640,7 +643,7 @@ func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]man
 		return nil, fmt.Errorf("failed to load specific manifest '%s': %v", manifestName, err)
 	}
 
-	logger.Info("Successfully loaded specific manifest '%s' with %d items", manifestName, len(manifestItems))
+	logger.Info("Successfully loaded specific manifest '%s' with %d items (self-service skipped)", manifestName, len(manifestItems))
 
 	return manifestItems, nil
 }
