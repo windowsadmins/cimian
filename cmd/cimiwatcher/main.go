@@ -312,8 +312,10 @@ func installService(name, displayName, desc string) error {
 	defer m.Disconnect()
 	s, err := m.OpenService(name)
 	if err == nil {
+		// Service already exists - this is OK during upgrades
 		s.Close()
-		return fmt.Errorf("service %s already exists", name)
+		log.Printf("Service %s already exists, skipping installation", name)
+		return nil
 	}
 	s, err = m.CreateService(name, exepath, mgr.Config{
 		DisplayName: displayName,
@@ -365,6 +367,18 @@ func startService(name string) error {
 		return fmt.Errorf("could not access service: %v", err)
 	}
 	defer s.Close()
+
+	// Check if service is already running
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("could not query service status: %v", err)
+	}
+
+	if status.State == svc.Running {
+		log.Printf("Service %s is already running", name)
+		return nil
+	}
+
 	err = s.Start("service")
 	if err != nil {
 		return fmt.Errorf("could not start service: %v", err)
