@@ -35,6 +35,9 @@ type Configuration struct {
 	RepoPath          string   `yaml:"RepoPath"`
 	SoftwareRepoURL   string   `yaml:"SoftwareRepoURL"`
 	Verbose           bool     `yaml:"Verbose"`
+
+	// Internal flag to skip self-service manifest processing (not exposed in YAML)
+	SkipSelfService bool `yaml:"-"`
 }
 
 // LoadConfig loads the configuration from a YAML file.

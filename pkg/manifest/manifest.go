@@ -381,92 +381,97 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 	// Process self-service manifest after all server manifests
 	// This is similar to Munki's approach where SelfServeManifest is processed last
-	selfServicePath := `C:\ProgramData\ManagedInstalls\SelfServeManifest.yaml`
-	if _, err := os.Stat(selfServicePath); err == nil {
-		logging.Info("Processing self-service manifest")
+	// Skip if SkipSelfService flag is set (e.g., when using --manifest flag)
+	if !cfg.SkipSelfService {
+		selfServicePath := `C:\ProgramData\ManagedInstalls\SelfServeManifest.yaml`
+		if _, err := os.Stat(selfServicePath); err == nil {
+			logging.Info("Processing self-service manifest")
 
-		// Read the self-service manifest
-		data, err := os.ReadFile(selfServicePath)
-		if err != nil {
-			logging.Warn("Failed to read self-service manifest", "error", err)
-		} else {
-			var selfServiceManifest ManifestFile
-			if err := yaml.Unmarshal(data, &selfServiceManifest); err != nil {
-				logging.Warn("Failed to parse self-service manifest", "error", err)
+			// Read the self-service manifest
+			data, err := os.ReadFile(selfServicePath)
+			if err != nil {
+				logging.Warn("Failed to read self-service manifest", "error", err)
 			} else {
-				logging.Info("Processed self-service manifest", "name", selfServiceManifest.Name)
+				var selfServiceManifest ManifestFile
+				if err := yaml.Unmarshal(data, &selfServiceManifest); err != nil {
+					logging.Warn("Failed to parse self-service manifest", "error", err)
+				} else {
+					logging.Info("Processed self-service manifest", "name", selfServiceManifest.Name)
 
-				// Process self-service managed_installs
-				for _, pkgName := range selfServiceManifest.ManagedInstalls {
-					if pkgName == "" {
-						continue
-					}
-					actionKey := "install|" + strings.ToLower(pkgName)
-					if deduplicateCheck[actionKey] {
-						continue
-					}
-					deduplicateCheck[actionKey] = true
+					// Process self-service managed_installs
+					for _, pkgName := range selfServiceManifest.ManagedInstalls {
+						if pkgName == "" {
+							continue
+						}
+						actionKey := "install|" + strings.ToLower(pkgName)
+						if deduplicateCheck[actionKey] {
+							continue
+						}
+						deduplicateCheck[actionKey] = true
 
-					catKey := strings.ToLower(pkgName)
-					catEntry, found := catalogMap[catKey]
-					if !found {
-						logging.Warn("No catalog entry for self-service package", "package", pkgName)
-						finalItems = append(finalItems, Item{
-							Name:     pkgName,
-							Version:  "",
-							Catalogs: cfg.Catalogs, // Use global catalogs
-							Action:   "install",
-						})
-					} else {
-						finalItems = append(finalItems, Item{
-							Name:              catEntry.Name,
-							Version:           catEntry.Version,
-							InstallerLocation: catEntry.Installer.Location,
-							Catalogs:          cfg.Catalogs, // Use global catalogs
-							SupportedArch:     catEntry.SupportedArch,
-							OnDemand:          catEntry.OnDemand,
-							Action:            "install",
-						})
+						catKey := strings.ToLower(pkgName)
+						catEntry, found := catalogMap[catKey]
+						if !found {
+							logging.Warn("No catalog entry for self-service package", "package", pkgName)
+							finalItems = append(finalItems, Item{
+								Name:     pkgName,
+								Version:  "",
+								Catalogs: cfg.Catalogs, // Use global catalogs
+								Action:   "install",
+							})
+						} else {
+							finalItems = append(finalItems, Item{
+								Name:              catEntry.Name,
+								Version:           catEntry.Version,
+								InstallerLocation: catEntry.Installer.Location,
+								Catalogs:          cfg.Catalogs, // Use global catalogs
+								SupportedArch:     catEntry.SupportedArch,
+								OnDemand:          catEntry.OnDemand,
+								Action:            "install",
+							})
+						}
 					}
-				}
 
-				// Process self-service managed_uninstalls
-				for _, pkgName := range selfServiceManifest.ManagedUninstalls {
-					if pkgName == "" {
-						continue
-					}
-					actionKey := "uninstall|" + strings.ToLower(pkgName)
-					if deduplicateCheck[actionKey] {
-						continue
-					}
-					deduplicateCheck[actionKey] = true
+					// Process self-service managed_uninstalls
+					for _, pkgName := range selfServiceManifest.ManagedUninstalls {
+						if pkgName == "" {
+							continue
+						}
+						actionKey := "uninstall|" + strings.ToLower(pkgName)
+						if deduplicateCheck[actionKey] {
+							continue
+						}
+						deduplicateCheck[actionKey] = true
 
-					catKey := strings.ToLower(pkgName)
-					catEntry, found := catalogMap[catKey]
-					if !found {
-						logging.Warn("No catalog entry for self-service uninstall", "package", pkgName)
-						finalItems = append(finalItems, Item{
-							Name:     pkgName,
-							Version:  "",
-							Catalogs: cfg.Catalogs,
-							Action:   "uninstall",
-						})
-					} else {
-						finalItems = append(finalItems, Item{
-							Name:              catEntry.Name,
-							Version:           catEntry.Version,
-							InstallerLocation: catEntry.Installer.Location,
-							Catalogs:          cfg.Catalogs,
-							SupportedArch:     catEntry.SupportedArch,
-							OnDemand:          catEntry.OnDemand,
-							Action:            "uninstall",
-						})
+						catKey := strings.ToLower(pkgName)
+						catEntry, found := catalogMap[catKey]
+						if !found {
+							logging.Warn("No catalog entry for self-service uninstall", "package", pkgName)
+							finalItems = append(finalItems, Item{
+								Name:     pkgName,
+								Version:  "",
+								Catalogs: cfg.Catalogs,
+								Action:   "uninstall",
+							})
+						} else {
+							finalItems = append(finalItems, Item{
+								Name:              catEntry.Name,
+								Version:           catEntry.Version,
+								InstallerLocation: catEntry.Installer.Location,
+								Catalogs:          cfg.Catalogs,
+								SupportedArch:     catEntry.SupportedArch,
+								OnDemand:          catEntry.OnDemand,
+								Action:            "uninstall",
+							})
+						}
 					}
 				}
 			}
+		} else {
+			logging.Debug("No self-service manifest found", "path", selfServicePath)
 		}
 	} else {
-		logging.Debug("No self-service manifest found", "path", selfServicePath)
+		logging.Debug("Skipping self-service manifest processing (SkipSelfService flag set)")
 	}
 
 	// Populate cfg.Catalogs with all catalog names found in manifests
@@ -474,6 +479,39 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	for catName := range catalogNames {
 		catalogList = append(catalogList, catName)
 	}
+
+	// If no catalogs were found in manifests, use the default catalog
+	if len(catalogList) == 0 && cfg.DefaultCatalog != "" {
+		catalogList = append(catalogList, cfg.DefaultCatalog)
+		logging.Info("No catalogs found in manifests, using default catalog", "defaultCatalog", cfg.DefaultCatalog)
+
+		// Download and process the default catalog since it wasn't processed above
+		catURL := fmt.Sprintf("%s/catalogs/%s.yaml",
+			strings.TrimRight(cfg.SoftwareRepoURL, "/"),
+			cfg.DefaultCatalog)
+		catLocal := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, cfg.DefaultCatalog+".yaml")
+
+		// Download the catalog
+		if err := download.DownloadFile(catURL, catLocal, cfg); err != nil {
+			logging.Error("Failed to download default catalog", "catalogURL", catURL, "error", err)
+		} else {
+			logging.Info(fmt.Sprintf("Downloaded default catalog: %s", cfg.DefaultCatalog))
+
+			// Parse it
+			cEntries, err := parseCatalogFile(catLocal)
+			if err != nil {
+				logging.Error("Failed to parse default catalog", "catalog", cfg.DefaultCatalog, "error", err)
+			} else {
+				// Merge into our global map
+				for _, ce := range cEntries {
+					key := strings.ToLower(ce.Name)
+					catalogMap[key] = ce
+				}
+				logging.Info("Successfully processed default catalog", "catalog", cfg.DefaultCatalog, "entries", len(cEntries))
+			}
+		}
+	}
+
 	cfg.Catalogs = catalogList
 	logging.Info("Updated config catalogs from manifests", "catalogs", strings.Join(cfg.Catalogs, ", "))
 
