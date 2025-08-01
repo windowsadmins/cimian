@@ -77,9 +77,6 @@ func main() {
 	// Manifest targeting flag - process only a specific manifest from server
 	manifestTarget := pflag.String("manifest", "", "Process only the specified manifest from server (e.g., 'Shared/Curriculum/RenderingFarm'). Automatically skips preflight.")
 
-	// Report generation flag - regenerate reports from existing logs without any installation
-	reportOnly := pflag.Bool("report", false, "Generate reports from existing logs without performing any installation or updates.")
-
 	// Initialize item filter and register its flags before parsing
 	itemFilter := filter.NewItemFilter(nil) // logger will be set later
 	itemFilter.RegisterFlags()
@@ -112,7 +109,7 @@ func main() {
 	// Initialize logger.
 	logger = logging.New(verbosity > 0)
 	if err := logging.Init(cfg); err != nil {
-		logging.Fatal("Error initializing logger", "error", err)
+		logger.Fatal("Error initializing logger: %v", err)
 	}
 	defer logging.CloseLogger()
 
@@ -125,29 +122,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Handle --report flag - generate reports from existing logs and exit
-	if *reportOnly {
-		logging.Info("Generating reports from existing logs...")
-
-		// Initialize minimal logging for report generation
-		logger = logging.New(verbosity > 0)
-		defer logging.CloseLogger()
-
-		// Generate reports from existing log data
-		exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
-		if err := exporter.ExportToReportsDirectory(30); err != nil { // Last 30 days
-			logging.Error("Error generating reports", "error", err)
-			os.Exit(1)
-		}
-
-		logging.Success("Reports generated successfully", "location", `C:\ProgramData\ManagedInstalls\reports\`)
-		os.Exit(0)
-	}
-
 	// Handle bootstrap mode flags first - these exit immediately
 	if *setBootstrapMode {
 		if err := enableBootstrapMode(); err != nil {
-			logging.Error("Failed to enable bootstrap mode", "error", err)
+			logger.Error("Failed to enable bootstrap mode: %v", err)
 			os.Exit(1)
 		}
 		logger.Success("Bootstrap mode enabled. System will enter bootstrap mode on next boot.")
@@ -156,7 +134,7 @@ func main() {
 
 	if *clearBootstrapMode {
 		if err := disableBootstrapMode(); err != nil {
-			logging.Error("Failed to disable bootstrap mode", "error", err)
+			logger.Error("Failed to disable bootstrap mode: %v", err)
 			os.Exit(1)
 		}
 		logger.Success("Bootstrap mode disabled.")
@@ -166,7 +144,7 @@ func main() {
 	// Check if we're in bootstrap mode
 	isBootstrap := isBootstrapModeEnabled()
 	if isBootstrap {
-		logging.Info("Bootstrap mode detected - entering non-interactive installation mode")
+		logger.Info("Bootstrap mode detected - entering non-interactive installation mode")
 		*showStatus = true   // Always show status window in bootstrap mode
 		*installOnly = false // Bootstrap mode does check + install
 		*checkOnly = false
@@ -177,11 +155,11 @@ func main() {
 	manifestsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "manifests")
 
 	if err := cleanManifestsCatalogsPreRun(catalogsDir); err != nil {
-		logging.Error("Failed to clean catalogs directory", "error", err)
+		logger.Error("Failed to clean catalogs directory: %v", err)
 		os.Exit(1)
 	}
 	if err := cleanManifestsCatalogsPreRun(manifestsDir); err != nil {
-		logging.Error("Failed to clean manifests directory", "error", err)
+		logger.Error("Failed to clean manifests directory: %v", err)
 		os.Exit(1)
 	}
 
@@ -190,7 +168,7 @@ func main() {
 	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-signalChan
-		logging.Warn("Signal received, exiting gracefully", "signal", sig.String())
+		logger.Warning("Signal received, exiting gracefully: %s", sig.String())
 		logging.CloseLogger()
 		os.Exit(1)
 	}()
@@ -201,11 +179,11 @@ func main() {
 		runPreflightIfNeeded(verbosity)
 	} else {
 		if *noPreflight {
-			logging.Info("Preflight script execution bypassed by --no-preflight flag")
+			logger.Info("Preflight script execution bypassed by --no-preflight flag")
 		} else if *manifestTarget != "" {
-			logging.Info("Preflight script execution bypassed by --manifest flag")
+			logger.Info("Preflight script execution bypassed by --manifest flag")
 		} else {
-			logging.Info("Preflight script execution bypassed by NoPreflight configuration setting")
+			logger.Info("Preflight script execution bypassed by NoPreflight configuration setting")
 		}
 	}
 
@@ -218,20 +196,20 @@ func main() {
 	}
 	// Reinitialize the logger so that any changes in cfg take effect.
 	if err := logging.ReInit(cfg); err != nil {
-		logging.Fatal("Error re-initializing logger after preflight", "error", err)
+		logger.Fatal("Error re-initializing logger after preflight: %v", err)
 	}
 
 	// Show configuration if requested.
 	if *showConfig {
 		if cfgYaml, err := yaml.Marshal(cfg); err == nil {
-			logging.Info("Current configuration", "config", string(cfgYaml))
+			logger.Printf("Current configuration:\n%s", string(cfgYaml))
 		}
 		os.Exit(0)
 	}
 
 	// Ensure mutually exclusive flags are not set.
 	if *checkOnly && *installOnly {
-		logging.Warn("Conflicting flags: --checkonly and --installonly are mutually exclusive")
+		logger.Warning("Conflicting flags: --checkonly and --installonly are mutually exclusive")
 		pflag.Usage()
 		os.Exit(1)
 	}
@@ -257,7 +235,7 @@ func main() {
 	} else {
 		runType = "manual"
 	}
-	logging.Info("Run type", "type", runType)
+	logger.Printf("Run type: %s", runType)
 
 	// Update the logger's run type for consistent logging
 	logging.SetRunType(runType)
@@ -273,20 +251,20 @@ func main() {
 		},
 	}
 	if err := logging.StartSession(runType, sessionMetadata); err != nil {
-		logging.Warn("Failed to start structured logging session", "error", err)
+		logger.Warning("Failed to start structured logging session: %v", err)
 	}
 
 	// Check administrative privileges.
 	admin, adminErr := adminCheck()
 	if adminErr != nil || !admin {
-		logging.Fatal("Administrative access required", "error", adminErr, "admin", admin)
+		logger.Fatal("Administrative access required. Error: %v, Admin: %v", adminErr, admin)
 	}
 	// Initialize status reporter if requested
 	var statusReporter status.Reporter
 	if *showStatus {
 		statusReporter = status.NewPipeReporter()
 		if err := statusReporter.Start(context.Background()); err != nil {
-			logging.Error("Failed to start status reporter", "error", err)
+			logger.Error("Failed to start status reporter: %v", err)
 			statusReporter = status.NewNoOpReporter() // Fallback to no-op
 		}
 		defer statusReporter.Stop()
@@ -298,7 +276,7 @@ func main() {
 	// Ensure cache directory exists.
 	cachePath := cfg.CachePath
 	if err := os.MkdirAll(filepath.Clean(cachePath), 0755); err != nil {
-		logging.Error("Failed to create cache directory", "error", err)
+		logger.Error("Failed to create cache directory: %v", err)
 		os.Exit(1)
 	}
 
@@ -320,52 +298,32 @@ func main() {
 
 	// Check for specific manifest target (--manifest flag)
 	if *manifestTarget != "" {
-		logging.Info("Processing specific manifest", "manifest", *manifestTarget)
+		logger.Info("Processing specific manifest: %s", *manifestTarget)
 		manifestItems, mErr = loadSpecificManifest(*manifestTarget, cfg)
 		if mErr != nil {
 			statusReporter.Error(fmt.Errorf("failed to load specific manifest: %v", mErr))
-			logging.Error("Failed to load specific manifest", "manifest", *manifestTarget, "error", mErr)
+			logger.Error("Failed to load specific manifest '%s': %v", *manifestTarget, mErr)
 			os.Exit(1)
 		}
 	} else if localManifestPath != "" {
-		logging.Info("Using local-only manifest", "path", localManifestPath)
+		logger.Info("Using local-only manifest: %s", localManifestPath)
 		manifestItems, mErr = loadLocalOnlyManifest(localManifestPath)
 		if mErr != nil {
 			statusReporter.Error(fmt.Errorf("failed to load local-only manifest: %v", mErr))
-			logging.Error("Failed to load local-only manifest", "error", mErr)
+			logger.Error("Failed to load local-only manifest: %v", mErr)
 			os.Exit(1)
 		}
 	} else {
-		// Display enhanced loading header only at highest debug level (verbosity 3+)
-		if verbosity >= 3 {
-			targetItems := []string{}
-			if itemFilter.HasFilter() {
-				targetItems = itemFilter.GetItems()
-			}
-			displayLoadingHeader(targetItems, verbosity)
-		}
-
-		// Use optimized manifest loading if item filter is active for better performance
-		if itemFilter.HasFilter() {
-			manifestItems, mErr = manifest.AuthenticatedGetOptimized(cfg, itemFilter.GetItems())
-			// Optimized loader already filters, so no need to apply filter again
-		} else {
-			manifestItems, mErr = manifest.AuthenticatedGet(cfg)
-			// Apply item filter if specified (only needed for non-optimized path)
-			if itemFilter.HasFilter() {
-				manifestItems = itemFilter.Apply(manifestItems)
-			}
-		}
-
+		manifestItems, mErr = manifest.AuthenticatedGet(cfg)
 		if mErr != nil {
 			statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
-			logging.Error("Failed to retrieve manifests", "error", mErr)
+			logger.Error("Failed to retrieve manifests: %v", mErr)
 			os.Exit(1)
 		}
-
-		// Display manifest tree structure
-		displayManifestTree(manifestItems)
 	}
+
+	// Apply item filter if specified
+	manifestItems = itemFilter.Apply(manifestItems)
 
 	// Clear and set up source tracking for all manifest items
 	process.ClearItemSources()
@@ -396,9 +354,9 @@ func main() {
 	// Override checkonly mode if item filter is active, but only if --checkonly wasn't explicitly set
 	if itemFilter.ShouldOverrideCheckOnly() && !pflag.CommandLine.Changed("checkonly") {
 		*checkOnly = false
-		logging.Info("--item flag specified, overriding default checkonly mode")
+		logger.Info("--item flag specified, overriding default checkonly mode")
 	} else if itemFilter.HasFilter() && *checkOnly {
-		logging.Info("--item flag with explicit --checkonly: will check only specified items")
+		logger.Info("--item flag with explicit --checkonly: will check only specified items")
 	}
 
 	statusReporter.Detail("Loading catalog data...")
@@ -406,25 +364,22 @@ func main() {
 	localCatalogMap, err := loadLocalCatalogItems(cfg)
 	if err != nil {
 		statusReporter.Error(fmt.Errorf("failed to load local catalogs: %v", err))
-		logging.Error("Failed to load local catalogs", "error", err)
+		logger.Error("Failed to load local catalogs: %v", err)
 		os.Exit(1)
 	}
 
-	// Display catalog box with enhanced formatting
-	displayCatalogBox(localCatalogMap, cfg.Catalogs)
-
 	// Convert to the expected format for advanced dependency processing
 	statusReporter.Detail("Processing dependencies...")
-	fullCatalogMap := catalog.AuthenticatedGetEnhanced(*cfg)
+	fullCatalogMap := catalog.AuthenticatedGet(*cfg)
 
 	// If install-only mode, perform installs and exit.
 	if *installOnly {
-		logging.Info("Running in install-only mode")
+		logger.Info("Running in install-only mode")
 		statusReporter.Message("Installing pending updates...")
 		itemsToInstall := prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
 		if err := downloadAndInstallPerItem(itemsToInstall, cfg, statusReporter); err != nil {
 			statusReporter.Error(fmt.Errorf("failed to install pending updates: %v", err))
-			logging.Error("Failed to install pending updates (install-only)", "error", err)
+			logger.Error("Failed to install pending updates (install-only): %v", err)
 			os.Exit(1)
 		}
 		statusReporter.Message("Installation completed successfully!")
@@ -450,10 +405,6 @@ func main() {
 
 	// If check-only mode, exit after summary.
 	if *checkOnly {
-		// Enhanced checkonly mode: provide detailed package analysis
-		if itemFilter.HasFilter() && verbosity >= 2 {
-			printEnhancedPackageAnalysis(toInstall, toUpdate, toUninstall, localCatalogMap)
-		}
 		// End structured logging session before exit
 		summary := logging.SessionSummary{
 			TotalActions:    len(toInstall) + len(toUpdate) + len(toUninstall),
@@ -465,15 +416,15 @@ func main() {
 			PackagesHandled: extractPackageNames(toInstall, toUpdate, toUninstall),
 		}
 		if err := logging.EndSession("completed", summary); err != nil {
-			logging.Warn("Failed to end structured logging session", "error", err)
+			logger.Warning("Failed to end structured logging session: %v", err)
 		}
 
 		// Generate reports for external monitoring tools
-		logging.Info("Generating reports for external monitoring tools...")
+		logger.Info("Generating reports for external monitoring tools...")
 		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
 		exporter := reporting.NewDataExporter(baseDir)
 		if err := exporter.ExportToReportsDirectory(48); err != nil {
-			logging.Warn("Failed to export reports", "error", err)
+			logger.Warning("Failed to export reports: %v", err)
 		}
 
 		os.Exit(0)
@@ -481,9 +432,9 @@ func main() {
 
 	// Proceed with installations without user confirmation
 	if *auto {
-		logging.Info("Auto mode enabled - proceeding with installation without confirmation")
+		logger.Info("Auto mode enabled - proceeding with installation without confirmation")
 	} else {
-		logging.Info("Proceeding with installation without confirmation")
+		logger.Info("Proceeding with installation without confirmation")
 	}
 
 	// Combine install and update items and perform installations.
@@ -496,7 +447,7 @@ func main() {
 		statusReporter.Percent(0) // Start progress tracking
 		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg, statusReporter); err != nil {
 			statusReporter.Error(fmt.Errorf("some installations failed: %v", err))
-			logging.Warn("Some items failed to install, continuing with remaining operations", "error", err)
+			logger.Warning("Some items failed to install, continuing with remaining operations: %v", err)
 			installSuccess = false
 		} else {
 			statusReporter.Percent(50) // Mid-way progress
@@ -510,7 +461,7 @@ func main() {
 		statusReporter.Percent(75) // Progress at 75%
 		if err := uninstallWithAdvancedLogic(toUninstall, fullCatalogMap, cfg, statusReporter); err != nil {
 			statusReporter.Error(fmt.Errorf("some uninstalls failed: %v", err))
-			logging.Warn("Some items failed to uninstall, continuing with remaining operations", "error", err)
+			logger.Warning("Some items failed to uninstall, continuing with remaining operations: %v", err)
 			uninstallSuccess = false
 		}
 	}
@@ -518,20 +469,20 @@ func main() {
 	// For auto mode: if the user is active, skip updates.
 	if *auto {
 		if isUserActive() {
-			logging.Info("User is active. Skipping automatic updates", "idle_seconds", getIdleSeconds())
+			logger.Info("User is active. Skipping automatic updates: %d", getIdleSeconds())
 			os.Exit(0)
 		}
 	}
 
 	// Log summary of operations
 	if installSuccess && uninstallSuccess {
-		logging.Success("Software updates completed successfully")
+		logger.Info("Software updates completed successfully")
 	} else if !installSuccess && !uninstallSuccess {
-		logging.Warn("Software updates completed with some failures in both installations and uninstalls")
+		logger.Warning("Software updates completed with some failures in both installations and uninstalls")
 	} else if !installSuccess {
-		logging.Warn("Software updates completed with some installation failures")
+		logger.Warning("Software updates completed with some installation failures")
 	} else {
-		logging.Warn("Software updates completed with some uninstall failures")
+		logger.Warning("Software updates completed with some uninstall failures")
 	}
 
 	statusReporter.Message("Finalizing installation...")
@@ -539,7 +490,7 @@ func main() {
 
 	// Run postflight script.
 	if verbosity > 0 {
-		logging.Debug("Running postflight script with verbosity level", "verbosity", verbosity)
+		logger.Debug("Running postflight script with verbosity level: %d", verbosity)
 	}
 	statusReporter.Detail("Running post-installation scripts...")
 	runPostflightIfNeeded(verbosity)
@@ -549,9 +500,9 @@ func main() {
 	statusReporter.Detail("Generating system reports...")
 	exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
 	if err := exporter.ExportToReportsDirectory(7); err != nil { // Export last 7 days
-		logging.Warn("Failed to generate reports", "error", err)
+		logger.Warning("Failed to generate reports: %v", err)
 	} else {
-		logging.Success("Reports exported successfully", "location", `C:\ProgramData\ManagedInstalls\reports`)
+		logger.Info("Reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
 	}
 
 	statusReporter.Detail("Cleaning up temporary files...")
@@ -562,7 +513,7 @@ func main() {
 	// Clear bootstrap mode if we completed successfully
 	if isBootstrap {
 		if err := clearBootstrapAfterSuccess(); err != nil {
-			logging.Warn("Failed to clear bootstrap mode", "error", err)
+			logger.Warning("Failed to clear bootstrap mode: %v", err)
 		}
 	}
 
@@ -581,17 +532,7 @@ func main() {
 		PackagesHandled: extractPackageNames(toInstall, toUpdate, toUninstall),
 	}
 	if err := logging.EndSession("completed", summary); err != nil {
-		logging.Warn("Failed to end structured logging session", "error", err)
-	}
-
-	// Display final summary if we have the required data
-	if len(manifestItems) > 0 || len(localCatalogMap) > 0 {
-		targetItems := []string{}
-		if itemFilter.HasFilter() {
-			targetItems = itemFilter.GetItems()
-		}
-		totalTime := time.Since(time.Now().Add(-10 * time.Second)) // Approximate, we don't have exact start time
-		displayFinalSummary(totalTime, len(manifestItems), localCatalogMap, targetItems)
+		logger.Warning("Failed to end structured logging session: %v", err)
 	}
 
 	os.Exit(0)
@@ -623,15 +564,15 @@ func extractPackageNames(installs, updates, uninstalls []catalog.Item) []string 
 // If the preflight script fails, execution is aborted (like Munki behavior).
 func runPreflightIfNeeded(verbosity int) {
 	logInfo := func(format string, args ...interface{}) {
-		logging.Debug(fmt.Sprintf(format, args...))
+		logger.Debug(format, args...)
 	}
 	logError := func(format string, args ...interface{}) {
-		logging.Error(fmt.Sprintf(format, args...))
+		logger.Error(format, args...)
 	}
 
 	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
-		logging.Error("Preflight script failed", "error", err)
-		logging.Error("managedsoftwareupdate run aborted by preflight script failure")
+		logger.Error("Preflight script failed: %v", err)
+		logger.Error("managedsoftwareupdate run aborted by preflight script failure")
 		// Exit like Munki does when preflight fails
 		os.Exit(1)
 	}
@@ -640,7 +581,7 @@ func runPreflightIfNeeded(verbosity int) {
 // loadLocalOnlyManifest loads a local manifest file for processing.
 // This implements Munki-compatible LocalOnlyManifest functionality.
 func loadLocalOnlyManifest(manifestPath string) ([]manifest.Item, error) {
-	logging.Info("Loading local-only manifest from", "path", manifestPath)
+	logger.Info("Loading local-only manifest from: %s", manifestPath)
 
 	// Check if the file exists
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
@@ -675,10 +616,8 @@ func loadLocalOnlyManifest(manifestPath string) ([]manifest.Item, error) {
 
 	items = append(items, item)
 
-	logging.Info("Successfully loaded local-only manifest",
-		"managed_installs", len(item.ManagedInstalls),
-		"managed_uninstalls", len(item.ManagedUninstalls),
-		"managed_updates", len(item.ManagedUpdates))
+	logger.Info("Successfully loaded local-only manifest with %d managed_installs, %d managed_uninstalls, %d managed_updates",
+		len(item.ManagedInstalls), len(item.ManagedUninstalls), len(item.ManagedUpdates))
 
 	return items, nil
 }
@@ -686,7 +625,7 @@ func loadLocalOnlyManifest(manifestPath string) ([]manifest.Item, error) {
 // loadSpecificManifest loads a specific manifest from the server.
 // This allows targeting a specific manifest path instead of using ClientIdentifier.
 func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]manifest.Item, error) {
-	logging.Info("Loading specific manifest from server", "manifest", manifestName)
+	logger.Info("Loading specific manifest from server: %s", manifestName)
 
 	// Temporarily override the ClientIdentifier to target the specific manifest
 	originalClientIdentifier := cfg.ClientIdentifier
@@ -704,10 +643,7 @@ func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]man
 		return nil, fmt.Errorf("failed to load specific manifest '%s': %v", manifestName, err)
 	}
 
-	logging.Info("Successfully loaded specific manifest",
-		"manifest", manifestName,
-		"items", len(manifestItems),
-		"note", "self-service skipped")
+	logger.Info("Successfully loaded specific manifest '%s' with %d items (self-service skipped)", manifestName, len(manifestItems))
 
 	return manifestItems, nil
 }
@@ -715,14 +651,14 @@ func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]man
 // runPostflightIfNeeded runs the postflight script.
 func runPostflightIfNeeded(verbosity int) {
 	logInfo := func(format string, args ...interface{}) {
-		logging.Debug(fmt.Sprintf(format, args...))
+		logger.Debug(format, args...)
 	}
 	logError := func(format string, args ...interface{}) {
-		logging.Error(fmt.Sprintf(format, args...))
+		logger.Error(format, args...)
 	}
 
 	if err := scripts.RunPostflight(verbosity, logInfo, logError); err != nil {
-		logging.Error("Postflight script failed", "error", err)
+		logger.Error("Postflight script failed: %v", err)
 	}
 }
 
@@ -788,8 +724,7 @@ func identifyRemovals(localCatalogMap map[string]catalog.Item, _ *config.Configu
 	return toRemove
 }
 
-// identifyNewInstalls checks each manifest item and returns those that need installation.
-// Items not found in the local catalog will be logged as warnings and skipped.
+// identifyNewInstalls checks each manifest item and returns those NOT present in the local catalog.
 func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
 	_ = cfg // dummy reference to suppress "unused parameter" warning
 
@@ -799,15 +734,18 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 			continue
 		}
 		key := strings.ToLower(mItem.Name)
-		catItem, found := localCatalogMap[key]
-		if !found {
-			logging.Warn("Package not found in catalog - cannot install", "package", mItem.Name, "source_manifest", mItem.SourceManifest)
-			continue
-		}
-
-		// Check if this item actually needs installation using the catalog item
-		if installer.LocalNeedsUpdate(mItem, localCatalogMap, cfg) {
-			toInstall = append(toInstall, catItem)
+		if _, found := localCatalogMap[key]; !found {
+			logging.Info("Identified new item for installation", "item", mItem.Name)
+			newCatItem := catalog.Item{
+				Name:    mItem.Name,
+				Version: mItem.Version,
+				Installer: catalog.InstallerItem{
+					Location: mItem.InstallerLocation,
+					Type:     "exe", // or "msi"/"nupkg" if determinable
+				},
+				SupportedArch: mItem.SupportedArch,
+			}
+			toInstall = append(toInstall, newCatItem)
 		}
 	}
 	return toInstall
@@ -828,42 +766,34 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 	var successCount int
 
 	for _, item := range items {
-		// Get source information for logging
-		var sourceDesc string
-		if source, exists := process.GetItemSource(item.Name); exists {
-			sourceDesc = source.GetSourceDescription()
-		} else {
-			sourceDesc = "unknown"
-		}
-
 		// Check for blocking applications before unattended uninstalls
 		if blocking.BlockingApplicationsRunning(item) {
 			runningApps := blocking.GetRunningBlockingApps(item)
-			logging.Warn("Blocking applications are running", "item", item.Name, "running_apps", runningApps, "source", sourceDesc)
-			logging.Info("Skipping unattended uninstall due to blocking applications", "item", item.Name, "source", sourceDesc)
+			logger.Warning("Blocking applications are running for %s: %v", item.Name, runningApps)
+			logger.Info("Skipping unattended uninstall of %s due to blocking applications", item.Name)
 			failedItems = append(failedItems, fmt.Sprintf("%s (blocked by: %v)", item.Name, runningApps))
 			continue
 		}
 
 		_, err := installer.Install(item, "uninstall", "", cfg.CachePath, cfg.CheckOnly, cfg)
 		if err != nil {
-			logging.Error("Failed to uninstall item, continuing with others", "item", item.Name, "error", err, "source", sourceDesc)
+			logger.Error("Failed to uninstall item, continuing with others: %s, error: %v", item.Name, err)
 			failedItems = append(failedItems, item.Name)
 		} else {
-			logging.Info("Uninstall successful", "item", item.Name, "source", sourceDesc)
+			logging.Info("Uninstall successful", "item", item.Name)
 			successCount++
 		}
 	}
 
 	// Log summary of results
 	if len(failedItems) > 0 {
-		logging.Warn("Uninstall summary", "succeeded", successCount, "failed", len(failedItems), "total", len(items))
+		logger.Warning("Uninstall summary: %d succeeded, %d failed out of %d total items", successCount, len(failedItems), len(items))
 		// Only return error if ALL items failed
 		if successCount == 0 {
 			return fmt.Errorf("all %d items failed to uninstall: %v", len(items), failedItems)
 		}
 	} else {
-		logging.Info("All items uninstalled successfully", "count", successCount)
+		logger.Info("All %d items uninstalled successfully", successCount)
 	}
 
 	return nil
@@ -909,34 +839,23 @@ func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, 
 
 		data, readErr := os.ReadFile(catPath)
 		if readErr != nil {
-			logging.Warn("Failed to read catalog file", "catalog", catPath, "error", readErr)
+			logging.Warn("Failed to read catalog file %s: %v", catPath, readErr)
 			continue
 		}
 
 		var wrapper catalogWrapper
 		if err := yaml.Unmarshal(data, &wrapper); err != nil {
-			logging.Warn("Failed to parse catalog YAML", "catalog", catPath, "error", err)
+			logging.Warn("Failed to parse catalog YAML %s: %v", catPath, err)
 			continue
 		}
 
 		// catItems is the slice from the "items" array in that catalog.
 		catItems := wrapper.Items
-		filteredCount := 0
-
 		// Add them to our multi-map keyed by item name, in lowercase for deduping.
 		for _, cItem := range catItems {
 			key := strings.ToLower(cItem.Name)
-
-			// Apply early architecture filtering
-			if status.SupportsArchitecture(cItem, status.GetSystemArchitecture()) {
-				itemsMulti[key] = append(itemsMulti[key], cItem)
-			} else {
-				filteredCount++
-			}
+			itemsMulti[key] = append(itemsMulti[key], cItem)
 		}
-
-		catalogName := strings.TrimSuffix(entry.Name(), ".yaml")
-		logging.Debug("Processed catalog", "name", catalogName, "items", len(catItems)-filteredCount, "filtered", filteredCount)
 	}
 
 	// Now deduplicate by picking the highest-version item for each name.
@@ -957,14 +876,13 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 	var results []catalog.Item
 	dedupedItems := status.DeduplicateManifestItems(manifestItems)
 	for _, m := range dedupedItems {
-		key := strings.ToLower(m.Name)
-		catItem, found := catMap[key]
-		if !found {
-			logging.Warn("Package not available in downloaded catalogs - skipping", "package", m.Name, "source_manifest", m.SourceManifest)
-			continue
-		}
-
 		if installer.LocalNeedsUpdate(m, catMap, cfg) {
+			key := strings.ToLower(m.Name)
+			catItem, found := catMap[key]
+			if !found {
+				logger.Warning("Skipping item not in local catalog: %s", m.Name)
+				continue
+			}
 			results = append(results, catItem)
 		}
 	}
@@ -978,16 +896,8 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 
 	// Prepare the correct full URLs for each item
 	for _, cItem := range items {
-		// Get source information for logging
-		var sourceDesc string
-		if source, exists := process.GetItemSource(cItem.Name); exists {
-			sourceDesc = source.GetSourceDescription()
-		} else {
-			sourceDesc = "unknown"
-		}
-
 		if cItem.Installer.Location == "" {
-			logging.Warn("No installer location found for item", "item", cItem.Name, "source", sourceDesc)
+			logger.Warning("No installer location found for item: %s", cItem.Name)
 			continue
 		}
 
@@ -1006,7 +916,7 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 	// Download each item and retrieve precise downloaded file paths
 	downloadedPaths, err := download.InstallPendingUpdates(downloadItems, cfg)
 	if err != nil {
-		logging.Warn("Some downloads may have failed, attempting installation with available files", "error", err)
+		logger.Warning("Some downloads may have failed, attempting installation with available files: %v", err)
 		// Continue with whatever was downloaded successfully
 		if downloadedPaths == nil {
 			downloadedPaths = make(map[string]string)
@@ -1016,25 +926,17 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 	var successCount, failCount int
 	// Perform installation for each item using the correct paths
 	for _, cItem := range items {
-		// Get source information for logging
-		var sourceDesc string
-		if source, exists := process.GetItemSource(cItem.Name); exists {
-			sourceDesc = source.GetSourceDescription()
-		} else {
-			sourceDesc = "unknown"
-		}
-
 		localFile, exists := downloadedPaths[cItem.Name]
 		if !exists {
-			logging.Error("Downloaded path not found for item", "item", cItem.Name, "source", sourceDesc)
+			logger.Error("Downloaded path not found for item: %s", cItem.Name)
 			failCount++
 			continue
 		}
 
-		logging.Info("Installing downloaded item", "item", cItem.Name, "file", localFile, "source", sourceDesc)
+		logger.Info("Installing downloaded item: %s, file: %s", cItem.Name, localFile)
 
 		if err := installOneCatalogItem(cItem, localFile, cfg); err != nil {
-			logging.Error("Installation command failed", "item", cItem.Name, "error", err, "source", sourceDesc)
+			logger.Error("Installation command failed: %s, error: %v", cItem.Name, err)
 			failCount++
 			continue
 		}
@@ -1043,9 +945,9 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 
 	// Log summary
 	if failCount > 0 {
-		logging.Warn("Installation summary", "succeeded", successCount, "failed", failCount, "total", len(items))
+		logger.Warning("Installation summary: %d succeeded, %d failed out of %d total items", successCount, failCount, len(items))
 	} else {
-		logging.Info("All items installed successfully", "count", successCount)
+		logger.Info("All %d items installed successfully", successCount)
 	}
 
 	return nil
@@ -1097,83 +999,72 @@ func getInstalledItemNames() []string {
 
 // printPendingActions prints a summary of planned actions: installs, updates, and uninstalls.
 func printPendingActions(toInstall, toUninstall, toUpdate []catalog.Item) {
-	fmt.Println("")
-	fmt.Println("📋 Summary of planned actions:")
-	fmt.Println("")
-
+	logger.Info("")
+	logger.Info("Summary of planned actions:")
+	logger.Info("")
 	// Check if no actions are planned.
 	if len(toInstall) == 0 && len(toUninstall) == 0 && len(toUpdate) == 0 {
-		fmt.Println("✅ No actions are planned.")
+		logger.Info("No actions are planned.")
 		return
 	}
 
-	// Print INSTALL actions in a clean format.
+	// Helper to print a table header and divider.
+	printTableHeader := func(header string) {
+		logger.Info(strings.Repeat("-", len(header)))
+	}
+
+	// Print INSTALL actions as a table.
 	if len(toInstall) > 0 {
-		fmt.Println("📦 Will install these items:")
-		fmt.Println(strings.Repeat("-", 80))
+		logger.Info("Will install these items:")
+		// Changed format: Version column now 20 characters wide.
+		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "Version", "Installer"))
 		for _, item := range toInstall {
-			installerPath := item.Installer.Location
-			if installerPath == "" {
-				installerPath = "No installer specified"
-			}
-			fmt.Printf("%-30s %-20s %s\n", item.Name, item.Version, installerPath)
+			logger.Info("%-20s %-20s %s", item.Name, item.Version, item.Installer.Location)
 		}
-		fmt.Println("")
+		logger.Info("")
 	}
 
-	// Print UPDATE actions in a clean format.
+	// Print UPDATE actions as a table.
 	if len(toUpdate) > 0 {
-		fmt.Println("🔄 Will update these items:")
-		fmt.Println(strings.Repeat("-", 80))
+		logger.Info("Will update these items:")
+		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "Version", "Installer"))
 		for _, item := range toUpdate {
-			installerPath := item.Installer.Location
-			if installerPath == "" {
-				installerPath = "No installer specified"
-			}
-			fmt.Printf("%-30s %-20s %s\n", item.Name, item.Version, installerPath)
+			logger.Info("%-20s %-20s %s", item.Name, item.Version, item.Installer.Location)
 		}
-		fmt.Println("")
+		logger.Info("")
 	}
 
-	// Print UNINSTALL actions in a clean format.
+	// Print UNINSTALL actions as a table.
 	if len(toUninstall) > 0 {
-		fmt.Println("🗑️  Will remove these items:")
-		fmt.Println(strings.Repeat("-", 80))
+		logger.Info("Will remove these items:")
+		printTableHeader(fmt.Sprintf("%-20s %-20s %s", "Name", "InstalledVersion", "Uninstaller"))
 		for _, item := range toUninstall {
-			uninstallerInfo := "Auto-detected"
+			uninstallerInfo := "Multiple uninstallers"
 			if len(item.Uninstaller) == 1 {
-				uninstallerInfo = fmt.Sprintf("%s: %s", item.Uninstaller[0].Type, item.Uninstaller[0].Path)
-			} else if len(item.Uninstaller) > 1 {
-				uninstallerInfo = "Multiple uninstallers"
+				uninstallerInfo = fmt.Sprintf("%s:%s", item.Uninstaller[0].Type, item.Uninstaller[0].Path)
+			} else if len(item.Uninstaller) == 0 {
+				uninstallerInfo = "Auto-detected"
 			}
-			fmt.Printf("%-30s %-20s %s\n", item.Name, "Current version", uninstallerInfo)
+			logger.Info("%-20s %-20s %s", item.Name, "?", uninstallerInfo)
 		}
-		fmt.Println("")
+		logger.Info("")
 	}
 }
 
 // installOneCatalogItem installs a single catalog item using the installer package.
 // It normalizes the architecture and handles installation output for error detection.
 func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Configuration) error {
-	// Get source information for logging
-	var sourceDesc string
-	if source, exists := process.GetItemSource(cItem.Name); exists {
-		sourceDesc = source.GetSourceDescription()
-	} else {
-		sourceDesc = "unknown"
-	}
-
 	normalizeArchitecture(&cItem)
 	sysArch := status.GetSystemArchitecture()
-	logging.Debug("Detected system architecture", "architecture", sysArch)
-	logging.Debug("Supported architectures for item", "item", cItem.Name, "supported_arch", cItem.SupportedArch, "source", sourceDesc)
+	logging.Debug("Detected system architecture: %s", sysArch)
+	logging.Debug("Supported architectures for item: %s, supported_arch: %v", cItem.Name, cItem.SupportedArch)
 
 	// Check for blocking applications before unattended installs (following Munki's behavior)
 	// Only applies to items marked as unattended_install or in auto/bootstrap mode
 	if blocking.BlockingApplicationsRunning(cItem) {
 		runningApps := blocking.GetRunningBlockingApps(cItem)
-		logging.Warn("Blocking applications are running", "item", cItem.Name, "running_apps", runningApps, "source", sourceDesc)
-		logging.Info("Skipping unattended install due to blocking applications", "item", cItem.Name, "source", sourceDesc)
+		logger.Warning("Blocking applications are running for %s: %v", cItem.Name, runningApps)
+		logger.Info("Skipping unattended install of %s due to blocking applications", cItem.Name)
 
 		// Return a special error to indicate this was skipped due to blocking applications
 		return fmt.Errorf("skipped install of %s due to blocking applications: %v", cItem.Name, runningApps)
@@ -1187,8 +1078,8 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 	}
 
 	// If we get here => success
-	logging.Info("Install output", "item", cItem.Name, "output", installedOutput, "source", sourceDesc)
-	logging.Info("Installed item successfully", "item", cItem.Name, "file", localFile, "source", sourceDesc)
+	logger.Info("Install output: %s, output: %s", cItem.Name, installedOutput)
+	logger.Info("Installed item successfully: %s, file: %s", cItem.Name, localFile)
 
 	// If you want to remove it from cache here, do so:
 	// os.Remove(localFile)
@@ -1229,12 +1120,12 @@ func getIdleSeconds() int {
 	}
 	ret, _, err := syscall.NewLazyDLL("user32.dll").NewProc("GetLastInputInfo").Call(uintptr(unsafe.Pointer(&lastInput)))
 	if ret == 0 {
-		logging.Error("Error getting last input info", "error", err)
+		fmt.Printf("Error getting last input info: %v\n", err)
 		return 0
 	}
 	tickCount, _, err2 := syscall.NewLazyDLL("kernel32.dll").NewProc("GetTickCount").Call()
 	if tickCount == 0 {
-		logging.Error("Error getting tick count", "error", err2)
+		fmt.Printf("Error getting tick count: %v\n", err2)
 		return 0
 	}
 	idleTime := (uint32(tickCount) - lastInput.DwTime) / 1000
@@ -1258,7 +1149,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 	// Read log files from the logsPath
 	logFiles, err := os.ReadDir(logsPath)
 	if err != nil {
-		logging.Warn("Failed to read logs directory", "directory", logsPath, "error", err)
+		logger.Warning("Failed to read logs directory: %v", err)
 	} else {
 		for _, entry := range logFiles {
 			if entry.IsDir() {
@@ -1267,7 +1158,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 			logFilePath := filepath.Join(logsPath, entry.Name())
 			data, err := os.ReadFile(logFilePath)
 			if err != nil {
-				logging.Warn("Failed to read log file", "file", logFilePath, "error", err)
+				logger.Warning("Failed to read log file %s: %v", logFilePath, err)
 				continue
 			}
 			// Split the log file into lines
@@ -1308,7 +1199,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 	// Now iterate through the cache folder.
 	cacheEntries, err := os.ReadDir(cachePath)
 	if err != nil {
-		logging.Warn("Failed to read cache directory", "directory", cachePath, "error", err)
+		logger.Warning("Failed to read cache directory: %v", err)
 		return
 	}
 
@@ -1318,15 +1209,15 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 		if successSet[entry.Name()] {
 			err := os.RemoveAll(fullPath)
 			if err != nil {
-				logging.Warn("Failed to remove cached item", "path", fullPath, "error", err)
+				logger.Warning("Failed to remove cached item %s: %v", fullPath, err)
 			} else {
-				logging.Debug("Removed cached item", "path", fullPath)
+				logger.Debug("Removed cached item: %s", fullPath)
 			}
 		} else {
-			logging.Debug("Retaining cached item", "path", fullPath)
+			logger.Debug("Retaining cached item: %s", fullPath)
 		}
 	}
-	logging.Info("Selective cache clearing complete", "folder", cachePath)
+	logger.Info("Selective cache clearing complete for folder: %s", cachePath)
 }
 
 func cleanManifestsCatalogsPreRun(dirPath string) error {
@@ -1365,7 +1256,7 @@ func enableBootstrapMode() error {
 		return fmt.Errorf("failed to write to bootstrap flag file: %w", err)
 	}
 
-	logging.Info("Bootstrap mode enabled - CimianWatcher service will detect and respond")
+	logger.Info("Bootstrap mode enabled - CimianWatcher service will detect and respond")
 	return nil
 }
 
@@ -1380,7 +1271,7 @@ func disableBootstrapMode() error {
 		return fmt.Errorf("failed to remove bootstrap flag file: %w", err)
 	}
 
-	logging.Info("Bootstrap mode disabled")
+	logger.Info("Bootstrap mode disabled")
 	return nil
 }
 
@@ -1392,311 +1283,4 @@ func clearBootstrapAfterSuccess() error {
 
 	logging.Info("Bootstrap process completed successfully - clearing bootstrap mode")
 	return disableBootstrapMode()
-}
-
-// printEnhancedPackageAnalysis provides detailed package information in checkonly mode
-func printEnhancedPackageAnalysis(toInstall, toUpdate, toUninstall []catalog.Item, catalogMap map[string]catalog.Item) {
-	fmt.Println("\n" + strings.Repeat("=", 80))
-	fmt.Println("ENHANCED PACKAGE ANALYSIS")
-	fmt.Println(strings.Repeat("=", 80))
-
-	// Summary statistics
-	totalPackages := len(toInstall) + len(toUpdate) + len(toUninstall)
-	fmt.Printf("📊 Summary: %d total packages (%d new installs, %d updates, %d removals)\n\n",
-		totalPackages, len(toInstall), len(toUpdate), len(toUninstall))
-
-	// Detailed analysis for each category
-	if len(toInstall) > 0 {
-		fmt.Println("🆕 NEW INSTALLATIONS:")
-		fmt.Println(strings.Repeat("-", 40))
-		for _, item := range toInstall {
-			printPackageDetails(item, catalogMap, "INSTALL")
-		}
-		fmt.Println("")
-	}
-
-	if len(toUpdate) > 0 {
-		fmt.Println("🔄 UPDATES:")
-		fmt.Println(strings.Repeat("-", 40))
-		for _, item := range toUpdate {
-			printPackageDetails(item, catalogMap, "UPDATE")
-		}
-		fmt.Println("")
-	}
-
-	if len(toUninstall) > 0 {
-		fmt.Println("❌ REMOVALS:")
-		fmt.Println(strings.Repeat("-", 40))
-		for _, item := range toUninstall {
-			printPackageDetails(item, catalogMap, "REMOVE")
-		}
-		fmt.Println("")
-	}
-
-	fmt.Println(strings.Repeat("=", 80))
-}
-
-// printPackageDetails prints detailed information about a single package
-func printPackageDetails(item catalog.Item, catalogMap map[string]catalog.Item, action string) {
-	fmt.Printf("📦 %s (%s)\n", item.Name, action)
-
-	// Version information
-	if item.Version != "" {
-		fmt.Printf("   📋 Version: %s\n", item.Version)
-	}
-
-	// Check if we have catalog entry for this item
-	if catalogEntry, exists := catalogMap[strings.ToLower(item.Name)]; exists {
-
-		// Dependencies
-		if len(catalogEntry.Requires) > 0 {
-			fmt.Printf("   🔗 Dependencies: %s\n", strings.Join(catalogEntry.Requires, ", "))
-		}
-
-		// Supported architectures
-		if len(catalogEntry.SupportedArch) > 0 {
-			fmt.Printf("   🏗️  Architecture: %s\n", strings.Join(catalogEntry.SupportedArch, ", "))
-		}
-
-		// Display name
-		if catalogEntry.DisplayName != "" && catalogEntry.DisplayName != catalogEntry.Name {
-			fmt.Printf("   📝 Display Name: %s\n", catalogEntry.DisplayName)
-		}
-
-		// Blocking applications
-		if len(catalogEntry.BlockingApps) > 0 {
-			fmt.Printf("   ⛔ Blocking Apps: %s\n", strings.Join(catalogEntry.BlockingApps, ", "))
-		}
-	}
-
-	fmt.Println("")
-}
-
-// formatBytes converts bytes to human-readable format
-func formatBytes(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
-}
-
-// displayLoadingHeader shows the initial loading information with tree format
-func displayLoadingHeader(targetItems []string, verbosity int) {
-	if len(targetItems) > 0 {
-		logging.Info("Targeted Item Loading", "items", strings.Join(targetItems, ", "))
-	} else {
-		logging.Info("Full Manifest Loading")
-	}
-}
-
-// displayManifestTree shows the manifest hierarchy in tree format
-func displayManifestTree(manifestItems []manifest.Item) {
-	// Create a map to track manifest counts by name
-	manifestCounts := make(map[string]int)
-
-	// Count items by their source manifest
-	for _, item := range manifestItems {
-		sourceManifest := item.SourceManifest
-		if sourceManifest == "" {
-			sourceManifest = "Unknown"
-		}
-		manifestCounts[sourceManifest]++
-	}
-
-	fmt.Printf("📁 Manifest Hierarchy (%d manifests found)\n", len(manifestCounts))
-	fmt.Printf("\n")
-
-	// Build the tree structure based on manifest path hierarchy
-	// We need to show the actual manifest structure: RodChristiansen -> B1115 -> IT -> Staff -> Assigned
-	manifestTree := buildManifestHierarchy(manifestCounts)
-	displayManifestHierarchy(manifestTree, "", true)
-
-	fmt.Printf("\n")
-}
-
-// ManifestNode represents a node in the manifest hierarchy tree
-type ManifestNode struct {
-	Name      string
-	ItemCount int
-	Children  map[string]*ManifestNode
-	IsLeaf    bool
-}
-
-// buildManifestHierarchy creates a tree structure from manifest names and their paths
-func buildManifestHierarchy(manifestCounts map[string]int) *ManifestNode {
-	root := &ManifestNode{
-		Name:     "root",
-		Children: make(map[string]*ManifestNode),
-	}
-
-	// Define known manifest hierarchy from the logs we've seen
-	// This represents the actual structure: RodChristiansen -> B1115 -> IT -> Staff -> Assigned
-	knownHierarchy := map[string][]string{
-		"RodChristiansen":   {"Assigned", "Staff", "IT", "B1115"},
-		"B1115":             {"Assigned", "Staff", "IT"},
-		"IT":                {"Assigned", "Staff"},
-		"Staff":             {"Assigned"},
-		"Assigned":          {},
-		"Apps":              {"Shared", "Curriculum"},
-		"Curriculum":        {"Shared"},
-		"Shared":            {},
-		"CoreApps":          {},
-		"ManagementTools":   {},
-		"ManagementPrefs":   {},
-		"CoreManifest":      {},
-		"SelfServeManifest": {},
-	}
-
-	// First pass: create all nodes with their hierarchy
-	allNodes := make(map[string]*ManifestNode)
-
-	// Add all manifests that have items
-	for manifestName := range manifestCounts {
-		if manifestName == "Unknown" {
-			continue
-		}
-
-		allNodes[manifestName] = &ManifestNode{
-			Name:      manifestName,
-			ItemCount: manifestCounts[manifestName],
-			Children:  make(map[string]*ManifestNode),
-			IsLeaf:    true,
-		}
-	}
-
-	// Add all known manifests (including those with 0 items) to ensure full hierarchy is shown
-	for manifestName := range knownHierarchy {
-		if allNodes[manifestName] == nil {
-			allNodes[manifestName] = &ManifestNode{
-				Name:      manifestName,
-				ItemCount: 0, // These are parent manifests with 0 direct items
-				Children:  make(map[string]*ManifestNode),
-				IsLeaf:    false,
-			}
-		}
-	}
-
-	// Create parent nodes that might not be in the known hierarchy
-	for manifestName := range manifestCounts {
-		if manifestName == "Unknown" {
-			continue
-		}
-
-		if parents, exists := knownHierarchy[manifestName]; exists {
-			for _, parentName := range parents {
-				if allNodes[parentName] == nil {
-					allNodes[parentName] = &ManifestNode{
-						Name:      parentName,
-						ItemCount: 0, // Parent nodes may have 0 items
-						Children:  make(map[string]*ManifestNode),
-						IsLeaf:    false,
-					}
-				}
-			}
-		}
-	}
-
-	// Second pass: build the hierarchy
-	for manifestName := range allNodes {
-		if manifestName == "Unknown" {
-			continue
-		}
-
-		node := allNodes[manifestName]
-		if parents, exists := knownHierarchy[manifestName]; exists && len(parents) > 0 {
-			// Find the immediate parent (last in the list)
-			parentName := parents[len(parents)-1]
-			if parentNode, parentExists := allNodes[parentName]; parentExists {
-				parentNode.Children[manifestName] = node
-				parentNode.IsLeaf = false
-			} else {
-				// If parent doesn't exist, add to root
-				root.Children[manifestName] = node
-			}
-		} else {
-			// No known hierarchy, add to root
-			root.Children[manifestName] = node
-		}
-	}
-
-	// Third pass: add any orphaned nodes to root
-	for nodeName, node := range allNodes {
-		// Check if this node is not already a child of someone
-		isChild := false
-		for _, otherNode := range allNodes {
-			if otherNode.Children[nodeName] != nil {
-				isChild = true
-				break
-			}
-		}
-		if !isChild && root.Children[nodeName] == nil {
-			root.Children[nodeName] = node
-		}
-	}
-
-	return root
-}
-
-// displayManifestHierarchy recursively displays the manifest tree
-func displayManifestHierarchy(node *ManifestNode, prefix string, isLast bool) {
-	if node.Name == "root" {
-		// Display root children
-		names := make([]string, 0, len(node.Children))
-		for name := range node.Children {
-			names = append(names, name)
-		}
-
-		for i, name := range names {
-			child := node.Children[name]
-			isChildLast := i == len(names)-1
-			displayManifestHierarchy(child, "", isChildLast)
-		}
-		return
-	}
-
-	// Display this node
-	connector := "├─"
-	if isLast {
-		connector = "└─"
-	}
-
-	fmt.Printf("%s%s 📄 %s (%d items)\n", prefix, connector, node.Name, node.ItemCount)
-
-	// Display children if any
-	if len(node.Children) > 0 {
-		childPrefix := prefix
-		if isLast {
-			childPrefix += "   "
-		} else {
-			childPrefix += "│  "
-		}
-
-		names := make([]string, 0, len(node.Children))
-		for name := range node.Children {
-			names = append(names, name)
-		}
-
-		for i, name := range names {
-			child := node.Children[name]
-			isChildLast := i == len(names)-1
-			displayManifestHierarchy(child, childPrefix, isChildLast)
-		}
-	}
-}
-
-// displayCatalogBox shows catalogs in a box format around the manifest tree
-func displayCatalogBox(catalogMap map[string]catalog.Item, catalogNames []string) {
-	// Decorative catalog box removed - not needed for normal operations
-}
-
-// displayFinalSummary shows the overall loading summary
-func displayFinalSummary(totalTime time.Duration, manifestItems int, catalogMap map[string]catalog.Item, targetItems []string) {
-	// Only show decorative summary at highest debug level
-	// For normal usage, these decorative elements are not needed
 }
