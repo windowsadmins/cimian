@@ -53,8 +53,8 @@ type Item struct {
 
 	// Add a field to record if the item is for install/update/uninstall
 	Action string `yaml:"-"` // internal use
-	
-	// Source tracking - not persisted to YAML, used for runtime tracking  
+
+	// Source tracking - not persisted to YAML, used for runtime tracking
 	SourceManifest string `yaml:"-"` // Which manifest this item came from
 }
 
@@ -177,7 +177,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			logging.Warn("Failed to parse manifest YAML", "file", localPath, "error", err)
 			continue
 		}
-		logging.Info(fmt.Sprintf("Processed manifest: %s", mf.Name))
+		logging.Debug(fmt.Sprintf("Processed manifest: %s", mf.Name))
 
 		allManifests = append(allManifests, mf)
 
@@ -208,7 +208,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				logging.Warn("Failed to download catalog", "catalogURL", catURL, "error", err)
 				continue
 			}
-			logging.Info(fmt.Sprintf("Downloaded catalog: %s", catName))
+			logging.Debug(fmt.Sprintf("Downloaded catalog: %s", catName))
 
 			// Parse it
 			cEntries, err := parseCatalogFile(catLocal)

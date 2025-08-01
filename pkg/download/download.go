@@ -123,7 +123,7 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 	}
 
 	return retry.Retry(configRetry, func() error {
-		logging.Info("Starting download", "url", url, "destination", dest)
+		logging.Debug("Starting download", "url", url, "destination", dest)
 
 		out, err := os.Create(dest)
 		if err != nil {
@@ -153,7 +153,7 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 		}
 
 		logging.Debug("File saved", "file", dest)
-		logging.Info("Download completed successfully", "file", dest)
+		logging.Debug("Download completed successfully", "file", dest)
 		return nil
 	})
 }
