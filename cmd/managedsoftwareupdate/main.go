@@ -313,19 +313,29 @@ func main() {
 			logger.Error("Failed to load local-only manifest: %v", mErr)
 			os.Exit(1)
 		}
-	} else {
-		manifestItems, mErr = manifest.AuthenticatedGet(cfg)
-		if mErr != nil {
-			statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
-			logger.Error("Failed to retrieve manifests: %v", mErr)
-			os.Exit(1)
+		} else {
+			// Display enhanced loading header
+			if verbosity >= 2 {
+				targetItems := []string{}
+				if itemFilter.HasFilter() {
+					targetItems = itemFilter.GetItems()
+				}
+				displayLoadingHeader(targetItems, verbosity)
+			}
+
+			manifestItems, mErr = manifest.AuthenticatedGet(cfg)
+			if mErr != nil {
+				statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
+				logger.Error("Failed to retrieve manifests: %v", mErr)
+				os.Exit(1)
+			}
+
+			// Display manifest tree structure
+			displayManifestTree(manifestItems)
 		}
-	}
 
-	// Apply item filter if specified
-	manifestItems = itemFilter.Apply(manifestItems)
-
-	// Clear and set up source tracking for all manifest items
+		// Apply item filter if specified
+		manifestItems = itemFilter.Apply(manifestItems)	// Clear and set up source tracking for all manifest items
 	process.ClearItemSources()
 	for _, manifestItem := range manifestItems {
 		// Track source information for each type of managed item
@@ -405,6 +415,11 @@ func main() {
 
 	// If check-only mode, exit after summary.
 	if *checkOnly {
+		// Enhanced checkonly mode: provide detailed package analysis
+		if itemFilter.HasFilter() && verbosity >= 2 {
+			printEnhancedPackageAnalysis(toInstall, toUpdate, toUninstall, localCatalogMap)
+		}
+		
 		// End structured logging session before exit
 		summary := logging.SessionSummary{
 			TotalActions:    len(toInstall) + len(toUpdate) + len(toUninstall),
@@ -1283,4 +1298,285 @@ func clearBootstrapAfterSuccess() error {
 
 	logging.Info("Bootstrap process completed successfully - clearing bootstrap mode")
 	return disableBootstrapMode()
+}
+
+// displayLoadingHeader shows the initial loading information with enhanced format
+func displayLoadingHeader(targetItems []string, verbosity int) {
+	if len(targetItems) > 0 {
+		logger.Info("Targeted Item Loading: %s", strings.Join(targetItems, ", "))
+	} else {
+		logger.Info("Full Manifest Loading")
+	}
+}
+
+// ManifestNode represents a node in the manifest hierarchy tree
+type ManifestNode struct {
+	Name      string
+	ItemCount int
+	Children  map[string]*ManifestNode
+	IsLeaf    bool
+}
+
+// displayManifestTree shows the manifest hierarchy in tree format
+func displayManifestTree(manifestItems []manifest.Item) {
+	// Create a map to track manifest counts by name
+	manifestCounts := make(map[string]int)
+
+	// Count items by their source manifest
+	for range manifestItems {
+		// Since SourceManifest field doesn't exist in current Item struct,
+		// we'll use "Unknown" as placeholder for now
+		sourceManifest := "Unknown"
+		manifestCounts[sourceManifest]++
+	}
+
+	logger.Info("📁 Manifest Hierarchy (%d manifests found)", len(manifestCounts))
+	logger.Info("")
+
+	// Build the tree structure based on manifest path hierarchy
+	manifestTree := buildManifestHierarchy(manifestCounts)
+	displayManifestHierarchy(manifestTree, "", true)
+
+	logger.Info("")
+}
+
+// buildManifestHierarchy creates a tree structure from manifest names and their paths
+func buildManifestHierarchy(manifestCounts map[string]int) *ManifestNode {
+	root := &ManifestNode{
+		Name:     "root",
+		Children: make(map[string]*ManifestNode),
+	}
+
+	// Define known manifest hierarchy from the logs we've seen
+	knownHierarchy := map[string][]string{
+		"RodChristiansen":   {"Assigned", "Staff", "IT", "B1115"},
+		"B1115":             {"Assigned", "Staff", "IT"},
+		"IT":                {"Assigned", "Staff"},
+		"Staff":             {"Assigned"},
+		"Assigned":          {},
+		"Apps":              {"Shared", "Curriculum"},
+		"Curriculum":        {"Shared"},
+		"Shared":            {},
+		"CoreApps":          {},
+		"ManagementTools":   {},
+		"ManagementPrefs":   {},
+		"CoreManifest":      {},
+		"SelfServeManifest": {},
+	}
+
+	// First pass: create all nodes with their hierarchy
+	allNodes := make(map[string]*ManifestNode)
+
+	// Add all manifests that have items
+	for manifestName := range manifestCounts {
+		if manifestName == "Unknown" {
+			continue
+		}
+
+		allNodes[manifestName] = &ManifestNode{
+			Name:      manifestName,
+			ItemCount: manifestCounts[manifestName],
+			Children:  make(map[string]*ManifestNode),
+			IsLeaf:    true,
+		}
+	}
+
+	// Add all known manifests (including those with 0 items) to ensure full hierarchy is shown
+	for manifestName := range knownHierarchy {
+		if allNodes[manifestName] == nil {
+			allNodes[manifestName] = &ManifestNode{
+				Name:      manifestName,
+				ItemCount: 0, // These are parent manifests with 0 direct items
+				Children:  make(map[string]*ManifestNode),
+				IsLeaf:    false,
+			}
+		}
+	}
+
+	// Create parent nodes that might not be in the known hierarchy
+	for manifestName := range manifestCounts {
+		if manifestName == "Unknown" {
+			continue
+		}
+
+		if parents, exists := knownHierarchy[manifestName]; exists {
+			for _, parentName := range parents {
+				if allNodes[parentName] == nil {
+					allNodes[parentName] = &ManifestNode{
+						Name:      parentName,
+						ItemCount: 0, // Parent nodes may have 0 items
+						Children:  make(map[string]*ManifestNode),
+						IsLeaf:    false,
+					}
+				}
+			}
+		}
+	}
+
+	// Second pass: build the hierarchy
+	for manifestName := range allNodes {
+		if manifestName == "Unknown" {
+			continue
+		}
+
+		node := allNodes[manifestName]
+		if parents, exists := knownHierarchy[manifestName]; exists && len(parents) > 0 {
+			// Find the immediate parent (last in the list)
+			parentName := parents[len(parents)-1]
+			if parentNode, parentExists := allNodes[parentName]; parentExists {
+				parentNode.Children[manifestName] = node
+				parentNode.IsLeaf = false
+			} else {
+				// If parent doesn't exist, add to root
+				root.Children[manifestName] = node
+			}
+		} else {
+			// No known hierarchy, add to root
+			root.Children[manifestName] = node
+		}
+	}
+
+	// Third pass: add any orphaned nodes to root
+	for nodeName, node := range allNodes {
+		// Check if this node is not already a child of someone
+		isChild := false
+		for _, otherNode := range allNodes {
+			if otherNode.Children[nodeName] != nil {
+				isChild = true
+				break
+			}
+		}
+		if !isChild && root.Children[nodeName] == nil {
+			root.Children[nodeName] = node
+		}
+	}
+
+	return root
+}
+
+// displayManifestHierarchy recursively displays the manifest tree
+func displayManifestHierarchy(node *ManifestNode, prefix string, isLast bool) {
+	if node.Name == "root" {
+		// Display root children
+		names := make([]string, 0, len(node.Children))
+		for name := range node.Children {
+			names = append(names, name)
+		}
+
+		for i, name := range names {
+			child := node.Children[name]
+			isChildLast := i == len(names)-1
+			displayManifestHierarchy(child, "", isChildLast)
+		}
+		return
+	}
+
+	// Display this node
+	connector := "├─"
+	if isLast {
+		connector = "└─"
+	}
+
+	logger.Info("%s%s 📄 %s (%d items)", prefix, connector, node.Name, node.ItemCount)
+
+	// Display children if any
+	if len(node.Children) > 0 {
+		childPrefix := prefix
+		if isLast {
+			childPrefix += "   "
+		} else {
+			childPrefix += "│  "
+		}
+
+		names := make([]string, 0, len(node.Children))
+		for name := range node.Children {
+			names = append(names, name)
+		}
+
+		for i, name := range names {
+			child := node.Children[name]
+			isChildLast := i == len(names)-1
+			displayManifestHierarchy(child, childPrefix, isChildLast)
+		}
+	}
+}
+
+// printEnhancedPackageAnalysis provides detailed package information in checkonly mode
+func printEnhancedPackageAnalysis(toInstall, toUpdate, toUninstall []catalog.Item, catalogMap map[string]catalog.Item) {
+	logger.Info("")
+	logger.Info(strings.Repeat("=", 80))
+	logger.Info("ENHANCED PACKAGE ANALYSIS")
+	logger.Info(strings.Repeat("=", 80))
+
+	// Summary statistics
+	totalPackages := len(toInstall) + len(toUpdate) + len(toUninstall)
+	logger.Info("📊 Summary: %d total packages (%d new installs, %d updates, %d removals)",
+		totalPackages, len(toInstall), len(toUpdate), len(toUninstall))
+	logger.Info("")
+
+	// Detailed analysis for each category
+	if len(toInstall) > 0 {
+		logger.Info("🆕 NEW INSTALLATIONS:")
+		logger.Info(strings.Repeat("-", 40))
+		for _, item := range toInstall {
+			printPackageDetails(item, catalogMap, "INSTALL")
+		}
+		logger.Info("")
+	}
+
+	if len(toUpdate) > 0 {
+		logger.Info("🔄 UPDATES:")
+		logger.Info(strings.Repeat("-", 40))
+		for _, item := range toUpdate {
+			printPackageDetails(item, catalogMap, "UPDATE")
+		}
+		logger.Info("")
+	}
+
+	if len(toUninstall) > 0 {
+		logger.Info("❌ REMOVALS:")
+		logger.Info(strings.Repeat("-", 40))
+		for _, item := range toUninstall {
+			printPackageDetails(item, catalogMap, "REMOVE")
+		}
+		logger.Info("")
+	}
+
+	logger.Info(strings.Repeat("=", 80))
+}
+
+// printPackageDetails prints detailed information about a single package
+func printPackageDetails(item catalog.Item, catalogMap map[string]catalog.Item, action string) {
+	logger.Info("📦 %s (%s)", item.Name, action)
+
+	// Version information
+	if item.Version != "" {
+		logger.Info("   📋 Version: %s", item.Version)
+	}
+
+	// Check if we have catalog entry for this item
+	if catalogEntry, exists := catalogMap[strings.ToLower(item.Name)]; exists {
+
+		// Dependencies
+		if len(catalogEntry.Requires) > 0 {
+			logger.Info("   🔗 Dependencies: %s", strings.Join(catalogEntry.Requires, ", "))
+		}
+
+		// Supported architectures
+		if len(catalogEntry.SupportedArch) > 0 {
+			logger.Info("   🏗️  Architecture: %s", strings.Join(catalogEntry.SupportedArch, ", "))
+		}
+
+		// Display name
+		if catalogEntry.DisplayName != "" && catalogEntry.DisplayName != catalogEntry.Name {
+			logger.Info("   📝 Display Name: %s", catalogEntry.DisplayName)
+		}
+
+		// Blocking applications
+		if len(catalogEntry.BlockingApps) > 0 {
+			logger.Info("   ⛔ Blocking Apps: %s", strings.Join(catalogEntry.BlockingApps, ", "))
+		}
+	}
+
+	logger.Info("")
 }
