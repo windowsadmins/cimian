@@ -434,6 +434,22 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 func (l *Logger) writeMainLog(entry LogEntry, keyValues []interface{}) {
 	// Traditional format for backward compatibility
 	ts := time.Unix(entry.Time, 0).Format("2006-01-02 15:04:05")
+
+	// Add color support for console output based on log level
+	var colorCode string
+	switch entry.Level {
+	case "ERROR":
+		colorCode = colorRed
+	case "WARN":
+		colorCode = colorYellow
+	case "DEBUG":
+		colorCode = colorBlue
+	case "INFO":
+		colorCode = "" // No color for INFO
+	default:
+		colorCode = ""
+	}
+
 	baseLine := fmt.Sprintf("[%s] %-5s %s", ts, entry.Level, entry.Message)
 
 	// Append key-value pairs in traditional format
@@ -462,7 +478,13 @@ func (l *Logger) writeMainLog(entry LogEntry, keyValues []interface{}) {
 		baseLine = "\n----------------------------------------\n" + baseLine
 	}
 
-	l.logger.Println(baseLine)
+	// Apply color for console output if color is defined
+	if colorCode != "" && l.config.EnableConsole {
+		coloredLine := fmt.Sprintf("%s%s%s", colorCode, baseLine, colorReset)
+		l.logger.Println(coloredLine)
+	} else {
+		l.logger.Println(baseLine)
+	}
 }
 
 // writeJSONLog writes structured JSON log entry
@@ -540,6 +562,48 @@ func Error(message string, keyValues ...interface{}) {
 		return
 	}
 	instance.logMessage(LevelError, message, keyValues...)
+}
+
+// Fatal logs error messages and exits.
+func Fatal(message string, keyValues ...interface{}) {
+	if instance == nil {
+		fmt.Printf("LOGGING NOT INITIALIZED: FATAL %s %v\n", message, keyValues)
+		os.Exit(1)
+	}
+	instance.logMessage(LevelError, message, keyValues...)
+	os.Exit(1)
+}
+
+// Success logs success messages with green color.
+func Success(message string, keyValues ...interface{}) {
+	if instance == nil {
+		fmt.Printf("LOGGING NOT INITIALIZED: SUCCESS %s %v\n", message, keyValues)
+		return
+	}
+	// Use INFO level but format as success
+	entry := instance.createLogEntry(LevelInfo, message, nil)
+	entry.Level = "SUCCESS"
+
+	// Write with green color formatting
+	ts := time.Unix(entry.Time, 0).Format("2006-01-02 15:04:05")
+	baseLine := fmt.Sprintf("[%s] %-7s %s", ts, entry.Level, entry.Message)
+
+	// Append key-value pairs
+	if len(keyValues) > 0 {
+		for i := 0; i < len(keyValues); i += 2 {
+			if i+1 < len(keyValues) {
+				key := fmt.Sprintf("%v", keyValues[i])
+				val := keyValues[i+1]
+				baseLine += fmt.Sprintf(" %s=%v", key, val)
+			}
+		}
+	}
+
+	// Apply green color
+	coloredLine := fmt.Sprintf("%s%s%s", colorGreen, baseLine, colorReset)
+	if instance.logger != nil {
+		instance.logger.Println(coloredLine)
+	}
 }
 
 // New creates a new Logger instance.
@@ -727,6 +791,14 @@ func LogStructured(level LogLevel, message string, properties map[string]interfa
 	}
 
 	instance.logMessage(level, message, keyValues...)
+}
+
+// LogEventEntry logs a structured event using the singleton logger instance
+func LogEventEntry(eventType, action, status, message string, opts ...EventOption) error {
+	if instance == nil {
+		return nil // Gracefully handle when structured logging is not available
+	}
+	return instance.LogEvent(eventType, action, status, message, opts...)
 }
 
 // runScript executes the PowerShell script with the specified verbosity and returns its output.
