@@ -396,7 +396,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	if !cfg.SkipSelfService {
 		selfServicePath := `C:\ProgramData\ManagedInstalls\SelfServeManifest.yaml`
 		if _, err := os.Stat(selfServicePath); err == nil {
-			logging.Info("Processing self-service manifest")
+			logging.Debug("Processing self-service manifest")
 
 			// Read the self-service manifest
 			data, err := os.ReadFile(selfServicePath)
@@ -407,7 +407,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				if err := yaml.Unmarshal(data, &selfServiceManifest); err != nil {
 					logging.Warn("Failed to parse self-service manifest", "error", err)
 				} else {
-					logging.Info("Processed self-service manifest", "name", selfServiceManifest.Name)
+					logging.Debug("Processed self-service manifest: %s", selfServiceManifest.Name)
 
 					// Process self-service managed_installs
 					for _, pkgName := range selfServiceManifest.ManagedInstalls {
@@ -524,7 +524,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	}
 
 	cfg.Catalogs = catalogList
-	logging.Info("Updated config catalogs from manifests", "catalogs", strings.Join(cfg.Catalogs, ", "))
+	logging.Debug("Updated config catalogs from manifests", "catalogs", strings.Join(cfg.Catalogs, ", "))
 
 	return finalItems, nil
 }
