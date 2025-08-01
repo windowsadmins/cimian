@@ -313,29 +313,29 @@ func main() {
 			logger.Error("Failed to load local-only manifest: %v", mErr)
 			os.Exit(1)
 		}
-		} else {
-			// Display enhanced loading header
-			if verbosity >= 2 {
-				targetItems := []string{}
-				if itemFilter.HasFilter() {
-					targetItems = itemFilter.GetItems()
-				}
-				displayLoadingHeader(targetItems, verbosity)
+	} else {
+		// Display enhanced loading header
+		if verbosity >= 2 {
+			targetItems := []string{}
+			if itemFilter.HasFilter() {
+				targetItems = itemFilter.GetItems()
 			}
-
-			manifestItems, mErr = manifest.AuthenticatedGet(cfg)
-			if mErr != nil {
-				statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
-				logger.Error("Failed to retrieve manifests: %v", mErr)
-				os.Exit(1)
-			}
-
-			// Display manifest tree structure
-			displayManifestTree(manifestItems)
+			displayLoadingHeader(targetItems, verbosity)
 		}
 
-		// Apply item filter if specified
-		manifestItems = itemFilter.Apply(manifestItems)	// Clear and set up source tracking for all manifest items
+		manifestItems, mErr = manifest.AuthenticatedGet(cfg)
+		if mErr != nil {
+			statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
+			logger.Error("Failed to retrieve manifests: %v", mErr)
+			os.Exit(1)
+		}
+
+		// Display manifest tree structure
+		displayManifestTree(manifestItems)
+	}
+
+	// Apply item filter if specified
+	manifestItems = itemFilter.Apply(manifestItems) // Clear and set up source tracking for all manifest items
 	process.ClearItemSources()
 	for _, manifestItem := range manifestItems {
 		// Track source information for each type of managed item
@@ -419,7 +419,7 @@ func main() {
 		if itemFilter.HasFilter() && verbosity >= 2 {
 			printEnhancedPackageAnalysis(toInstall, toUpdate, toUninstall, localCatalogMap)
 		}
-		
+
 		// End structured logging session before exit
 		summary := logging.SessionSummary{
 			TotalActions:    len(toInstall) + len(toUpdate) + len(toUninstall),
@@ -1323,10 +1323,11 @@ func displayManifestTree(manifestItems []manifest.Item) {
 	manifestCounts := make(map[string]int)
 
 	// Count items by their source manifest
-	for range manifestItems {
-		// Since SourceManifest field doesn't exist in current Item struct,
-		// we'll use "Unknown" as placeholder for now
-		sourceManifest := "Unknown"
+	for _, item := range manifestItems {
+		sourceManifest := item.SourceManifest
+		if sourceManifest == "" {
+			sourceManifest = "Unknown"
+		}
 		manifestCounts[sourceManifest]++
 	}
 

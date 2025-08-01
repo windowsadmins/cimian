@@ -53,6 +53,9 @@ type Item struct {
 
 	// Add a field to record if the item is for install/update/uninstall
 	Action string `yaml:"-"` // internal use
+	
+	// Source tracking - not persisted to YAML, used for runtime tracking  
+	SourceManifest string `yaml:"-"` // Which manifest this item came from
 }
 
 // CatalogEntry matches how each record in your catalogs is shaped.
@@ -262,10 +265,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				// No data in catalogs
 				logging.Warn("No catalog entry found for package", "package", pkgName)
 				finalItems = append(finalItems, Item{
-					Name:     pkgName,
-					Version:  "", // unknown
-					Catalogs: mf.Catalogs,
-					Action:   "install", // or "install"
+					Name:           pkgName,
+					Version:        "", // unknown
+					Catalogs:       mf.Catalogs,
+					Action:         "install", // or "install"
+					SourceManifest: mf.Name,
 				})
 			} else {
 				finalItems = append(finalItems, Item{
@@ -276,6 +280,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SupportedArch:     catEntry.SupportedArch,
 					OnDemand:          catEntry.OnDemand,
 					Action:            "install", // or "install"
+					SourceManifest:    mf.Name,
 				})
 			}
 		}
@@ -294,10 +299,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			if !found {
 				logging.Warn("No catalog entry for update package", "package", pkgName)
 				finalItems = append(finalItems, Item{
-					Name:     pkgName,
-					Version:  "",
-					Catalogs: mf.Catalogs,
-					Action:   "update",
+					Name:           pkgName,
+					Version:        "",
+					Catalogs:       mf.Catalogs,
+					Action:         "update",
+					SourceManifest: mf.Name,
 				})
 			} else {
 				finalItems = append(finalItems, Item{
@@ -308,6 +314,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SupportedArch:     catEntry.SupportedArch,
 					OnDemand:          catEntry.OnDemand,
 					Action:            "update",
+					SourceManifest:    mf.Name,
 				})
 			}
 		}
@@ -326,10 +333,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			if !found {
 				logging.Warn("No catalog entry for optional package", "package", pkgName)
 				finalItems = append(finalItems, Item{
-					Name:     pkgName,
-					Version:  "",
-					Catalogs: mf.Catalogs,
-					Action:   "optional",
+					Name:           pkgName,
+					Version:        "",
+					Catalogs:       mf.Catalogs,
+					Action:         "optional",
+					SourceManifest: mf.Name,
 				})
 			} else {
 				finalItems = append(finalItems, Item{
@@ -340,6 +348,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SupportedArch:     catEntry.SupportedArch,
 					OnDemand:          catEntry.OnDemand,
 					Action:            "optional",
+					SourceManifest:    mf.Name,
 				})
 			}
 		}
@@ -359,10 +368,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				logging.Warn("No catalog entry for uninstall package", "package", pkgName)
 				// But we can still do an uninstall if the local system had it.
 				finalItems = append(finalItems, Item{
-					Name:     pkgName,
-					Version:  "",
-					Catalogs: mf.Catalogs,
-					Action:   "uninstall",
+					Name:           pkgName,
+					Version:        "",
+					Catalogs:       mf.Catalogs,
+					Action:         "uninstall",
+					SourceManifest: mf.Name,
 				})
 			} else {
 				// Possibly we only need name + version for uninstall, or the uninstaller data?
@@ -374,6 +384,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SupportedArch:     catEntry.SupportedArch,
 					OnDemand:          catEntry.OnDemand,
 					Action:            "uninstall",
+					SourceManifest:    mf.Name,
 				})
 			}
 		}
