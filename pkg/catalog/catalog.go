@@ -123,7 +123,7 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 			catalogName)
 		catalogFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalogName+".yaml")
 
-		logging.Info("Downloading catalog", "url", catalogURL, "path", catalogFilePath)
+		logging.Debug("Downloading catalog", "url", catalogURL, "path", catalogFilePath)
 
 		// Download the catalog file
 		if err := download.DownloadFile(catalogURL, catalogFilePath, &cfg); err != nil {
@@ -159,7 +159,7 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 		}
 		catalogMap[catalogCount] = indexedItems
 
-		logging.Info("Successfully processed catalog", catalogName, "items", len(indexedItems))
+		logging.Debug("Successfully processed catalog", catalogName, "items", len(indexedItems))
 	}
 
 	return catalogMap
