@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
 )
 
@@ -40,6 +42,30 @@ type SessionRecord struct {
 	ProcessID       int      `json:"process_id"`
 	LogVersion      string   `json:"log_version"`
 	PackagesHandled []string `json:"packages_handled,omitempty"`
+
+	// Enhanced fields for external reporting tools
+	Config  *SessionConfig  `json:"config,omitempty"`
+	Summary *SessionSummary `json:"summary,omitempty"`
+}
+
+// SessionConfig represents configuration data for external reporting tool integration
+type SessionConfig struct {
+	Manifest         string `json:"manifest,omitempty"`
+	SoftwareRepoURL  string `json:"software_repo_url,omitempty"`
+	ClientIdentifier string `json:"client_identifier,omitempty"`
+	BootstrapMode    bool   `json:"bootstrap_mode,omitempty"`
+	CachePath        string `json:"cache_path,omitempty"`
+	DefaultCatalog   string `json:"default_catalog,omitempty"`
+	LogLevel         string `json:"log_level,omitempty"`
+}
+
+// SessionSummary represents enhanced summary data for external reporting tool integration
+type SessionSummary struct {
+	TotalPackagesManaged int     `json:"total_packages_managed"`
+	PackagesInstalled    int     `json:"packages_installed"`
+	PackagesPending      int     `json:"packages_pending"`
+	PackagesFailed       int     `json:"packages_failed"`
+	CacheSizeMB          float64 `json:"cache_size_mb,omitempty"`
 }
 
 // EventRecord represents a row in the events table
@@ -60,29 +86,58 @@ type EventRecord struct {
 	SourceFile string `json:"source_file"`
 	SourceFunc string `json:"source_function"`
 	SourceLine int    `json:"source_line"`
+
+	// Enhanced fields for external reporting tools
+	Details string        `json:"details,omitempty"`
+	Context *EventContext `json:"context,omitempty"`
+	LogFile string        `json:"log_file,omitempty"`
+}
+
+// EventContext represents context information for events
+type EventContext struct {
+	RunType   string `json:"run_type,omitempty"`
+	User      string `json:"user,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
+	ProcessID int    `json:"process_id,omitempty"`
 }
 
 // ItemRecord represents a row in the items table (comprehensive device status)
 type ItemRecord struct {
-	ItemName            string        `json:"item_name"`
-	ItemType            string        `json:"item_type"`      // managed_installs, managed_updates, optional_installs, etc.
-	CurrentStatus       string        `json:"current_status"` // "installed", "failed", "warning", "install_loop", "not_installed"
-	LatestVersion       string        `json:"latest_version"`
-	InstalledVersion    string        `json:"installed_version,omitempty"`
-	LastSeenInSession   string        `json:"last_seen_in_session"`
-	LastSuccessfulTime  string        `json:"last_successful_time"`
-	LastAttemptTime     string        `json:"last_attempt_time"`
-	LastAttemptStatus   string        `json:"last_attempt_status"` // "success", "failed", "warning"
-	InstallCount        int           `json:"install_count"`
-	UpdateCount         int           `json:"update_count"`
-	RemovalCount        int           `json:"removal_count"`
-	FailureCount        int           `json:"failure_count"`
-	WarningCount        int           `json:"warning_count"`
-	TotalSessions       int           `json:"total_sessions"`
-	InstallLoopDetected bool          `json:"install_loop_detected"`
-	LastError           string        `json:"last_error,omitempty"`
-	LastWarning         string        `json:"last_warning,omitempty"`
-	RecentAttempts      []ItemAttempt `json:"recent_attempts,omitempty"` // Last 5 attempts for loop detection
+	// Core identification
+	ID          string `json:"id"`                     // Short identifier for external tools
+	ItemName    string `json:"item_name"`              // Full package name
+	DisplayName string `json:"display_name,omitempty"` // User-friendly display name
+	ItemType    string `json:"item_type"`              // managed_installs, managed_updates, optional_installs, etc.
+
+	// Version information
+	CurrentStatus    string `json:"current_status"` // "installed", "failed", "warning", "install_loop", "not_installed", "pending_install"
+	LatestVersion    string `json:"latest_version"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+
+	// Status and timing
+	LastSeenInSession  string `json:"last_seen_in_session"`
+	LastSuccessfulTime string `json:"last_successful_time"`
+	LastAttemptTime    string `json:"last_attempt_time"`
+	LastAttemptStatus  string `json:"last_attempt_status"` // "success", "failed", "warning"
+	LastUpdate         string `json:"last_update"`         // Most recent activity timestamp
+
+	// Statistics
+	InstallCount        int  `json:"install_count"`
+	UpdateCount         int  `json:"update_count"`
+	RemovalCount        int  `json:"removal_count"`
+	FailureCount        int  `json:"failure_count"`
+	WarningCount        int  `json:"warning_count"`
+	TotalSessions       int  `json:"total_sessions"`
+	InstallLoopDetected bool `json:"install_loop_detected"`
+
+	// Enhanced metadata for external reporting tools
+	InstallMethod string `json:"install_method,omitempty"` // "nupkg", "msi", "exe", "pwsh"
+	Type          string `json:"type"`                     // Package manager type identifier
+
+	// Error information
+	LastError      string        `json:"last_error,omitempty"`
+	LastWarning    string        `json:"last_warning,omitempty"`
+	RecentAttempts []ItemAttempt `json:"recent_attempts,omitempty"` // Last 5 attempts for loop detection
 }
 
 // ItemAttempt represents a single install/update attempt for loop detection
@@ -104,11 +159,116 @@ func NewDataExporter(baseDir string) *DataExporter {
 	return &DataExporter{baseDir: baseDir}
 }
 
+// loadCimianConfiguration loads the current Cimian configuration for session enhancement
+func (exp *DataExporter) loadCimianConfiguration() *SessionConfig {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return nil
+	}
+
+	sessionConfig := &SessionConfig{
+		SoftwareRepoURL:  cfg.SoftwareRepoURL,
+		ClientIdentifier: cfg.ClientIdentifier,
+		CachePath:        cfg.CachePath,
+		DefaultCatalog:   cfg.DefaultCatalog,
+		LogLevel:         cfg.LogLevel,
+	}
+
+	// Determine current manifest path (simplified version)
+	if cfg.LocalOnlyManifest != "" {
+		sessionConfig.Manifest = cfg.LocalOnlyManifest
+	} else if cfg.ClientIdentifier != "" {
+		sessionConfig.Manifest = cfg.ClientIdentifier
+	}
+
+	return sessionConfig
+}
+
+// calculateCacheSize estimates the cache directory size in MB
+func (exp *DataExporter) calculateCacheSize(cachePath string) float64 {
+	if cachePath == "" {
+		return 0.0
+	}
+
+	var totalSize int64
+	err := filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Continue on errors
+		}
+		if !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0.0
+	}
+
+	return float64(totalSize) / (1024 * 1024) // Convert to MB
+}
+
+// determineInstallMethod attempts to determine the install method from cache files and package name
+func (exp *DataExporter) determineInstallMethod(packageName string, sessionConfig *SessionConfig) string {
+	if sessionConfig == nil || sessionConfig.CachePath == "" {
+		return "unknown"
+	}
+
+	nameLower := strings.ToLower(packageName)
+
+	// Check cache directory for package files
+	possibleExtensions := []string{".nupkg", ".msi", ".exe", ".msix"}
+	for _, ext := range possibleExtensions {
+		// Try various naming patterns
+		patterns := []string{
+			fmt.Sprintf("%s*%s", nameLower, ext),
+			fmt.Sprintf("*%s*%s", nameLower, ext),
+		}
+
+		for _, pattern := range patterns {
+			matches, _ := filepath.Glob(filepath.Join(sessionConfig.CachePath, "**", pattern))
+			if len(matches) > 0 {
+				switch ext {
+				case ".nupkg":
+					return "nupkg"
+				case ".msi":
+					return "msi"
+				case ".exe":
+					return "exe"
+				case ".msix":
+					return "msix"
+				}
+			}
+		}
+	}
+
+	// Check for PowerShell scripts
+	psPatterns := []string{
+		fmt.Sprintf("%s*.ps1", nameLower),
+		fmt.Sprintf("*%s*.ps1", nameLower),
+	}
+	for _, pattern := range psPatterns {
+		matches, _ := filepath.Glob(filepath.Join(sessionConfig.CachePath, "**", pattern))
+		if len(matches) > 0 {
+			return "pwsh"
+		}
+	}
+
+	return "unknown"
+}
+
 // GenerateSessionsTable creates external tool-compatible session records
 func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, error) {
 	sessions, err := exp.getRecentSessions(limitDays)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get recent sessions: %w", err)
+	}
+
+	// Load current configuration for session enhancement
+	sessionConfig := exp.loadCimianConfiguration()
+	var cacheSize float64
+	if sessionConfig != nil && sessionConfig.CachePath != "" {
+		cacheSize = exp.calculateCacheSize(sessionConfig.CachePath)
 	}
 
 	var records []SessionRecord
@@ -131,6 +291,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				Successes:       session.Summary.Successes,
 				Failures:        session.Summary.Failures,
 				PackagesHandled: session.Summary.PackagesHandled,
+				Config:          sessionConfig, // Add configuration data
 			}
 
 			// Calculate duration
@@ -159,6 +320,15 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				}
 			}
 
+			// Create enhanced summary for external reporting tools
+			record.Summary = &SessionSummary{
+				TotalPackagesManaged: len(record.PackagesHandled),
+				PackagesInstalled:    record.Successes,
+				PackagesPending:      record.TotalActions - record.Successes - record.Failures,
+				PackagesFailed:       record.Failures,
+				CacheSizeMB:          cacheSize,
+			}
+
 			// If start_time is missing or zero, try to get it from first event
 			if session.StartTime.IsZero() || record.StartTime == "0001-01-01T00:00:00Z" {
 				if startTime := exp.getSessionStartTimeFromEvents(sessionDir); !startTime.IsZero() {
@@ -180,6 +350,17 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 			// Old format - extract info from events.jsonl
 			record := exp.generateSessionFromEvents(sessionDir)
 			if record != nil {
+				// Add configuration and summary data to old format records too
+				record.Config = sessionConfig
+				if record.Summary == nil {
+					record.Summary = &SessionSummary{
+						TotalPackagesManaged: len(record.PackagesHandled),
+						PackagesInstalled:    record.Successes,
+						PackagesPending:      record.TotalActions - record.Successes - record.Failures,
+						PackagesFailed:       record.Failures,
+						CacheSizeMB:          cacheSize,
+					}
+				}
 				records = append(records, *record)
 			}
 		}
@@ -352,7 +533,7 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						continue
 					}
 
-					// Extract package name and other details from properties
+					// Extract package name and version from properties and message
 					packageName := ""
 					version := ""
 					action := ""
@@ -363,7 +544,16 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						if item, ok := props["item"].(string); ok {
 							packageName = item
 						}
+						// Check multiple version field names used in Cimian logs
 						if ver, ok := props["version"].(string); ok {
+							version = ver
+						} else if ver, ok := props["registryVersion"].(string); ok {
+							version = ver
+						} else if ver, ok := props["localVersion"].(string); ok {
+							version = ver
+						} else if ver, ok := props["repoVersion"].(string); ok {
+							version = ver
+						} else if ver, ok := props["targetVersion"].(string); ok {
 							version = ver
 						}
 						if act, ok := props["action"].(string); ok {
@@ -379,11 +569,22 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						}
 					}
 
-					// Infer event type from message content
+					// Get message and extract additional version info if not already present
 					message := ""
 					eventType := "general"
 					if msg, ok := logEvent["message"].(string); ok {
 						message = msg
+
+						// Extract version from message if not found in properties
+						if version == "" {
+							version = exp.extractVersionFromMessage(message)
+						}
+
+						// Extract package name from message if not found in properties
+						if packageName == "" {
+							packageName = exp.extractPackageFromMessage(message)
+						}
+
 						msgLower := strings.ToLower(message)
 						if strings.Contains(msgLower, "install") {
 							eventType = "install"
@@ -427,6 +628,49 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						sourceFunc = sf
 					}
 
+					// Enhanced error details for external reporting tools
+					details := ""
+					if errorMsg != "" && level == "ERROR" {
+						details = fmt.Sprintf("Error Details: %s", errorMsg)
+						if strings.Contains(message, "timeout") {
+							details += ". This may be due to network connectivity issues."
+						} else if strings.Contains(message, "exit code") {
+							details += ". Check installer logs for more information."
+						}
+					}
+
+					// Create event context for external reporting tool integration
+					eventContext := &EventContext{}
+					if props, ok := logEvent["properties"].(map[string]interface{}); ok {
+						if runType, ok := props["run_type"].(string); ok {
+							eventContext.RunType = runType
+						}
+						if user, ok := props["user"].(string); ok {
+							eventContext.User = user
+						}
+						if hostname, ok := props["hostname"].(string); ok {
+							eventContext.Hostname = hostname
+						}
+						if processID, ok := props["process_id"].(float64); ok {
+							eventContext.ProcessID = int(processID)
+						}
+					}
+
+					// Extract duration and progress if available
+					var duration int64
+					var progress int
+					if props, ok := logEvent["properties"].(map[string]interface{}); ok {
+						if dur, ok := props["duration_ms"].(float64); ok {
+							duration = int64(dur)
+						}
+						if prog, ok := props["progress"].(float64); ok {
+							progress = int(prog)
+						}
+					}
+
+					// Generate log file path for this session
+					logFilePath := filepath.Join(exp.baseDir, sessionID, "events.jsonl")
+
 					record := EventRecord{
 						EventID:    eventID,
 						SessionID:  sessionID,
@@ -436,12 +680,19 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						Package:    packageName,
 						Version:    version,
 						Action:     action,
-						Status:     status,
+						Status:     exp.normalizeStatus(status, level, errorMsg), // Apply status normalization
 						Message:    message,
+						Duration:   duration,
+						Progress:   progress,
 						Error:      errorMsg,
 						SourceFile: sourceFile,
 						SourceFunc: sourceFunc,
 						SourceLine: 0,
+
+						// Enhanced fields for external reporting tools
+						Details: details,
+						Context: eventContext,
+						LogFile: logFilePath,
 					}
 
 					records = append(records, record)
@@ -526,31 +777,31 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			switch event.EventType {
 			case "install":
 				switch attempt.Status {
-				case "success":
+				case "Success":
 					stats.InstallCount++
-					stats.CurrentStatus = "installed"
+					stats.CurrentStatus = "Installed"
 					if timeErr == nil {
 						stats.LastSuccessfulTime = eventTime
 						stats.LastAttemptTime = eventTime
 					}
-					stats.LastAttemptStatus = "success"
+					stats.LastAttemptStatus = "Success"
 					stats.InstalledVersion = event.Version
-				case "failed":
+				case "Failed":
 					stats.FailureCount++
-					stats.CurrentStatus = "failed"
+					stats.CurrentStatus = "Failed"
 					if timeErr == nil {
 						stats.LastAttemptTime = eventTime
 					}
-					stats.LastAttemptStatus = "failed"
+					stats.LastAttemptStatus = "Failed"
 					if event.Error != "" {
 						stats.LastError = event.Error
 					} else {
 						stats.LastError = event.Message
 					}
-				case "warning":
+				case "Warning":
 					stats.WarningCount++
-					if stats.CurrentStatus != "failed" { // Don't override failed status
-						stats.CurrentStatus = "warning"
+					if stats.CurrentStatus != "Failed" { // Don't override failed status
+						stats.CurrentStatus = "Warning"
 					}
 					if timeErr == nil {
 						stats.LastAttemptTime = eventTime
@@ -560,47 +811,47 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 				}
 			case "update":
 				switch attempt.Status {
-				case "success":
+				case "Success":
 					stats.UpdateCount++
-					stats.CurrentStatus = "installed"
+					stats.CurrentStatus = "Installed"
 					if timeErr == nil {
 						stats.LastSuccessfulTime = eventTime
 						stats.LastAttemptTime = eventTime
 					}
-					stats.LastAttemptStatus = "success"
+					stats.LastAttemptStatus = "Success"
 					stats.InstalledVersion = event.Version
-				case "failed":
+				case "Failed":
 					stats.FailureCount++
-					stats.CurrentStatus = "failed"
+					stats.CurrentStatus = "Failed"
 					if timeErr == nil {
 						stats.LastAttemptTime = eventTime
 					}
-					stats.LastAttemptStatus = "failed"
+					stats.LastAttemptStatus = "Failed"
 					if event.Error != "" {
 						stats.LastError = event.Error
 					} else {
 						stats.LastError = event.Message
 					}
-				case "warning":
+				case "Warning":
 					stats.WarningCount++
-					if stats.CurrentStatus != "failed" {
-						stats.CurrentStatus = "warning"
+					if stats.CurrentStatus != "Failed" {
+						stats.CurrentStatus = "Warning"
 					}
 					if timeErr == nil {
 						stats.LastAttemptTime = eventTime
 					}
-					stats.LastAttemptStatus = "warning"
+					stats.LastAttemptStatus = "Warning"
 					stats.LastWarning = event.Message
 				}
 			case "remove":
-				if attempt.Status == "success" {
+				if attempt.Status == "Success" {
 					stats.RemovalCount++
-					stats.CurrentStatus = "not_installed"
+					stats.CurrentStatus = "Not Installed"
 					stats.InstalledVersion = ""
 					if timeErr == nil {
 						stats.LastAttemptTime = eventTime
 					}
-					stats.LastAttemptStatus = "success"
+					stats.LastAttemptStatus = "Success"
 				}
 			}
 
@@ -618,21 +869,74 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	for _, stats := range itemStats {
 		stats.InstallLoopDetected = exp.detectInstallLoop(stats.RecentAttempts)
 		if stats.InstallLoopDetected {
-			stats.CurrentStatus = "install_loop"
+			stats.CurrentStatus = "Install Loop"
 		}
 	}
 
 	// Convert to records
 	var records []ItemRecord
+	sessionConfig := exp.loadCimianConfiguration() // Load config for cache path info
+
 	for _, stats := range itemStats {
+		// Generate standard reporting ID (lowercase, no spaces)
+		itemID := strings.ToLower(strings.ReplaceAll(stats.Name, " ", "-"))
+
+		// Determine display name (capitalize first letter of each word)
+		displayName := stats.Name
+		if strings.Contains(stats.Name, "-") || strings.Contains(stats.Name, "_") {
+			// Convert package-name or package_name to Package Name
+			parts := strings.FieldsFunc(stats.Name, func(c rune) bool {
+				return c == '-' || c == '_'
+			})
+			var titleParts []string
+			for _, part := range parts {
+				if len(part) > 0 {
+					// Capitalize first letter of each part
+					if len(part) == 1 {
+						titleParts = append(titleParts, strings.ToUpper(part))
+					} else {
+						titleParts = append(titleParts, strings.ToUpper(part[:1])+strings.ToLower(part[1:]))
+					}
+				}
+			}
+			displayName = strings.Join(titleParts, " ")
+		}
+
+		// Map current status to standard reporting format
+		standardStatus := stats.CurrentStatus
+		if stats.CurrentStatus == "Not Installed" && stats.LatestVersion != "" {
+			standardStatus = "Pending Install"
+		}
+
+		// Determine last update timestamp
+		lastUpdate := ""
+		if !stats.LastAttemptTime.IsZero() {
+			lastUpdate = stats.LastAttemptTime.Format(time.RFC3339)
+		} else if !stats.LastSuccessfulTime.IsZero() {
+			lastUpdate = stats.LastSuccessfulTime.Format(time.RFC3339)
+		}
+
+		// Determine install method from package data and cache
+		installMethod := exp.determineInstallMethod(stats.Name, sessionConfig)
+
 		record := ItemRecord{
-			ItemName:            stats.Name,
-			ItemType:            stats.ItemType,
-			CurrentStatus:       stats.CurrentStatus,
-			LatestVersion:       stats.LatestVersion,
-			InstalledVersion:    stats.InstalledVersion,
-			LastSeenInSession:   stats.LastSeenSession,
-			LastAttemptStatus:   stats.LastAttemptStatus,
+			// Core identification (enhanced for external reporting tools)
+			ID:          itemID,
+			ItemName:    stats.Name,
+			DisplayName: displayName,
+			ItemType:    stats.ItemType,
+
+			// Version information
+			CurrentStatus:    standardStatus,
+			LatestVersion:    stats.LatestVersion,
+			InstalledVersion: stats.InstalledVersion,
+
+			// Status and timing
+			LastSeenInSession: stats.LastSeenSession,
+			LastAttemptStatus: stats.LastAttemptStatus,
+			LastUpdate:        lastUpdate,
+
+			// Statistics
 			InstallCount:        stats.InstallCount,
 			UpdateCount:         stats.UpdateCount,
 			RemovalCount:        stats.RemovalCount,
@@ -640,9 +944,15 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			WarningCount:        stats.WarningCount,
 			TotalSessions:       len(stats.Sessions),
 			InstallLoopDetected: stats.InstallLoopDetected,
-			LastError:           stats.LastError,
-			LastWarning:         stats.LastWarning,
-			RecentAttempts:      stats.RecentAttempts,
+
+			// Enhanced metadata for external reporting tools
+			InstallMethod: installMethod,
+			Type:          "cimian",
+
+			// Error information
+			LastError:      stats.LastError,
+			LastWarning:    stats.LastWarning,
+			RecentAttempts: stats.RecentAttempts,
 		}
 
 		if !stats.LastSuccessfulTime.IsZero() {
@@ -733,6 +1043,7 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to export events: %w", err)
 	}
 
+	// Export enhanced items.json for external reporting tool integration
 	if err := exp.writeJSONFile(filepath.Join(reportsDir, "items.json"), packages); err != nil {
 		return fmt.Errorf("failed to export items: %w", err)
 	}
@@ -918,6 +1229,43 @@ func (exp *DataExporter) extractPackageFromMessage(message string) string {
 	return ""
 }
 
+// extractVersionFromMessage attempts to extract version information from log messages
+func (exp *DataExporter) extractVersionFromMessage(message string) string {
+	// Common version patterns in Cimian messages
+	versionPatterns := []string{
+		// Standard version patterns
+		`version\s+([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`v([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)\s+to\s+`,
+		`-([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)\.(exe|msi|nupkg)`,
+		`([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)-x64`,
+		`([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)-arm64`,
+
+		// Cimian-specific patterns
+		`registry version.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`local version.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`repo version.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`installed version.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`target version.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`version\s+is\s+([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)\s+(?:installed|found|detected)`,
+
+		// Patterns for version comparisons
+		`from\s+([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)\s+to`,
+		`updating\s+.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+		`installing\s+.*?([0-9]+\.[0-9]+(?:\.[0-9]+)*(?:\.[0-9]+)*)`,
+	}
+
+	for _, pattern := range versionPatterns {
+		re := regexp.MustCompile(`(?i)` + pattern) // Case insensitive
+		if matches := re.FindStringSubmatch(message); len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	return ""
+}
+
 // inferItemType attempts to determine the item type from session data or context
 func (exp *DataExporter) inferItemType(packageName, sessionDir string, event EventRecord) string {
 	switch event.EventType {
@@ -932,7 +1280,7 @@ func (exp *DataExporter) inferItemType(packageName, sessionDir string, event Eve
 	}
 }
 
-// normalizeStatus converts various status formats to standard form
+// normalizeStatus converts various status formats to standard form with proper capitalization
 func (exp *DataExporter) normalizeStatus(status, level, errorMsg string) string {
 	// Convert to lowercase for comparison
 	statusLower := strings.ToLower(status)
@@ -940,28 +1288,32 @@ func (exp *DataExporter) normalizeStatus(status, level, errorMsg string) string 
 
 	// Check for explicit error conditions
 	if errorMsg != "" || levelLower == "error" || strings.Contains(statusLower, "fail") {
-		return "failed"
+		return "Failed"
 	}
 
 	// Check for warning conditions
 	if levelLower == "warn" || levelLower == "warning" || strings.Contains(statusLower, "warn") {
-		return "warning"
+		return "Warning"
 	}
 
 	// Check for success conditions
 	if statusLower == "completed" || statusLower == "success" || statusLower == "ok" ||
 		strings.Contains(statusLower, "success") || strings.Contains(statusLower, "complete") {
-		return "success"
+		return "Success"
 	}
 
 	// Default based on log level
 	switch levelLower {
 	case "info":
-		return "success"
+		return "Success"
 	case "debug":
-		return "success"
+		return "Success"
+	case "error":
+		return "Failed"
+	case "warn", "warning":
+		return "Warning"
 	default:
-		return "unknown"
+		return "Unknown"
 	}
 }
 
