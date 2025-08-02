@@ -299,7 +299,7 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
 	extractAndRunChocolateyBeforeInstall(filePath, item)
 
-	chocoLog := filepath.Join(cachePath, fmt.Sprintf("install_choco_%s.log", pkgID))
+	chocoLog := filepath.Join(logging.GetCurrentLogDir(), fmt.Sprintf("choco_install_%s.log", pkgID))
 	sourceDir := filepath.Dir(filePath)
 	cmdArgs := []string{
 		"install", pkgID,
@@ -338,7 +338,7 @@ func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
 	extractAndRunChocolateyBeforeInstall(filePath, item)
 
-	chocoLog := filepath.Join(cachePath, fmt.Sprintf("upgrade_choco_%s.log", pkgID))
+	chocoLog := filepath.Join(logging.GetCurrentLogDir(), fmt.Sprintf("choco_upgrade_%s.log", pkgID))
 	sourceDir := filepath.Dir(filePath)
 	cmdArgs := []string{
 		"upgrade", pkgID,
@@ -1107,7 +1107,7 @@ func runNupkgUninstaller(absFile string) (string, error) {
 		return "", fmt.Errorf("failed reading nupkg for uninstall: %w", err)
 	}
 	cacheDir := filepath.Dir(absFile)
-	logPath := filepath.Join(cacheDir, fmt.Sprintf("uninstall_choco_%s.log", pkgID))
+	logPath := filepath.Join(logging.GetCurrentLogDir(), fmt.Sprintf("choco_uninstall_%s.log", pkgID))
 	args := []string{
 		"uninstall", pkgID,
 		"--version", pkgVer,
