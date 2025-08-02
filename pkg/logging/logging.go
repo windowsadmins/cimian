@@ -56,6 +56,22 @@ func (ll LogLevel) String() string {
 	}
 }
 
+// parseLogLevel converts a string to LogLevel enum
+func parseLogLevel(levelStr string) LogLevel {
+	switch strings.ToUpper(levelStr) {
+	case "ERROR":
+		return LevelError
+	case "WARN":
+		return LevelWarn
+	case "INFO":
+		return LevelInfo
+	case "DEBUG":
+		return LevelDebug
+	default:
+		return LevelInfo // Default to INFO if unknown
+	}
+}
+
 // LogEntry represents a structured log entry compatible with external monitoring tools
 type LogEntry struct {
 	Time       int64                  `json:"time"`                 // Unix timestamp (BIGINT)
@@ -86,6 +102,7 @@ type LoggerConfig struct {
 	RunType          string          // Type of run: manual, scheduled, auto
 	SessionID        string          // Unique session identifier
 	Component        string          // Component/module name
+	LogLevel         LogLevel        // Log level for filtering messages
 	Retention        RetentionPolicy // Retention policy
 	EnableStructured bool            // Enable structured JSON output
 	EnableJSON       bool            // Enable JSON output
@@ -171,6 +188,7 @@ func newLogger(cfg *config.Configuration) (*Logger, error) {
 		RunType:          "auto", // Default run type
 		SessionID:        generateSessionID(),
 		Component:        "cimian",
+		LogLevel:         parseLogLevel(cfg.LogLevel), // Parse log level from config
 		Retention:        DefaultRetentionPolicy(),
 		EnableStructured: true,
 		EnableJSON:       true,
@@ -216,9 +234,7 @@ func newLoggerWithConfig(cfg LoggerConfig) (*Logger, error) {
 	}
 
 	// Set up log level
-	var level LogLevel = LevelInfo
-	// TODO: Read from cfg when available
-	logger.logLevel = level
+	logger.logLevel = cfg.LogLevel
 
 	// Initialize log files
 	if err := logger.initializeLogFiles(); err != nil {
