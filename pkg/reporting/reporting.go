@@ -14,6 +14,7 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"golang.org/x/sys/windows/registry"
 	"gopkg.in/yaml.v3"
 )
 
@@ -935,6 +936,11 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			standardStatus = "Pending Install"
 		}
 
+		// If version is unknown, set status to Error
+		if stats.LatestVersion == "" || stats.LatestVersion == "Unknown" {
+			standardStatus = "Error"
+		}
+
 		// Determine last update timestamp
 		lastUpdate := ""
 		if !stats.LastAttemptTime.IsZero() {
@@ -1636,16 +1642,60 @@ func (exp *DataExporter) getInstalledVersionFromRegistry(packageName string) str
 
 // getCimianManagedVersion gets version from Cimian's managed registry
 func (exp *DataExporter) getCimianManagedVersion(packageName string) string {
-	// This would read from HKLM\Software\ManagedInstalls\<packageName>\Version
-	// For now, return empty as the registry access requires platform-specific code
-	// This can be implemented later using golang.org/x/sys/windows/registry
-	return ""
+	// Read from HKLM\Software\ManagedInstalls\<packageName>\Version
+	regPath := `Software\ManagedInstalls\` + packageName
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+
+	ver, _, err := k.GetStringValue("Version")
+	if err != nil {
+		return ""
+	}
+	return ver
 }
 
 // getUninstallRegistryVersion gets version from Windows uninstall registry
 func (exp *DataExporter) getUninstallRegistryVersion(packageName string) string {
-	// This would read from Windows uninstall registry entries
-	// For now, return empty as the registry access requires platform-specific code
-	// This can be implemented later using golang.org/x/sys/windows/registry
+	regPaths := []string{
+		`Software\Microsoft\Windows\CurrentVersion\Uninstall`,
+		`Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall`,
+	}
+
+	for _, rPath := range regPaths {
+		key, err := registry.OpenKey(registry.LOCAL_MACHINE, rPath, registry.READ)
+		if err != nil {
+			continue
+		}
+		defer key.Close()
+
+		subKeys, err := key.ReadSubKeyNames(0)
+		if err != nil {
+			continue
+		}
+
+		for _, subKey := range subKeys {
+			fullPath := rPath + `\` + subKey
+			subKeyObj, err := registry.OpenKey(registry.LOCAL_MACHINE, fullPath, registry.READ)
+			if err != nil {
+				continue
+			}
+			defer subKeyObj.Close()
+
+			// Get DisplayName
+			if name, _, err := subKeyObj.GetStringValue("DisplayName"); err == nil {
+				// Check for exact match or partial match
+				if strings.EqualFold(name, packageName) || strings.Contains(strings.ToLower(name), strings.ToLower(packageName)) {
+					// Get DisplayVersion
+					if version, _, err := subKeyObj.GetStringValue("DisplayVersion"); err == nil {
+						return version
+					}
+				}
+			}
+		}
+	}
+
 	return ""
 }
