@@ -193,7 +193,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 	switch installType {
 	case "install", "update":
 		if localVersion == "" {
-			logging.Info("No local version found, installation needed", "item", catalogItem.Name)
+			logging.Info("Not installed on device", "item", catalogItem.Name)
 			return true, nil
 		}
 		if IsOlderVersion(localVersion, catalogItem.Version) {
