@@ -14,6 +14,7 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"gopkg.in/yaml.v3"
 )
 
 // DataTables defines the table schemas for external monitoring tool integration
@@ -715,6 +716,9 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 
 	itemStats := make(map[string]*comprehensiveItemStat)
 
+	// Load catalog data to get authoritative version information
+	catalogVersions := exp.loadCatalogVersions()
+
 	// Process all sessions to build complete history
 	for _, sessionDir := range allSessions {
 		// Get events for this session
@@ -748,8 +752,10 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			// Parse event timestamp
 			eventTime, timeErr := time.Parse(time.RFC3339, event.Timestamp)
 
-			// Update latest version
-			if event.Version != "" {
+			// Update latest version - prioritize catalog version over event version
+			if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
+				stats.LatestVersion = catalogVersion
+			} else if event.Version != "" {
 				stats.LatestVersion = event.Version
 			}
 
@@ -870,6 +876,27 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 		stats.InstallLoopDetected = exp.detectInstallLoop(stats.RecentAttempts)
 		if stats.InstallLoopDetected {
 			stats.CurrentStatus = "Install Loop"
+		}
+	}
+
+	// Enhanced version detection - fill in missing version information
+	for _, stats := range itemStats {
+		// If we don't have latest version from catalog or events, try registry
+		if stats.LatestVersion == "" {
+			if registryVersion := exp.getInstalledVersionFromRegistry(stats.Name); registryVersion != "" {
+				stats.LatestVersion = registryVersion
+				// If we found it in registry and no installed version is set, use this
+				if stats.InstalledVersion == "" {
+					stats.InstalledVersion = registryVersion
+				}
+			}
+		}
+
+		// If we still don't have installed version, try to get it from registry
+		if stats.InstalledVersion == "" {
+			if registryVersion := exp.getInstalledVersionFromRegistry(stats.Name); registryVersion != "" {
+				stats.InstalledVersion = registryVersion
+			}
 		}
 	}
 
@@ -1541,4 +1568,84 @@ func (exp *DataExporter) fillMissingSessionData(record *SessionRecord, sessionDi
 			currentJSON.Reset()
 		}
 	}
+}
+
+// loadCatalogVersions reads catalog files to extract authoritative version information
+func (exp *DataExporter) loadCatalogVersions() map[string]string {
+	versions := make(map[string]string)
+
+	// Try to load from catalogs directory
+	catalogsPath := `C:\ProgramData\ManagedInstalls\catalogs`
+
+	entries, err := os.ReadDir(catalogsPath)
+	if err != nil {
+		logging.Debug("Could not read catalogs directory for version data", "path", catalogsPath, "error", err)
+		return versions
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+
+		catalogPath := filepath.Join(catalogsPath, entry.Name())
+		data, err := os.ReadFile(catalogPath)
+		if err != nil {
+			continue
+		}
+
+		// Parse catalog file using the same structure as main code
+		var wrapper struct {
+			Items []struct {
+				Name    string `yaml:"name"`
+				Version string `yaml:"version"`
+			} `yaml:"items"`
+		}
+
+		if err := yaml.Unmarshal(data, &wrapper); err != nil {
+			continue
+		}
+
+		// Extract version information for each item
+		for _, item := range wrapper.Items {
+			if item.Name != "" && item.Version != "" {
+				// Store with lowercase key for case-insensitive lookup
+				versions[strings.ToLower(item.Name)] = item.Version
+			}
+		}
+	}
+
+	logging.Debug("Loaded catalog versions for reporting", "count", len(versions))
+	return versions
+}
+
+// getInstalledVersionFromRegistry attempts to get the installed version of a package from Windows registry
+func (exp *DataExporter) getInstalledVersionFromRegistry(packageName string) string {
+	// Try Cimian's managed registry first (most reliable)
+	if cimianVersion := exp.getCimianManagedVersion(packageName); cimianVersion != "" {
+		return cimianVersion
+	}
+
+	// Try Windows uninstall registry
+	if uninstallVersion := exp.getUninstallRegistryVersion(packageName); uninstallVersion != "" {
+		return uninstallVersion
+	}
+
+	return ""
+}
+
+// getCimianManagedVersion gets version from Cimian's managed registry
+func (exp *DataExporter) getCimianManagedVersion(packageName string) string {
+	// This would read from HKLM\Software\ManagedInstalls\<packageName>\Version
+	// For now, return empty as the registry access requires platform-specific code
+	// This can be implemented later using golang.org/x/sys/windows/registry
+	return ""
+}
+
+// getUninstallRegistryVersion gets version from Windows uninstall registry
+func (exp *DataExporter) getUninstallRegistryVersion(packageName string) string {
+	// This would read from Windows uninstall registry entries
+	// For now, return empty as the registry access requires platform-specific code
+	// This can be implemented later using golang.org/x/sys/windows/registry
+	return ""
 }
