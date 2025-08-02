@@ -883,8 +883,8 @@ func main() {
 
 	statusReporter.Detail("Cleaning up temporary files...")
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
-	logsFolder := `C:\ProgramData\ManagedInstalls\logs`
-	clearCacheFolderSelective(cacheFolder, logsFolder)
+	currentLogDir := logging.GetCurrentLogDir()
+	clearCacheFolderSelective(cacheFolder, currentLogDir)
 
 	// Clear bootstrap mode if we completed successfully
 	if isBootstrap {
@@ -1543,7 +1543,6 @@ func printPendingActions(toInstall, toUninstall, toUpdate []catalog.Item) {
 	if len(toInstall) == 0 && len(toUninstall) == 0 && len(toUpdate) == 0 {
 		logger.Info("")
 		logger.Info("================================================================================")
-		logger.Info("🚫 NO ACTIONS PLANNED")
 		logger.Info("✅ All software is up to date")
 		logger.Info("================================================================================")
 		logger.Info("")
