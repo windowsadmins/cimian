@@ -483,7 +483,7 @@ func (l *Logger) writeMainLog(entry LogEntry, keyValues []interface{}) {
 				if i+1 < len(keyValues) {
 					key := fmt.Sprintf("%v", keyValues[i])
 					val := keyValues[i+1]
-					baseLine += fmt.Sprintf(" %s=%v", key, val)
+					baseLine += fmt.Sprintf(" %s: %v", key, val)
 				}
 			}
 		}
@@ -610,7 +610,7 @@ func Success(message string, keyValues ...interface{}) {
 			if i+1 < len(keyValues) {
 				key := fmt.Sprintf("%v", keyValues[i])
 				val := keyValues[i+1]
-				baseLine += fmt.Sprintf(" %s=%v", key, val)
+				baseLine += fmt.Sprintf(" %s: %v", key, val)
 			}
 		}
 	}
