@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/status"
 )
 
 // Global map to track item sources for debugging and logging
@@ -56,9 +56,9 @@ func ClearItemSources() {
 // LogItemSource logs the source information for an item if available
 func LogItemSource(itemName string, logMessage string) {
 	if source, exists := GetItemSource(itemName); exists {
-		logging.Info(logMessage, "item", itemName, "source", source.GetSourceDescription())
+		logging.Info(logMessage, "source", source.GetSourceDescription())
 	} else {
-		logging.Info(logMessage, "item", itemName, "source", "unknown")
+		logging.Info(logMessage, "source", "unknown")
 	}
 }
 
@@ -162,18 +162,6 @@ func Manifests(manifests []manifest.Item, catalogsMap map[int]map[string]catalog
 // This abstraction allows us to override when testing
 var installerInstall = installer.Install
 
-// getSystemArchitecture returns the architecture of the system.
-func getSystemArchitecture() string {
-	switch runtime.GOARCH {
-	case "amd64":
-		return "x64"
-	case "arm64":
-		return "arm64"
-	default:
-		return runtime.GOARCH
-	}
-}
-
 // supportsArchitecture checks if the package supports the given system architecture.
 func supportsArchitecture(item catalog.Item, systemArch string) bool {
 	for _, arch := range item.SupportedArch {
@@ -186,7 +174,7 @@ func supportsArchitecture(item catalog.Item, systemArch string) bool {
 
 // Installs prepares and then installs an array of items based on system architecture.
 func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _, cachePath string, CheckOnly bool, cfg *config.Configuration) {
-	systemArch := getSystemArchitecture()
+	systemArch := status.GetSystemArchitecture()
 	logging.Info("System architecture detected", "architecture", systemArch)
 
 	// Iterate through the installs array, install dependencies, and then the item itself
@@ -401,7 +389,7 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 		return fmt.Errorf("item not found in catalogs: %v", err)
 	}
 
-	systemArch := getSystemArchitecture()
+	systemArch := status.GetSystemArchitecture()
 
 	// Check architecture support
 	if !supportsArchitecture(item, systemArch) {
@@ -556,7 +544,7 @@ func InstallsWithDependencies(itemNames []string, catalogsMap map[int]map[string
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg); err != nil {
-			LogItemSource(itemName, "Failed to process install with advanced dependency logic")
+			LogItemSource(itemName, "Failed to process install of item: "+itemName)
 			return err
 		}
 	}
@@ -596,7 +584,7 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg); err != nil {
-			LogItemSource(itemName, "Failed to process install with advanced dependency logic")
+			LogItemSource(itemName, "Failed to process install of item: "+itemName)
 			logging.Error("Failed to install item, continuing with others", "item", itemName, "error", err)
 			failedItems = append(failedItems, itemName)
 		} else {
@@ -606,13 +594,15 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 
 	// Log summary of results
 	if len(failedItems) > 0 {
-		logging.Warn("Some items failed to install", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
+		logging.Warn("Some items failed to install:", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
 		// Only return error if ALL items failed
 		if successCount == 0 {
 			return fmt.Errorf("all %d items failed to install: %v", len(itemNames), failedItems)
 		}
 	} else {
-		logging.Info("All items installed successfully", "count", successCount)
+		if successCount > 0 {
+			logging.Info("All items installed successfully", "count", successCount)
+		}
 	}
 
 	return nil
@@ -632,7 +622,7 @@ func UninstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[str
 	for _, itemName := range itemNames {
 		if err := processUninstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedUninstalls, cachePath, checkOnly, cfg); err != nil {
-			LogItemSource(itemName, "Failed to process uninstall with advanced dependency logic")
+			LogItemSource(itemName, "Failed to process uninstall of item: "+itemName)
 			logging.Error("Failed to uninstall item, continuing with others", "item", itemName, "error", err)
 			failedItems = append(failedItems, itemName)
 		} else {
@@ -642,7 +632,7 @@ func UninstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[str
 
 	// Log summary of results
 	if len(failedItems) > 0 {
-		logging.Warn("Some items failed to uninstall", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
+		logging.Warn("Some items failed to uninstall:", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
 		// Only return error if ALL items failed
 		if successCount == 0 {
 			return fmt.Errorf("all %d items failed to uninstall: %v", len(itemNames), failedItems)
@@ -665,7 +655,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 		return nil
 	}
 
-	LogItemSource(itemName, "Processing install with advanced dependency logic")
+	LogItemSource(itemName, "Processing install of item: "+itemName)
 
 	// Mark as processed early to avoid infinite recursion
 	processedInstalls[itemName] = true
@@ -711,7 +701,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	}
 
 	// Install the main item
-	LogItemSource(itemName, "Installing item with advanced dependency logic")
+	LogItemSource(itemName, "Installing item: "+itemName)
 	if isOnDemandItem(item) {
 		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
 	} else {
@@ -759,7 +749,7 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 		return nil
 	}
 
-	LogItemSource(itemName, "Processing uninstall with advanced dependency logic")
+	LogItemSource(itemName, "Processing uninstall of item: "+itemName)
 
 	// Mark as processed early to avoid infinite recursion
 	processedUninstalls[itemName] = true
@@ -813,7 +803,7 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 			// We'll rely on the system's built-in uninstall mechanisms
 		}
 	}
-	logging.Info("Uninstalling item with advanced dependency logic", "item", itemName)
+	logging.Info("Uninstalling item:", "item", itemName)
 	_, err = installerInstall(item, "uninstall", "", cachePath, checkOnly, cfg)
 	if err != nil {
 		logging.Error("Failed to uninstall item", "item", itemName, "error", err)
