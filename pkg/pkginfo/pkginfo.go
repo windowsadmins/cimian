@@ -226,14 +226,32 @@ func ExtractPackageInfo(path string, defaultArch string) (Metadata, error) {
 		meta.Version = "1.0.0"
 	}
 
-	// If no arch was determined, use the default (e.g. "x64")
+	// If no arch was determined, use the default (e.g. "x64,arm64")
 	if defaultArch == "" {
-		defaultArch = "x64"
+		defaultArch = "x64,arm64"
 	}
 	if meta.Architecture == "" {
 		meta.Architecture = defaultArch
 	}
-	meta.SupportedArch = []string{meta.Architecture}
+
+	// Parse architectures from defaultArch (could be comma-separated like "x64,arm64")
+	if strings.Contains(meta.Architecture, ",") {
+		// Split comma-separated architectures
+		parts := strings.Split(meta.Architecture, ",")
+		var archList []string
+		for _, part := range parts {
+			arch := strings.ToLower(strings.TrimSpace(part))
+			if arch != "" {
+				archList = append(archList, arch)
+			}
+		}
+		meta.SupportedArch = archList
+		if len(archList) > 0 {
+			meta.Architecture = archList[0] // Set primary arch to first one
+		}
+	} else {
+		meta.SupportedArch = []string{meta.Architecture}
+	}
 
 	return meta, nil
 }

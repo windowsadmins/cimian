@@ -113,7 +113,7 @@ func GetDefaultConfig() *Configuration {
 		CheckOnly:        false,
 		ClientIdentifier: "",
 		SoftwareRepoURL:  "https://cimian.example.com",
-		DefaultArch:      "x64",
+		DefaultArch:      "x64,arm64",
 		DefaultCatalog:   "testing",
 		CloudProvider:    "none",
 		CloudBucket:      "",

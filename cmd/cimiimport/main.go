@@ -463,7 +463,7 @@ func configureCimianImport(conf *config.Configuration) error {
 	defaultRepoPath := filepath.Join(usr.HomeDir, "DevOps", "Cimian", "deployment")
 	defaultCloudProvider := "none"
 	defaultCatalog := "Development"
-	defaultArch := "x64"
+	defaultArch := "x64,arm64"
 
 	fmt.Printf("Enter Repo Path [%s]: ", defaultRepoPath)
 	var repoPathInput string
@@ -549,7 +549,7 @@ func configureCimianImportNonInteractive(conf *config.Configuration) error {
 		conf.DefaultCatalog = "Development"
 	}
 	if conf.DefaultArch == "" {
-		conf.DefaultArch = "x64"
+		conf.DefaultArch = "x64,arm64"
 	}
 	if !conf.OpenImportedYaml {
 		conf.OpenImportedYaml = true
@@ -998,7 +998,25 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 	if metadata.Architecture == "" {
 		metadata.Architecture = conf.DefaultArch
 	}
-	metadata.SupportedArch = []string{metadata.Architecture}
+
+	// Parse architectures from conf.DefaultArch (could be comma-separated like "x64,arm64")
+	if strings.Contains(metadata.Architecture, ",") {
+		// Split comma-separated architectures
+		parts := strings.Split(metadata.Architecture, ",")
+		var archList []string
+		for _, part := range parts {
+			arch := strings.ToLower(strings.TrimSpace(part))
+			if arch != "" {
+				archList = append(archList, arch)
+			}
+		}
+		metadata.SupportedArch = archList
+		if len(archList) > 0 {
+			metadata.Architecture = archList[0] // Set primary arch to first one
+		}
+	} else {
+		metadata.SupportedArch = []string{metadata.Architecture}
+	}
 	return metadata, nil
 }
 
@@ -1466,7 +1484,7 @@ to be the main installer path. Example:
 Options:
   -i, --installs-array <path>   Add a path to final 'installs' array (multiple OK)
   --repo_path=<path>            Override the Cimian repo path
-  --arch=<arch>                 Override architecture (e.g. x64)
+  --arch=<arch>                 Override architecture (e.g. x64,arm64)
   --uninstaller=<path>          Specify an optional uninstaller
   --minimum_os_version=<version> Minimum Windows version required (e.g. 10.0.19041)
   --maximum_os_version=<version> Maximum Windows version supported (e.g. 11.0.22000)
