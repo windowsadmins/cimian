@@ -79,6 +79,22 @@ func IsOlderVersion(local, remote string) bool {
 
 // getSystemArchitecture returns a normalized string for the local system arch
 func GetSystemArchitecture() string {
+	// On Windows, use PROCESSOR_ARCHITECTURE to get the actual system architecture
+	// rather than runtime.GOARCH which reflects the binary's compilation target
+	if arch := os.Getenv("PROCESSOR_ARCHITECTURE"); arch != "" {
+		switch strings.ToUpper(arch) {
+		case "AMD64", "X86_64":
+			return "x64"
+		case "X86", "386":
+			return "x86"
+		case "ARM64":
+			return "arm64"
+		default:
+			return strings.ToLower(arch)
+		}
+	}
+
+	// Fallback to runtime.GOARCH if environment variable is not available
 	arch := runtime.GOARCH
 	switch arch {
 	case "amd64", "x86_64":
