@@ -623,7 +623,7 @@ func main() {
 
 		itemsToInstall := prepareDownloadItemsWithCatalog(manifestItems, localCatalogMap, cfg)
 		if verbosity > 0 {
-			logging.Info("→ Found %d items to install", len(itemsToInstall))
+			logging.Info("→ Found items to install", "count", len(itemsToInstall))
 		}
 
 		if err := downloadAndInstallPerItem(itemsToInstall, cfg, statusReporter); err != nil {
@@ -1142,6 +1142,14 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 		key := strings.ToLower(mItem.Name)
 		if _, found := localCatalogMap[key]; !found {
 			logging.Info("Identified new item for installation", "item", mItem.Name)
+
+			// Set up source tracking for new installs
+			sourceManifest := mItem.SourceManifest
+			if sourceManifest == "" {
+				sourceManifest = "unknown-manifest"
+			}
+			process.SetItemSource(mItem.Name, sourceManifest, "managed_installs")
+
 			newCatItem := catalog.Item{
 				Name:    mItem.Name,
 				Version: mItem.Version,
@@ -1350,6 +1358,14 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 				logger.Warning("Skipping item not in local catalog: %s", m.Name)
 				continue
 			}
+
+			// Set up source tracking for updates
+			sourceManifest := m.SourceManifest
+			if sourceManifest == "" {
+				sourceManifest = "unknown-manifest"
+			}
+			process.SetItemSource(m.Name, sourceManifest, "managed_updates")
+
 			results = append(results, catItem)
 		}
 	}
@@ -1483,11 +1499,13 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 			logging.WithContext("total_count", len(items)),
 			logging.WithError(fmt.Errorf("some installations failed: %v", installErrors)))
 	} else {
-		logger.Info("All %d items installed successfully", successCount)
-		logging.LogEventEntry("batch_install", "complete", "completed",
-			fmt.Sprintf("All %d items installed successfully", successCount),
-			logging.WithContext("success_count", successCount),
-			logging.WithContext("total_count", len(items)))
+		if successCount > 0 {
+			logger.Info("All %d items installed successfully", successCount)
+			logging.LogEventEntry("batch_install", "complete", "completed",
+				fmt.Sprintf("All %d items installed successfully", successCount),
+				logging.WithContext("success_count", successCount),
+				logging.WithContext("total_count", len(items)))
+		}
 	}
 
 	return nil
@@ -1839,6 +1857,23 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 
 	for _, entry := range cacheEntries {
 		fullPath := filepath.Join(cachePath, entry.Name())
+		fileName := entry.Name()
+
+		// Remove old log files that were incorrectly saved in cache directory
+		if strings.HasSuffix(fileName, ".log") &&
+			(strings.HasPrefix(fileName, "install_choco_") ||
+				strings.HasPrefix(fileName, "upgrade_choco_") ||
+				strings.HasPrefix(fileName, "choco_install_") ||
+				strings.HasPrefix(fileName, "choco_upgrade_")) {
+			err := os.RemoveAll(fullPath)
+			if err != nil {
+				logger.Warning("Failed to remove old log file %s: %v", fullPath, err)
+			} else {
+				logger.Debug("Removed old log file from cache: %s", fullPath)
+			}
+			continue
+		}
+
 		// Only remove the file if its base name is in the success set and marked as true (successfully installed).
 		if successSet[entry.Name()] {
 			err := os.RemoveAll(fullPath)

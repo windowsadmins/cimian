@@ -145,7 +145,19 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected HTTP status code: %d", resp.StatusCode)
+			// Provide more specific error messages for common HTTP status codes
+			switch resp.StatusCode {
+			case 404:
+				return fmt.Errorf("file not found (404): resource may have been moved or deleted")
+			case 403:
+				return fmt.Errorf("access forbidden (403): insufficient permissions or authentication required")
+			case 500:
+				return fmt.Errorf("server error (500): internal server error occurred")
+			case 503:
+				return fmt.Errorf("service unavailable (503): server temporarily unavailable")
+			default:
+				return fmt.Errorf("unexpected HTTP status code: %d (%s)", resp.StatusCode, http.StatusText(resp.StatusCode))
+			}
 		}
 
 		if _, err = io.Copy(out, resp.Body); err != nil {

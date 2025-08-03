@@ -605,18 +605,23 @@ func gatherSystemFacts() map[string]interface{} {
 
 // getSystemArchitecture returns the system architecture
 func getSystemArchitecture() string {
+	// On Windows, use PROCESSOR_ARCHITECTURE to get the actual system architecture
+	// rather than runtime.GOARCH which reflects the binary's compilation target
 	if arch := os.Getenv("PROCESSOR_ARCHITECTURE"); arch != "" {
-		switch strings.ToLower(arch) {
-		case "amd64", "x86_64":
+		switch strings.ToUpper(arch) {
+		case "AMD64", "X86_64":
 			return "x64"
-		case "x86", "386":
+		case "X86", "386":
 			return "x86"
-		case "arm64":
+		case "ARM64":
 			return "arm64"
 		default:
-			return arch
+			return strings.ToLower(arch)
 		}
 	}
+
+	// Fallback to runtime.GOARCH if environment variable is not available
+	// This import would need to be added if not already present
 	return "unknown"
 }
 
