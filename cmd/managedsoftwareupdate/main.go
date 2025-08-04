@@ -1012,14 +1012,16 @@ func loadLocalOnlyManifest(manifestPath string) ([]manifest.Item, error) {
 		ManagedUninstalls: manifestFile.ManagedUninstalls,
 		ManagedUpdates:    manifestFile.ManagedUpdates,
 		OptionalInstalls:  manifestFile.OptionalInstalls,
+		ManagedProfiles:   manifestFile.ManagedProfiles,
+		ManagedApps:       manifestFile.ManagedApps,
 		Catalogs:          manifestFile.Catalogs,
 		Includes:          manifestFile.IncludedManifests,
 	}
 
 	items = append(items, item)
 
-	logger.Info("Successfully loaded local-only manifest with %d managed_installs, %d managed_uninstalls, %d managed_updates",
-		len(item.ManagedInstalls), len(item.ManagedUninstalls), len(item.ManagedUpdates))
+	logger.Info("Successfully loaded local-only manifest with %d managed_installs, %d managed_uninstalls, %d managed_updates, %d managed_profiles, %d managed_apps",
+		len(item.ManagedInstalls), len(item.ManagedUninstalls), len(item.ManagedUpdates), len(item.ManagedProfiles), len(item.ManagedApps))
 
 	return items, nil
 }
