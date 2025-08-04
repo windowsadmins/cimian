@@ -34,6 +34,8 @@ type Item struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty"`
 	ManagedUpdates    []string `yaml:"managed_updates,omitempty"`
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty"`
+	ManagedProfiles   []string `yaml:"managed_profiles,omitempty"` // Graph API configuration profiles
+	ManagedApps       []string `yaml:"managed_apps,omitempty"`     // Microsoft Store apps
 
 	// The catalogs (Development, etc.)
 	Catalogs      []string `yaml:"catalogs,omitempty"`
@@ -84,6 +86,8 @@ type ManifestFile struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls"`
 	ManagedUpdates    []string `yaml:"managed_updates"`
 	OptionalInstalls  []string `yaml:"optional_installs"`
+	ManagedProfiles   []string `yaml:"managed_profiles"` // Graph API configuration profiles
+	ManagedApps       []string `yaml:"managed_apps"`     // Microsoft Store apps
 	IncludedManifests []string `yaml:"included_manifests"`
 
 	// Conditional Items - NSPredicate-style conditional evaluation
@@ -108,6 +112,8 @@ type ConditionalItem struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty" json:"managed_uninstalls,omitempty"`
 	ManagedUpdates    []string `yaml:"managed_updates,omitempty" json:"managed_updates,omitempty"`
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty" json:"optional_installs,omitempty"`
+	ManagedProfiles   []string `yaml:"managed_profiles,omitempty" json:"managed_profiles,omitempty"` // Graph API configuration profiles
+	ManagedApps       []string `yaml:"managed_apps,omitempty" json:"managed_apps,omitempty"`         // Microsoft Store apps
 }
 
 // -----------------------------------------------------------------------------
@@ -233,7 +239,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		// Process conditional items first
 		if len(mf.ConditionalItems) > 0 {
 			logging.Debug("Processing conditional items", "count", len(mf.ConditionalItems))
-			conditionalInstalls, conditionalUninstalls, conditionalUpdates, conditionalOptional, err := EvaluateConditionalItems(mf.ConditionalItems)
+			conditionalInstalls, conditionalUninstalls, conditionalUpdates, conditionalOptional, conditionalProfiles, conditionalApps, err := EvaluateConditionalItems(mf.ConditionalItems)
 			if err != nil {
 				logging.Warn("Error evaluating conditional items", "error", err)
 			} else {
@@ -242,7 +248,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 				mf.ManagedUninstalls = append(mf.ManagedUninstalls, conditionalUninstalls...)
 				mf.ManagedUpdates = append(mf.ManagedUpdates, conditionalUpdates...)
 				mf.OptionalInstalls = append(mf.OptionalInstalls, conditionalOptional...)
-				logging.Debug("Added conditional items", "installs", len(conditionalInstalls), "uninstalls", len(conditionalUninstalls), "updates", len(conditionalUpdates), "optional", len(conditionalOptional))
+				mf.ManagedProfiles = append(mf.ManagedProfiles, conditionalProfiles...)
+				mf.ManagedApps = append(mf.ManagedApps, conditionalApps...)
+				logging.Debug("Added conditional items", "installs", len(conditionalInstalls), "uninstalls", len(conditionalUninstalls), "updates", len(conditionalUpdates), "optional", len(conditionalOptional), "profiles", len(conditionalProfiles), "apps", len(conditionalApps))
 			}
 		}
 
@@ -387,6 +395,44 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SourceManifest:    mf.Name,
 				})
 			}
+		}
+		for _, profileName := range mf.ManagedProfiles {
+			if profileName == "" {
+				continue
+			}
+			actionKey := "profile|" + strings.ToLower(profileName)
+			if deduplicateCheck[actionKey] {
+				continue
+			}
+			deduplicateCheck[actionKey] = true
+
+			// For profiles, we create a special item that will be handled by Graph API pipeline
+			finalItems = append(finalItems, Item{
+				Name:           profileName,
+				Version:        "",
+				Catalogs:       mf.Catalogs,
+				Action:         "profile",
+				SourceManifest: mf.Name,
+			})
+		}
+		for _, appName := range mf.ManagedApps {
+			if appName == "" {
+				continue
+			}
+			actionKey := "app|" + strings.ToLower(appName)
+			if deduplicateCheck[actionKey] {
+				continue
+			}
+			deduplicateCheck[actionKey] = true
+
+			// For Microsoft Store apps, we create a special item that will be handled by Graph API pipeline
+			finalItems = append(finalItems, Item{
+				Name:           appName,
+				Version:        "",
+				Catalogs:       mf.Catalogs,
+				Action:         "app",
+				SourceManifest: mf.Name,
+			})
 		}
 	}
 
@@ -548,8 +594,8 @@ func parseCatalogFile(path string) ([]CatalogEntry, error) {
 }
 
 // EvaluateConditionalItems processes conditional items and returns items that match system facts
-func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []string, []string, []string, error) {
-	var managedInstalls, managedUninstalls, managedUpdates, optionalInstalls []string
+func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []string, []string, []string, []string, []string, error) {
+	var managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps []string
 
 	// Gather system facts
 	facts := gatherSystemFacts()
@@ -567,12 +613,14 @@ func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []
 			managedUninstalls = append(managedUninstalls, item.ManagedUninstalls...)
 			managedUpdates = append(managedUpdates, item.ManagedUpdates...)
 			optionalInstalls = append(optionalInstalls, item.OptionalInstalls...)
+			managedProfiles = append(managedProfiles, item.ManagedProfiles...)
+			managedApps = append(managedApps, item.ManagedApps...)
 		} else {
 			logging.Debug("Conditional item did not match, skipping")
 		}
 	}
 
-	return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, nil
+	return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps, nil
 }
 
 // gatherSystemFacts collects system information for predicate evaluation

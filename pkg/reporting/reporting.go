@@ -1308,6 +1308,10 @@ func (exp *DataExporter) inferItemType(packageName, sessionDir string, event Eve
 		return "managed_updates"
 	case "remove":
 		return "managed_uninstalls"
+	case "profile":
+		return "managed_profiles"
+	case "app":
+		return "managed_apps"
 	default:
 		return "unknown"
 	}

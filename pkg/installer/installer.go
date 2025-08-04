@@ -142,6 +142,16 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		logging.Info("Uninstalled item successfully", "item", item.Name)
 		return out, nil
 
+	case "profile":
+		// Configuration profiles are handled by Graph API pipeline, not directly by Cimian
+		logging.Info("Configuration profile scheduled for deployment via Graph API", "profile", item.Name)
+		return "Profile scheduled for Graph API deployment", nil
+
+	case "app":
+		// Microsoft Store apps are handled by Graph API pipeline, not directly by Cimian
+		logging.Info("Microsoft Store app scheduled for deployment via Graph API", "app", item.Name)
+		return "App scheduled for Graph API deployment", nil
+
 	default:
 		msg := fmt.Sprintf("Unsupported action: %s", action)
 		logging.Warn(msg)
