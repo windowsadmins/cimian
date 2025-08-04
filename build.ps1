@@ -1489,11 +1489,54 @@ foreach ($msiArch in $msiArchs) {
         exit 1
     }
     
-    if ($Sign) {        
-        Write-Log "Skipping MSI signing due to Windows file locking issues. The contained binaries are already signed for security." "INFO"
+    if ($Sign) {
+        # Wait longer for WiX to fully release file handles
+        Write-Log "Preparing MSI for signing..." "INFO"
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        Start-Sleep -Seconds 5
+        
+        # Attempt MSI signing with retry logic
+        $signAttempts = 3
+        $signSuccess = $false
+        
+        for ($attempt = 1; $attempt -le $signAttempts; $attempt++) {
+            Write-Log "Attempting MSI signing (attempt $attempt of $signAttempts)..." "INFO"
+            
+            try {
+                # Check if file is still locked
+                if (Test-FileLocked -FilePath $msiOutput) {
+                    Write-Log "MSI file is locked, waiting..." "WARNING"
+                    Start-Sleep -Seconds (3 * $attempt)
+                    [System.GC]::Collect()
+                    [System.GC]::WaitForPendingFinalizers()
+                }
+                
+                $signResult = signPackage -FilePath $msiOutput
+                if ($signResult) {
+                    Write-Log "MSI package signed successfully: $msiOutput" "SUCCESS"
+                    $signSuccess = $true
+                    break
+                } else {
+                    Write-Log "MSI signing attempt $attempt failed" "WARNING"
+                }
+            }
+            catch {
+                Write-Log "MSI signing attempt $attempt failed: $_" "WARNING"
+            }
+            
+            if ($attempt -lt $signAttempts) {
+                Write-Log "Retrying MSI signing in $($attempt * 2) seconds..." "INFO"
+                Start-Sleep -Seconds ($attempt * 2)
+            }
+        }
+        
+        if (-not $signSuccess) {
+            Write-Log "All MSI signing attempts failed. MSI package created unsigned: $msiOutput" "WARNING"
+            Write-Log "Note: Individual executables inside the MSI are still signed for security." "INFO"
+        }
+    } else {
         Write-Log "MSI package created (unsigned): $msiOutput" "SUCCESS"
-        # Note: This is a temporary workaround for Windows file locking issues
-        # The security benefit is minimal since all contained executables are already signed
     }
     # Clean up temp folder
     Remove-Item -Path "$msiTempDir\*" -Recurse -Force
