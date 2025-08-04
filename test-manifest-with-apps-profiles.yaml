@@ -1,0 +1,29 @@
+name: "test-manifest-with-apps-profiles"
+catalogs:
+  - "Development"
+
+managed_installs:
+  - "Firefox"
+  - "Chrome"
+
+managed_profiles:
+  - "CompanySecurityProfile"
+  - "WiFiConfigProfile"
+  - "EmailSettingsProfile"
+
+managed_apps:
+  - "Microsoft Teams"
+  - "Microsoft Office"
+  - "Microsoft To Do"
+
+conditional_items:
+  - condition:
+      key: "hostname"
+      operator: "LIKE"
+      value: "DEV-*"
+    managed_installs:
+      - "VisualStudioCode"
+    managed_profiles:
+      - "DeveloperProfile"
+    managed_apps:
+      - "Microsoft Visual Studio"
