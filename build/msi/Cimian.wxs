@@ -18,6 +18,18 @@
            Compressed="yes"
            Scope="perMachine">
 
+    <!-- Disable Windows Restart Manager to prevent service restart dialogs -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    
+    <!-- Additional properties to control restart behavior -->
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <Property Id="MSIRMSHUTDOWN" Value="2" />
+    <Property Id="MSIDISABLERMRESTART" Value="1" />
+    <Property Id="DISABLEADVTSHORTCUTS" Value="1" />
+    <Property Id="MSIRESTARTMANAGERDISABLED" Value="1" />
+    <Property Id="MSISHUTDOWNTIMEOUT" Value="0" />
+    <Property Id="MSIFORCERESTART" Value="0" />
+
     <!-- Search for the config file -->
     <Property Id="CONFIGFILE">
       <DirectorySearch Id="ManagedInstallsDirSearch" Path="[CommonAppDataFolder]ManagedInstalls">
@@ -69,6 +81,13 @@
         <!-- CimianWatcher service for responsive bootstrap monitoring -->
         <Component Id="Binary8" Guid="CF855CDE-1234-5678-9ABC-26091DE9B83D">
           <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimiwatcher.exe" />
+          
+          <!-- Service control to stop existing service before file replacement -->
+          <util:ServiceConfig ServiceName="CimianWatcher" 
+                              FirstFailureActionType="restart" 
+                              SecondFailureActionType="restart" 
+                              ThirdFailureActionType="restart" 
+                              RestartServiceDelayInSeconds="60" />
         </Component>
 
         <!-- CimiTrigger CLI for manual update triggering -->
@@ -97,14 +116,8 @@
       </Directory>
     </StandardDirectory>
 
-    <!-- Custom Actions -->
-    <!-- Stop any existing CimianWatcher service before installation -->
-    <CustomAction Id="StopExistingCimianWatcher"
-                  Execute="immediate"
-                  Impersonate="no"
-                  Return="ignore"
-                  Directory="SystemFolder"
-                  ExeCommand="cmd.exe /c &quot;sc stop CimianWatcher&quot;" />
+    <!-- Custom Actions for simplified service management -->
+    <!-- Note: Service management is handled primarily through util:ServiceConfig -->
 
     <CustomAction Id="RunCimiImport"
                   Execute="deferred"
@@ -128,7 +141,22 @@
                   Directory="INSTALLDIR"
                   ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; start" />
 
-    <!-- Remove the CimianWatcher service on uninstall -->
+    <!-- Forcefully stop any existing CimianWatcher service and processes -->
+    <CustomAction Id="StopExistingCimianWatcher"
+                  Execute="immediate"
+                  Impersonate="no"
+                  Return="ignore"
+                  Property="SystemFolder"
+                  ExeCommand="cmd.exe /c &quot;sc stop CimianWatcher 2>nul &amp;&amp; timeout /t 2 /nobreak >nul 2>&amp;1 &amp;&amp; taskkill /f /im cimiwatcher.exe 2>nul &amp;&amp; timeout /t 1 /nobreak >nul 2>&amp;1 || exit 0&quot;" />
+
+    <!-- Immediate action to stop service very early in install sequence -->
+    <CustomAction Id="ForceStopCimianWatcher"
+                  Execute="immediate"
+                  Impersonate="no"
+                  Return="ignore"
+                  Property="SystemFolder"
+                  ExeCommand="cmd.exe /c &quot;net stop CimianWatcher /y 2>nul &amp;&amp; taskkill /f /im cimiwatcher.exe 2>nul &amp;&amp; taskkill /f /im cimiwatcher.exe /t 2>nul || exit 0&quot;" />
+
     <CustomAction Id="StopCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
@@ -145,8 +173,12 @@
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
-      <!-- Stop existing CimianWatcher service before installation -->
+      <!-- Force stop service immediately after LaunchConditions, before any file operations -->
+      <Custom Action="ForceStopCimianWatcher" After="LaunchConditions" Condition="NOT REMOVE" />
+      <!-- Stop any existing CimianWatcher service/process before installing files -->
       <Custom Action="StopExistingCimianWatcher" Before="InstallFiles" Condition="NOT REMOVE" />
+      
+      <!-- Service management is handled through util:ServiceConfig -->
       
       <Custom Action="RunCimiImport" After="InstallFiles" Condition="NOT CONFIGFILE" />
       <!-- Custom Action for Installation -->
