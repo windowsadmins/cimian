@@ -60,8 +60,8 @@ type ConditionalItem struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty" json:"managed_uninstalls,omitempty"`
 	ManagedUpdates    []string `yaml:"managed_updates,omitempty" json:"managed_updates,omitempty"`
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty" json:"optional_installs,omitempty"`
-	ManagedProfiles   []string `yaml:"managed_profiles,omitempty" json:"managed_profiles,omitempty"` // Graph API configuration profiles
-	ManagedApps       []string `yaml:"managed_apps,omitempty" json:"managed_apps,omitempty"`         // Microsoft Store apps
+	ManagedProfiles   []string `yaml:"managed_profiles,omitempty" json:"managed_profiles,omitempty"` // Device Management Service configuration profiles
+	ManagedApps       []string `yaml:"managed_apps,omitempty" json:"managed_apps,omitempty"`         // Device Management Service apps
 }
 
 // FactsCollector manages system and custom facts gathering
