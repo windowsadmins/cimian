@@ -126,9 +126,20 @@ then run the build again.
 "@ "ERROR"
     exit 1
 }
-# Function to find the WiX Toolset bin directory
+# Function to find the WiX Toolset bin directory (supports both v3 and v6)
 function Find-WiXBinPath {
-    # Common installation paths for WiX Toolset via Chocolatey
+    # First check for WiX v5/v6 (.NET tool) - check using dotnet tool list to avoid permission issues
+    try {
+        $dotnetWixVersion = & dotnet tool list --global 2>$null | Select-String "^wix\s"
+        if ($dotnetWixVersion) {
+            Write-Log "Found WiX v5/v6 as .NET global tool: $($dotnetWixVersion.ToString().Trim())" "SUCCESS"
+            return "dotnet-tool"
+        }
+    } catch {
+        # Ignore errors from dotnet tool list
+    }
+    
+    # Fallback to WiX v3 (legacy) - Common installation paths for WiX Toolset via Chocolatey
     $possiblePaths = @(
         "C:\Program Files (x86)\WiX Toolset*\bin\candle.exe",
         "C:\Program Files\WiX Toolset*\bin\candle.exe"
@@ -136,6 +147,7 @@ function Find-WiXBinPath {
     foreach ($path in $possiblePaths) {
         $found = Get-ChildItem -Path $path -ErrorAction SilentlyContinue
         if ($null -ne $found) {
+            Write-Log "Found WiX v3 legacy installation: $($found[0].Directory.FullName)" "INFO"
             return $found[0].Directory.FullName
         }
     }
@@ -305,11 +317,11 @@ function signPackage {
                 $handleOutput = & handle.exe $FilePath 2>$null
                 if ($handleOutput -and $handleOutput -match "pid: (\d+)") {
                     $lockingPids = [regex]::Matches($handleOutput, "pid: (\d+)") | ForEach-Object { $_.Groups[1].Value }
-                    foreach ($pid in $lockingPids) {
+                    foreach ($procId in $lockingPids) {
                         try {
-                            $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+                            $process = Get-Process -Id $procId -ErrorAction SilentlyContinue
                             if ($process) {
-                                Write-Log "Terminating process $($process.Name) (PID: $pid) that may be locking $FilePath" "INFO"
+                                Write-Log "Terminating process $($process.Name) (PID: $procId) that may be locking $FilePath" "INFO"
                                 $process | Stop-Process -Force -ErrorAction SilentlyContinue
                                 Start-Sleep -Seconds 1
                             }
@@ -854,7 +866,7 @@ if (Test-Path "release") {
         if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
             try {
                 Write-Log "Using 'sudo' for elevated directory cleanup..." "INFO"
-                $sudoResult = sudo powershell -Command "Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force"
+                sudo powershell -Command "Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force"
                 Write-Log "Release directory cleaned successfully using sudo." "SUCCESS"
             }
             catch {
@@ -961,11 +973,21 @@ foreach ($tool in $tools) {
 Write-Log "Checking if WiX is installed..." "INFO"
 $wixBin = Find-WiXBinPath
 if ($wixBin) {
-    Write-Log "WiX is already installed: $wixBin" "SUCCESS"
+    if ($wixBin -eq "dotnet-tool") {
+        Write-Log "WiX v6 is already installed as .NET global tool" "SUCCESS"
+    } else {
+        Write-Log "WiX v3 is already installed: $wixBin" "SUCCESS"
+    }
 } else {
-    Write-Log "WiX is not installed. Installing via Chocolatey..." "INFO"
-    choco install wixtoolset --yes --no-progress --force | Out-Null
-    Write-Log "WiX installed successfully." "SUCCESS"
+    Write-Log "WiX is not installed. Installing WiX v6 via .NET tool..." "INFO"
+    sudo dotnet tool install --global wix --version 6.0.1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log "WiX v6 installed successfully." "SUCCESS"
+    } else {
+        Write-Log "Failed to install WiX v6. Falling back to WiX v3..." "WARNING"
+        choco install wixtoolset --yes --no-progress --force | Out-Null
+        Write-Log "WiX v3 installed successfully." "SUCCESS"
+    }
 }
 Write-Log "Required tools check and installation completed." "SUCCESS"
 # Force environment reload via Chocolateley's refreshenv
@@ -1029,8 +1051,30 @@ else {
 }
 # Step 4: Verify WiX Toolset installation
 Write-Log "Verifying WiX Toolset installation..." "INFO"
-if (-not (Test-Command "candle.exe")) {
-    Write-Log "WiX Toolset is not installed correctly or not in PATH. Exiting..." "ERROR"
+$wixVerified = $false
+
+# Check WiX version
+$wixBinPath = Find-WiXBinPath
+if ($wixBinPath -eq "dotnet-tool") {
+    # For WiX v6, verify using dotnet wix
+    try {
+        $wixVersion = & dotnet tool list --global 2>$null | Select-String "^wix\s"
+        if ($wixVersion) {
+            Write-Log "WiX v6 (.NET tool) verified: $($wixVersion.ToString().Trim())" "SUCCESS"
+            $wixVerified = $true
+        }
+    } catch {
+        Write-Log "Failed to verify WiX v6 installation" "ERROR"
+    }
+} elseif (-not (Test-Command "candle.exe")) {
+    Write-Log "WiX v3 candle.exe not found in PATH" "ERROR"
+} else {
+    Write-Log "WiX v3 verified" "SUCCESS"
+    $wixVerified = $true
+}
+
+if (-not $wixVerified) {
+    Write-Log "WiX Toolset is not installed correctly or not accessible. Exiting..." "ERROR"
     exit 1
 }
 Write-Log "WiX Toolset is available." "SUCCESS"
@@ -1297,61 +1341,139 @@ catch {
 }
 # Step 10: Build MSI Packages with WiX for both x64 and arm64
 Write-Log "Building MSI packages with WiX for x64 and arm64..." "INFO"
-$wixToolsetPath   = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
-$candlePath       = Join-Path $wixToolsetPath "candle.exe"
-$lightPath        = Join-Path $wixToolsetPath "light.exe"
-$wixUtilExtension = Join-Path $wixToolsetPath "WixUtilExtension.dll"
-if (-not (Test-Path $wixToolsetPath)) {
-    Write-Log "WiX Toolset path '$wixToolsetPath' not found. Exiting..." "ERROR"
+
+# Detect WiX version and set up paths
+$wixBinPath = Find-WiXBinPath
+if ($wixBinPath -eq "dotnet-tool") {
+    Write-Log "Using WiX v6 (.NET tool)" "INFO"
+    $useWixV5 = $true
+} elseif ($wixBinPath) {
+    Write-Log "Using WiX v3 legacy: $wixBinPath" "INFO"
+    $useWixV5 = $false
+    $wixToolsetPath = $wixBinPath
+    $candlePath = Join-Path $wixToolsetPath "candle.exe"
+    $lightPath = Join-Path $wixToolsetPath "light.exe"
+    $wixUtilExtension = Join-Path $wixToolsetPath "WixUtilExtension.dll"
+    
+    if (-not (Test-Path $wixToolsetPath)) {
+        Write-Log "WiX Toolset path '$wixToolsetPath' not found. Exiting..." "ERROR"
+        exit 1
+    }
+} else {
+    Write-Log "No WiX installation found. Please install WiX v6 (.NET tool) or WiX v3 (legacy)." "ERROR"
+    Write-Log "To install WiX v6: dotnet tool install --global wix" "INFO"
+    Write-Log "To install WiX v3: choco install wixtoolset" "INFO"
     exit 1
 }
+
 $msiArchs = @("x64", "arm64")
 foreach ($msiArch in $msiArchs) {
     $msiTempDir = "release\msi_$msiArch"
     if (Test-Path $msiTempDir) { Remove-Item -Path "$msiTempDir\*" -Recurse -Force }
     else { New-Item -ItemType Directory -Path $msiTempDir | Out-Null }
+    
     # Copy correct binaries for this arch
     Write-Log "Preparing $msiArch binaries for MSI..." "INFO"
     Get-ChildItem -Path "release\$msiArch\*.exe" | ForEach-Object {
         Copy-Item $_.FullName $msiTempDir -Force
     }
+    
     # Copy any other required files (e.g., config.yaml) if needed by WiX
-    if (Test-Path "build\config.yaml") {
-        Copy-Item "build\config.yaml" $msiTempDir -Force
+    if (Test-Path "build\msi\config.yaml") {
+        Copy-Item "build\msi\config.yaml" $msiTempDir -Force
     }
+    
     # Build MSI for this arch
     $msiOutput = "release\Cimian-$msiArch-$env:RELEASE_VERSION.msi"
+    
     try {
-        Write-Log "Compiling WiX source with candle for $msiArch..." "INFO"
-        # Use argument splatting for candle
-        $candleArgs = @(
-            "-dBIN_DIR=$msiTempDir"
-            "-dProductVersion=$env:SEMANTIC_VERSION"
-            "-ext", $wixUtilExtension
-            "-out", "build\msi.$msiArch.wixobj"
-            "build\msi.wxs"
-        )
-        & $candlePath @candleArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Candle compilation failed for $msiArch with exit code $LASTEXITCODE"
+        if ($useWixV5) {
+            # WiX v6 (.NET tool) build process
+            Write-Log "Building MSI with WiX v6 for $msiArch..." "INFO"
+            
+            # Use the existing WiX project and build directly
+            $wixProjPath = "build\msi\Cimian.wixproj"
+            
+            # Build with dotnet using the updated project
+            $buildArgs = @(
+                "build"
+                $wixProjPath
+                "-p:ProductVersion=$env:SEMANTIC_VERSION"
+                "-p:BinDir=../../release/msi_$msiArch"
+                "-p:OutputName=Cimian-$msiArch"
+                "--configuration", "Release"
+                "--nologo"
+                "--verbosity", "minimal"
+            )
+            
+            Write-Log "Running: dotnet $($buildArgs -join ' ')" "INFO"
+            & dotnet @buildArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "WiX v6 build failed for $msiArch with exit code $LASTEXITCODE"
+            }
+            
+            # Find the output MSI in the build output
+            $builtMsi = "build\msi\bin\x64\Release\Cimian-$msiArch.msi"
+            if (Test-Path $builtMsi) {
+                Move-Item $builtMsi $msiOutput -Force
+                Write-Log "MSI package built with WiX v6 at $msiOutput." "SUCCESS"
+            } else {
+                # Try alternate paths
+                $altPaths = @(
+                    "build\msi\bin\Release\Cimian-$msiArch.msi",
+                    "build\msi\bin\Debug\Cimian-$msiArch.msi",
+                    "build\bin\x64\Release\Cimian-$msiArch.msi",
+                    "build\bin\Release\Cimian-$msiArch.msi",
+                    "build\bin\Debug\Cimian-$msiArch.msi",
+                    "build\Cimian-$msiArch.msi"
+                )
+                $found = $false
+                foreach ($altPath in $altPaths) {
+                    if (Test-Path $altPath) {
+                        Move-Item $altPath $msiOutput -Force
+                        Write-Log "MSI package built with WiX v6 at $msiOutput (found at $altPath)." "SUCCESS"
+                        $found = $true
+                        break
+                    }
+                }
+                if (-not $found) {
+                    throw "WiX v6 build completed but output MSI not found. Expected at $builtMsi"
+                }
+            }
+        } else {
+            # WiX v3 legacy build process
+            Write-Log "Compiling WiX source with candle for $msiArch..." "INFO"
+            # Use argument splatting for candle
+            $candleArgs = @(
+                "-dBIN_DIR=$msiTempDir"
+                "-dProductVersion=$env:SEMANTIC_VERSION"
+                "-ext", $wixUtilExtension
+                "-out", "build\msi.$msiArch.wixobj"
+                "build\msi.wxs"
+            )
+            & $candlePath @candleArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "Candle compilation failed for $msiArch with exit code $LASTEXITCODE"
+            }
+            Write-Log "Candle compilation completed successfully for $msiArch" "SUCCESS"
+            
+            Write-Log "Linking and creating MSI with light for $msiArch..." "INFO"
+            # Use argument splatting for light
+            $lightArgs = @(
+                "-dBIN_DIR=$msiTempDir"
+                "-dProductVersion=$env:SEMANTIC_VERSION"
+                "-sice:ICE*"
+                "-ext", $wixUtilExtension
+                "-out", $msiOutput
+                "build\msi.$msiArch.wixobj"
+            )
+            & $lightPath @lightArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "Light linking failed for $msiArch with exit code $LASTEXITCODE"
+            }
+            Write-Log "Light linking completed successfully for $msiArch" "SUCCESS"
+            Write-Log "MSI package built with WiX v3 at $msiOutput." "SUCCESS"
         }
-        Write-Log "Candle compilation completed successfully for $msiArch" "SUCCESS"
-        Write-Log "Linking and creating MSI with light for $msiArch..." "INFO"
-        # Use argument splatting for light
-        $lightArgs = @(
-            "-dBIN_DIR=$msiTempDir"
-            "-dProductVersion=$env:SEMANTIC_VERSION"
-            "-sice:ICE*"
-            "-ext", $wixUtilExtension
-            "-out", $msiOutput
-            "build\msi.$msiArch.wixobj"
-        )
-        & $lightPath @lightArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Light linking failed for $msiArch with exit code $LASTEXITCODE"
-        }
-        Write-Log "Light linking completed successfully for $msiArch" "SUCCESS"
-        Write-Log "MSI package built at $msiOutput." "SUCCESS"
         
         # Force garbage collection and wait for WiX processes to fully release file handles
         [System.GC]::Collect()
@@ -1360,7 +1482,7 @@ foreach ($msiArch in $msiArchs) {
         
         # Give WiX processes additional time to release file handles
         Write-Log "Waiting for WiX processes to release file handles..." "INFO"
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 2
     }
     catch {
         Write-Log "Failed to build MSI package for $msiArch. Error: $_" "ERROR"
@@ -1389,12 +1511,12 @@ foreach ($arch in $archs) {
     # binaries
     Copy-Item "release\$arch\*.exe" $archBinDst
     # common payload
-    Copy-Item "build\config.yaml"   $pkgTempDir        -EA SilentlyContinue
+    Copy-Item "build\nupkg\config.yaml"   $pkgTempDir        -EA SilentlyContinue
     if (Test-Path "build\install.ps1") { Copy-Item "build\install.ps1" $pkgTempDir }
     if (Test-Path "README.md")      { Copy-Item "README.md" $pkgTempDir }
     else { 'Cimian command-line tools.' | Set-Content (Join-Path $pkgTempDir 'README.md') }
     # materialise nuspec (add <file> line for install.ps1 only if present)
-    $nuspecText = Get-Content "build\nupkg.nuspec"
+    $nuspecText = Get-Content "build\nupkg\nupkg.nuspec"
     if (-not (Test-Path "$pkgTempDir\install.ps1")) {
         $nuspecText = $nuspecText -replace '<file src="install.ps1".*?/>', ''
     }
@@ -1422,13 +1544,13 @@ foreach ($arch in $archs) {
     Write-Log "$arch NuGet ready → $nupkgOut" "SUCCESS"
 }
 # Step 11.1: Revert `nupkg.nuspec` to its dynamic state
-Write-Log "Reverting build/nupkg.nuspec to dynamic state..." "INFO"
+Write-Log "Reverting build/nupkg/nupkg.nuspec to dynamic state..." "INFO"
 try {
-    (Get-Content "build\nupkg.nuspec") -replace "$env:SEMANTIC_VERSION", '{{VERSION}}' | Set-Content "build\nupkg.nuspec"
-    Write-Log "Reverted build/nupkg.nuspec to use dynamic placeholder." "SUCCESS"
+    (Get-Content "build\nupkg\nupkg.nuspec") -replace "$env:SEMANTIC_VERSION", '{{VERSION}}' | Set-Content "build\nupkg\nupkg.nuspec"
+    Write-Log "Reverted build/nupkg/nupkg.nuspec to use dynamic placeholder." "SUCCESS"
 }
 catch {
-    Write-Log "Failed to revert build/nupkg.nuspec. Error: $_" "ERROR"
+    Write-Log "Failed to revert build/nupkg/nupkg.nuspec. Error: $_" "ERROR"
     exit 1
 }
 Write-Log "NuGet packaging for all architectures completed." "SUCCESS"
