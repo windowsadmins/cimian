@@ -13,10 +13,6 @@ jobs:
   build:
     runs-on: windows-latest
 
-    strategy:
-      matrix:
-        targetplatform: [x64]
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -37,18 +33,19 @@ jobs:
             Write-Host "IntuneWinAppUtil is already installed."
           }
 
-      - name: Check for WiX Installation
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install WiX v6
         run: |
-          if (-not (Test-Path "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe")) {
-            choco install wixtoolset --version=3.14 --no-progress --yes --force
-          } else {
-            Write-Host "WiX Toolset v3.14 is already installed."
-          }
+          dotnet tool install --global wix --version 6.0.1
+          Write-Host "WiX v6 installed as .NET global tool"
 
       - name: Verify WiX Installation
         run: |
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -v
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -v
+          wix --version
 
       - name: Set up Go Environment
         uses: actions/setup-go@v4
@@ -68,13 +65,17 @@ jobs:
           echo "SEMANTIC_VERSION=$version" >> $env:GITHUB_ENV
           
           # Update the WiX XML with the new version
-          $wxsPath = "build/msi.wxs"
-          $wxsContent = Get-Content $wxsPath -Raw
-          $updatedWxsContent = [regex]::Replace($wxsContent, 
-                                           '(<Product Id="\*"\s+UpgradeCode="[^"]+"\s+Name="[^"]+"\s+Version=")([^"]+)(")', 
-                                           "`${1}$version`${3}")
-          Set-Content -Path $wxsPath -Value $updatedWxsContent
-          Write-Host "Updated WiX product version to $version in $wxsPath"
+          $wxsPath = "build/msi/Cimian.wxs"
+          if (Test-Path $wxsPath) {
+            $wxsContent = Get-Content $wxsPath -Raw
+            $updatedWxsContent = [regex]::Replace($wxsContent, 
+                                             '(<Product Id="\*"\s+UpgradeCode="[^"]+"\s+Name="[^"]+"\s+Version=")([^"]+)(")', 
+                                             "`${1}$version`${3}")
+            Set-Content -Path $wxsPath -Value $updatedWxsContent
+            Write-Host "Updated WiX product version to $version in $wxsPath"
+          } else {
+            Write-Host "WiX file not found at $wxsPath"
+          }
           
           # Output the version for GitHub Actions
           echo "version=$version" >> $GITHUB_OUTPUT
@@ -124,27 +125,57 @@ jobs:
         run: |
           Get-ChildItem -Path release/*.exe
 
-      - name: Build MSI Package with WiX
+      - name: Build MSI Package with WiX v6
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $semanticVersion = $env:SEMANTIC_VERSION
           Write-Host "SemanticVersion is $semanticVersion"
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe" -ext WixUtilExtension.dll -o build/msi.wixobj build/msi.wxs
-          & "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe" -sice:ICE61 -ext WixUtilExtension.dll -v -o release/Cimian-$env:RELEASE_VERSION.msi build/msi.wixobj
+          
+          # Create MSI architecture-specific directories
+          New-Item -ItemType Directory -Path "release/msi_x64" -Force
+          
+          # Copy binaries to MSI directory
+          Get-ChildItem -Path release/*.exe | ForEach-Object {
+            Copy-Item $_.FullName "release/msi_x64/"
+          }
+          
+          # Copy config.yaml to MSI directory if it doesn't exist
+          if (-not (Test-Path "release/msi_x64/config.yaml")) {
+            Copy-Item "build/msi/config.yaml" "release/msi_x64/"
+          }
+          
+          # Build MSI with WiX v6 (.NET tool)
+          dotnet build "build/msi/Cimian.wixproj" `
+            -p:ProductVersion=$semanticVersion `
+            -p:BinDir="../../release/msi_x64" `
+            -p:OutputName="Cimian-x64" `
+            --configuration Release `
+            --nologo `
+            --verbosity minimal
+          
+          # Move the built MSI to release directory
+          $builtMsi = "build/msi/bin/x64/Release/Cimian-x64.msi"
+          if (Test-Path $builtMsi) {
+            Move-Item $builtMsi "release/Cimian-$env:RELEASE_VERSION.msi" -Force
+            Write-Host "MSI package built successfully"
+          } else {
+            Write-Error "MSI build failed - output file not found"
+            exit 1
+          }
 
       - name: Prepare NuGet Package
         shell: pwsh
         run: |
-          Copy-Item build/nupkg.ps1 -Destination build/install.ps1          
+          Copy-Item build/nupkg/nupkg.ps1 -Destination build/nupkg/install.ps1          
           $version = $env:SEMANTIC_VERSION
-          (Get-Content build/nupkg.nuspec) -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $version | Set-Content build/nupkg.nuspec
-          nuget pack build/nupkg.nuspec -OutputDirectory release -BasePath $PWD
+          (Get-Content build/nupkg/nupkg.nuspec) -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $version | Set-Content build/nupkg/nupkg.nuspec
+          nuget pack build/nupkg/nupkg.nuspec -OutputDirectory release -BasePath $PWD
 
       - name: Prepare IntuneWin Package
         shell: pwsh
         run: |
-          pwsh build/intunewin.ps1 -SetupFolder release -SetupFile release/Cimian-$env:RELEASE_VERSION.msi -OutputFolder release
+          pwsh build/msi/intunewin.ps1 -SetupFolder release -SetupFile release/Cimian-$env:RELEASE_VERSION.msi -OutputFolder release
 
       - name: Verify Generated Files
         shell: pwsh
