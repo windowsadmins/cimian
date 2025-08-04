@@ -133,8 +133,8 @@ type PkgsInfo struct {
 	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
 	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
 	OnDemand             bool          `yaml:"OnDemand,omitempty"`
-	ManagedProfiles      []string      `yaml:"managed_profiles,omitempty"` // Graph API configuration profiles
-	ManagedApps          []string      `yaml:"managed_apps,omitempty"`     // Microsoft Store apps
+	ManagedProfiles      []string      `yaml:"managed_profiles,omitempty"` // Device Management Service configuration profiles
+	ManagedApps          []string      `yaml:"managed_apps,omitempty"`     // Device Management Service apps
 	Installer            *Installer    `yaml:"installer,omitempty"`
 }
 
@@ -163,8 +163,8 @@ type wrapperPkgsInfo struct {
 	UninstallCheckScript NoQuoteString `yaml:"uninstallcheck_script"`
 	PreinstallScript     NoQuoteString `yaml:"preinstall_script"`
 	PostinstallScript    NoQuoteString `yaml:"postinstall_script"`
-	ManagedProfiles      []string      `yaml:"managed_profiles,omitempty"` // Graph API configuration profiles
-	ManagedApps          []string      `yaml:"managed_apps,omitempty"`     // Microsoft Store apps
+	ManagedProfiles      []string      `yaml:"managed_profiles,omitempty"` // Device Management Service configuration profiles
+	ManagedApps          []string      `yaml:"managed_apps,omitempty"`     // Device Management Service apps
 }
 
 // Config struct for reading `C:\ProgramData\ManagedInstalls\Config.yaml`

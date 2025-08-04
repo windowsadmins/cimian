@@ -34,8 +34,8 @@ type Item struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty"`
 	ManagedUpdates    []string `yaml:"managed_updates,omitempty"`
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty"`
-	ManagedProfiles   []string `yaml:"managed_profiles,omitempty"` // Graph API configuration profiles
-	ManagedApps       []string `yaml:"managed_apps,omitempty"`     // Microsoft Store apps
+	ManagedProfiles   []string `yaml:"managed_profiles,omitempty"` // Device Management Service configuration profiles
+	ManagedApps       []string `yaml:"managed_apps,omitempty"`     // Device Management Service apps
 
 	// The catalogs (Development, etc.)
 	Catalogs      []string `yaml:"catalogs,omitempty"`
@@ -86,8 +86,8 @@ type ManifestFile struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls"`
 	ManagedUpdates    []string `yaml:"managed_updates"`
 	OptionalInstalls  []string `yaml:"optional_installs"`
-	ManagedProfiles   []string `yaml:"managed_profiles"` // Graph API configuration profiles
-	ManagedApps       []string `yaml:"managed_apps"`     // Microsoft Store apps
+	ManagedProfiles   []string `yaml:"managed_profiles"` // Device Management Service configuration profiles
+	ManagedApps       []string `yaml:"managed_apps"`     // Device Management Service apps
 	IncludedManifests []string `yaml:"included_manifests"`
 
 	// Conditional Items - NSPredicate-style conditional evaluation
@@ -112,8 +112,8 @@ type ConditionalItem struct {
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty" json:"managed_uninstalls,omitempty"`
 	ManagedUpdates    []string `yaml:"managed_updates,omitempty" json:"managed_updates,omitempty"`
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty" json:"optional_installs,omitempty"`
-	ManagedProfiles   []string `yaml:"managed_profiles,omitempty" json:"managed_profiles,omitempty"` // Graph API configuration profiles
-	ManagedApps       []string `yaml:"managed_apps,omitempty" json:"managed_apps,omitempty"`         // Microsoft Store apps
+	ManagedProfiles   []string `yaml:"managed_profiles,omitempty" json:"managed_profiles,omitempty"` // Device Management Service configuration profiles
+	ManagedApps       []string `yaml:"managed_apps,omitempty" json:"managed_apps,omitempty"`         // Device Management Service apps
 }
 
 // -----------------------------------------------------------------------------
@@ -406,7 +406,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			}
 			deduplicateCheck[actionKey] = true
 
-			// For profiles, we create a special item that will be handled by Graph API pipeline
+			// For profiles, we create a special item that will be handled by Device Management Service solution
 			finalItems = append(finalItems, Item{
 				Name:           profileName,
 				Version:        "",
@@ -425,7 +425,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			}
 			deduplicateCheck[actionKey] = true
 
-			// For Microsoft Store apps, we create a special item that will be handled by Graph API pipeline
+			// For apps, we create a special item that will be handled by Device Management Service solution
 			finalItems = append(finalItems, Item{
 				Name:           appName,
 				Version:        "",
