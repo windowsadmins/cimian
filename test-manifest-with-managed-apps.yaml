@@ -1,0 +1,36 @@
+name: TestManifestWithManagedApps
+catalogs:
+  - Development
+managed_installs:
+  - TestPackage1
+  - TestPackage2
+managed_profiles:
+  - TestConfigProfile1
+  - TestConfigProfile2
+managed_apps:
+  - Microsoft.VisualStudioCode
+  - Microsoft.PowerToys
+  - Microsoft.WindowsTerminal
+optional_installs:
+  - OptionalPackage1
+included_manifests: []
+
+conditional_items:
+  - condition:
+      key: "os_version"
+      operator: ">="
+      value: "10.0.19041"
+    managed_apps:
+      - Microsoft.PowerBI
+  - conditions:
+      - key: "hostname"
+        operator: "LIKE"
+        value: "*DEV*"
+      - key: "username"
+        operator: "=="
+        value: "developer"
+    condition_type: "AND"
+    managed_apps:
+      - Microsoft.VisualStudio.Enterprise
+    managed_profiles:
+      - DeveloperConfigProfile
