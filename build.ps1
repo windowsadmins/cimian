@@ -1710,6 +1710,45 @@ if ($Install) {
             exit 1
         }
     }
+    
+    # Pre-installation: Stop any running Cimian services to prevent restart manager dialog
+    Write-Log "Pre-installation: Stopping existing Cimian services..." "INFO"
+    try {
+        # Stop the service using multiple methods
+        $services = @("CimianWatcher", "Cimian Bootstrap File Watcher")
+        foreach ($serviceName in $services) {
+            try {
+                $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+                if ($service -and $service.Status -eq "Running") {
+                    Write-Log "Stopping service: $serviceName" "INFO"
+                    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                    # Wait a moment for service to stop
+                    Start-Sleep -Seconds 2
+                }
+            }
+            catch {
+                # Ignore service stop errors
+            }
+        }
+        
+        # Force kill any remaining processes
+        $processes = @("cimiwatcher", "cimistatus", "managedsoftwareupdate")
+        foreach ($processName in $processes) {
+            try {
+                Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+                # Ignore process kill errors
+            }
+        }
+        
+        Write-Log "Pre-installation cleanup completed." "SUCCESS"
+        Start-Sleep -Seconds 3  # Give Windows time to release file handles
+    }
+    catch {
+        Write-Log "Pre-installation cleanup had some issues, but continuing: $_" "WARNING"
+    }
+    
     # Attempt to install the MSI
     $installSuccess = Install-MsiPackage -MsiPath $msiToInstall
     if ($installSuccess) {
