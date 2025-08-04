@@ -143,14 +143,14 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		return out, nil
 
 	case "profile":
-		// Configuration profiles are handled by Graph API pipeline, not directly by Cimian
-		logging.Info("Configuration profile scheduled for deployment via Graph API", "profile", item.Name)
-		return "Profile scheduled for Graph API deployment", nil
+		// Configuration profiles are handled by Device Management Service solution, not directly by Cimian
+		logging.Info("Configuration profile scheduled for deployment via Device Management Service", "profile", item.Name)
+		return "Profile scheduled for Device Management Service deployment", nil
 
 	case "app":
-		// Microsoft Store apps are handled by Graph API pipeline, not directly by Cimian
-		logging.Info("Microsoft Store app scheduled for deployment via Graph API", "app", item.Name)
-		return "App scheduled for Graph API deployment", nil
+		// Apps are handled by Device Management Service solution, not directly by Cimian
+		logging.Info("App scheduled for deployment via Device Management Service", "app", item.Name)
+		return "App scheduled for Device Management Service deployment", nil
 
 	default:
 		msg := fmt.Sprintf("Unsupported action: %s", action)
