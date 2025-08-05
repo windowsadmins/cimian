@@ -14,6 +14,7 @@
 #  ─Install       … after building, install the MSI package (requires elevation)
 #  ─IntuneWin     … create .intunewin packages (adds build time, only needed for deployment)
 #  ─Dev           … development mode: stops services, faster iteration
+#  ─SignMSI       … sign existing MSI files in release directory (standalone operation)
 #
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing (no .intunewin)
@@ -23,6 +24,8 @@
 #   .\build.ps1 -Install             # Build and install the MSI package
 #   .\build.ps1 -IntuneWin           # Full build including .intunewin packages
 #   .\build.ps1 -Dev -Install        # Development mode: fast rebuild and install
+#   .\build.ps1 -SignMSI             # Sign existing MSI files in release directory
+#   .\build.ps1 -SignMSI -Thumbprint XX # Sign existing MSI files with specific certificate
 param(
     [switch]$Sign,
     [switch]$NoSign,
@@ -33,7 +36,8 @@ param(
     [string]$Binary,
     [switch]$Install,
     [switch]$IntuneWin,
-    [switch]$Dev  # Development mode - stops services, skips signing, faster iteration
+    [switch]$Dev,  # Development mode - stops services, skips signing, faster iteration
+    [switch]$SignMSI  # Sign existing MSI files in release directory
 )
 # ──────────────────────────  GLOBALS  ──────────────────────────
 # Friendly name (CN) of the enterprise code-signing certificate you push with Intune
@@ -177,7 +181,7 @@ function Invoke-Retry {
         }
     }
 }
-# ──────────────────────────  SIGNING DECISION  ─────────────────
+
 # ──────────────────────────  SIGNING DECISION  ─────────────────
 # Auto-detect enterprise certificate if available
 $autoDetectedThumbprint = $null
@@ -217,6 +221,22 @@ if ($Binary) {
 if ($Install -and ($Binaries -or $Binary)) {
     Write-Log "Cannot use -Install with -Binaries or -Binary flag. MSI packages are needed for installation." "ERROR"
     exit 1
+}
+
+# If SignMSI flag is set, validate it's not used with conflicting flags
+if ($SignMSI) {
+    $conflictingFlags = @()
+    if ($Binaries) { $conflictingFlags += "-Binaries" }
+    if ($Binary) { $conflictingFlags += "-Binary" }
+    if ($Install) { $conflictingFlags += "-Install" }
+    if ($IntuneWin) { $conflictingFlags += "-IntuneWin" }
+    if ($Dev) { $conflictingFlags += "-Dev" }
+    
+    if ($conflictingFlags.Count -gt 0) {
+        Write-Log "Cannot use -SignMSI with the following flags: $($conflictingFlags -join ', ')" "ERROR"
+        Write-Log "-SignMSI is designed to sign existing MSI files only." "ERROR"
+        exit 1
+    }
 }
 # If Install flag is set, ensure Task includes packaging
 if ($Install -and $Task -eq "build") {
@@ -286,6 +306,7 @@ if ($Dev) {
     }
     Write-Log "Development mode preparation complete - files unlocked for rebuild" "SUCCESS"
 }
+
 # ────────────────  SIGNING HELPERS  ────────────────
 function signPackage {
     <#
@@ -568,6 +589,62 @@ function Get-FileLockInfo {
         # Ignore process enumeration errors
     }
 }
+# ───────────────────────────────────────────────────
+#  SIGNMSI MODE HANDLING
+# ───────────────────────────────────────────────────
+if ($SignMSI) {
+    Write-Log "SignMSI mode - will sign existing MSI files in release directory" "INFO"
+    
+    # Force signing to be enabled
+    if ($NoSign) {
+        Write-Log "Cannot use -NoSign with -SignMSI flag. Removing NoSign restriction." "WARNING"
+        $NoSign = $false
+    }
+    $Sign = $true
+    
+    # Ensure signing tools and certificate are available
+    Test-SignTool
+    if (-not $Thumbprint) {
+        $Thumbprint = Get-SigningCertThumbprint
+        if (-not $Thumbprint) {
+            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found – aborting." "ERROR"
+            exit 1
+        }
+        Write-Log "Auto-selected signing cert $Thumbprint for MSI signing" "INFO"
+    } else {
+        Write-Log "Using signing certificate $Thumbprint for MSI signing" "INFO"
+    }
+    $env:SIGN_THUMB = $Thumbprint
+    
+    # Find MSI files in release directory
+    $msiFiles = Get-ChildItem -Path "release" -Filter "*.msi" -File -ErrorAction SilentlyContinue
+    if ($msiFiles.Count -eq 0) {
+        Write-Log "No MSI files found in release directory to sign." "ERROR"
+        exit 1
+    }
+    
+    Write-Log "Found $($msiFiles.Count) MSI file(s) to sign:" "INFO"
+    foreach ($msi in $msiFiles) {
+        Write-Log "  $($msi.Name)" "INFO"
+    }
+    
+    # Sign each MSI file
+    $signedCount = 0
+    foreach ($msi in $msiFiles) {
+        Write-Log "Signing MSI: $($msi.Name)" "INFO"
+        $success = signPackage -FilePath $msi.FullName
+        if ($success) {
+            $signedCount++
+            Write-Log "Successfully signed: $($msi.Name)" "SUCCESS"
+        } else {
+            Write-Log "Failed to sign: $($msi.Name)" "ERROR"
+        }
+    }
+    
+    Write-Log "SignMSI completed: $signedCount of $($msiFiles.Count) MSI files signed successfully." "SUCCESS"
+    exit 0
+}
+
 # ───────────────────────────────────────────────────
 #  BUILD PROCESS STARTS
 # ───────────────────────────────────────────────────
