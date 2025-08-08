@@ -102,9 +102,14 @@ func SaveConfig(config *Configuration) error {
 
 // GetDefaultConfig provides default configuration values in YAML format.
 func GetDefaultConfig() *Configuration {
+	// Use ProgramW6432 environment variable to force 64-bit Program Files path
+	programFiles := os.Getenv("ProgramW6432")
+	if programFiles == "" {
+		programFiles = `C:\Program Files`
+	}
 	return &Configuration{
 		LogLevel:         "INFO",
-		InstallPath:      `C:\Program Files\Cimian`,
+		InstallPath:      filepath.Join(programFiles, "Cimian"),
 		RepoPath:         `C:\ProgramData\ManagedInstalls\repo`,
 		CatalogsPath:     `C:\ProgramData\ManagedInstalls\catalogs`,
 		CachePath:        `C:\ProgramData\ManagedInstalls\Cache`,

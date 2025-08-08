@@ -305,9 +305,16 @@ namespace Cimian.Status.Services
 
         private string? FindExecutable()
         {
+            // Get the ProgramW6432 environment variable for 64-bit Program Files path
+            var programFiles = Environment.GetEnvironmentVariable("ProgramW6432") ?? 
+                              Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            
             var possiblePaths = new[]
             {
-                // Installed location
+                // Installed location using ProgramW6432 (64-bit Program Files)
+                Path.Combine(programFiles, "Cimian", "managedsoftwareupdate.exe"),
+                
+                // Fallback to standard Program Files location
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Cimian", "managedsoftwareupdate.exe"),
                 
                 // Development locations - relative to current executable
