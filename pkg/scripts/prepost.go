@@ -72,7 +72,12 @@ func runScript(
 
 // RunPreflight calls runScript for preflight.
 func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
-	scriptPath := `C:\Program Files\Cimian\preflight.ps1`
+	// Use ProgramW6432 environment variable to force 64-bit Program Files path
+	programFiles := os.Getenv("ProgramW6432")
+	if programFiles == "" {
+		programFiles = `C:\Program Files`
+	}
+	scriptPath := filepath.Join(programFiles, "Cimian", "preflight.ps1")
 
 	// Check if the script exists before trying to run it
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
@@ -87,7 +92,12 @@ func RunPreflight(verbosity int, logInfo func(string, ...interface{}), logError 
 
 // RunPostflight calls runScript for postflight.
 func RunPostflight(verbosity int, logInfo func(string, ...interface{}), logError func(string, ...interface{})) error {
-	scriptPath := `C:\Program Files\Cimian\postflight.ps1`
+	// Use ProgramW6432 environment variable to force 64-bit Program Files path
+	programFiles := os.Getenv("ProgramW6432")
+	if programFiles == "" {
+		programFiles = `C:\Program Files`
+	}
+	scriptPath := filepath.Join(programFiles, "Cimian", "postflight.ps1")
 
 	// Check if the script exists before trying to run it
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {

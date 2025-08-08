@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -202,7 +203,12 @@ func BuildCimianPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem,
 	// If not found, fallback
 	if installLocation == "" {
 		truncatedName := TruncateDomain(pkgID)
-		installLocation = filepath.Join(`C:\Program Files`, truncatedName)
+		// Use ProgramW6432 environment variable to force 64-bit Program Files path
+		programFiles := os.Getenv("ProgramW6432")
+		if programFiles == "" {
+			programFiles = `C:\Program Files`
+		}
+		installLocation = filepath.Join(programFiles, truncatedName)
 	}
 
 	// enumerate only payload/ subfolder
