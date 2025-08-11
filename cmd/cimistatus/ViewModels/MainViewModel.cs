@@ -41,7 +41,7 @@ namespace Cimian.Status.ViewModels
         private string _lastRunTime = "Never";
 
         [ObservableProperty]
-        private string _runButtonText = "Run Now";
+        private string _runButtonText = "Check for Updates";
 
         [ObservableProperty]
         private string _connectionStatusText = "Connected";
@@ -118,7 +118,7 @@ namespace Cimian.Status.ViewModels
                 // Start log tailing when update begins
                 await StartLogTailingAsync();
 
-                await _updateService.ExecuteUpdateAsync();
+                await _updateService.MonitorExistingProcessesAsync();
             }
             catch (Exception ex)
             {
