@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,6 +12,8 @@ namespace Cimian.Status
 {
     public static class Program
     {
+        private static Mutex? _mutex;
+
         [STAThread]
         public static void Main(string[] args)
         {
@@ -25,8 +28,26 @@ namespace Cimian.Status
             }
             else
             {
-                // Run with modern WPF UI
-                RunWithUI(args);
+                // Check for single instance (only for UI mode)
+                _mutex = new Mutex(true, "CimianStatusSingleInstance", out bool isNewInstance);
+                
+                if (!isNewInstance)
+                {
+                    // Another instance is already running, try to bring it to front
+                    BringExistingInstanceToFront();
+                    return;
+                }
+
+                try
+                {
+                    // Run with modern WPF UI
+                    RunWithUI(args);
+                }
+                finally
+                {
+                    _mutex?.ReleaseMutex();
+                    _mutex?.Dispose();
+                }
             }
         }
 
@@ -85,5 +106,37 @@ namespace Cimian.Status
 
             host.Run();
         }
+
+        private static void BringExistingInstanceToFront()
+        {
+            // Try to find and activate the existing CimianStatus window
+            try
+            {
+                var processes = System.Diagnostics.Process.GetProcessesByName("cimistatus");
+                foreach (var process in processes)
+                {
+                    if (process.Id != System.Diagnostics.Process.GetCurrentProcess().Id && process.MainWindowHandle != IntPtr.Zero)
+                    {
+                        // Import Windows API functions for window manipulation
+                        ShowWindow(process.MainWindowHandle, SW_RESTORE);
+                        SetForegroundWindow(process.MainWindowHandle);
+                        break;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore errors when trying to bring window to front
+            }
+        }
+
+        // Windows API imports for window manipulation
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+        
+        private const int SW_RESTORE = 9;
     }
 }
