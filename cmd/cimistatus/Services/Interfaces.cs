@@ -11,7 +11,7 @@ namespace Cimian.Status.Services
         event EventHandler<StatusEventArgs>? StatusChanged;
         event EventHandler<UpdateCompletedEventArgs>? Completed;
 
-        Task ExecuteUpdateAsync();
+        Task MonitorExistingProcessesAsync();
         bool IsExecutableFound();
         Process? LaunchWithOutputCapture(Action<string> onOutputReceived, Action<string> onErrorReceived);
     }
