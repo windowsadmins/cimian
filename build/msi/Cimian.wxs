@@ -30,6 +30,15 @@
     <Property Id="MSISHUTDOWNTIMEOUT" Value="0" />
     <Property Id="MSIFORCERESTART" Value="0" />
 
+    <!-- Search for existing CimianWatcher service via registry -->
+    <Property Id="CIMIANWATCHER_SERVICE_EXISTS">
+      <RegistrySearch Id="CimianWatcherServiceSearch" 
+                      Root="HKLM" 
+                      Key="SYSTEM\CurrentControlSet\Services\CimianWatcher" 
+                      Name="ImagePath" 
+                      Type="raw" />
+    </Property>
+
     <!-- Search for the config file -->
     <Property Id="CONFIGFILE">
       <DirectorySearch Id="ManagedInstallsDirSearch" Path="[CommonAppDataFolder]ManagedInstalls">
@@ -82,12 +91,8 @@
         <Component Id="Binary8" Guid="CF855CDE-1234-5678-9ABC-26091DE9B83D">
           <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimiwatcher.exe" />
           
-          <!-- Service control to stop existing service before file replacement -->
-          <util:ServiceConfig ServiceName="CimianWatcher" 
-                              FirstFailureActionType="restart" 
-                              SecondFailureActionType="restart" 
-                              ThirdFailureActionType="restart" 
-                              RestartServiceDelayInSeconds="60" />
+          <!-- Note: Service configuration removed to prevent issues on fresh installs -->
+          <!-- Service management is handled through custom actions instead -->
         </Component>
 
         <!-- CimiTrigger CLI for manual update triggering -->
@@ -173,10 +178,10 @@
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
-      <!-- Force stop service immediately after LaunchConditions, before any file operations -->
-      <Custom Action="ForceStopCimianWatcher" After="LaunchConditions" Condition="NOT REMOVE" />
-      <!-- Stop any existing CimianWatcher service/process before installing files -->
-      <Custom Action="StopExistingCimianWatcher" Before="InstallFiles" Condition="NOT REMOVE" />
+      <!-- Force stop service immediately after LaunchConditions, but only if service exists (upgrade scenario) -->
+      <Custom Action="ForceStopCimianWatcher" After="LaunchConditions" Condition="NOT REMOVE AND CIMIANWATCHER_SERVICE_EXISTS" />
+      <!-- Stop any existing CimianWatcher service/process before installing files, only if service exists -->
+      <Custom Action="StopExistingCimianWatcher" Before="InstallFiles" Condition="NOT REMOVE AND CIMIANWATCHER_SERVICE_EXISTS" />
       
       <!-- Service management is handled through util:ServiceConfig -->
       
@@ -185,9 +190,9 @@
       <Custom Action="InstallCimianWatcherService" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="StartCimianWatcherService" After="InstallCimianWatcherService" Condition="NOT REMOVE" />
 
-      <!-- Custom Action for Uninstallation -->
-      <Custom Action="StopCimianWatcherService" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
-      <Custom Action="RemoveCimianWatcherService" After="StopCimianWatcherService" Condition="REMOVE=&quot;ALL&quot;" />
+      <!-- Custom Action for Uninstallation - only run if service exists -->
+      <Custom Action="StopCimianWatcherService" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND CIMIANWATCHER_SERVICE_EXISTS" />
+      <Custom Action="RemoveCimianWatcherService" After="StopCimianWatcherService" Condition="REMOVE=&quot;ALL&quot; AND CIMIANWATCHER_SERVICE_EXISTS" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->

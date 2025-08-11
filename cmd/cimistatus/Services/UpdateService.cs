@@ -28,7 +28,7 @@ namespace Cimian.Status.Services
             _statusServer.MessageReceived += OnStatusMessageReceived;
         }
 
-        public async Task ExecuteUpdateAsync()
+        public async Task MonitorExistingProcessesAsync()
         {
             try
             {
@@ -438,7 +438,7 @@ namespace Cimian.Status.Services
                 var processInfo = new ProcessStartInfo
                 {
                     FileName = execPath,
-                    Arguments = "--auto --show-status -vv --check-only",  // Check-only mode + max verbosity for detailed logging
+                    Arguments = "--auto --show-status -vv",  // Max verbosity for detailed logging (READ-ONLY monitoring)
                     UseShellExecute = false,             // Required for output capture
                     RedirectStandardOutput = true,       // Capture stdout
                     RedirectStandardError = true,        // Capture stderr

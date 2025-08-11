@@ -246,24 +246,46 @@ func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 	// Execute the bootstrap update
 	logger.Info(1, fmt.Sprintf("Starting %s bootstrap update process", updateType))
 
-	var cmd *exec.Cmd
+	// First, start managedsoftwareupdate in the background
+	var updateCmd *exec.Cmd
 	if withGUI {
-		// Run with GUI (cimistatus)
-		cmd = exec.Command(cimianExePath, "--auto", "--show-status")
+		// Run with verbose output for GUI monitoring
+		updateCmd = exec.Command(cimianExePath, "--auto", "--show-status", "-vv")
 	} else {
-		// Run without GUI (headless)
-		cmd = exec.Command(cimianExePath, "--auto")
+		// Run headless mode
+		updateCmd = exec.Command(cimianExePath, "--auto")
 	}
 
-	// Set up the command to run in the background
-	if err := cmd.Start(); err != nil {
+	// Start the update process
+	if err := updateCmd.Start(); err != nil {
 		logger.Error(1, fmt.Sprintf("Failed to start %s bootstrap update: %v", updateType, err))
 		return
 	}
 
-	// Monitor the process in a separate goroutine
+	logger.Info(1, fmt.Sprintf("Started managedsoftwareupdate process (PID: %d)", updateCmd.Process.Pid))
+
+	// If GUI mode, also launch cimistatus to provide UI monitoring
+	if withGUI {
+		cimistatus := filepath.Join(filepath.Dir(cimianExePath), "cimistatus.exe")
+
+		// Check if cimistatus exists
+		if _, err := os.Stat(cimistatus); err == nil {
+			logger.Info(1, "Starting CimianStatus UI for monitoring")
+
+			guiCmd := exec.Command(cimistatus)
+			if err := guiCmd.Start(); err != nil {
+				logger.Error(1, fmt.Sprintf("Failed to start CimianStatus UI: %v", err))
+			} else {
+				logger.Info(1, fmt.Sprintf("Started CimianStatus UI (PID: %d)", guiCmd.Process.Pid))
+			}
+		} else {
+			logger.Error(1, fmt.Sprintf("CimianStatus not found at: %s", cimistatus))
+		}
+	}
+
+	// Monitor the main update process in a separate goroutine
 	go func() {
-		if err := cmd.Wait(); err != nil {
+		if err := updateCmd.Wait(); err != nil {
 			logger.Error(1, fmt.Sprintf("%s bootstrap update process failed: %v", updateType, err))
 		} else {
 			logger.Info(1, fmt.Sprintf("%s bootstrap update process completed successfully", updateType))
