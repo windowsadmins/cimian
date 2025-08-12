@@ -1390,6 +1390,21 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 	for _, cItem := range items {
 		itemNames = append(itemNames, cItem.Name)
 
+		// Check if this is a script-only item (no installer file needed)
+		logging.Debug("Script-only detection values",
+			"item", cItem.Name,
+			"installer_type", cItem.Installer.Type,
+			"installer_location", cItem.Installer.Location,
+			"installcheck_script_len", len(string(cItem.InstallCheckScript)),
+			"preinstall_script_len", len(string(cItem.PreScript)),
+			"postinstall_script_len", len(string(cItem.PostScript)))
+
+		if cItem.Installer.Type == "" && cItem.Installer.Location == "" &&
+			(string(cItem.InstallCheckScript) != "" || string(cItem.PreScript) != "" || string(cItem.PostScript) != "") {
+			logging.Debug("Script-only item detected, skipping download preparation", "item", cItem.Name)
+			continue
+		}
+
 		if cItem.Installer.Location == "" {
 			logger.Warning("No installer location found for item: %s", cItem.Name)
 			logging.LogEventEntry("install", "prepare", "failed",
@@ -1448,18 +1463,31 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 
 	// Perform installation for each item using the correct paths
 	for _, cItem := range items {
-		localFile, exists := downloadedPaths[cItem.Name]
-		if !exists {
-			logger.Error("Downloaded path not found for item: %s", cItem.Name)
-			logging.LogEventEntry("install", "start", "failed",
-				fmt.Sprintf("Downloaded path not found for %s", cItem.Name),
-				logging.WithPackage(cItem.Name, cItem.Version),
-				logging.WithError(fmt.Errorf("downloaded path not found")))
-			failCount++
-			continue
+		// Check if this is a script-only item (no download needed)
+		isScriptOnly := cItem.Installer.Type == "" && cItem.Installer.Location == "" &&
+			(cItem.Check.Script != "" || string(cItem.PreScript) != "" || string(cItem.PostScript) != "")
+
+		var localFile string
+		if isScriptOnly {
+			// Script-only item - no local file needed
+			logger.Info("Installing script-only item: %s", cItem.Name)
+			localFile = "" // Empty string for script-only items
+		} else {
+			// Regular item - must have a downloaded file
+			var exists bool
+			localFile, exists = downloadedPaths[cItem.Name]
+			if !exists {
+				logger.Error("Downloaded path not found for item: %s", cItem.Name)
+				logging.LogEventEntry("install", "start", "failed",
+					fmt.Sprintf("Downloaded path not found for %s", cItem.Name),
+					logging.WithPackage(cItem.Name, cItem.Version),
+					logging.WithError(fmt.Errorf("downloaded path not found")))
+				failCount++
+				continue
+			}
+			logger.Info("Installing downloaded item: %s, file: %s", cItem.Name, localFile)
 		}
 
-		logger.Info("Installing downloaded item: %s, file: %s", cItem.Name, localFile)
 		statusReporter.Detail(fmt.Sprintf("Installing %s...", cItem.Name))
 
 		// Log individual install start
