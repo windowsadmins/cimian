@@ -15,19 +15,21 @@ import (
 
 // Item contains an individual entry from the catalog.
 type Item struct {
-	Name          string              `yaml:"name"`
-	Dependencies  []string            `yaml:"dependencies"`
-	DisplayName   string              `yaml:"display_name"`
-	Identifier    string              `yaml:"identifier,omitempty"`
-	Installer     InstallerItem       `yaml:"installer"`
-	Uninstaller   []InstallItem       `yaml:"uninstaller"`
-	Check         InstallCheck        `yaml:"check"`
-	Installs      []InstallItem       `yaml:"installs"`
-	Version       string              `yaml:"version"`
-	BlockingApps  []string            `yaml:"blocking_apps"`
-	PreScript     utils.LiteralString `yaml:"preinstall_script"`
-	PostScript    utils.LiteralString `yaml:"postinstall_script"`
-	SupportedArch []string            `yaml:"supported_architectures"`
+	Name                 string              `yaml:"name"`
+	Dependencies         []string            `yaml:"dependencies"`
+	DisplayName          string              `yaml:"display_name"`
+	Identifier           string              `yaml:"identifier,omitempty"`
+	Installer            InstallerItem       `yaml:"installer"`
+	Uninstaller          []InstallItem       `yaml:"uninstaller"`
+	Check                InstallCheck        `yaml:"check"`
+	Installs             []InstallItem       `yaml:"installs"`
+	Version              string              `yaml:"version"`
+	BlockingApps         []string            `yaml:"blocking_apps"`
+	PreScript            utils.LiteralString `yaml:"preinstall_script"`
+	PostScript           utils.LiteralString `yaml:"postinstall_script"`
+	InstallCheckScript   utils.LiteralString `yaml:"installcheck_script"`
+	UninstallCheckScript utils.LiteralString `yaml:"uninstallcheck_script"`
+	SupportedArch        []string            `yaml:"supported_architectures"`
 	// OS version compatibility
 	MinOSVersion string `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
 	MaxOSVersion string `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
