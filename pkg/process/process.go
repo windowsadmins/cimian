@@ -77,8 +77,9 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 			// Check if it's a valid install or uninstall item
 			validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
 			validUninstallItem := len(item.Uninstaller) > 0
+			validScriptOnlyItem := (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "")
 
-			if validInstallItem || validUninstallItem {
+			if validInstallItem || validUninstallItem || validScriptOnlyItem {
 				// Don't modify the location here, return it as-is
 				return item, nil
 			}
@@ -221,6 +222,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 					handleOnDemandInstall(validDependency, cachePath, CheckOnly, cfg)
 				} else {
 					// Download the file first for dependencies
+					logging.Debug("Calling downloadItemFile from dependency processing", "dependency", validDependency.Name)
 					localFile, err := downloadItemFile(validDependency, cfg)
 					if err != nil {
 						logging.Error("Failed to download dependency", "dependency", validDependency.Name, "error", err)
@@ -235,13 +237,30 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 		if isOnDemandItem(validItem) {
 			handleOnDemandInstall(validItem, cachePath, CheckOnly, cfg)
 		} else {
-			// Download the file first
-			localFile, err := downloadItemFile(validItem, cfg)
-			if err != nil {
-				logging.Error("Failed to download item", "item", validItem.Name, "error", err)
-				continue
+			// Debug logging for script-only detection
+			logging.Debug("Script-only detection in process.go",
+				"item", validItem.Name,
+				"installer_type", validItem.Installer.Type,
+				"installer_location", validItem.Installer.Location,
+				"installcheck_script_len", len(string(validItem.InstallCheckScript)),
+				"preinstall_script_len", len(string(validItem.PreScript)),
+				"postinstall_script_len", len(string(validItem.PostScript)))
+
+			// Check if this is a script-only item (no installer file needed)
+			if validItem.Installer.Type == "" && validItem.Installer.Location == "" &&
+				(string(validItem.InstallCheckScript) != "" || string(validItem.PreScript) != "" || string(validItem.PostScript) != "") {
+				// Script-only item - call installer directly without downloading
+				logging.Debug("Processing script-only item, skipping download", "item", validItem.Name)
+				installerInstall(validItem, "install", "", cachePath, CheckOnly, cfg)
+			} else {
+				logging.Debug("Not script-only item, proceeding with download", "item", validItem.Name)
+				localFile, err := downloadItemFile(validItem, cfg)
+				if err != nil {
+					logging.Error("Failed to download item", "item", validItem.Name, "error", err)
+					continue
+				}
+				installerInstall(validItem, "install", localFile, cachePath, CheckOnly, cfg)
 			}
-			installerInstall(validItem, "install", localFile, cachePath, CheckOnly, cfg)
 		}
 	}
 }
@@ -449,12 +468,21 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 	if isOnDemandItem(item) {
 		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
 	} else {
-		// Download the file first
-		localFile, err := downloadItemFile(item, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to download item %s: %v", itemName, err)
+		// Check if this is a script-only item (no installer file needed)
+		if item.Installer.Type == "" && item.Installer.Location == "" &&
+			(string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "") {
+			// Script-only item - call installer directly without downloading
+			logging.Debug("Processing script-only item in ProcessInstallWithDependencies", "item", item.Name)
+			installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+		} else {
+			// Download the file first
+			logging.Debug("Not script-only item in ProcessInstallWithDependencies", "item", item.Name)
+			localFile, err := downloadItemFile(item, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to download item %s: %v", itemName, err)
+			}
+			installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 		}
-		installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 	}
 
 	// Look for updates that should be applied after this install
@@ -705,15 +733,27 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	if isOnDemandItem(item) {
 		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
 	} else {
-		// Download the file first, then install it
-		localFile, err := downloadItemFile(item, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to download item %s: %v", itemName, err)
-		}
+		// Check if this is a script-only item (no installer file needed)
+		if item.Installer.Type == "" && item.Installer.Location == "" &&
+			(string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "") {
+			// Script-only item - call installer directly without downloading
+			logging.Debug("Processing script-only item in processInstallWithAdvancedLogic", "item", item.Name)
+			_, err := installerInstall(item, "install", "", cachePath, checkOnly, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to install script-only item %s: %v", itemName, err)
+			}
+		} else {
+			// Download the file first, then install it
+			logging.Debug("Not script-only item in processInstallWithAdvancedLogic", "item", item.Name)
+			localFile, err := downloadItemFile(item, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to download item %s: %v", itemName, err)
+			}
 
-		_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
-		if err != nil {
-			return fmt.Errorf("failed to install item %s: %v", itemName, err)
+			_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
+			if err != nil {
+				return fmt.Errorf("failed to install item %s: %v", itemName, err)
+			}
 		}
 	}
 
@@ -936,6 +976,8 @@ func handleOnDemandInstall(item catalog.Item, cachePath string, checkOnly bool, 
 
 // downloadItemFile downloads the installer file for a single catalog item and returns the local file path
 func downloadItemFile(item catalog.Item, cfg *config.Configuration) (string, error) {
+	logging.Debug("downloadItemFile called", "item", item.Name, "installer_location", item.Installer.Location, "caller", "check_calling_function")
+
 	if item.Installer.Location == "" {
 		return "", fmt.Errorf("no installer location found for item: %s", item.Name)
 	}
