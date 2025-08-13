@@ -1,20 +1,24 @@
-<#
+﻿<#
 .SYNOPSIS
     Builds the Cimian project locally, replicating the CI/CD pipeline.
 .DESCRIPTION
     This script automates the build and packaging process, including installing dependencies,
     building binaries, and packaging artifacts.
 #>
-#  ─Sign          … build + sign
-#  ─NoSign        … disable auto-signing even if enterprise cert is found
-#  ─Thumbprint XX … override auto-detection
-#  ─Task XX       … run specific task: build, package, all (default: all)
-#  ─Binaries      … build and sign only the .exe binaries, skip all packaging
-#  ─Binary XX     … build and sign only a specific binary (e.g., cimistatus)
-#  ─Install       … after building, install the MSI package (requires elevation)
-#  ─IntuneWin     … create .intunewin packages (adds build time, only needed for deployment)
-#  ─Dev           … development mode: stops services, faster iteration
-#  ─SignMSI       … sign existing MSI files in release directory (standalone operation)
+#  Sign           build + sign
+#  NoSign         disable auto-signing even if enterprise cert is found
+#  Thumbprint XX  override auto-detection
+#  Task XX        run specific task: build, package, all (default: all)
+#  Binaries       build and sign only the .exe binaries, skip all packaging
+#  Binary XX      build and sign only a specific binary (e.g., cimistatus)
+#  Install        after building, install the MSI package (requires elevation)
+#  IntuneWin      create .intunewin packages (adds build time, only needed for deployment)
+#  Dev            development mode: stops services, faster iteration
+#  SignMSI        sign existing MSI files in release directory (standalone operation)
+#  SkipMSI        skip MSI packaging, build only .nupkg packages
+#  PackageOnly    package existing binaries only (skip build), create both MSI and NUPKG
+#  NupkgOnly      create .nupkg packages only using existing binaries (skip build and MSI)
+#  MsiOnly        create MSI packages only using existing binaries (skip build and NUPKG)
 #
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing (no .intunewin)
@@ -26,6 +30,10 @@
 #   .\build.ps1 -Dev -Install        # Development mode: fast rebuild and install
 #   .\build.ps1 -SignMSI             # Sign existing MSI files in release directory
 #   .\build.ps1 -SignMSI -Thumbprint XX # Sign existing MSI files with specific certificate
+#   .\build.ps1 -SkipMSI             # Build only .nupkg packages, skip MSI packaging
+#   .\build.ps1 -PackageOnly         # Package existing binaries (both MSI and NUPKG)
+#   .\build.ps1 -NupkgOnly           # Create only .nupkg packages from existing binaries
+#   .\build.ps1 -MsiOnly             # Create only MSI packages from existing binaries
 param(
     [switch]$Sign,
     [switch]$NoSign,
@@ -37,9 +45,13 @@ param(
     [switch]$Install,
     [switch]$IntuneWin,
     [switch]$Dev,  # Development mode - stops services, skips signing, faster iteration
-    [switch]$SignMSI  # Sign existing MSI files in release directory
+    [switch]$SignMSI,  # Sign existing MSI files in release directory
+    [switch]$SkipMSI,  # Skip MSI packaging, build only .nupkg packages
+    [switch]$PackageOnly,  # Package existing binaries only (skip build), create both MSI and NUPKG
+    [switch]$NupkgOnly,    # Create .nupkg packages only using existing binaries (skip build and MSI)
+    [switch]$MsiOnly       # Create MSI packages only using existing binaries (skip build and NUPKG)
 )
-# ──────────────────────────  GLOBALS  ──────────────────────────
+#   GLOBALS  
 # Friendly name (CN) of the enterprise code-signing certificate you push with Intune
 $Global:EnterpriseCertCN = 'EmilyCarrU Intune Windows Enterprise Certificate'
 # Exit immediately if a command exits with a non-zero status
@@ -182,7 +194,7 @@ function Invoke-Retry {
     }
 }
 
-# ──────────────────────────  SIGNING DECISION  ─────────────────
+#   SIGNING DECISION  
 # Auto-detect enterprise certificate if available
 $autoDetectedThumbprint = $null
 if (-not $Sign -and -not $NoSign -and -not $Thumbprint) {
@@ -231,6 +243,9 @@ if ($SignMSI) {
     if ($Install) { $conflictingFlags += "-Install" }
     if ($IntuneWin) { $conflictingFlags += "-IntuneWin" }
     if ($Dev) { $conflictingFlags += "-Dev" }
+    if ($PackageOnly) { $conflictingFlags += "-PackageOnly" }
+    if ($NupkgOnly) { $conflictingFlags += "-NupkgOnly" }
+    if ($MsiOnly) { $conflictingFlags += "-MsiOnly" }
     
     if ($conflictingFlags.Count -gt 0) {
         Write-Log "Cannot use -SignMSI with the following flags: $($conflictingFlags -join ', ')" "ERROR"
@@ -252,7 +267,7 @@ if ($Sign) {
     if (-not $Thumbprint) {
         $Thumbprint = Get-SigningCertThumbprint
         if (-not $Thumbprint) {
-            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found – aborting." "ERROR"
+            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found  aborting." "ERROR"
             exit 1
         }
         Write-Log "Auto-selected signing cert $Thumbprint" "INFO"
@@ -263,7 +278,7 @@ if ($Sign) {
 } else {
     Write-Log "Build will be unsigned." "INFO"
 }
-# ────────────────  DEVELOPMENT MODE HANDLING  ────────────────
+#   DEVELOPMENT MODE HANDLING  
 if ($Dev) {
     Write-Log "Development mode enabled - preparing for rapid iteration..." "INFO"
     # Stop and remove Cimian services that might lock files
@@ -307,12 +322,12 @@ if ($Dev) {
     Write-Log "Development mode preparation complete - files unlocked for rebuild" "SUCCESS"
 }
 
-# ────────────────  SIGNING HELPERS  ────────────────
+#   SIGNING HELPERS  
 function signPackage {
     <#
-      .SYNOPSIS  Authenticode-signs an MSI/EXE/… with our enterprise cert.
-      .PARAMETER FilePath     – the file you want to sign
-      .PARAMETER Thumbprint   – SHA-1 thumbprint of the cert (defaults to $env:SIGN_THUMB)
+      .SYNOPSIS  Authenticode-signs an MSI/EXE/ with our enterprise cert.
+      .PARAMETER FilePath      the file you want to sign
+      .PARAMETER Thumbprint    SHA-1 thumbprint of the cert (defaults to $env:SIGN_THUMB)
     #>
     param(
         [Parameter(Mandatory)][string]$FilePath,
@@ -388,7 +403,7 @@ function signPackage {
         'http://timestamp.entrust.net/TSS/RFC3161sha2TS'
     )
     foreach ($tsa in $tsaList) {
-        Write-Log "Signing '$FilePath' using $tsa …" "INFO"
+        Write-Log "Signing '$FilePath' using $tsa " "INFO"
         # Force garbage collection before signing to release any handles
         [System.GC]::Collect()
         [System.GC]::WaitForPendingFinalizers()
@@ -411,7 +426,7 @@ function signPackage {
 function signNuget {
     param(
         [Parameter(Mandatory)][string]$Nupkg,
-        [string]$Thumbprint            # ← optional override (matches existing caller)
+        [string]$Thumbprint            #  optional override (matches existing caller)
     )
     if (-not (Test-Path $Nupkg)) {
         throw "NuGet package '$Nupkg' not found - cannot sign."
@@ -424,7 +439,7 @@ function signNuget {
                        Select-Object -First 1 -ExpandProperty Thumbprint)
     }
     if (-not $Thumbprint) {
-        Write-Log "No enterprise code-signing cert present – skipping NuGet repo sign." "WARNING"
+        Write-Log "No enterprise code-signing cert present  skipping NuGet repo sign." "WARNING"
         return $false
     }
     & nuget.exe sign `
@@ -589,9 +604,9 @@ function Get-FileLockInfo {
         # Ignore process enumeration errors
     }
 }
-# ───────────────────────────────────────────────────
+# 
 #  SIGNMSI MODE HANDLING
-# ───────────────────────────────────────────────────
+# 
 if ($SignMSI) {
     Write-Log "SignMSI mode - will sign existing MSI files in release directory" "INFO"
     
@@ -607,7 +622,7 @@ if ($SignMSI) {
     if (-not $Thumbprint) {
         $Thumbprint = Get-SigningCertThumbprint
         if (-not $Thumbprint) {
-            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found – aborting." "ERROR"
+            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found  aborting." "ERROR"
             exit 1
         }
         Write-Log "Auto-selected signing cert $Thumbprint for MSI signing" "INFO"
@@ -645,9 +660,9 @@ if ($SignMSI) {
     exit 0
 }
 
-# ───────────────────────────────────────────────────
+# 
 #  BUILD PROCESS STARTS
-# ───────────────────────────────────────────────────
+# 
 # Early exit for binaries-only mode or single binary mode after basic setup
 if ($Binaries -or $Binary) {
     if ($Binary) {
@@ -693,11 +708,7 @@ if ($Binaries -or $Binary) {
     go mod download
     # Build binaries
     Write-Log "Building binaries for x64 and arm64..." "INFO"
-    # Clean and create bin directories
-    if (Test-Path "bin") {
-        Remove-Item -Path "bin\*" -Recurse -Force
-    }
-    # Create release directories
+    # Create and clean release directories
     if (Test-Path "release") {
         Remove-Item -Path "release\*" -Recurse -Force
     } else {
@@ -721,11 +732,7 @@ if ($Binaries -or $Binary) {
         "arm64" = "arm64"
     }
     foreach ($arch in $archs) {
-        $binArchDir = "bin\$arch"
         $releaseArchDir = "release\$arch"
-        if (-not (Test-Path $binArchDir)) {
-            New-Item -ItemType Directory -Path $binArchDir | Out-Null
-        }
         if (-not (Test-Path $releaseArchDir)) {
             New-Item -ItemType Directory -Path $releaseArchDir | Out-Null
         }
@@ -736,7 +743,7 @@ if ($Binaries -or $Binary) {
             $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
             $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
             $submoduleGoMod = Join-Path $dir.FullName "go.mod"
-            $outputPath = "bin\$arch\$binaryName.exe"
+            $outputPath = "release\$arch\$binaryName.exe"
             if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject)) {
                 # This is a C# project - build with dotnet
                 Write-Log "Detected C# project for $binaryName" "INFO"
@@ -889,9 +896,7 @@ if ($Binaries -or $Binary) {
                     exit 1
                 }
             }
-            # Copy to release directory
-            Copy-Item "bin\$arch\$binaryName.exe" "release\$arch\$binaryName.exe"
-            Write-Log "$binaryName ($arch) built and copied to release folder." "SUCCESS"
+            Write-Log "$binaryName ($arch) built successfully." "SUCCESS"
         }
     }
     # Sign binaries if signing is enabled
@@ -907,7 +912,7 @@ if ($Binaries -or $Binary) {
                 try {
                     $signResult = signPackage -FilePath $_.FullName
                     if ($signResult) {
-                        Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                        Write-Log "Signed $($_.FullName) " "SUCCESS"
                     } else {
                         Write-Log "Failed to sign $($_.FullName) - continuing build" "WARNING"
                     }
@@ -928,65 +933,83 @@ if ($Binaries -or $Binary) {
     }
     exit 0
 }
-# Step 0: Clean Release Directory Before Build
-Write-Log "Cleaning existing release directory..." "INFO"
-if (Test-Path "release") {
-    try {
-        Remove-Item -Path "release\*" -Recurse -Force
-        Write-Log "Existing release directory cleaned." "SUCCESS"
-    }
-    catch {
-        Write-Log "Standard cleanup failed: $($_.Exception.Message)" "WARNING"
-        Write-Log "Attempting cleanup with elevated permissions..." "INFO"
-        
-        # Try using sudo if available
-        if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
-            try {
-                Write-Log "Using 'sudo' for elevated directory cleanup..." "INFO"
-                sudo powershell -Command "Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force"
-                Write-Log "Release directory cleaned successfully using sudo." "SUCCESS"
-            }
-            catch {
-                Write-Log "Sudo cleanup failed: $_" "WARNING"
-                # Continue to try elevation method
-                $sudoFailed = $true
-            }
-        } else {
-            $sudoFailed = $true
-        }
-        
-        # If sudo failed or isn't available, try elevated PowerShell
-        if ($sudoFailed -ne $false) {
-            try {
-                Write-Log "Launching elevated PowerShell session for directory cleanup..." "INFO"
-                $cleanupScript = "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force; Write-Host 'Cleanup completed successfully'"
-                $elevatedProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $cleanupScript -Verb RunAs -Wait -PassThru
-                if ($elevatedProcess.ExitCode -eq 0) {
-                    Write-Log "Release directory cleaned successfully via elevated session." "SUCCESS"
-                } else {
-                    Write-Log "Elevated cleanup failed with exit code $($elevatedProcess.ExitCode)" "ERROR"
-                    Write-Log "You may need to manually delete locked files in the release directory." "WARNING"
-                    Write-Log "Continuing with build - some files may remain..." "INFO"
-                }
-            }
-            catch {
-                Write-Log "Failed to launch elevated session: $_" "ERROR"
-                Write-Log "Continuing with build - some files may remain in release directory..." "WARNING"
-            }
+
+# 
+#  PACKAGE-ONLY MODE EARLY EXIT
+# 
+# Early exit for package-only modes - skip all build steps and go directly to packaging
+if ($PackageOnly -or $NupkgOnly -or $MsiOnly) {
+    Write-Log "Package-only mode detected - skipping build steps and going directly to packaging..." "INFO"
+    
+    # Validate that binaries exist before attempting to package
+    $binaryDirs = @("release\x64", "release\arm64")
+    $missingBinaries = @()
+    foreach ($dir in $binaryDirs) {
+        if (-not (Test-Path $dir)) {
+            $missingBinaries += $dir
         }
     }
-}
-else {
-    Write-Log "Release directory does not exist. Creating it..." "INFO"
-    try {
-        New-Item -ItemType Directory -Path "release" -Force | Out-Null
-        Write-Log "Release directory created." "SUCCESS"
-    }
-    catch {
-        Write-Log "Failed to create release directory. Error: $_" "ERROR"
+    
+    if ($missingBinaries.Count -gt 0) {
+        Write-Log "Cannot package - missing binary directories: $($missingBinaries -join ', ')" "ERROR"
+        Write-Log "Run '.\build.ps1 -Binaries' first to build the binaries." "INFO"
         exit 1
     }
+    
+    # Basic tool validation for packaging
+    $requiredTools = @()
+    if (-not $MsiOnly) {
+        $requiredTools += @{ Name = "nuget.commandline"; Command = "nuget" }
+    }
+    if (-not $NupkgOnly) {
+        # Check for WiX
+        $wixBin = Find-WiXBinPath
+        if (-not $wixBin) {
+            Write-Log "WiX Toolset is required for MSI packaging but not found." "ERROR"
+            exit 1
+        }
+    }
+    
+    # Install required tools if needed
+    foreach ($tool in $requiredTools) {
+        if (-not (Test-Command $tool.Command)) {
+            Write-Log "$($tool.Name) is required for packaging. Installing..." "INFO"
+            Install-Chocolatey
+            choco install $tool.Name --no-progress --yes --force | Out-Null
+        }
+    }
+    
+    # Set up version environment variables
+    $fullVersion     = Get-Date -Format "yyyy.MM.dd"
+    $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
+    $env:RELEASE_VERSION   = $fullVersion
+    $env:SEMANTIC_VERSION  = $semanticVersion
+    Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
+    Write-Log "SEMANTIC_VERSION set to $semanticVersion" "INFO"
+    
+    # Set mode-specific flags
+    if ($NupkgOnly) {
+        $SkipMSI = $true
+        Write-Log "NUPKG-only mode: Will skip MSI packaging" "INFO"
+    } elseif ($MsiOnly) {
+        # No special flags needed for MSI-only, NuGet packaging conditional is already set
+        Write-Log "MSI-only mode: Will skip NuGet packaging" "INFO"
+    } elseif ($PackageOnly) {
+        Write-Log "Package-only mode: Will create both MSI and NuGet packages" "INFO"
+    }
+    
+    # Jump directly to packaging section - we'll handle the specific mode logic there
+    Write-Log "Package-only setup complete. Proceeding to packaging..." "SUCCESS"
+    # Don't exit here - let it continue to the packaging section
 }
+
+# Define architecture arrays for both build and packaging modes
+$archs = @("x64", "arm64")
+$goarchMap = @{
+    "x64"   = "amd64"
+    "arm64" = "arm64"
+}
+
 # Function to ensure Chocolatey is installed
 function Install-Chocolatey {
     Write-Log "Checking if Chocolatey is installed..." "INFO"
@@ -1016,6 +1039,73 @@ function Install-Chocolatey {
         Write-Log "Chocolatey is already installed." "SUCCESS"
     }
 }
+# 
+#  SKIP BUILD STEPS FOR PACKAGE-ONLY MODES
+# 
+# Only run build steps if not in package-only mode
+if (-not ($PackageOnly -or $NupkgOnly -or $MsiOnly)) {
+    Write-Log "Starting full build process..." "INFO"
+
+    # Step 0: Clean Release Directory Before Build
+    Write-Log "Cleaning existing release directory..." "INFO"
+    if (Test-Path "release") {
+        try {
+            Remove-Item -Path "release\*" -Recurse -Force
+            Write-Log "Existing release directory cleaned." "SUCCESS"
+        }
+        catch {
+            Write-Log "Standard cleanup failed: $($_.Exception.Message)" "WARNING"
+            Write-Log "Attempting cleanup with elevated permissions..." "INFO"
+            
+            # Try using sudo if available
+            if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
+                try {
+                    Write-Log "Using 'sudo' for elevated directory cleanup..." "INFO"
+                    sudo powershell -Command "Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force"
+                    Write-Log "Release directory cleaned successfully using sudo." "SUCCESS"
+                }
+                catch {
+                    Write-Log "Sudo cleanup failed: $_" "WARNING"
+                    # Continue to try elevation method
+                    $sudoFailed = $true
+                }
+            } else {
+                $sudoFailed = $true
+            }
+            
+            # If sudo failed or isn't available, try elevated PowerShell
+            if ($sudoFailed -ne $false) {
+                try {
+                    Write-Log "Launching elevated PowerShell session for directory cleanup..." "INFO"
+                    $cleanupScript = "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; Remove-Item -Path '$(Get-Location)\release\*' -Recurse -Force; Write-Host 'Cleanup completed successfully'"
+                    $elevatedProcess = Start-Process -FilePath "powershell.exe" -ArgumentList "-Command", $cleanupScript -Verb RunAs -Wait -PassThru
+                    if ($elevatedProcess.ExitCode -eq 0) {
+                        Write-Log "Release directory cleaned successfully via elevated session." "SUCCESS"
+                    } else {
+                        Write-Log "Elevated cleanup failed with exit code $($elevatedProcess.ExitCode)" "ERROR"
+                        Write-Log "You may need to manually delete locked files in the release directory." "WARNING"
+                        Write-Log "Continuing with build - some files may remain..." "INFO"
+                    }
+                }
+                catch {
+                    Write-Log "Failed to launch elevated session: $_" "ERROR"
+                    Write-Log "Continuing with build - some files may remain in release directory..." "WARNING"
+                }
+            }
+        }
+    }
+    else {
+        Write-Log "Release directory does not exist. Creating it..." "INFO"
+        try {
+            New-Item -ItemType Directory -Path "release" -Force | Out-Null
+            Write-Log "Release directory created." "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to create release directory. Error: $_" "ERROR"
+            exit 1
+        }
+    }
+
 # Step 1: Ensure Chocolatey is installed
 Install-Chocolatey
 # Step 2: Install required tools via Chocolatey
@@ -1177,21 +1267,11 @@ Write-Log "Go modules tidied and downloaded." "SUCCESS"
 # Step 8: Build All Binaries
 Write-Log "Building all binaries for x64 and arm64..." "INFO"
 # Clean existing binaries first
-Write-Log "Cleaning existing binaries from bin directory..." "INFO"
-if (Test-Path "bin") {
-    Remove-Item -Path "bin\*" -Recurse -Force
-    Write-Log "Cleaned existing binaries from bin directory." "SUCCESS"
-}
 $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
-$archs = @("x64", "arm64")
-$goarchMap = @{
-    "x64"   = "amd64"
-    "arm64" = "arm64"
-}
 foreach ($arch in $archs) {
-    $binArchDir = "bin\$arch"
-    if (-not (Test-Path $binArchDir)) {
-        New-Item -ItemType Directory -Path $binArchDir | Out-Null
+    $releaseArchDir = "release\$arch"
+    if (-not (Test-Path $releaseArchDir)) {
+        New-Item -ItemType Directory -Path $releaseArchDir | Out-Null
     }
     foreach ($dir in $binaryDirs) {
         $binaryName = $dir.Name
@@ -1200,7 +1280,7 @@ foreach ($arch in $archs) {
         $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
         $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
         $submoduleGoMod = Join-Path $dir.FullName "go.mod"
-        $outputPath = "bin\$arch\$binaryName.exe"
+        $outputPath = "release\$arch\$binaryName.exe"
         if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject)) {
             # This is a C# project - build with dotnet
             Write-Log "Detected C# project for $binaryName" "INFO"
@@ -1336,19 +1416,7 @@ foreach ($arch in $archs) {
     }
 }
 Write-Log "All binaries built for all architectures." "SUCCESS"
-# Step 9: Package Binaries
-Write-Log "Packaging binaries for all architectures..." "INFO"
-foreach ($arch in $archs) {
-    $releaseArchDir = "release\$arch"
-    if (-not (Test-Path $releaseArchDir)) {
-        New-Item -ItemType Directory -Path $releaseArchDir | Out-Null
-    }
-    Get-ChildItem -Path "bin\$arch\*.exe" | ForEach-Object {
-        Copy-Item $_.FullName $releaseArchDir
-        Write-Log "Copied $($_.Name) to $releaseArchDir." "INFO"
-    }
-}
-# ───────────── SIGN EVERY EXE (once) IN ITS OWN ARCH FOLDER ─────────────
+#  SIGN EVERY EXE (once) IN ITS OWN ARCH FOLDER 
 if ($Sign) {
     Write-Log "Signing all EXEs in each release\<arch>\ folder..." "INFO"
     # Force a comprehensive garbage collection before signing to release any lingering file handles
@@ -1373,9 +1441,9 @@ if ($Sign) {
                 [System.GC]::Collect()
                 # Add a small delay to ensure file handles are fully released
                 Start-Sleep -Milliseconds 500
-                $signResult = signPackage -FilePath $_.FullName   # ← uses $env:SIGN_THUMB, adds RFC 3161 timestamp
+                $signResult = signPackage -FilePath $_.FullName   #  uses $env:SIGN_THUMB, adds RFC 3161 timestamp
                 if ($signResult) {
-                    Write-Log "Signed $($_.FullName) ✔" "SUCCESS"
+                    Write-Log "Signed $($_.FullName) " "SUCCESS"
                 } else {
                     Write-Log "Failed to sign $($_.FullName) - continuing build" "WARNING"
                 }
@@ -1416,17 +1484,21 @@ catch {
         Write-Log "Continuing without zip archive..." "WARNING"
     }
 }
-# Step 10: Build MSI Packages with WiX for both x64 and arm64
-Write-Log "Building MSI packages with WiX for x64 and arm64..." "INFO"
 
-# Detect WiX version and set up paths
-$wixBinPath = Find-WiXBinPath
-if ($wixBinPath -eq "dotnet-tool") {
-    Write-Log "Using WiX v6 (.NET tool)" "INFO"
-    $useWixV5 = $true
-} elseif ($wixBinPath) {
-    Write-Log "Using WiX v3 legacy: $wixBinPath" "INFO"
-    $useWixV5 = $false
+} # End of build steps conditional for package-only modes
+
+# Step 10: Build MSI Packages with WiX for both x64 and arm64 (unless -SkipMSI is specified)
+if (-not $SkipMSI) {
+    Write-Log "Building MSI packages with WiX for x64 and arm64..." "INFO"
+
+    # Detect WiX version and set up paths
+    $wixBinPath = Find-WiXBinPath
+    if ($wixBinPath -eq "dotnet-tool") {
+        Write-Log "Using WiX v6 (.NET tool)" "INFO"
+        $useWixV5 = $true
+    } elseif ($wixBinPath) {
+        Write-Log "Using WiX v3 legacy: $wixBinPath" "INFO"
+        $useWixV5 = $false
     $wixToolsetPath = $wixBinPath
     $candlePath = Join-Path $wixToolsetPath "candle.exe"
     $lightPath = Join-Path $wixToolsetPath "light.exe"
@@ -1566,90 +1638,71 @@ foreach ($msiArch in $msiArchs) {
         exit 1
     }
     
-    if ($Sign) {
-        # Wait longer for WiX to fully release file handles
-        Write-Log "Preparing MSI for signing..." "INFO"
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
-        Start-Sleep -Seconds 5
-        
-        # Attempt MSI signing with retry logic
-        $signAttempts = 3
-        $signSuccess = $false
-        
-        for ($attempt = 1; $attempt -le $signAttempts; $attempt++) {
-            Write-Log "Attempting MSI signing (attempt $attempt of $signAttempts)..." "INFO"
-            
-            try {
-                # Check if file is still locked
-                if (Test-FileLocked -FilePath $msiOutput) {
-                    Write-Log "MSI file is locked, waiting..." "WARNING"
-                    Start-Sleep -Seconds (3 * $attempt)
-                    [System.GC]::Collect()
-                    [System.GC]::WaitForPendingFinalizers()
-                }
-                
-                $signResult = signPackage -FilePath $msiOutput
-                if ($signResult) {
-                    Write-Log "MSI package signed successfully: $msiOutput" "SUCCESS"
-                    $signSuccess = $true
-                    break
-                } else {
-                    Write-Log "MSI signing attempt $attempt failed" "WARNING"
-                }
-            }
-            catch {
-                Write-Log "MSI signing attempt $attempt failed: $_" "WARNING"
-            }
-            
-            if ($attempt -lt $signAttempts) {
-                Write-Log "Retrying MSI signing in $($attempt * 2) seconds..." "INFO"
-                Start-Sleep -Seconds ($attempt * 2)
-            }
-        }
-        
-        if (-not $signSuccess) {
-            Write-Log "All MSI signing attempts failed. MSI package created unsigned: $msiOutput" "WARNING"
-            Write-Log "Note: Individual executables inside the MSI are still signed for security." "INFO"
-        }
-    } else {
-        Write-Log "MSI package created (unsigned): $msiOutput" "SUCCESS"
-    }
+    # MSI package created - signing will be done at the end to avoid file locking issues
+    Write-Log "MSI package created: $msiOutput" "SUCCESS"
+    Write-Log "MSI signing will be performed after all packaging is complete to avoid file locks." "INFO"
+    
     # Clean up temp folder
     Remove-Item -Path "$msiTempDir\*" -Recurse -Force
 }
-# Step 11: Prepare NuGet Packages for both x64 and arm64
-Write-Log "Preparing NuGet packages for x64 and arm64..." "INFO"
+} else {
+    Write-Log "Skipping MSI package building due to -SkipMSI flag" "INFO"
+}
+
+# Step 11: Prepare NuGet Packages for both x64 and arm64 (unless -MsiOnly is specified)
+if (-not $MsiOnly) {
+    Write-Log "Preparing NuGet packages for x64 and arm64..." "INFO"
 foreach ($arch in $archs) {
     $pkgTempDir  = "release\nupkg_$arch"
-    $archBinDst  = Join-Path $pkgTempDir $arch
-    $nuspecPath  = "build\nupkg.$arch.nuspec"
-    $nupkgOut    = "release\Cimian-$arch-$env:SEMANTIC_VERSION.nupkg"
+    $nuspecPath  = "build\nupkg\nupkg.$arch.nuspec"
+    $nupkgOut    = "release\CimianTools-$arch-$env:SEMANTIC_VERSION.nupkg"
+    
+    # Verify the architecture-specific nuspec exists
+    if (-not (Test-Path $nuspecPath)) {
+        Write-Log "Architecture-specific nuspec not found: $nuspecPath" "ERROR"
+        exit 1
+    }
+    
     # workspace
     if (Test-Path $pkgTempDir) { Remove-Item $pkgTempDir -Recurse -Force }
-    New-Item -ItemType Directory -Path $archBinDst -Force | Out-Null
-    # binaries
-    Copy-Item "release\$arch\*.exe" $archBinDst
-    # common payload
-    Copy-Item "build\nupkg\config.yaml"   $pkgTempDir        -EA SilentlyContinue
-    if (Test-Path "build\install.ps1") { Copy-Item "build\install.ps1" $pkgTempDir }
-    if (Test-Path "README.md")      { Copy-Item "README.md" $pkgTempDir }
-    else { 'Cimian command-line tools.' | Set-Content (Join-Path $pkgTempDir 'README.md') }
-    # materialise nuspec (add <file> line for install.ps1 only if present)
-    $nuspecText = Get-Content "build\nupkg\nupkg.nuspec"
-    if (-not (Test-Path "$pkgTempDir\install.ps1")) {
-        $nuspecText = $nuspecText -replace '<file src="install.ps1".*?/>', ''
+    New-Item -ItemType Directory -Path $pkgTempDir -Force | Out-Null
+    
+    # payload (Program Files and ProgramData structure) - not needed for direct reference
+    # scripts - not needed for direct reference
+    
+    # common payload - only copy README if needed
+    if (-not (Test-Path "README.md")) { 
+        'Cimian command-line tools.' | Set-Content (Join-Path $pkgTempDir 'README.md') 
     }
-    $nuspecText `
-        -replace '\$\{\{ARCH\}\}',        $arch `
-        -replace '\$\{\{VERSION\}\}',     $env:SEMANTIC_VERSION |
-        Set-Content $nuspecPath
-    # pack
-    nuget pack $nuspecPath -OutputDirectory "release" `
-                -BasePath $pkgTempDir -NoDefaultExcludes | Out-Null
+    
+    # Use the pre-created architecture-specific nuspec directly with version substitution
+    $nuspecContent = Get-Content $nuspecPath -Raw
+    $nuspecWithVersion = $nuspecContent -replace '\{\{VERSION\}\}', $env:SEMANTIC_VERSION
+    $tempNuspecPath = "build\nupkg\temp_nupkg_$arch.nuspec"
+    $nuspecWithVersion | Set-Content $tempNuspecPath
+    
+    # pack - use the build/nupkg directory as base path since the nuspec paths are relative to build/nupkg/
+    nuget pack $tempNuspecPath -OutputDirectory "release" -BasePath "build\nupkg" -NoDefaultExcludes | Out-Null
     $built = Get-ChildItem "release" -Filter '*.nupkg' |
              Sort-Object LastWriteTime -Desc | Select-Object -First 1
-    Move-Item $built.FullName $nupkgOut -Force
+    
+    # Retry Move-Item to handle file locking issues
+    $retryCount = 3
+    $moved = $false
+    for ($i = 0; $i -lt $retryCount; $i++) {
+        try {
+            Move-Item $built.FullName $nupkgOut -Force -ErrorAction Stop
+            $moved = $true
+            break
+        } catch {
+            Write-Log "Attempt $($i+1): Failed to move package file - $_" "WARNING"
+            Start-Sleep -Seconds 2
+        }
+    }
+    if (-not $moved) {
+        Write-Log "Failed to move $($built.FullName) to $nupkgOut after $retryCount attempts" "ERROR"
+        throw "Unable to complete package build due to file locking"
+    }
     if ($Sign) {
         $signResult = signNuget $nupkgOut
         if ($signResult) {
@@ -1659,21 +1712,17 @@ foreach ($arch in $archs) {
         }
     }
     # cleanup
-    Remove-Item $pkgTempDir -Recurse -Force
-    Remove-Item $nuspecPath -Force
-    Write-Log "$arch NuGet ready → $nupkgOut" "SUCCESS"
+    Remove-Item $pkgTempDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $tempNuspecPath -Force -ErrorAction SilentlyContinue
+    Write-Log "$arch NuGet ready  $nupkgOut" "SUCCESS"
 }
-# Step 11.1: Revert `nupkg.nuspec` to its dynamic state
-Write-Log "Reverting build/nupkg/nupkg.nuspec to dynamic state..." "INFO"
-try {
-    (Get-Content "build\nupkg\nupkg.nuspec") -replace "$env:SEMANTIC_VERSION", '{{VERSION}}' | Set-Content "build\nupkg\nupkg.nuspec"
-    Write-Log "Reverted build/nupkg/nupkg.nuspec to use dynamic placeholder." "SUCCESS"
-}
-catch {
-    Write-Log "Failed to revert build/nupkg/nupkg.nuspec. Error: $_" "ERROR"
-    exit 1
-}
+# Step 11.1: No need to revert nuspec files since we use architecture-specific ones
 Write-Log "NuGet packaging for all architectures completed." "SUCCESS"
+
+} else {
+    Write-Log "Skipping NuGet package creation due to -MsiOnly flag" "INFO"
+}
+
 # Step 12: Prepare IntuneWin Packages for both x64 and arm64 (Optional)
 if ($IntuneWin) {
     Write-Log "IntuneWin flag detected - preparing IntuneWin packages for x64 and arm64..." "INFO"
@@ -1762,6 +1811,44 @@ else {
     $generatedFiles | ForEach-Object { Write-Host $_.FullName }
 }
 Write-Log "Verification complete." "SUCCESS"
+
+# Step 14.5: Sign MSI packages (moved to end to avoid file locking issues)
+if ($Sign -and -not $SkipMSI) {
+    Write-Log "Signing MSI packages after all build processes are complete..." "INFO"
+    
+    # Find MSI files in release directory
+    $msiFiles = Get-ChildItem -Path "release" -Filter "*.msi" -File -ErrorAction SilentlyContinue
+    if ($msiFiles.Count -eq 0) {
+        Write-Log "No MSI files found to sign in release directory." "INFO"
+    } else {
+        Write-Log "Found $($msiFiles.Count) MSI file(s) to sign:" "INFO"
+        foreach ($msi in $msiFiles) {
+            Write-Log "  $($msi.Name)" "INFO"
+        }
+        
+        # Wait for any remaining file handles to be released
+        Write-Log "Waiting for all file handles to be released before signing..." "INFO"
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        Start-Sleep -Seconds 10
+        
+        # Sign each MSI file
+        $signedCount = 0
+        foreach ($msi in $msiFiles) {
+            Write-Log "Signing MSI: $($msi.Name)" "INFO"
+            $success = signPackage -FilePath $msi.FullName
+            if ($success) {
+                $signedCount++
+                Write-Log "Successfully signed: $($msi.Name)" "SUCCESS"
+            } else {
+                Write-Log "Failed to sign: $($msi.Name)" "WARNING"
+            }
+        }
+        
+        Write-Log "MSI signing completed: $signedCount of $($msiFiles.Count) MSI files signed successfully." "SUCCESS"
+    }
+}
+
 Write-Log "Build and packaging process completed successfully." "SUCCESS"
 # Step 15: Install MSI Package if requested
 if ($Install) {
@@ -1858,6 +1945,24 @@ function Remove-TempFiles {
 Write-Log "Cleaning up temporary files..." "INFO"
 $temporaryFiles = @("release.zip", "build\msi.msi", "build\msi.wixobj", "build\msi.wixpdb")
 Remove-TempFiles -Files $temporaryFiles
+
+# Clean up temporary MSI staging directories
+$tempDirectories = @("release\msi_x64", "release\msi_arm64")
+foreach ($dir in $tempDirectories) {
+    if (Test-Path $dir) {
+        try {
+            Remove-Item $dir -Recurse -Force
+            Write-Log "Temporary directory '$dir' deleted successfully." "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to delete temporary directory '$dir'. Error: $_" "WARNING"
+        }
+    }
+    else {
+        Write-Log "Temporary directory '$dir' does not exist. Skipping deletion." "INFO"
+    }
+}
+
 # Clean up .wixpdb files in release\
 Get-ChildItem -Path "release" -Filter "*.wixpdb" -File | ForEach-Object {
     try {
@@ -1935,3 +2040,4 @@ if (-not $mingwInstalled) {
 else {
     Write-Log "mingw is already available." "SUCCESS"
 }
+
