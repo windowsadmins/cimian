@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>ca.emilycarru.winadmins.CimianTools</id>
+    <version>{{VERSION}}</version>
+    <authors>EmilyCarrU</authors>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Cimian Tools for Windows Software Management</description>
+    <tags>admin</tags>
+  </metadata>
+  <files>
+    <file src="..\..\release\arm64\**" target="tools" />
+    <file src="payload\**" target="tools" />
+    <file src="scripts\chocolateyInstall.ps1" target="tools" />
+    <file src="scripts\chocolateyUninstall.ps1" target="tools" />
+    <!-- Include .ignore files to prevent Chocolatey from creating automatic shims -->
+    <file src="scripts\*.exe.ignore" target="tools" />
+  </files>
+</package>
