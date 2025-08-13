@@ -62,6 +62,7 @@ type PkgsInfo struct {
 	PostuninstallScript  utils.LiteralString `yaml:"postuninstall_script,omitempty"`
 	InstallCheckScript   utils.LiteralString `yaml:"installcheck_script,omitempty"`
 	UninstallCheckScript utils.LiteralString `yaml:"uninstallcheck_script,omitempty"`
+	OnDemand             bool                `yaml:"OnDemand,omitempty"`
 
 	FilePath string `yaml:"-"`
 }
