@@ -1,6 +1,8 @@
 module github.com/windowsadmins/cimian
 
-go 1.21
+go 1.23
+
+toolchain go1.24.2
 
 require (
 	github.com/gonutz/w32 v1.0.0
@@ -8,7 +10,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/spf13/pflag v1.0.5
 	github.com/yusufpapurcu/wmi v1.2.4
-	golang.org/x/sys v0.28.0
+	golang.org/x/sys v0.30.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
