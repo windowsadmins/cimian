@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows/registry"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/selfservice"
 	"github.com/windowsadmins/cimian/pkg/status"
+	"github.com/windowsadmins/cimian/pkg/utils"
 )
 
 // By default, we expect these paths for msiexec/powershell/chocolatey.
@@ -93,6 +95,45 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		if !status.SupportsArchitecture(item, sysArch) {
 			return "", fmt.Errorf("system arch %s not in supported_arch=%v for item %s",
 				sysArch, item.SupportedArch, item.Name)
+		}
+
+		// Check if this is a script-only item (no installer section)
+		if item.Installer.Type == "" && (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "") {
+			// Handle script-only packages with no installer file
+			logging.Debug("Processing script-only item (nopkg)", "item", item.Name)
+
+			// Run preinstall script if present
+			if item.PreScript != "" {
+				out, err := runNopkgScript(item.PreScript, cachePath, "preinstall")
+				if err != nil {
+					return "", fmt.Errorf("preinstall script failed: %w", err)
+				}
+				logging.Debug("Preinstall script completed", "item", item.Name, "output", out)
+			}
+
+			// Run postinstall script if present
+			if item.PostScript != "" {
+				out, err := runNopkgScript(item.PostScript, cachePath, "postinstall")
+				if err != nil {
+					return "", fmt.Errorf("postinstall script failed: %w", err)
+				}
+				logging.Debug("Postinstall script completed", "item", item.Name, "output", out)
+			}
+
+			// For OnDemand items, do not store installed version in registry
+			if !item.OnDemand {
+				storeInstalledVersionInRegistry(item)
+			} else {
+				logging.Info("OnDemand item completed successfully (not marking as installed)", "item", item.Name)
+				// Remove OnDemand items from the self-service manifest after successful execution
+				if err := selfservice.RemoveFromSelfServiceInstalls(item.Name); err != nil {
+					logging.Warn("Failed to remove OnDemand item from self-service manifest",
+						"item", item.Name, "error", err)
+				}
+			}
+
+			logging.Info("Script-only item processed successfully", "item", item.Name)
+			return "Script-only installation success", nil
 		}
 
 		// If it's a nupkg, handle it via Chocolatey logic
@@ -264,6 +305,30 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 			return err
 		}
 		logging.Debug("MSIX install output", "output", out)
+		return nil
+
+	case "nopkg":
+		// Handle script-only packages with no installer file
+		logging.Debug("Processing nopkg item (script-only)", "item", item.Name)
+
+		// Run preinstall script if present
+		if item.PreScript != "" {
+			out, err := runNopkgScript(item.PreScript, cachePath, "preinstall")
+			if err != nil {
+				return fmt.Errorf("preinstall script failed: %w", err)
+			}
+			logging.Debug("Preinstall script completed", "item", item.Name, "output", out)
+		}
+
+		// Run postinstall script if present
+		if item.PostScript != "" {
+			out, err := runNopkgScript(item.PostScript, cachePath, "postinstall")
+			if err != nil {
+				return fmt.Errorf("postinstall script failed: %w", err)
+			}
+			logging.Debug("Postinstall script completed", "item", item.Name, "output", out)
+		}
+
 		return nil
 
 	default:
@@ -1391,4 +1456,44 @@ func immediateCleanupAfterInstall(item catalog.Item, localFile string) {
 		logging.Warn("Installation verification failed, retaining cached file for troubleshooting",
 			"item", item.Name, "cachedFile", localFile)
 	}
+}
+
+// runNopkgScript executes a PowerShell script for nopkg (script-only) items.
+func runNopkgScript(script utils.LiteralString, cachePath, scriptType string) (string, error) {
+	if string(script) == "" {
+		return "", nil
+	}
+
+	// Create a temporary PowerShell script file
+	tempDir := filepath.Join(cachePath, "temp")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create temp directory: %w", err)
+	}
+
+	tempFile := filepath.Join(tempDir, fmt.Sprintf("%s_script_%d.ps1", scriptType, time.Now().Unix()))
+	if err := os.WriteFile(tempFile, []byte(string(script)), 0644); err != nil {
+		return "", fmt.Errorf("failed to write temp script file: %w", err)
+	}
+
+	// Clean up temp file when done
+	defer func() {
+		if err := os.Remove(tempFile); err != nil {
+			logging.Warn("Failed to clean up temp script file", "file", tempFile, "error", err)
+		}
+	}()
+
+	// Execute the PowerShell script
+	cmdArgs := []string{
+		"-ExecutionPolicy", "Bypass",
+		"-NoProfile",
+		"-NonInteractive",
+		"-File", tempFile,
+	}
+
+	output, err := runCMD("powershell.exe", cmdArgs)
+	if err != nil {
+		return output, fmt.Errorf("%s script execution failed: %w", scriptType, err)
+	}
+
+	return output, nil
 }
