@@ -958,11 +958,21 @@ func isOnDemandItem(item catalog.Item) bool {
 func handleOnDemandInstall(item catalog.Item, cachePath string, checkOnly bool, cfg *config.Configuration) {
 	logging.Info("Processing OnDemand item", "item", item.Name)
 
-	// Download the file first for OnDemand items too
-	localFile, err := downloadItemFile(item, cfg)
-	if err != nil {
-		logging.Error("Failed to download OnDemand item", "item", item.Name, "error", err)
-		return
+	var localFile string
+	var err error
+
+	// Check if this is a nopkg (script-only) item by checking if installer location is empty
+	// For nopkg items, there is no installer section at all in the catalog
+	if item.Installer.Location == "" {
+		logging.Debug("OnDemand nopkg item - skipping download (no installer location)", "item", item.Name)
+		localFile = "" // No file needed for script-only items
+	} else {
+		// Download the file first for OnDemand items with installers
+		localFile, err = downloadItemFile(item, cfg)
+		if err != nil {
+			logging.Error("Failed to download OnDemand item", "item", item.Name, "error", err)
+			return
+		}
 	}
 
 	// OnDemand items are always available for execution
