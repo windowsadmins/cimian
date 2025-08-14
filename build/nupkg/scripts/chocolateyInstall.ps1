@@ -5,19 +5,36 @@ $ErrorActionPreference = 'Stop'
 Write-Host "Installing CimianTools..." -ForegroundColor Green
 
 $toolsDir = "$(Split-Path -parent $MyInvocation.MyCommand.Definition)"
-# Use ProgramData for enterprise environments that may have stricter Program Files policies
-$InstallDir = "${env:ProgramData}\Cimian"
+
+# ARM64-safe installation path - NEVER use Program Files (x86)
+# This works correctly on both x64 and ARM64 architectures
+if ($env:ProgramW6432) {
+    # On 64-bit systems, ProgramW6432 points to the native Program Files
+    $InstallDir = "$env:ProgramW6432\Cimian"
+} else {
+    # Fallback to ProgramFiles (should be the same on modern systems)
+    $InstallDir = "$env:ProgramFiles\Cimian"
+}
+
+# Verify we're NOT installing to the legacy x86 folder
+if ($InstallDir -like "*Program Files (x86)*") {
+    throw "CRITICAL ERROR: Attempted installation to legacy x86 folder: $InstallDir. This is not allowed for ARM64-safe deployment."
+}
+
+Write-Host "ARM64-safe installation path: $InstallDir" -ForegroundColor Green
+$arch = $env:PROCESSOR_ARCHITECTURE
+Write-Host "Target architecture: $arch" -ForegroundColor Green
 
 try {
-    # Create Program Files\Cimian directory
-    Write-Host "Creating installation directory: $InstallDir"
+    # Create native Program Files\Cimian directory (never x86)
+    Write-Host "Creating ARM64-safe installation directory: $InstallDir"
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         Write-Host "Created directory: $InstallDir"
     }
 
-    # Copy all .exe files to Program Files\Cimian (excluding any in subdirectories to avoid duplicates)
-    Write-Host "Copying executables to Program Files..."
+    # Copy all .exe files to native Program Files\Cimian (never x86)
+    Write-Host "Copying executables to ARM64-safe Program Files..."
     $exeFiles = Get-ChildItem -Path $toolsDir -Filter "*.exe" | Where-Object { $_.Directory.Name -eq "scripts" }
     
     if ($exeFiles.Count -eq 0) {
@@ -42,8 +59,9 @@ try {
         Write-Host "Added to system PATH"
     }
 
-    Write-Host "CimianTools installed successfully!" -ForegroundColor Green
+    Write-Host "CimianTools installed successfully to ARM64-safe path!" -ForegroundColor Green
     Write-Host "Installation Directory: $InstallDir" -ForegroundColor Green
+    Write-Host "Architecture: $arch" -ForegroundColor Green
     Write-Host "Added to system PATH" -ForegroundColor Green
 }
 catch {
