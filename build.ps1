@@ -86,61 +86,31 @@ function Test-Command {
 function Get-SigningCertThumbprint {
     [OutputType([string])]
     param()
-    Get-ChildItem Cert:\CurrentUser\My |
-        Where-Object {
-            $_.Subject -like "*CN=$Global:EnterpriseCertCN*" -and
-            $_.NotAfter -gt (Get-Date) -and
-            $_.HasPrivateKey
-        } |
-        Sort-Object NotAfter -Descending |
-        Select-Object -First 1 -ExpandProperty Thumbprint
+    Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint
 }
-# Function to ensure signtool is available
 function Test-SignTool {
-    param(
-        [string[]]$PreferredArchOrder = @(
-            # Automatically pick the host arch first
-            $(if ($Env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'x64' }
-              elseif ($Env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' }
-              else { 'x86' }),
-            # Fallbacks in case the host arch build is missing
-            'x86', 'x64', 'arm64'
-        )
-    )
-    function Add-ToPath([string]$dir) {
-        if (-not [string]::IsNullOrWhiteSpace($dir) -and
-            -not ($env:Path -split ';' | Where-Object { $_ -ieq $dir })) {
-            $env:Path = "$dir;$env:Path"
-        }
-    }
-    if (Get-Command signtool.exe -ErrorAction SilentlyContinue) { return }
+    $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($c) { return }
     $roots = @(
-        "${env:ProgramFiles}\Windows Kits\10\bin",
-        "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
-    )
+        "$env:ProgramFiles\Windows Kits\10\bin",
+        "$env:ProgramFiles(x86)\Windows Kits\10\bin"
+    ) | Where-Object { Test-Path $_ }
+
     try {
         $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -EA Stop).KitsRoot10
         if ($kitsRoot) { $roots += (Join-Path $kitsRoot 'bin') }
-    } catch { }
-    $roots = $roots | Where-Object { Test-Path $_ } | Select-Object -Unique
+    } catch {}
+
     foreach ($root in $roots) {
-        foreach ($arch in $PreferredArchOrder) {
-            $candidate = Get-ChildItem -Path (Join-Path $root "*\$arch\signtool.exe") -EA SilentlyContinue |
-                         Sort-Object LastWriteTime -Desc | Select-Object -First 1
-            if ($candidate) {
-                Add-ToPath $candidate.Directory.FullName
-                Write-Log "signtool discovered at $($candidate.FullName)" "SUCCESS"
-                return
-            }
+        $cand = Get-ChildItem -Path (Join-Path $root '*\x64\signtool.exe') -EA SilentlyContinue |
+                Sort-Object LastWriteTime -Desc | Select-Object -First 1
+        if ($cand) {
+            $env:Path = "$($cand.Directory.FullName);$env:Path"
+            return
         }
     }
-    Write-Log @"
-signtool.exe not found.
-Install **any** Windows 10/11 SDK _or_ Visual Studio Build Tools
-(ensure the **Windows SDK Signing Tools** workload is included),
-then run the build again.
-"@ "ERROR"
-    exit 1
+    throw "signtool.exe not found. Install Windows 10/11 SDK (Signing Tools)."
 }
 # Function to find the WiX Toolset bin directory (supports both v3 and v6)
 function Find-WiXBinPath {
@@ -265,9 +235,10 @@ if ($NoSign) {
 if ($Sign) {
     Test-SignTool
     if (-not $Thumbprint) {
-        $Thumbprint = Get-SigningCertThumbprint
+        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint)
         if (-not $Thumbprint) {
-            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found  aborting." "ERROR"
+            Write-Log "No valid EmilyCarrU certificate with a private key found - aborting." "ERROR"
             exit 1
         }
         Write-Log "Auto-selected signing cert $Thumbprint" "INFO"
@@ -323,6 +294,48 @@ if ($Dev) {
 }
 
 #   SIGNING HELPERS  
+function Invoke-SignArtifact {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Thumbprint,
+        [int]$MaxAttempts = 4
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
+
+    $tsas = @(
+        'http://timestamp.digicert.com',
+        'http://timestamp.sectigo.com',
+        'http://timestamp.entrust.net/TSS/RFC3161sha2TS'
+    )
+
+    $attempt = 0
+    while ($attempt -lt $MaxAttempts) {
+        $attempt++
+        foreach ($tsa in $tsas) {
+            & signtool.exe sign `
+                /sha1 $Thumbprint `
+                /fd SHA256 `
+                /td SHA256 `
+                /tr $tsa `
+                /v `
+                "$Path"
+            $code = $LASTEXITCODE
+
+            if ($code -eq 0) {
+                # Optional append of legacy timestamp for old verifiers; harmless if TSA rejects.
+                & signtool.exe timestamp /t http://timestamp.digicert.com /v "$Path" 2>$null
+                return
+            }
+
+            Start-Sleep -Seconds (4 * $attempt)
+        }
+    }
+
+    throw "Signing failed after $MaxAttempts attempts across TSAs: $Path"
+}
+
+# Legacy signPackage function wrapper for backwards compatibility
 function signPackage {
     <#
       .SYNOPSIS  Authenticode-signs an MSI/EXE/ with our enterprise cert.
@@ -397,31 +410,17 @@ function signPackage {
             }
         }
     }
-    $tsaList = @(
-        'http://timestamp.digicert.com',
-        'http://timestamp.sectigo.com',
-        'http://timestamp.entrust.net/TSS/RFC3161sha2TS'
-    )
-    foreach ($tsa in $tsaList) {
-        Write-Log "Signing '$FilePath' using $tsa " "INFO"
-        # Force garbage collection before signing to release any handles
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
-        & signtool.exe sign `
-            /sha1  $Thumbprint `
-            /fd    SHA256 `
-            /tr    $tsa `
-            /td    SHA256 `
-            /v `
-            "$FilePath"
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log  "signtool succeeded with $tsa" "SUCCESS"
-            return $true
-        }
-        Write-Log "signtool failed with $tsa (exit $LASTEXITCODE)" "WARNING"
+    
+    # Use the new hardened signing function
+    try {
+        Invoke-SignArtifact -Path $FilePath -Thumbprint $Thumbprint
+        Write-Log "Signed '$FilePath' successfully" "SUCCESS"
+        return $true
     }
-    Write-Log "signtool failed with all timestamp authorities for '$FilePath' - continuing build without signature" "WARNING"
-    return $false
+    catch {
+        Write-Log "Signing failed for '$FilePath': $($_.Exception.Message)" "WARNING"
+        return $false
+    }
 }
 function signNuget {
     param(
@@ -433,19 +432,17 @@ function signNuget {
     }
     $tsa = 'http://timestamp.digicert.com'
     if (-not $Thumbprint) {
-        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My |
-                       Where-Object { $_.Subject -like "*CN=$Global:EnterpriseCertCN*" -and $_.HasPrivateKey } |
-                       Sort-Object NotAfter -Descending |
-                       Select-Object -First 1 -ExpandProperty Thumbprint)
+        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint)
     }
     if (-not $Thumbprint) {
-        Write-Log "No enterprise code-signing cert present  skipping NuGet repo sign." "WARNING"
+        Write-Log "No enterprise code-signing cert present - skipping NuGet repo sign." "WARNING"
         return $false
     }
     & nuget.exe sign `
     $Nupkg `
     -CertificateStoreName   My `
-    -CertificateSubjectName $Global:EnterpriseCertCN `
+    -CertificateSubjectName 'EmilyCarrU Intune Windows Enterprise Certificate' `
     -Timestamper            $tsa
     if ($LASTEXITCODE) {
         Write-Log "nuget sign failed ($LASTEXITCODE) for '$Nupkg' - continuing build" "WARNING"
@@ -620,9 +617,10 @@ if ($SignMSI) {
     # Ensure signing tools and certificate are available
     Test-SignTool
     if (-not $Thumbprint) {
-        $Thumbprint = Get-SigningCertThumbprint
+        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint)
         if (-not $Thumbprint) {
-            Write-Log "No valid '$Global:EnterpriseCertCN' certificate with a private key found  aborting." "ERROR"
+            Write-Log "No valid EmilyCarrU certificate with a private key found - aborting." "ERROR"
             exit 1
         }
         Write-Log "Auto-selected signing cert $Thumbprint for MSI signing" "INFO"

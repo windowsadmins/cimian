@@ -33,14 +33,13 @@ try {
         Write-Host "Created directory: $InstallDir"
     }
 
-    # Copy all .exe files to native Program Files\Cimian (never x86)
+    # Copy EXEs from the package's tools folder (ignore shim-blockers)
     Write-Host "Copying executables to ARM64-safe Program Files..."
-    $exeFiles = Get-ChildItem -Path $toolsDir -Filter "*.exe" | Where-Object { $_.Directory.Name -eq "scripts" }
+    $exeFiles = Get-ChildItem -Path $toolsDir -Filter '*.exe' -File |
+                Where-Object { $_.Name -notlike '*.ignore' }
     
     if ($exeFiles.Count -eq 0) {
-        # Fallback: look in parent directories for exe files
-        $packageDir = Split-Path -Parent $toolsDir
-        $exeFiles = Get-ChildItem -Path $packageDir -Filter "*.exe" -Recurse | Where-Object { $_.Name -notlike "*.ignore" }
+        throw "No .exe files found in tools directory: $toolsDir"
     }
     
     foreach ($exe in $exeFiles) {
