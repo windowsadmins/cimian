@@ -6,6 +6,7 @@
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <NoWarn>$(NoWarn);NU1900</NoWarn>
     <AssemblyName>cimistatus</AssemblyName>
     <AssemblyTitle>Cimian Status</AssemblyTitle>
     <AssemblyDescription>Cimian Software Management Status Monitor</AssemblyDescription>
