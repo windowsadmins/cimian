@@ -13,6 +13,8 @@
     <file src="payload\**" target="tools" />
     <file src="scripts\chocolateyInstall.ps1" target="tools" />
     <file src="scripts\chocolateyUninstall.ps1" target="tools" />
+    <file src="scripts\install-scheduled-tasks.ps1" target="tools" />
+    <file src="scripts\uninstall-scheduled-tasks.ps1" target="tools" />
     <!-- Include .ignore files to prevent Chocolatey from creating automatic shims -->
     <file src="scripts\*.exe.ignore" target="tools" />
   </files>
