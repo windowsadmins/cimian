@@ -1,0 +1,277 @@
+# Cimian Development Guide
+
+## Overview
+Cimian is a Windows software deployment solution inspired by Munki. It's written primarily in Go with one C# component (CimianStatus UI). This guide covers what you need to know about developing, building, testing, and contributing to Cimian.
+
+## Quick Start
+**CRITICAL**: We cannot run unsigned binaries in this system. Always use the `-Sign` parameter when building:
+```powershell
+# Build and sign a specific binary
+.\build.ps1 -Sign -Binary managedsoftwareupdate
+.\build.ps1 -Sign -Binary cimiimport
+
+# Build and sign all binaries
+.\build.ps1 -Sign -Binaries
+
+# Full build with signing (includes MSI/NuGet packages)
+.\build.ps1 -Sign
+```
+
+## Project Structure
+
+### Core Components
+- **Go-based tools** (cmd/):
+  - `managedsoftwareupdate` - Main client for software management
+  - `cimiimport` - Imports software packages and generates metadata
+  - `cimipkg` - Creates deployable NuGet packages
+  - `cimiwatcher` - Windows service for monitoring and automation
+  - `cimitrigger` - Trigger utility
+  - `makecatalogs` - Generates software catalogs
+  - `makepkginfo` - Creates package metadata
+  - `manifestutil` - Manages deployment manifests
+
+- **C# component**:
+  - `cimistatus` - WPF GUI application for status display (.NET 8)
+
+### Supporting Libraries (pkg/)
+- `auth/` - Authentication and credentials
+- `catalog/` - Catalog management and processing
+- `config/` - Configuration management
+- `download/` - Download utilities
+- `installer/` - Installation handling
+- `logging/` - Centralized logging system
+- `manifest/` - Manifest processing
+- `pkginfo/` - Package information handling
+- `reporting/` - Status reporting
+- And many more...
+
+## Development Environment Setup
+
+### Prerequisites
+- **Go 1.23+** - Primary development language
+- **.NET 8 SDK** - For CimianStatus C# component
+- **WiX Toolset** - For MSI package creation
+- **PowerShell** - Build system and scripts
+- **Git** - Version control
+- **Code signing certificate** - Enterprise certificate for binary signing
+
+### Tool Installation
+The build script automatically installs required tools via Chocolatey:
+```powershell
+# Tools installed automatically:
+# - go
+# - dotnet
+# - nuget.commandline
+# - wixtoolset (v3) or wix (v6 via .NET tool)
+# - intunewinapputil (if -IntuneWin flag used)
+```
+
+## Build System
+
+### Build Script Options
+The `build.ps1` script is the central build system with many options:
+
+```powershell
+# SIGNING OPTIONS
+-Sign                    # Build + sign (auto-detects cert)
+-NoSign                  # Disable signing even if cert found
+-Thumbprint XX          # Override cert auto-detection
+
+# BUILD SCOPE
+-Binaries               # Build only .exe files, skip packaging
+-Binary <name>          # Build only specific binary (e.g., cimistatus)
+-Task <build|package|all> # Specify build phase
+
+# PACKAGING OPTIONS
+-PackageOnly            # Package existing binaries (skip build)
+-NupkgOnly             # Create only NuGet packages
+-MsiOnly               # Create only MSI packages
+-SkipMSI               # Skip MSI creation
+-IntuneWin             # Create .intunewin packages
+
+# DEPLOYMENT
+-Install               # Install MSI after building
+-Dev                   # Development mode (faster iteration)
+
+# UTILITIES
+-SignMSI               # Sign existing MSI files only
+```
+
+### Common Development Workflows
+
+#### 1. Quick Development Iteration
+```powershell
+# Fast development cycle - stops services, skips signing
+.\build.ps1 -Dev -Binary managedsoftwareupdate
+
+# Test the built binary safely
+sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly
+```
+
+#### 2. Full Production Build
+```powershell
+# Complete build with all packages
+.\build.ps1 -Sign -IntuneWin
+```
+
+#### 3. Building Specific Components
+```powershell
+# Build only the Go binaries
+.\build.ps1 -Sign -Binaries
+
+# Build only CimianStatus (C# GUI)
+.\build.ps1 -Sign -Binary cimistatus
+
+# Build specific tool
+.\build.ps1 -Sign -Binary cimiimport
+```
+
+#### 4. Packaging Without Rebuilding
+```powershell
+# Package existing binaries
+.\build.ps1 -PackageOnly -Sign
+
+# Create only NuGet packages
+.\build.ps1 -NupkgOnly -Sign
+```
+
+## Testing and Debugging
+
+### Safe Testing
+Always use the `--checkonly` flag when testing `managedsoftwareupdate` to avoid triggering actual installations:
+
+```powershell
+# Test with verbose output, no actual installs
+sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly
+
+# Test specific functionality
+sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly --debug
+```
+
+### Development Mode Testing
+```powershell
+# Development mode automatically stops services for clean testing
+.\build.ps1 -Dev -Binary managedsoftwareupdate
+sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly
+```
+
+### Log Analysis
+Check logs in standard Windows locations:
+- Application logs: Event Viewer
+- Cimian-specific logs: Check `pkg/logging/` for log file locations
+
+## Code Organization
+
+### Go Modules
+- **Main module**: `github.com/windowsadmins/cimian`
+- **Submodules**: Some components have their own `go.mod` files
+- **Dependencies**: See `go.mod` for current dependency list
+
+### Key Packages
+- **github.com/spf13/pflag** - Command-line flag parsing
+- **gopkg.in/yaml.v3** - YAML configuration handling
+- **github.com/shirou/gopsutil/v3** - System information
+- **golang.org/x/sys** - Windows system APIs
+
+### C# Component
+- **Target**: .NET 8 Windows
+- **UI Framework**: WPF
+- **Architecture**: MVVM pattern
+- **Build**: Uses standard `dotnet build` with runtime-specific targeting
+
+## Architecture & Patterns
+
+### Version Information
+Build process injects version information:
+```go
+// pkg/version/ provides build-time version info
+// Set via build flags during compilation
+```
+
+### Configuration System
+- **YAML-based**: `config.yaml` for all settings
+- **Hierarchical**: Supports defaults and overrides
+- **Multi-architecture**: Separate configs for x64/arm64
+
+### Cross-platform Considerations
+- **Native Windows**: All components target Windows specifically
+- **Architecture support**: Both x64 and arm64
+- **Signing required**: All binaries must be signed for deployment
+
+## Contributing Guidelines
+
+### Code Style
+- **Go**: Follow standard Go conventions (`gofmt`, `golint`)
+- **C#**: Follow Microsoft C# conventions
+- **PowerShell**: Use approved verbs, proper error handling
+
+### Branch Strategy
+- **main**: Stable release branch
+- **dev**: Development branch (current working branch)
+- **feature/***: Feature development branches
+
+### Pull Request Process
+1. Work on feature branch
+2. Ensure all tests pass
+3. Build with signing succeeds
+4. Update documentation if needed
+5. Submit PR to `dev` branch
+
+### Testing Requirements
+- Build must complete successfully with signing
+- All binaries must be tested with `--checkonly` flag
+- C# components must build for both x64 and arm64
+- MSI packages must install cleanly
+
+## Advanced Topics
+
+### Bootstrap System
+Cimian includes a zero-touch deployment system:
+- **Bootstrap mode**: Automated software deployment
+- **CimianWatcher service**: Monitors and triggers installations
+- **Flag file**: `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
+
+### Package Management
+- **Multiple formats**: MSI, MSIX, EXE, NuGet
+- **Metadata**: YAML-based package descriptions
+- **Catalogs**: Organized software collections
+- **Conditional deployment**: Based on system facts
+
+### Signing and Security
+- **Enterprise certificates**: Required for all binaries
+- **MSI signing**: Separate signing step for MSI packages
+- **NuGet signing**: Repository-level package signing
+- **Timestamp servers**: Multiple TSA servers for reliability
+
+## Troubleshooting
+
+### Common Build Issues
+1. **Unsigned binary errors**: Always use `-Sign` parameter
+2. **File locking**: Use `-Dev` mode to stop services first
+3. **Certificate issues**: Check enterprise certificate in personal store
+4. **Go module issues**: Run `go mod tidy` and `go mod download`
+
+### Testing Issues
+1. **Permission errors**: Use `sudo` for administrative operations
+2. **Service conflicts**: Stop CimianWatcher service before testing
+3. **File locks**: Use development mode or restart PowerShell session
+
+### Debugging Tips
+- Use verbose flags (`-v`, `--debug`) for detailed output
+- Check Windows Event Viewer for service-related issues
+- Examine build logs for compilation problems
+- Use `--checkonly` to avoid side effects during testing
+
+## Additional Resources
+
+### Documentation
+- `/docs/` - Comprehensive documentation library
+- `README.md` - Project overview and basic usage
+- Individual component READMEs in respective directories
+
+### Configuration
+- `config.yaml` - Main configuration template
+- `build/msi/config.yaml` - MSI build configuration
+- Architecture-specific nuspec files in `build/nupkg/`
+
+This development guide should get you started with Cimian development. Remember: **always sign your binaries** and use safe testing practices!
