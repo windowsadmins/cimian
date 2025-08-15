@@ -1530,6 +1530,14 @@ foreach ($msiArch in $msiArchs) {
         Copy-Item "build\msi\config.yaml" $msiTempDir -Force
     }
     
+    # Copy scheduled task scripts for this architecture
+    if (Test-Path "build\msi\install-tasks.ps1") {
+        Copy-Item "build\msi\install-tasks.ps1" $msiTempDir -Force
+    }
+    if (Test-Path "build\msi\uninstall-tasks.ps1") {
+        Copy-Item "build\msi\uninstall-tasks.ps1" $msiTempDir -Force
+    }
+    
     # Build MSI for this arch
     $msiOutput = "release\Cimian-$msiArch-$env:RELEASE_VERSION.msi"
     
