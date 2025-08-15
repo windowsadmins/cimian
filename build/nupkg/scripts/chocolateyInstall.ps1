@@ -58,10 +58,26 @@ try {
         Write-Host "Added to system PATH"
     }
 
+    # Install scheduled tasks for automatic software updates
+    Write-Host "Installing scheduled tasks for automatic software updates..."
+    $taskInstallScript = Join-Path $toolsDir "install-scheduled-tasks.ps1"
+    if (Test-Path $taskInstallScript) {
+        try {
+            & $taskInstallScript -InstallPath $InstallDir
+            Write-Host "Scheduled tasks installed successfully"
+        } catch {
+            Write-Warning "Failed to install scheduled tasks: $_"
+            Write-Warning "You may need to manually create scheduled tasks for automatic updates"
+        }
+    } else {
+        Write-Warning "Scheduled task installation script not found: $taskInstallScript"
+    }
+
     Write-Host "CimianTools installed successfully to ARM64-safe path!" -ForegroundColor Green
     Write-Host "Installation Directory: $InstallDir" -ForegroundColor Green
     Write-Host "Architecture: $arch" -ForegroundColor Green
     Write-Host "Added to system PATH" -ForegroundColor Green
+    Write-Host "Scheduled task created for automatic hourly updates" -ForegroundColor Green
 }
 catch {
     Write-Host "Installation failed: $_" -ForegroundColor Red
