@@ -64,6 +64,35 @@ function Stop-CimianProcesses {
     }
 }
 
+function Remove-ScheduledTasks {
+    Write-Log "Removing Cimian scheduled tasks..." "INFO"
+    
+    try {
+        $taskNames = @(
+            "Cimian Automatic Software Update"
+        )
+
+        foreach ($taskName in $taskNames) {
+            try {
+                $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+                if ($task) {
+                    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+                    Write-Log "Removed scheduled task: $taskName" "SUCCESS"
+                } else {
+                    Write-Log "Task not found (already removed): $taskName" "INFO"
+                }
+            } catch {
+                Write-Log "Failed to remove task '$taskName': $($_.Exception.Message)" "WARNING"
+            }
+        }
+        
+        Write-Log "Scheduled tasks cleanup completed" "SUCCESS"
+    }
+    catch {
+        Write-Log "Failed to remove scheduled tasks: $($_.Exception.Message)" "WARNING"
+    }
+}
+
 function Remove-FromPath {
     Write-Log "Removing Cimian from system PATH..." "INFO"
     
@@ -137,13 +166,16 @@ function Uninstall-CimianTools {
         # Step 2: Remove service
         Remove-CimianService
         
-        # Step 3: Remove from PATH
+        # Step 3: Remove scheduled tasks
+        Remove-ScheduledTasks
+        
+        # Step 4: Remove from PATH
         Remove-FromPath
         
-        # Step 4: Remove installation files
+        # Step 5: Remove installation files
         Remove-InstallationFiles
         
-        # Step 5: Remove registry keys
+        # Step 6: Remove registry keys
         Remove-RegistryKeys
         
         Write-Log "CimianTools uninstallation completed successfully" "SUCCESS"
@@ -153,6 +185,7 @@ function Uninstall-CimianTools {
         Write-Host "   ============================================" -ForegroundColor Green
         Write-Host "   Service Removed:         $ServiceName" -ForegroundColor Green
         Write-Host "   Processes Stopped:       cimiwatcher, cimistatus, managedsoftwareupdate" -ForegroundColor Green
+        Write-Host "   Scheduled Tasks Removed: Cimian Automatic Software Update" -ForegroundColor Green
         Write-Host "   PATH Updated:            Cimian removed from system PATH" -ForegroundColor Green
         Write-Host "   Files Removed:           $InstallDir" -ForegroundColor Green
         Write-Host "   Registry Cleaned:        HKLM:\SOFTWARE\Cimian" -ForegroundColor Green

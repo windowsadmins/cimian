@@ -100,6 +100,12 @@
           <File Id="BinaryFile9" Source="$(var.BIN_DIR)\cimitrigger.exe" />
         </Component>
 
+        <!-- Scheduled Task Scripts -->
+        <Component Id="ScheduledTaskScripts" Guid="EF855CDE-1234-5678-9ABC-26091DE9B83F">
+          <File Id="TaskInstallScript" Source="$(var.BIN_DIR)\install-tasks.ps1" />
+          <File Id="TaskUninstallScript" Source="$(var.BIN_DIR)\uninstall-tasks.ps1" />
+        </Component>
+
         <!-- Component to Modify PATH Environment Variable -->
         <Component Id="SetPathComponent" Guid="A5F2C571-89DF-4C71-967F-EC9D3EF4CDD0">
           <RegistryValue Root="HKLM" Key="Software\Cimian" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
@@ -130,6 +136,22 @@
                   Return="ignore"
                   Directory="INSTALLDIR"
                   ExeCommand="&quot;[INSTALLDIR]cimiimport.exe&quot; --config-auto" />
+
+    <!-- Install scheduled tasks for automatic software updates -->
+    <CustomAction Id="InstallScheduledTasks"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Directory="INSTALLDIR"
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\install-tasks.ps1' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 0 }&quot;"
+                  Return="ignore" />
+
+    <!-- Uninstall scheduled tasks -->
+    <CustomAction Id="UninstallScheduledTasks"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Directory="INSTALLDIR"
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\uninstall-tasks.ps1' -ErrorAction Stop } catch { }&quot;"
+                  Return="ignore" />
 
     <!-- Install and start the CimianWatcher service -->
     <CustomAction Id="InstallCimianWatcherService"
@@ -189,10 +211,14 @@
       <!-- Custom Action for Installation -->
       <Custom Action="InstallCimianWatcherService" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="StartCimianWatcherService" After="InstallCimianWatcherService" Condition="NOT REMOVE" />
+      <!-- Install scheduled tasks after service installation -->
+      <Custom Action="InstallScheduledTasks" After="StartCimianWatcherService" Condition="NOT REMOVE" />
 
       <!-- Custom Action for Uninstallation - only run if service exists -->
       <Custom Action="StopCimianWatcherService" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND CIMIANWATCHER_SERVICE_EXISTS" />
       <Custom Action="RemoveCimianWatcherService" After="StopCimianWatcherService" Condition="REMOVE=&quot;ALL&quot; AND CIMIANWATCHER_SERVICE_EXISTS" />
+      <!-- Uninstall scheduled tasks before removing files -->
+      <Custom Action="UninstallScheduledTasks" Before="StopCimianWatcherService" Condition="REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->
@@ -206,6 +232,7 @@
       <ComponentRef Id="Binary7" />
       <ComponentRef Id="Binary8" />
       <ComponentRef Id="Binary9" />
+      <ComponentRef Id="ScheduledTaskScripts" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="Component_Config" />
     </Feature>
