@@ -1,2 +1,0 @@
-Reminder that we can not run unsigned binaries so use `.\build.ps1 -Sign -Binary managedsoftwareupdate` (never ever skip signing, we can not run unsigned binaries in this system) to build a new one or `.\build.ps1 -Sign -Binary cimiimport`
-You can test it with using `sudo managedsoftwareupdate.exe` with the relevant flags so its in line in the console here, such as when you are testing the runs use: `sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly` so it doesn't run installs and take forever when testing `managedsoftwareupdate` directly.
