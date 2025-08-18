@@ -433,6 +433,12 @@ Temporary Items
 # Local builds
 /release
 
+# Large archive files
+*.zip
+*.tar.gz
+*.tar.bz2
+*.7z
+
 # Development environment files
 .env
 .env.local
