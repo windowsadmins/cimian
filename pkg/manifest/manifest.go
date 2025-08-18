@@ -412,14 +412,8 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			}
 			deduplicateCheck[actionKey] = true
 
-			// For profiles, we create a special item that will be handled by Device Management Service solution
-			finalItems = append(finalItems, Item{
-				Name:           profileName,
-				Version:        "",
-				Catalogs:       mf.Catalogs,
-				Action:         "profile",
-				SourceManifest: mf.Name,
-			})
+			// Profiles are handled by external Graph API pipeline, not by managedsoftwareupdate.exe
+			logging.Info("Skipping managed profile (handled by Graph API)", "profile", profileName, "manifest", mf.Name)
 		}
 		for _, appName := range mf.ManagedApps {
 			if appName == "" {
@@ -431,14 +425,8 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			}
 			deduplicateCheck[actionKey] = true
 
-			// For apps, we create a special item that will be handled by Device Management Service solution
-			finalItems = append(finalItems, Item{
-				Name:           appName,
-				Version:        "",
-				Catalogs:       mf.Catalogs,
-				Action:         "app",
-				SourceManifest: mf.Name,
-			})
+			// Apps are handled by external Graph API pipeline, not by managedsoftwareupdate.exe
+			logging.Info("Skipping managed app (handled by Graph API)", "app", appName, "manifest", mf.Name)
 		}
 	}
 

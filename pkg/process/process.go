@@ -692,9 +692,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	if err != nil {
 		// firstItem already logs the error with source information, just return the non-retryable error
 		return err
-	}
-
-	// Track items scheduled for installation during this operation
+	} // Track items scheduled for installation during this operation
 	var scheduledItems []string
 
 	// Process requires dependencies first
