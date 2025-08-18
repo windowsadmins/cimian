@@ -16,6 +16,10 @@ import (
 	"golang.org/x/sys/windows/svc/debug"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
+
+	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/selfupdate"
 )
 
 const (
@@ -128,6 +132,9 @@ func (m *cimianWatcherService) Execute(args []string, r <-chan svc.ChangeRequest
 		s <- svc.Status{State: svc.Stopped}
 		return
 	}
+
+	// Check for pending self-updates on service start
+	m.checkAndPerformSelfUpdate()
 
 	s <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 	logger.Info(1, "Cimian watcher service is now running")
@@ -435,6 +442,47 @@ func controlService(name string, c svc.Cmd, to svc.State) error {
 		}
 	}
 	return nil
+}
+
+// checkAndPerformSelfUpdate checks for pending self-updates and executes them
+func (m *cimianWatcherService) checkAndPerformSelfUpdate() {
+	// Check if self-update is pending
+	pending, metadata, err := selfupdate.GetSelfUpdateStatus()
+	if err != nil {
+		logger.Error(1, fmt.Sprintf("Failed to check self-update status: %v", err))
+		return
+	}
+
+	if !pending {
+		logger.Info(1, "No self-update pending")
+		return
+	}
+
+	logger.Info(1, fmt.Sprintf("Self-update detected, executing update for %s", metadata["Item"]))
+
+	// Load configuration for self-update
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		logger.Error(1, fmt.Sprintf("Failed to load configuration for self-update: %v", err))
+		return
+	}
+
+	// Initialize logging for self-update operations
+	if err := logging.Init(cfg); err != nil {
+		logger.Error(1, fmt.Sprintf("Failed to initialize logging for self-update: %v", err))
+		return
+	}
+	defer logging.CloseLogger()
+
+	// Perform the self-update
+	selfUpdateManager := selfupdate.NewSelfUpdateManager()
+	if err := selfUpdateManager.PerformSelfUpdate(cfg); err != nil {
+		logger.Error(1, fmt.Sprintf("Self-update failed: %v", err))
+		logging.Error("Self-update failed in CimianWatcher service: %v", err)
+	} else {
+		logger.Info(1, "Self-update completed successfully")
+		logging.Success("Self-update completed successfully in CimianWatcher service")
+	}
 }
 
 func exePath() (string, error) {
