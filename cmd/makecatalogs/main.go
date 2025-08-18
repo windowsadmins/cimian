@@ -208,6 +208,7 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 
 		enc := yaml.NewEncoder(file)
 		enc.SetIndent(2)
+		// Configure encoder to respect custom marshaling styles
 		if encodeErr := enc.Encode(catalogWrapper); encodeErr != nil {
 			file.Close()
 			return fmt.Errorf("yaml encode error for %s: %v", outPath, encodeErr)
