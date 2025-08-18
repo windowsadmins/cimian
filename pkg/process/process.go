@@ -612,8 +612,7 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg); err != nil {
-			LogItemSource(itemName, "Failed to process install of item: "+itemName)
-			logging.Error("Failed to install item, continuing with others", "item", itemName, "error", err)
+			// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
 			failedItems = append(failedItems, itemName)
 		} else {
 			successCount++
@@ -691,9 +690,8 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	// Get the main item
 	item, err := firstItem(itemName, catalogsMap)
 	if err != nil {
-		LogItemSource(itemName, "Item not found in any catalog")
-		// Wrap catalog lookup errors as non-retryable since retrying won't help
-		return download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog", itemName)}
+		// firstItem already logs the error with source information, just return the non-retryable error
+		return err
 	}
 
 	// Track items scheduled for installation during this operation

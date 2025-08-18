@@ -35,7 +35,7 @@ func (e NonRetryableError) Unwrap() error {
 
 const (
 	CacheExpirationDays = 30
-	Timeout             = 10 * time.Minute
+	Timeout             = 30 * time.Second // Reduced from 10 minutes to 30 seconds
 )
 
 // DownloadFile retrieves a file from `url` and saves it to the correct local path.
@@ -150,8 +150,18 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 			return fmt.Errorf("failed to prepare HTTP request: %v", err)
 		}
 
-		// Optionally set a short-ish timeout
-		client := &http.Client{Timeout: Timeout}
+		// Configure HTTP client with better connection pooling and timeouts
+		transport := &http.Transport{
+			DisableKeepAlives:     false,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+		client := &http.Client{
+			Timeout:   Timeout,
+			Transport: transport,
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to perform HTTP request: %v", err)
