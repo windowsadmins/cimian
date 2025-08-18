@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/process"
 	"github.com/windowsadmins/cimian/pkg/reporting"
 	"github.com/windowsadmins/cimian/pkg/scripts"
+	"github.com/windowsadmins/cimian/pkg/selfupdate"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/version"
 )
@@ -56,6 +58,41 @@ func enableANSIConsole() {
 	}
 }
 
+// runCommand executes a command and returns any error
+func runCommand(command string, args []string) error {
+	cmd := exec.Command(command, args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return fmt.Errorf("command failed: %w (output: %s)", err, string(output))
+	}
+
+	return nil
+}
+
+// restartCimianWatcherService restarts the CimianWatcher Windows service
+func restartCimianWatcherService() error {
+	// Stop the service
+	if err := runCommand("sc", []string{"stop", "CimianWatcher"}); err != nil {
+		// Service might not be running, log but continue
+		fmt.Printf("⚠️  Warning: Failed to stop CimianWatcher service: %v\n", err)
+	} else {
+		fmt.Println("✅ CimianWatcher service stopped")
+
+		// Wait a moment for service to fully stop
+		fmt.Print("   Waiting for service to stop...")
+		time.Sleep(2 * time.Second)
+		fmt.Println(" done")
+	}
+
+	// Start the service
+	if err := runCommand("sc", []string{"start", "CimianWatcher"}); err != nil {
+		return fmt.Errorf("failed to start CimianWatcher service: %w", err)
+	}
+
+	return nil
+}
+
 func main() {
 	enableANSIConsole()
 	// Define command-line flags.
@@ -69,6 +106,13 @@ func main() {
 	// Bootstrap mode flags - similar to Munki's --set-bootstrap-mode and --clear-bootstrap-mode
 	setBootstrapMode := pflag.Bool("set-bootstrap-mode", false, "Enable bootstrap mode for next boot.")
 	clearBootstrapMode := pflag.Bool("clear-bootstrap-mode", false, "Disable bootstrap mode.")
+
+	// Self-update management flags
+	clearSelfUpdate := pflag.Bool("clear-selfupdate", false, "Clear pending self-update flag.")
+	checkSelfUpdate := pflag.Bool("check-selfupdate", false, "Check if self-update is pending.")
+	performSelfUpdate := pflag.Bool("perform-selfupdate", false, "Perform pending self-update (internal use).")
+	selfUpdateStatus := pflag.Bool("selfupdate-status", false, "Show self-update status and exit.")
+	restartService := pflag.Bool("restart-service", false, "Restart CimianWatcher service and exit.")
 
 	// Munki-compatible flags for preflight bypass and manifest override
 	noPreflight := pflag.Bool("no-preflight", false, "Skip preflight script execution.")
@@ -148,6 +192,96 @@ func main() {
 			os.Exit(1)
 		}
 		logging.Success("Bootstrap mode disabled.")
+		os.Exit(0)
+	}
+
+	// Handle self-update management flags
+	if *clearSelfUpdate {
+		if err := selfupdate.ClearSelfUpdateFlag(); err != nil {
+			logging.Error("Failed to clear self-update flag: %v", err)
+			os.Exit(1)
+		}
+		logging.Success("Self-update flag cleared.")
+		os.Exit(0)
+	}
+
+	if *checkSelfUpdate {
+		pending, metadata, err := selfupdate.GetSelfUpdateStatus()
+		if err != nil {
+			logging.Error("Failed to check self-update status: %v", err)
+			os.Exit(1)
+		}
+		if pending {
+			logging.Info("Self-update is pending:")
+			for key, value := range metadata {
+				logging.Info("  %s: %s", key, value)
+			}
+		} else {
+			logging.Info("No self-update pending.")
+		}
+		os.Exit(0)
+	}
+
+	if *selfUpdateStatus {
+		pending, metadata, err := selfupdate.GetSelfUpdateStatus()
+		if err != nil {
+			fmt.Printf("❌ Failed to check self-update status: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("🔄 Cimian Self-Update Status")
+		fmt.Println("════════════════════════════")
+
+		if pending {
+			fmt.Println("📋 Status: Self-update pending")
+			fmt.Println("📦 Update details:")
+			for key, value := range metadata {
+				fmt.Printf("   %s: %s\n", key, value)
+			}
+			fmt.Println()
+			fmt.Println("💡 To trigger the update:")
+			fmt.Println("   managedsoftwareupdate --restart-service")
+		} else {
+			fmt.Println("📋 Status: No self-update pending")
+			fmt.Println("✅ Cimian is up to date")
+		}
+		os.Exit(0)
+	}
+
+	if *restartService {
+		fmt.Println("🔄 Restarting CimianWatcher service...")
+
+		if err := restartCimianWatcherService(); err != nil {
+			fmt.Printf("❌ Failed to restart service: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("✅ CimianWatcher service restarted successfully")
+		fmt.Println("ℹ️  Self-update will be processed if pending")
+		os.Exit(0)
+	}
+
+	if *performSelfUpdate {
+		// Load configuration first
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			logging.Error("Failed to load configuration for self-update: %v", err)
+			os.Exit(1)
+		}
+
+		// Initialize logging for self-update
+		if err := logging.Init(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing logger for self-update: %v\n", err)
+			os.Exit(1)
+		}
+		defer logging.CloseLogger()
+
+		selfUpdateManager := selfupdate.NewSelfUpdateManager()
+		if err := selfUpdateManager.PerformSelfUpdate(cfg); err != nil {
+			logging.Error("Self-update failed: %v", err)
+			os.Exit(1)
+		}
+		logging.Success("Self-update completed successfully.")
 		os.Exit(0)
 	}
 
@@ -731,6 +865,76 @@ func main() {
 	var allToInstall []catalog.Item
 	allToInstall = append(allToInstall, toInstall...)
 	allToInstall = append(allToInstall, toUpdate...)
+
+	// Check for self-updates and handle them specially
+	var selfUpdateItems []catalog.Item
+	var regularItems []catalog.Item
+
+	for _, item := range allToInstall {
+		if selfupdate.IsCimianPackage(item) {
+			selfUpdateItems = append(selfUpdateItems, item)
+			logging.Info("Detected Cimian self-update package", "item", item.Name, "version", item.Version)
+		} else {
+			regularItems = append(regularItems, item)
+		}
+	}
+
+	// Handle self-updates by scheduling them for next restart
+	if len(selfUpdateItems) > 0 {
+		logging.Info("----------------------------------------------------------------------")
+		logging.Info("🔄 CIMIAN SELF-UPDATE DETECTED")
+		logging.Info("   %d self-update package(s) will be scheduled for next restart", len(selfUpdateItems))
+		logging.Info("----------------------------------------------------------------------")
+
+		selfUpdateManager := selfupdate.NewSelfUpdateManager()
+
+		for _, item := range selfUpdateItems {
+			// Download the self-update package first
+			downloadItems := make(map[string]string)
+			fullURL := item.Installer.Location
+			if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
+				fullURL = strings.ReplaceAll(fullURL, "\\", "/")
+				if !strings.HasPrefix(fullURL, "/") {
+					fullURL = "/" + fullURL
+				}
+				fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
+			}
+			downloadItems[item.Name] = fullURL
+
+			// Download the package
+			statusReporter.Message(fmt.Sprintf("Downloading self-update package: %s", item.Name))
+			downloadedPaths, err := download.InstallPendingUpdates(downloadItems, cfg)
+			if err != nil {
+				logging.Error("Failed to download self-update package", "item", item.Name, "error", err)
+				continue
+			}
+
+			localFile, exists := downloadedPaths[item.Name]
+			if !exists {
+				logging.Error("Downloaded path not found for self-update package", "item", item.Name)
+				continue
+			}
+
+			// Schedule the self-update
+			if err := selfUpdateManager.ScheduleSelfUpdate(item, localFile, cfg); err != nil {
+				logging.Error("Failed to schedule self-update", "item", item.Name, "error", err)
+			} else {
+				logging.Success("Self-update scheduled successfully", "item", item.Name, "version", item.Version)
+			}
+		}
+
+		if len(selfUpdateItems) > 0 {
+			logging.Info("----------------------------------------------------------------------")
+			logging.Info("✅ SELF-UPDATE SCHEDULING COMPLETE")
+			logging.Info("   Cimian will update itself on the next service restart")
+			logging.Info("   You can restart the CimianWatcher service to apply updates immediately")
+			logging.Info("----------------------------------------------------------------------")
+		}
+
+		// Update allToInstall to only include regular items
+		allToInstall = regularItems
+	}
+
 	var installSuccess bool = true
 	if len(allToInstall) > 0 {
 		if verbosity > 0 {
