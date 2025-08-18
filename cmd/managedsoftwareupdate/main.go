@@ -559,6 +559,10 @@ func main() {
 				sourceType = "optional_installs" // fallback for items without explicit action
 			}
 
+			// Debug logging to see what's being set
+			if verbosity > 1 {
+				logging.Debug("Setting item source", "item", manifestItem.Name, "sourceManifest", manifestItem.SourceManifest, "sourceType", sourceType)
+			}
 			process.SetItemSource(manifestItem.Name, manifestItem.SourceManifest, sourceType)
 		}
 	}
@@ -1159,9 +1163,6 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 
 			// Source manifest is already set in the mItem structure
 			sourceManifest := mItem.SourceManifest
-			if sourceManifest == "" {
-				sourceManifest = "unknown-manifest"
-			}
 			process.SetItemSource(mItem.Name, sourceManifest, "managed_installs")
 
 			newCatItem := catalog.Item{
@@ -1384,9 +1385,6 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 
 			// Source manifest is already set in the m structure
 			sourceManifest := m.SourceManifest
-			if sourceManifest == "" {
-				sourceManifest = "unknown-manifest"
-			}
 			process.SetItemSource(m.Name, sourceManifest, "managed_updates")
 
 			results = append(results, catItem)
