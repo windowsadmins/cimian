@@ -3,12 +3,19 @@
 package retry
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/windowsadmins/cimian/pkg/logging"
 )
+
+// NonRetryableError interface for errors that should not be retried
+type NonRetryableError interface {
+	error
+	Unwrap() error
+}
 
 // RetryConfig defines the configuration for retry attempts
 type RetryConfig struct {
@@ -25,6 +32,19 @@ func Retry(config RetryConfig, action func() error) error {
 		err := action()
 		if err == nil {
 			return nil
+		}
+
+		// Check if this is a non-retryable error
+		var nonRetryableErr NonRetryableError
+		if errors.As(err, &nonRetryableErr) {
+			logging.LogStructured(logging.LevelWarn,
+				fmt.Sprintf("Non-retryable error encountered: %s", err.Error()),
+				map[string]interface{}{
+					"level":         "RETRY",
+					"attempt":       attempt,
+					"non_retryable": true,
+				})
+			return err
 		}
 
 		// Improve error message for common 404 errors

@@ -89,12 +89,12 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 	// Log source information when item is not found
 	if source, exists := GetItemSource(itemName); exists {
 		logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription())
-		return catalog.Item{}, fmt.Errorf("item %s not found in any catalog (source: %s)", itemName, source.GetSourceDescription())
+		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s)", itemName, source.GetSourceDescription())}
 	}
 
 	// If no source information is available, provide generic error
 	logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing")
-	return catalog.Item{}, fmt.Errorf("item %s not found in any catalog (source: unknown)", itemName)
+	return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown)", itemName)}
 }
 
 // Manifests iterates through manifests, processes items from managed arrays, and ensures manifest names are excluded.
@@ -692,7 +692,8 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	item, err := firstItem(itemName, catalogsMap)
 	if err != nil {
 		LogItemSource(itemName, "Item not found in any catalog")
-		return fmt.Errorf("item %s not found in any catalog", itemName)
+		// Wrap catalog lookup errors as non-retryable since retrying won't help
+		return download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog", itemName)}
 	}
 
 	// Track items scheduled for installation during this operation
