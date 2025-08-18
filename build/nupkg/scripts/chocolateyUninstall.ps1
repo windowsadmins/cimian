@@ -26,14 +26,36 @@ function Remove-CimianService {
             if ($service.Status -eq "Running") {
                 Write-Log "Stopping service $ServiceName..." "INFO"
                 Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 2
+                Start-Sleep -Seconds 3
+                
+                # Force stop if still running
+                $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                if ($service -and $service.Status -eq "Running") {
+                    Write-Log "Force stopping service using sc.exe..." "INFO"
+                    & sc.exe stop $ServiceName
+                    Start-Sleep -Seconds 2
+                }
             }
             
+            # Try using the service executable first (preferred method)
             $serviceExe = Join-Path $InstallDir "cimiwatcher.exe"
             if (Test-Path $serviceExe) {
-                Write-Log "Removing service $ServiceName..." "INFO"
+                Write-Log "Removing service using $serviceExe remove..." "INFO"
+                & $serviceExe remove
+                Start-Sleep -Seconds 2
+            } else {
+                # Fallback to sc.exe if executable not found
+                Write-Log "Service executable not found, using sc.exe delete..." "INFO"
                 & sc.exe delete $ServiceName
             }
+            
+            # Verify service removal
+            $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            if ($service) {
+                Write-Log "Service still exists, forcing removal with sc.exe..." "WARNING"
+                & sc.exe delete $ServiceName
+            }
+            
             Write-Log "Service $ServiceName removed successfully" "SUCCESS"
         } else {
             Write-Log "Service $ServiceName not found" "INFO"
@@ -41,6 +63,13 @@ function Remove-CimianService {
     }
     catch {
         Write-Log "Failed to remove service: $($_.Exception.Message)" "WARNING"
+        # Try one more time with sc.exe as fallback
+        try {
+            Write-Log "Attempting fallback service removal..." "INFO"
+            & sc.exe delete $ServiceName
+        } catch {
+            Write-Log "Fallback service removal also failed" "WARNING"
+        }
     }
 }
 
