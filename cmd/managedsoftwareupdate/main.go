@@ -1141,6 +1141,17 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 		if mItem.Name == "" {
 			continue
 		}
+
+		// Skip managed_profiles and managed_apps items - these should not be processed as software installs
+		if mItem.Action == "profile" {
+			logging.Debug("Skipping profile item (not a software install)", "item", mItem.Name)
+			continue
+		}
+		if mItem.Action == "app" {
+			logging.Debug("Skipping app item (not a software install)", "item", mItem.Name)
+			continue
+		}
+
 		key := strings.ToLower(mItem.Name)
 		if _, found := localCatalogMap[key]; !found {
 			logging.Info("Identified new item for installation", "item", mItem.Name)
@@ -1353,6 +1364,16 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 	var results []catalog.Item
 	dedupedItems := status.DeduplicateManifestItems(manifestItems)
 	for _, m := range dedupedItems {
+		// Skip managed_profiles and managed_apps items - these should not be processed as software installs/updates
+		if m.Action == "profile" {
+			logging.Debug("Skipping profile item (not a software install/update)", "item", m.Name)
+			continue
+		}
+		if m.Action == "app" {
+			logging.Debug("Skipping app item (not a software install/update)", "item", m.Name)
+			continue
+		}
+
 		if installer.LocalNeedsUpdate(m, catMap, cfg) {
 			key := strings.ToLower(m.Name)
 			catItem, found := catMap[key]
