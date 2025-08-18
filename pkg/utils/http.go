@@ -25,7 +25,6 @@ func NewAuthenticatedRequest(method, url string, body io.Reader) (*http.Request,
 		logging.Warn("No valid Authorization header found, proceeding without authentication.")
 	} else {
 		req.Header.Set("Authorization", "Basic "+authHeader)
-		logging.Debug("Authorization header included")
 	}
 
 	return req, nil
