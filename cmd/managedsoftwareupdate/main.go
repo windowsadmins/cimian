@@ -535,29 +535,31 @@ func main() {
 	}
 
 	// Apply item filter if specified
-	manifestItems = itemFilter.Apply(manifestItems) // Clear and set up source tracking for all manifest items
+	manifestItems = itemFilter.Apply(manifestItems)
+
+	// Clear and set up source tracking for all manifest items
 	process.ClearItemSources()
 	for _, manifestItem := range manifestItems {
-		// Track source information for each type of managed item
-		for _, item := range manifestItem.ManagedInstalls {
-			if item != "" {
-				process.SetItemSource(item, manifestItem.Name, "managed_installs")
+		// Each manifestItem is now an individual item with an Action field, not a manifest with arrays
+		if manifestItem.Name != "" {
+			// Determine the source type based on the Action field
+			sourceType := ""
+			switch manifestItem.Action {
+			case "install":
+				sourceType = "managed_installs"
+			case "update":
+				sourceType = "managed_updates"
+			case "uninstall":
+				sourceType = "managed_uninstalls"
+			case "profile":
+				sourceType = "managed_profiles"
+			case "app":
+				sourceType = "managed_apps"
+			default:
+				sourceType = "optional_installs" // fallback for items without explicit action
 			}
-		}
-		for _, item := range manifestItem.ManagedUpdates {
-			if item != "" {
-				process.SetItemSource(item, manifestItem.Name, "managed_updates")
-			}
-		}
-		for _, item := range manifestItem.ManagedUninstalls {
-			if item != "" {
-				process.SetItemSource(item, manifestItem.Name, "managed_uninstalls")
-			}
-		}
-		for _, item := range manifestItem.OptionalInstalls {
-			if item != "" {
-				process.SetItemSource(item, manifestItem.Name, "optional_installs")
-			}
+
+			process.SetItemSource(manifestItem.Name, manifestItem.SourceManifest, sourceType)
 		}
 	}
 
@@ -1142,13 +1144,12 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 			continue
 		}
 
-		// Skip managed_profiles and managed_apps items - these should not be processed as software installs
-		if mItem.Action == "profile" {
-			logging.Debug("Skipping profile item (not a software install)", "item", mItem.Name)
-			continue
-		}
-		if mItem.Action == "app" {
-			logging.Debug("Skipping app item (not a software install)", "item", mItem.Name)
+		// Only process items with Action "install" - skip profiles, apps, updates, etc.
+		if mItem.Action != "install" {
+			// Don't log profile/app skips as they're expected behavior
+			if mItem.Action != "profile" && mItem.Action != "app" {
+				logging.Debug("Skipping non-install item", "item", mItem.Name, "action", mItem.Action)
+			}
 			continue
 		}
 
@@ -1156,7 +1157,7 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 		if _, found := localCatalogMap[key]; !found {
 			logging.Info("Identified new item for installation", "item", mItem.Name)
 
-			// Set up source tracking for new installs
+			// Source manifest is already set in the mItem structure
 			sourceManifest := mItem.SourceManifest
 			if sourceManifest == "" {
 				sourceManifest = "unknown-manifest"
@@ -1364,13 +1365,12 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 	var results []catalog.Item
 	dedupedItems := status.DeduplicateManifestItems(manifestItems)
 	for _, m := range dedupedItems {
-		// Skip managed_profiles and managed_apps items - these should not be processed as software installs/updates
-		if m.Action == "profile" {
-			logging.Debug("Skipping profile item (not a software install/update)", "item", m.Name)
-			continue
-		}
-		if m.Action == "app" {
-			logging.Debug("Skipping app item (not a software install/update)", "item", m.Name)
+		// Only process items with Action "update" or "install" - skip profiles, apps, etc.
+		if m.Action != "update" && m.Action != "install" {
+			// Don't log profile/app skips as they're expected behavior
+			if m.Action != "profile" && m.Action != "app" {
+				logging.Debug("Skipping non-installable item", "item", m.Name, "action", m.Action)
+			}
 			continue
 		}
 
@@ -1382,7 +1382,7 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 				continue
 			}
 
-			// Set up source tracking for updates
+			// Source manifest is already set in the m structure
 			sourceManifest := m.SourceManifest
 			if sourceManifest == "" {
 				sourceManifest = "unknown-manifest"
