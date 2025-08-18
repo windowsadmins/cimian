@@ -183,6 +183,12 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			logging.Warn("Failed to parse manifest YAML", "file", localPath, "error", err)
 			continue
 		}
+		
+		// If the manifest doesn't have a name field, use the filename
+		if mf.Name == "" {
+			// Remove .yaml extension from filename for cleaner display
+			mf.Name = strings.TrimSuffix(currentName, ".yaml")
+		}
 		logging.Debug(fmt.Sprintf("Processed manifest: %s", mf.Name))
 
 		allManifests = append(allManifests, mf)
