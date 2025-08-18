@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
   <metadata>
-    <id>ca.emilycarru.winadmins.CimianTools</id>
+    <id>cimian</id>
     <version>{{VERSION}}</version>
-    <authors>EmilyCarrU</authors>
+    <authors>Windows Admins Open Source</authors>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>Cimian Tools for Windows Software Management</description>
     <tags>admin</tags>
