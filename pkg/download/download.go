@@ -5,6 +5,7 @@ package download
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,19 @@ import (
 	"github.com/windowsadmins/cimian/pkg/retry"
 	"github.com/windowsadmins/cimian/pkg/utils"
 )
+
+// NonRetryableError wraps errors that should not be retried
+type NonRetryableError struct {
+	Err error
+}
+
+func (e NonRetryableError) Error() string {
+	return e.Err.Error()
+}
+
+func (e NonRetryableError) Unwrap() error {
+	return e.Err
+}
 
 const (
 	CacheExpirationDays = 30
@@ -115,7 +129,7 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 		return fmt.Errorf("failed to create directory structure for %s: %v", dest, err)
 	}
 
-	// 7) Start the retry logic
+	// 7) Start the retry logic - but only for network/download errors, not logical errors
 	configRetry := retry.RetryConfig{
 		MaxRetries:      3,
 		InitialInterval: time.Second,
@@ -146,9 +160,10 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 
 		if resp.StatusCode != http.StatusOK {
 			// Provide more specific error messages for common HTTP status codes
+			// 404 errors should NOT be retried as they indicate the resource doesn't exist
 			switch resp.StatusCode {
 			case 404:
-				return fmt.Errorf("file not found (404): resource may have been moved or deleted")
+				return NonRetryableError{Err: fmt.Errorf("file not found (404): resource may have been moved or deleted")}
 			case 403:
 				return fmt.Errorf("access forbidden (403): insufficient permissions or authentication required")
 			case 500:
@@ -196,6 +211,13 @@ func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configur
 		// Call DownloadFile
 		if err := DownloadFile(url, "", cfg); err != nil {
 			logging.Error("Failed to download", "name", name, "error", err)
+			
+			// Check if this is a non-retryable error and propagate it accordingly
+			var nonRetryableErr NonRetryableError
+			if errors.As(err, &nonRetryableErr) {
+				return nil, NonRetryableError{Err: fmt.Errorf("failed to download %s: %v", name, err)}
+			}
+			
 			return nil, fmt.Errorf("failed to download %s: %v", name, err)
 		}
 
