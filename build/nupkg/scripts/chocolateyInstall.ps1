@@ -58,6 +58,37 @@ try {
         Write-Host "Added to system PATH"
     }
 
+    # Install and start CimianWatcher service for responsive bootstrap monitoring
+    Write-Host "Installing CimianWatcher service for responsive bootstrap monitoring..."
+    $cimiwatcherExe = Join-Path $InstallDir "cimiwatcher.exe"
+    if (Test-Path $cimiwatcherExe) {
+        try {
+            # Install the service
+            Write-Host "Installing CimianWatcher service..."
+            & $cimiwatcherExe install
+            Start-Sleep -Seconds 2
+            
+            # Start the service
+            Write-Host "Starting CimianWatcher service..."
+            & $cimiwatcherExe start
+            Start-Sleep -Seconds 2
+            
+            # Verify service is running
+            $service = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
+            if ($service -and $service.Status -eq "Running") {
+                Write-Host "CimianWatcher service installed and started successfully" -ForegroundColor Green
+            } else {
+                Write-Warning "CimianWatcher service was installed but may not be running properly"
+            }
+        } catch {
+            Write-Warning "Failed to install or start CimianWatcher service: $_"
+            Write-Warning "Bootstrap monitoring may not work optimally without the service"
+        }
+    } else {
+        Write-Warning "cimiwatcher.exe not found: $cimiwatcherExe"
+        Write-Warning "Bootstrap monitoring service will not be available"
+    }
+
     # Install scheduled tasks for automatic software updates
     Write-Host "Installing scheduled tasks for automatic software updates..."
     $taskInstallScript = Join-Path $toolsDir "install-scheduled-tasks.ps1"
@@ -77,6 +108,7 @@ try {
     Write-Host "Installation Directory: $InstallDir" -ForegroundColor Green
     Write-Host "Architecture: $arch" -ForegroundColor Green
     Write-Host "Added to system PATH" -ForegroundColor Green
+    Write-Host "CimianWatcher service installed and started for responsive bootstrap monitoring" -ForegroundColor Green
     Write-Host "Scheduled task created for automatic hourly updates" -ForegroundColor Green
 }
 catch {
