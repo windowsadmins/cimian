@@ -1004,7 +1004,23 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 	for _, flag := range item.Installer.Flags {
 		flag = strings.TrimSpace(flag)
 
-		// Split flags only on the first whitespace or equals sign
+		// If user already provided dashes in their flag, preserve their exact format
+		if strings.HasPrefix(flag, "--") || strings.HasPrefix(flag, "-") {
+			if strings.Contains(flag, "=") {
+				// User explicitly used = format (e.g., "--mode=unattended"), preserve it
+				args = append(args, flag)
+			} else if strings.Contains(flag, " ") {
+				// User used space format (e.g., "--mode unattended"), preserve it
+				parts := strings.SplitN(flag, " ", 2)
+				args = append(args, parts[0], quoteIfNeeded(strings.TrimSpace(parts[1])))
+			} else {
+				// Single flag without value (e.g., "--silent")
+				args = append(args, flag)
+			}
+			continue
+		}
+
+		// Split flags only on the first whitespace or equals sign for auto-detection
 		var key, val string
 		if strings.Contains(flag, "=") {
 			parts := strings.SplitN(flag, "=", 2)
@@ -1014,20 +1030,6 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 			key, val = parts[0], strings.TrimSpace(parts[1])
 		} else {
 			key = flag
-		}
-
-		// If user already specified dashes, preserve them exactly
-		if strings.HasPrefix(key, "--") || strings.HasPrefix(key, "-") {
-			if val != "" {
-				if strings.Contains(flag, "=") {
-					args = append(args, fmt.Sprintf("%s=%s", key, quoteIfNeeded(val)))
-				} else {
-					args = append(args, key, quoteIfNeeded(val))
-				}
-			} else {
-				args = append(args, key)
-			}
-			continue
 		}
 
 		// Smart detection based on installer patterns and flag characteristics
