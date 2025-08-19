@@ -361,7 +361,7 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 	}
 
 	if !installed {
-		logging.Info("Nupkg not installed; forcing install", "pkgID", nupkgID)
+		logging.Info("Nupkg not installed; installing", "pkgID", nupkgID)
 		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item)
 	}
 
