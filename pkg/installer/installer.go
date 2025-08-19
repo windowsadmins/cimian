@@ -1267,6 +1267,10 @@ func runCMD(command string, arguments []string) (string, error) {
 			exitCode := exitErr.ExitCode()
 			logging.Error("Command failed",
 				"command", command, "args", arguments, "exitCode", exitCode, "stderr", errStr)
+			// Include stderr in the error message for better debugging
+			if errStr != "" {
+				return outStr, fmt.Errorf("command failed exit code=%d: %s", exitCode, strings.TrimSpace(errStr))
+			}
 			return outStr, fmt.Errorf("command failed exit code=%d", exitCode)
 		}
 		logging.Error("Failed to run cmd",
