@@ -336,7 +336,7 @@ func main() {
 		logging.Info("----------------------------------------------------------------------")
 		logging.Info("🔄 PREFLIGHT EXECUTION")
 		logging.Info("----------------------------------------------------------------------")
-		runPreflightIfNeeded(verbosity)
+		runPreflightIfNeeded(verbosity, cfg)
 	} else {
 		if verbosity > 0 {
 			logging.Info("----------------------------------------------------------------------")
@@ -1075,7 +1075,7 @@ func main() {
 		logger.Info("----------------------------------------------------------------------")
 	}
 	statusReporter.Detail("Running post-installation scripts...")
-	runPostflightIfNeeded(verbosity)
+	runPostflightIfNeeded(verbosity, cfg)
 	if verbosity > 0 {
 		logger.Success("✓ Postflight script completed")
 	} else {
@@ -1169,8 +1169,8 @@ func extractPackageNames(installs, updates, uninstalls []catalog.Item) []string 
 }
 
 // runPreflightIfNeeded runs the preflight script.
-// If the preflight script fails, execution is aborted (like Munki behavior).
-func runPreflightIfNeeded(verbosity int) {
+// Behavior depends on configuration: continue (default), abort, or warn.
+func runPreflightIfNeeded(verbosity int, cfg *config.Configuration) {
 	logInfo := func(format string, args ...interface{}) {
 		if verbosity >= 2 {
 			logger.Info(format, args...)
@@ -1183,10 +1183,33 @@ func runPreflightIfNeeded(verbosity int) {
 	}
 
 	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
-		logger.Error("Preflight script failed: %v", err)
-		logger.Error("managedsoftwareupdate run aborted by preflight script failure")
-		// Exit like Munki does when preflight fails
-		os.Exit(1)
+		// Get the failure action from configuration (default to "continue")
+		failureAction := cfg.PreflightFailureAction
+		if failureAction == "" {
+			failureAction = "continue"
+		}
+
+		switch strings.ToLower(failureAction) {
+		case "abort":
+			logger.Error("Preflight script failed: %v", err)
+			logger.Error("managedsoftwareupdate run aborted by preflight script failure (PreflightFailureAction=abort)")
+			// Exit like Munki does when preflight fails
+			os.Exit(1)
+		case "warn":
+			logger.Warning("Preflight script failed: %v", err)
+			logger.Warning("Preflight script failure detected - continuing with software updates (PreflightFailureAction=warn)")
+		default: // "continue" or any other value
+			logger.Error("Preflight script failed: %v", err)
+			logger.Warning("Preflight script failure detected - continuing with software updates (PreflightFailureAction=continue)")
+			logger.Warning("Consider investigating preflight script issues to ensure proper system preparation")
+		}
+
+		// Log structured event for preflight failure
+		logging.LogEventEntry("preflight", "execute", "failed",
+			fmt.Sprintf("Preflight script failed (action=%s): %v", failureAction, err),
+			logging.WithError(err),
+			logging.WithContext("failure_action", failureAction),
+			logging.WithContext("continue_on_failure", failureAction != "abort"))
 	}
 }
 
@@ -1263,7 +1286,8 @@ func loadSpecificManifest(manifestName string, cfg *config.Configuration) ([]man
 }
 
 // runPostflightIfNeeded runs the postflight script.
-func runPostflightIfNeeded(verbosity int) {
+// Behavior depends on configuration: continue (default), abort, or warn.
+func runPostflightIfNeeded(verbosity int, cfg *config.Configuration) {
 	logInfo := func(format string, args ...interface{}) {
 		if verbosity >= 2 {
 			logger.Info(format, args...)
@@ -1276,7 +1300,33 @@ func runPostflightIfNeeded(verbosity int) {
 	}
 
 	if err := scripts.RunPostflight(verbosity, logInfo, logError); err != nil {
-		logger.Error("Postflight script failed: %v", err)
+		// Get the failure action from configuration (default to "continue")
+		failureAction := cfg.PostflightFailureAction
+		if failureAction == "" {
+			failureAction = "continue"
+		}
+
+		switch strings.ToLower(failureAction) {
+		case "abort":
+			logger.Error("Postflight script failed: %v", err)
+			logger.Error("managedsoftwareupdate run aborted by postflight script failure (PostflightFailureAction=abort)")
+			// Exit when postflight fails with abort setting
+			os.Exit(1)
+		case "warn":
+			logger.Warning("Postflight script failed: %v", err)
+			logger.Warning("Postflight script failure detected - software updates completed but cleanup may be incomplete (PostflightFailureAction=warn)")
+		default: // "continue" or any other value
+			logger.Error("Postflight script failed: %v", err)
+			logger.Warning("Postflight script failure detected - software updates completed but cleanup may be incomplete (PostflightFailureAction=continue)")
+			logger.Warning("Consider investigating postflight script issues to ensure proper system cleanup")
+		}
+
+		// Log structured event for postflight failure
+		logging.LogEventEntry("postflight", "execute", "failed",
+			fmt.Sprintf("Postflight script failed (action=%s): %v", failureAction, err),
+			logging.WithError(err),
+			logging.WithContext("failure_action", failureAction),
+			logging.WithContext("continue_on_failure", failureAction != "abort"))
 	}
 }
 
