@@ -114,6 +114,10 @@ func main() {
 	selfUpdateStatus := pflag.Bool("selfupdate-status", false, "Show self-update status and exit.")
 	restartService := pflag.Bool("restart-service", false, "Restart CimianWatcher service and exit.")
 
+	// Cache management flags
+	validateCache := pflag.Bool("validate-cache", false, "Validate cache integrity and remove corrupt files.")
+	cacheStatus := pflag.Bool("cache-status", false, "Show cache status and statistics.")
+
 	// Munki-compatible flags for preflight bypass and manifest override
 	noPreflight := pflag.Bool("no-preflight", false, "Skip preflight script execution.")
 	localOnlyManifest := pflag.String("local-only-manifest", "", "Use specified local manifest file instead of server manifest.")
@@ -258,6 +262,51 @@ func main() {
 
 		fmt.Println("✅ CimianWatcher service restarted successfully")
 		fmt.Println("ℹ️  Self-update will be processed if pending")
+		os.Exit(0)
+	}
+
+	// Handle cache management flags
+	if *validateCache {
+		fmt.Println("🔍 Validating cache integrity...")
+
+		// Load minimal config for cache path
+		if err := download.ValidateAndCleanCache(cfg.CachePath); err != nil {
+			fmt.Printf("❌ Cache validation failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("✅ Cache validation completed successfully")
+		os.Exit(0)
+	}
+
+	if *cacheStatus {
+		fmt.Println("📊 Cimian Cache Status")
+		fmt.Println("═══════════════════════")
+
+		fmt.Printf("📁 Cache Path: %s\n", cfg.CachePath)
+
+		// Count files and calculate sizes
+		var totalFiles, corruptFiles, totalSize int64
+		filepath.Walk(cfg.CachePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			totalFiles++
+			totalSize += info.Size()
+			if info.Size() == 0 {
+				corruptFiles++
+			}
+			return nil
+		})
+
+		fmt.Printf("📦 Total Files: %d\n", totalFiles)
+		fmt.Printf("💾 Total Size: %.2f MB\n", float64(totalSize)/(1024*1024))
+		if corruptFiles > 0 {
+			fmt.Printf("⚠️  Corrupt Files: %d (0-byte files detected)\n", corruptFiles)
+			fmt.Println("💡 Run with --validate-cache to clean up corrupt files")
+		} else {
+			fmt.Println("✅ No corruption detected")
+		}
 		os.Exit(0)
 	}
 
@@ -495,6 +544,13 @@ func main() {
 	if err := os.MkdirAll(filepath.Clean(cachePath), 0755); err != nil {
 		logging.Error("Failed to create cache directory: %v", err)
 		os.Exit(1)
+	}
+
+	// Perform cache validation and cleanup to prevent corrupt downloads from causing issues
+	statusReporter.Message("Validating cache integrity...")
+	if err := download.ValidateAndCleanCache(cfg.CachePath); err != nil {
+		logging.Warn("Cache validation encountered errors", "error", err)
+		// Don't exit - continue with potentially degraded cache
 	}
 
 	// Retrieve manifests.
