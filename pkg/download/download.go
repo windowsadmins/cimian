@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,7 +36,8 @@ func (e NonRetryableError) Unwrap() error {
 
 const (
 	CacheExpirationDays = 30
-	Timeout             = 30 * time.Second // Reduced from 10 minutes to 30 seconds
+	Timeout             = 10 * time.Minute // Increased back to 10 minutes for large files
+	LargeFileThreshold  = 100 * 1024 * 1024 // 100MB threshold for large files
 )
 
 // DownloadFile retrieves a file from `url` and saves it to the correct local path.
@@ -168,6 +170,22 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 		}
 		defer resp.Body.Close()
 
+		// Calculate dynamic timeout based on content length for future requests
+		timeout := Timeout // default 10 minutes
+		if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+			if size := parseContentLength(contentLength); size > 0 {
+				// Calculate timeout: 1 minute base + 1 minute per 50MB
+				// This gives: 100MB = ~3min, 500MB = ~11min, 1GB = ~21min
+				calculatedTimeout := time.Minute + time.Duration(size/(50*1024*1024))*time.Minute
+				if calculatedTimeout > timeout {
+					timeout = calculatedTimeout
+					logging.Debug("Large file detected", 
+						"size_mb", size/(1024*1024), 
+						"calculated_timeout_minutes", int(timeout.Minutes()))
+				}
+			}
+		}
+
 		if resp.StatusCode != http.StatusOK {
 			// Provide more specific error messages for common HTTP status codes
 			// 404 errors should NOT be retried as they indicate the resource doesn't exist
@@ -274,4 +292,13 @@ func calculateHash(path string) string {
 		return ""
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// parseContentLength parses the Content-Length header and returns the size in bytes
+func parseContentLength(contentLength string) int64 {
+	size, err := strconv.ParseInt(contentLength, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return size
 }
