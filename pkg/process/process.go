@@ -63,7 +63,7 @@ func LogItemSource(itemName string, logMessage string) {
 }
 
 // firstItem returns the first occurrence of an item in a map of catalogs
-func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (catalog.Item, error) {
+func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg *config.Configuration) (catalog.Item, error) {
 	// Get the keys in the map and sort them so we can loop over them in order
 	keys := make([]int, 0)
 	for k := range catalogsMap {
@@ -71,8 +71,20 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 	}
 	sort.Ints(keys)
 
+	// Track which catalogs were searched for better error reporting
+	var searchedCatalogs []string
+
 	// Loop through each catalog and return if we find a match
 	for _, k := range keys {
+		// Map catalog index to catalog name (1-based indexing from AuthenticatedGet)
+		var catalogName string
+		if cfg != nil && len(cfg.Catalogs) >= k && k >= 1 {
+			catalogName = cfg.Catalogs[k-1] // k is 1-based, slice is 0-based
+		} else {
+			catalogName = fmt.Sprintf("catalog-%d", k)
+		}
+		searchedCatalogs = append(searchedCatalogs, catalogName)
+
 		if item, exists := catalogsMap[k][itemName]; exists {
 			// Check if it's a valid install or uninstall item
 			validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
@@ -86,15 +98,18 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item) (ca
 		}
 	}
 
+	// Create a more informative error message that includes which catalogs were searched
+	catalogList := strings.Join(searchedCatalogs, ", ")
+
 	// Log source information when item is not found
 	if source, exists := GetItemSource(itemName); exists {
-		logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription())
-		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s)", itemName, source.GetSourceDescription())}
+		logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
+		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
 	}
 
 	// If no source information is available, provide generic error
-	logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing")
-	return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown)", itemName)}
+	logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing", "catalogs_searched", catalogList)
+	return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown, searched catalogs: %s)", itemName, catalogList)}
 }
 
 // Manifests iterates through manifests, processes items from managed arrays, and ensures manifest names are excluded.
@@ -181,7 +196,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 	// Iterate through the installs array, install dependencies, and then the item itself
 	for _, item := range installs {
 		// Get the first valid item from our catalogs
-		validItem, err := firstItem(item, catalogsMap)
+		validItem, err := firstItem(item, catalogsMap, cfg)
 		if err != nil {
 			logging.Error("Processing Error", "error", err)
 			logging.Warn("Processing warning: failed to process install item", "error", err)
@@ -205,7 +220,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 		// Check for dependencies and install if found
 		if len(validItem.Dependencies) > 0 {
 			for _, dependency := range validItem.Dependencies {
-				validDependency, err := firstItem(dependency, catalogsMap)
+				validDependency, err := firstItem(dependency, catalogsMap, cfg)
 				if err != nil {
 					logging.Error("Processing Error", "error", err)
 					logging.Warn("Processing warning: failed to process dependency", "error", err)
@@ -270,7 +285,7 @@ func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item
 	// Iterate through the uninstalls array and uninstall the item
 	for _, item := range uninstalls {
 		// Get the first valid item from our catalogs
-		validItem, err := firstItem(item, catalogsMap)
+		validItem, err := firstItem(item, catalogsMap, cfg)
 		if err != nil {
 			logging.Error("Processing Error", "error", err)
 			logging.Warn("Processing warning: failed to process uninstall item", "error", err)
@@ -285,7 +300,7 @@ func Uninstalls(uninstalls []string, catalogsMap map[int]map[string]catalog.Item
 func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, _, cachePath string, CheckOnly bool, cfg *config.Configuration) {
 	// Iterate through the updates array
 	for _, item := range updates {
-		validItem, err := firstItem(item, catalogsMap)
+		validItem, err := firstItem(item, catalogsMap, cfg)
 		if err != nil {
 			logging.Error("Processing Error", "error", err)
 			continue
@@ -403,7 +418,7 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 	logging.Debug("Processing install with dependencies", "item", itemName)
 
 	// Get the item from catalogs
-	item, err := firstItem(itemName, catalogsMap)
+	item, err := firstItem(itemName, catalogsMap, cfg)
 	if err != nil {
 		return fmt.Errorf("item not found in catalogs: %v", err)
 	}
@@ -437,7 +452,7 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 	// Handle legacy dependencies field as well
 	if len(item.Dependencies) > 0 {
 		for _, dependency := range item.Dependencies {
-			validDependency, err := firstItem(dependency, catalogsMap)
+			validDependency, err := firstItem(dependency, catalogsMap, cfg)
 			if err != nil {
 				logging.Error("Failed to process legacy dependency", "dependency", dependency, "error", err)
 				continue
@@ -530,7 +545,7 @@ func ProcessUninstallWithDependencies(itemName string, catalogsMap map[int]map[s
 	}
 
 	// Get the main item and uninstall it
-	item, err := firstItem(itemName, catalogsMap)
+	item, err := firstItem(itemName, catalogsMap, cfg)
 	if err != nil {
 		return fmt.Errorf("item not found in catalogs: %v", err)
 	}
@@ -688,7 +703,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	processedInstalls[itemName] = true
 
 	// Get the main item
-	item, err := firstItem(itemName, catalogsMap)
+	item, err := firstItem(itemName, catalogsMap, cfg)
 	if err != nil {
 		// firstItem already logs the error with source information, just return the non-retryable error
 		return err
@@ -792,7 +807,7 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 	processedUninstalls[itemName] = true
 
 	// Find and process items that require this item (dependents)
-	dependentItems := findItemsRequiringItem(itemName, catalogsMap, installedItems)
+	dependentItems := findItemsRequiringItem(itemName, catalogsMap, installedItems, cfg)
 	if len(dependentItems) > 0 {
 		logging.Debug("Processing dependent items for removal", "item", itemName, "dependents", dependentItems)
 
@@ -830,7 +845,7 @@ func processUninstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[
 	}
 
 	// Get the main item and uninstall it
-	item, err := firstItem(itemName, catalogsMap)
+	item, err := firstItem(itemName, catalogsMap, cfg)
 	if err != nil {
 		// Item might not be in catalogs anymore, but we should still try to uninstall
 		logging.Warn("Item not found in catalogs during uninstall, continuing anyway", "item", itemName)
@@ -879,7 +894,7 @@ func isRequirementSatisfied(reqName, reqVersion string, installedItems, schedule
 }
 
 // findItemsRequiringItem finds all installed items that require the given item
-func findItemsRequiringItem(itemName string, catalogsMap map[int]map[string]catalog.Item, installedItems []string) []string {
+func findItemsRequiringItem(itemName string, catalogsMap map[int]map[string]catalog.Item, installedItems []string, cfg *config.Configuration) []string {
 	var dependentItems []string
 
 	// Check different name formats that might be used in requires
@@ -891,7 +906,7 @@ func findItemsRequiringItem(itemName string, catalogsMap map[int]map[string]cata
 	// Only check items that are actually installed
 	for _, installedItem := range installedItems {
 		// Find the catalog entry for this installed item
-		if catalogItem, err := firstItem(installedItem, catalogsMap); err == nil {
+		if catalogItem, err := firstItem(installedItem, catalogsMap, cfg); err == nil {
 			if catalogItem.Requires != nil {
 				for _, reqItem := range catalogItem.Requires {
 					reqName, _ := catalog.SplitNameAndVersion(reqItem)
