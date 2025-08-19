@@ -21,26 +21,28 @@ const CSPRegistryPath = `SOFTWARE\Cimian\Config`
 
 // Configuration holds the configurable options for Cimian in YAML format
 type Configuration struct {
-	Catalogs          []string `yaml:"Catalogs"`
-	CatalogsPath      string   `yaml:"CatalogsPath"`
-	CachePath         string   `yaml:"CachePath"`
-	CheckOnly         bool     `yaml:"CheckOnly"`
-	ClientIdentifier  string   `yaml:"ClientIdentifier"`
-	CloudBucket       string   `yaml:"CloudBucket"`
-	CloudProvider     string   `yaml:"CloudProvider"`
-	Debug             bool     `yaml:"Debug"`
-	DefaultArch       string   `yaml:"DefaultArch"`
-	DefaultCatalog    string   `yaml:"DefaultCatalog"`
-	ForceBasicAuth    bool     `yaml:"ForceBasicAuth"`
-	InstallPath       string   `yaml:"InstallPath"`
-	LocalManifests    []string `yaml:"LocalManifests"`
-	LocalOnlyManifest string   `yaml:"LocalOnlyManifest"` // Munki-compatible: path to local-only manifest
-	LogLevel          string   `yaml:"LogLevel"`
-	NoPreflight       bool     `yaml:"NoPreflight"` // Munki-compatible: skip preflight script
-	OpenImportedYaml  bool     `yaml:"OpenImportedYaml"`
-	RepoPath          string   `yaml:"RepoPath"`
-	SoftwareRepoURL   string   `yaml:"SoftwareRepoURL"`
-	Verbose           bool     `yaml:"Verbose"`
+	Catalogs                []string `yaml:"Catalogs"`
+	CatalogsPath            string   `yaml:"CatalogsPath"`
+	CachePath               string   `yaml:"CachePath"`
+	CheckOnly               bool     `yaml:"CheckOnly"`
+	ClientIdentifier        string   `yaml:"ClientIdentifier"`
+	CloudBucket             string   `yaml:"CloudBucket"`
+	CloudProvider           string   `yaml:"CloudProvider"`
+	Debug                   bool     `yaml:"Debug"`
+	DefaultArch             string   `yaml:"DefaultArch"`
+	DefaultCatalog          string   `yaml:"DefaultCatalog"`
+	ForceBasicAuth          bool     `yaml:"ForceBasicAuth"`
+	InstallPath             string   `yaml:"InstallPath"`
+	LocalManifests          []string `yaml:"LocalManifests"`
+	LocalOnlyManifest       string   `yaml:"LocalOnlyManifest"` // Munki-compatible: path to local-only manifest
+	LogLevel                string   `yaml:"LogLevel"`
+	NoPreflight             bool     `yaml:"NoPreflight"`             // Munki-compatible: skip preflight script
+	PreflightFailureAction  string   `yaml:"PreflightFailureAction"`  // "continue", "abort", or "warn" (default: continue)
+	PostflightFailureAction string   `yaml:"PostflightFailureAction"` // "continue", "abort", or "warn" (default: continue)
+	OpenImportedYaml        bool     `yaml:"OpenImportedYaml"`
+	RepoPath                string   `yaml:"RepoPath"`
+	SoftwareRepoURL         string   `yaml:"SoftwareRepoURL"`
+	Verbose                 bool     `yaml:"Verbose"`
 
 	// Internal flag to skip self-service manifest processing (not exposed in YAML)
 	SkipSelfService bool `yaml:"-"`
@@ -126,22 +128,24 @@ func GetDefaultConfig() *Configuration {
 		programFiles = `C:\Program Files`
 	}
 	return &Configuration{
-		LogLevel:         "INFO",
-		InstallPath:      filepath.Join(programFiles, "Cimian"),
-		RepoPath:         `C:\ProgramData\ManagedInstalls\repo`,
-		CatalogsPath:     `C:\ProgramData\ManagedInstalls\catalogs`,
-		CachePath:        `C:\ProgramData\ManagedInstalls\Cache`,
-		Debug:            false,
-		Verbose:          false,
-		CheckOnly:        false,
-		ClientIdentifier: "",
-		SoftwareRepoURL:  "https://cimian.example.com",
-		DefaultArch:      "x64,arm64",
-		DefaultCatalog:   "testing",
-		CloudProvider:    "none",
-		CloudBucket:      "",
-		ForceBasicAuth:   false,
-		OpenImportedYaml: true,
+		LogLevel:                "INFO",
+		InstallPath:             filepath.Join(programFiles, "Cimian"),
+		RepoPath:                `C:\ProgramData\ManagedInstalls\repo`,
+		CatalogsPath:            `C:\ProgramData\ManagedInstalls\catalogs`,
+		CachePath:               `C:\ProgramData\ManagedInstalls\Cache`,
+		Debug:                   false,
+		Verbose:                 false,
+		CheckOnly:               false,
+		ClientIdentifier:        "",
+		SoftwareRepoURL:         "https://cimian.example.com",
+		DefaultArch:             "x64,arm64",
+		DefaultCatalog:          "testing",
+		CloudProvider:           "none",
+		CloudBucket:             "",
+		ForceBasicAuth:          false,
+		OpenImportedYaml:        true,
+		PreflightFailureAction:  "continue", // Default: continue on preflight failure
+		PostflightFailureAction: "continue", // Default: continue on postflight failure
 	}
 }
 
@@ -201,6 +205,8 @@ func loadCSPFromRegistryPath(registryPath string, config *Configuration) error {
 	loadStringFromRegistry(key, "RepoPath", &config.RepoPath)
 	loadStringFromRegistry(key, "CachePath", &config.CachePath)
 	loadStringFromRegistry(key, "CatalogsPath", &config.CatalogsPath)
+	loadStringFromRegistry(key, "PreflightFailureAction", &config.PreflightFailureAction)
+	loadStringFromRegistry(key, "PostflightFailureAction", &config.PostflightFailureAction)
 
 	// Load boolean configuration values
 	loadBoolFromRegistry(key, "Debug", &config.Debug)
