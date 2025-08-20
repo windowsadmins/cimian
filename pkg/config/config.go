@@ -44,6 +44,9 @@ type Configuration struct {
 	SoftwareRepoURL         string   `yaml:"SoftwareRepoURL"`
 	Verbose                 bool     `yaml:"Verbose"`
 
+	// Installer timeout settings
+	InstallerTimeoutMinutes int `yaml:"InstallerTimeoutMinutes"` // Default timeout for installers (in minutes)
+
 	// Internal flag to skip self-service manifest processing (not exposed in YAML)
 	SkipSelfService bool `yaml:"-"`
 }
@@ -146,6 +149,7 @@ func GetDefaultConfig() *Configuration {
 		OpenImportedYaml:        true,
 		PreflightFailureAction:  "continue", // Default: continue on preflight failure
 		PostflightFailureAction: "continue", // Default: continue on postflight failure
+		InstallerTimeoutMinutes: 15,         // Default: 15 minute timeout for installers
 	}
 }
 
@@ -208,6 +212,9 @@ func loadCSPFromRegistryPath(registryPath string, config *Configuration) error {
 	loadStringFromRegistry(key, "PreflightFailureAction", &config.PreflightFailureAction)
 	loadStringFromRegistry(key, "PostflightFailureAction", &config.PostflightFailureAction)
 
+	// Load integer configuration values
+	loadIntFromRegistry(key, "InstallerTimeoutMinutes", &config.InstallerTimeoutMinutes)
+
 	// Load boolean configuration values
 	loadBoolFromRegistry(key, "Debug", &config.Debug)
 	loadBoolFromRegistry(key, "Verbose", &config.Verbose)
@@ -247,6 +254,24 @@ func loadBoolFromRegistry(key registry.Key, valueName string, target *bool) {
 	if val, _, err := key.GetIntegerValue(valueName); err == nil {
 		*target = val != 0
 		log.Printf("CSP: Loaded %s = %t", valueName, val != 0)
+	}
+}
+
+// loadIntFromRegistry loads an integer value from registry if it exists.
+func loadIntFromRegistry(key registry.Key, valueName string, target *int) {
+	// Try string value first
+	if val, _, err := key.GetStringValue(valueName); err == nil {
+		if parsed, parseErr := strconv.Atoi(val); parseErr == nil {
+			*target = parsed
+			log.Printf("CSP: Loaded %s = %d", valueName, parsed)
+			return
+		}
+	}
+
+	// Try DWORD value
+	if val, _, err := key.GetIntegerValue(valueName); err == nil {
+		*target = int(val)
+		log.Printf("CSP: Loaded %s = %d", valueName, int(val))
 	}
 }
 
