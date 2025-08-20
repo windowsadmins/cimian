@@ -365,7 +365,17 @@ func main() {
 		conf.RepoPath = val
 	}
 
-	// 5) Build script paths from e.g. -preinstall-script=..., etc.
+	// 5) Check if we're in a git repository and run git pull BEFORE import to ensure we're up to date
+	if isGitRepository(conf.RepoPath) {
+		logger.Printf("Git repository detected, pulling latest changes before import...")
+		if err := runGitPull(conf.RepoPath); err != nil {
+			logger.Warning("Git pull failed (continuing anyway): %v", err)
+		}
+	} else {
+		logger.Printf("No git repository detected at %s, skipping git pull", conf.RepoPath)
+	}
+
+	// 6) Build script paths from e.g. -preinstall-script=..., etc.
 	scripts := ScriptPaths{
 		Preinstall:     otherFlags["preinstall-script"],
 		Postinstall:    otherFlags["postinstall-script"],
@@ -381,7 +391,7 @@ func main() {
 	minOSVersion := otherFlags["minimum_os_version"]
 	maxOSVersion := otherFlags["maximum_os_version"]
 
-	// 6) Do the cimianImport
+	// 7) Do the cimianImport
 	success, err := cimianImport(
 		packagePath, // the main installer
 		conf,        // loaded config
@@ -399,19 +409,19 @@ func main() {
 		os.Exit(0) // user canceled
 	}
 
-	// 7) upload to cloud if set
+	// 8) upload to cloud if set
 	if conf.CloudProvider != "none" {
 		if err := uploadToCloud(conf); err != nil {
 			logger.Error("Error uploading to cloud: %v", err)
 		}
 	}
 
-	// 8) Always run makecatalogs
+	// 9) Always run makecatalogs
 	if err := runMakeCatalogs(true); err != nil {
 		logger.Error("makecatalogs error: %v", err)
 	}
 
-	// 9) If AWS/Azure => optionally sync pkgs or icons
+	// 10) If AWS/Azure => optionally sync pkgs or icons
 	if conf.CloudProvider == "aws" || conf.CloudProvider == "azure" {
 		logger.Printf("Starting upload for pkgs")
 		err = syncToCloud(conf, filepath.Join(conf.RepoPath, "pkgs"), "pkgs")
@@ -1220,6 +1230,59 @@ func getInput(prompt, defaultVal string) string {
 	return input
 }
 
+// isGitRepository checks if the given path is inside a git repository
+func isGitRepository(path string) bool {
+	// Check for .git directory starting from the given path and walking up
+	currentPath := path
+	for {
+		gitPath := filepath.Join(currentPath, ".git")
+		if info, err := os.Stat(gitPath); err == nil && info.IsDir() {
+			return true
+		}
+
+		// Move up one directory
+		parentPath := filepath.Dir(currentPath)
+		if parentPath == currentPath {
+			// Reached the root, no .git found
+			break
+		}
+		currentPath = parentPath
+	}
+	return false
+}
+
+// runGitPull runs git pull in the specified directory
+func runGitPull(repoPath string) error {
+	cmd := exec.Command("git", "pull")
+	cmd.Dir = repoPath
+	cmd.Stdout = os.Stdout
+
+	// Capture stderr to filter out credential manager warnings
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	logger.Printf("Running git pull in: %s", repoPath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git pull failed: %v", err)
+	}
+
+	// Filter stderr output to suppress credential manager warnings
+	stderrOutput := stderrBuf.String()
+	if stderrOutput != "" {
+		lines := strings.Split(stderrOutput, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			// Skip credential manager warnings but show other stderr messages
+			if line != "" && !strings.Contains(line, "credential-manager-core") {
+				fmt.Fprintf(os.Stderr, "%s\n", line)
+			}
+		}
+	}
+
+	logger.Success("Git pull completed successfully")
+	return nil
+}
+
 // runMakeCatalogs runs makecatalogs.exe
 func runMakeCatalogs(silent bool) error {
 	makeCatalogsBinary := `C:\Program Files\Cimian\makecatalogs.exe`
@@ -1476,12 +1539,12 @@ func maybeOpenFile(filePath string) error {
 }
 
 func showUsageAndExit() {
-	fmt.Println(`Usage: cimianimport.exe [options] <installerPath>
+	fmt.Println(`Usage: cimiimport.exe [options] <installerPath>
 
 Manual argument parsing is used, so the first non-flag argument is assumed 
 to be the main installer path. Example:
 
-  cimianimport.exe "C:\Path With Spaces\SomeInstaller.exe" -i "C:\Also With Spaces\someFile.txt"
+  cimiimport.exe "C:\Path With Spaces\SomeInstaller.exe" -i "C:\Also With Spaces\someFile.txt"
 
 Options:
   -i, --installs-array <path>   Add a path to final 'installs' array (multiple OK)
