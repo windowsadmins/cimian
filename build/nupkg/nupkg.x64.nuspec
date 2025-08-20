@@ -10,7 +10,6 @@
   </metadata>
   <files>
     <file src="..\..\release\x64\**" target="tools" />
-    <file src="payload\**" target="tools" />
     <file src="scripts\chocolateyInstall.ps1" target="tools" />
     <file src="scripts\chocolateyUninstall.ps1" target="tools" />
     <file src="scripts\install-scheduled-tasks.ps1" target="tools" />
