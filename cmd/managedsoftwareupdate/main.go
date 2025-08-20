@@ -1,4 +1,18 @@
 // cmd/managedsoftwareupdate/main.go
+//
+// Cimian Managed Software Update - Enterprise Software Management
+//
+// Key Features:
+// - Automatic timeout protection for installers (prevents hanging on GUI dialogs)
+// - Bootstrap mode for initial system setup
+// - Self-update management for Cimian components
+// - Comprehensive logging and reporting
+// - Munki-compatible manifest processing
+// - Multiple installer types (MSI, EXE, PowerShell, MSIX, Chocolatey)
+//
+// Installer Timeout Protection:
+// Automatically terminates installers that exceed the configured timeout (default: 15 minutes)
+// to prevent batch installations from hanging on interactive GUI prompts.
 
 package main
 
@@ -128,7 +142,7 @@ func restartCimianWatcherService() error {
 
 func main() {
 	enableANSIConsole()
-	
+
 	// Check for single instance - prevent multiple concurrent executions
 	mutex, err := checkSingleInstance()
 	if err != nil {
@@ -137,7 +151,7 @@ func main() {
 	}
 	// Ensure mutex is released when the program exits
 	defer releaseSingleInstance(mutex)
-	
+
 	// Define command-line flags.
 	showConfig := pflag.Bool("show-config", false, "Display the current configuration and exit.")
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")

@@ -5,6 +5,7 @@ package installer
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -142,7 +144,7 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		}
 
 		// Otherwise, handle MSI/EXE/Powershell, etc.
-		err := installNonNupkg(item, localFile, cachePath)
+		err := installNonNupkg(item, localFile, cachePath, cfg)
 		if err != nil {
 			logging.Error("Installation failed", "item", item.Name, "error", err)
 			return "", err
@@ -264,10 +266,10 @@ func needsUpdateOld(item manifest.Item, _ *config.Configuration) bool {
 }
 
 // installNonNupkg handles MSI/EXE/Powershell items.
-func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
+func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config.Configuration) error {
 	switch strings.ToLower(item.Installer.Type) {
 	case "msi":
-		out, err := runMSIInstaller(item, localFile)
+		out, err := runMSIInstaller(item, localFile, cfg)
 		if err != nil {
 			return err
 		}
@@ -284,7 +286,7 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 			logging.Debug("Preinstall script for EXE completed", "output", out)
 		}
 		// Always run the EXE afterwards
-		out, err := runEXEInstaller(item, localFile)
+		out, err := runEXEInstaller(item, localFile, cfg)
 		if err != nil {
 			return err
 		}
@@ -292,7 +294,7 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 		return nil
 
 	case "powershell":
-		out, err := runPS1Installer(item, localFile)
+		out, err := runPS1Installer(item, localFile, cfg)
 		if err != nil {
 			return err
 		}
@@ -300,7 +302,7 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string) error {
 		return nil
 
 	case "msix":
-		out, err := runMSIXInstaller(item, localFile)
+		out, err := runMSIXInstaller(item, localFile, cfg)
 		if err != nil {
 			return err
 		}
@@ -826,7 +828,7 @@ func processTraditionalUninstall(item catalog.Item, cachePath string) (string, e
 	}
 }
 
-func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
+func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	// Base MSI installation arguments
 	logPath := filepath.Join(logging.GetCurrentLogDir(), "msi_install.log")
 	args := []string{
@@ -895,34 +897,41 @@ func runMSIInstaller(item catalog.Item, localFile string) (string, error) {
 		}
 	}
 
-	logging.Info("Invoking MSI install",
-		"msi", localFile, "item", item.Name, "extraArgs", args)
-	logging.Debug("runMSIInstaller => final command",
-		"exe", commandMsi, "args", strings.Join(args, " "))
+	logging.Info("Invoking MSI install with timeout",
+		"msi", localFile, "item", item.Name, "extraArgs", args, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
 
-	cmd := exec.Command(commandMsi, args...)
-	outputBytes, err := cmd.CombinedOutput()
-	output := string(outputBytes)
+	// Use timeout-aware command execution
+	output, err := runCMDWithTimeout(commandMsi, args, cfg.InstallerTimeoutMinutes)
 
 	if err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			logging.Error("Failed to run msiexec", "error", err, "stderr", output)
-			return output, err
+		// Check if it was a timeout error
+		if strings.Contains(err.Error(), "timed out") {
+			logging.Error("MSI installer timed out - likely waiting for user interaction",
+				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			return output, fmt.Errorf("MSI installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
 		}
-		code := exitErr.ExitCode()
-		logging.Error("MSI installation failed", "item", item.Name, "exitCode", code, "stderr", output)
-		switch code {
-		case 1603:
-			return output, fmt.Errorf("msiexec exit code 1603 (fatal) - skipping re-try")
-		case 1618:
-			return output, fmt.Errorf("msiexec exit code 1618 (another install in progress)")
-		case 3010:
-			logging.Warn("MSI installed but requires reboot (3010)", "item", item.Name)
-			return output, nil
-		default:
-			return output, fmt.Errorf("msiexec exit code %d", code)
+
+		if strings.Contains(err.Error(), "exit code=") {
+			// Parse exit code from error message
+			parts := strings.Split(err.Error(), "exit code=")
+			if len(parts) > 1 {
+				codeStr := strings.Split(parts[1], " ")[0]
+				if code, parseErr := strconv.Atoi(codeStr); parseErr == nil {
+					switch code {
+					case 1603:
+						return output, fmt.Errorf("msiexec exit code 1603 (fatal) - skipping re-try")
+					case 1618:
+						return output, fmt.Errorf("msiexec exit code 1618 (another install in progress)")
+					case 3010:
+						logging.Warn("MSI installed but requires reboot (3010)", "item", item.Name)
+						return output, nil
+					default:
+						return output, fmt.Errorf("msiexec exit code %d", code)
+					}
+				}
+			}
 		}
+		return output, err
 	}
 	logging.Info("MSI installed successfully", "item", item.Name)
 	return output, nil
@@ -939,17 +948,19 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 	return runCMD(commandMsi, args)
 }
 
-func runMSIXInstaller(item catalog.Item, localFile string) (string, error) {
+func runMSIXInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	args := []string{localFile}
-	logging.Info("Invoking MSIX install", "msix", localFile, "item", item.Name)
-	logging.Debug("runMSIXInstaller => final command",
-		"cmd", "Add-AppxPackage", "args", strings.Join(args, " "))
+	logging.Info("Invoking MSIX install with timeout", "msix", localFile, "item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
 
-	cmd := exec.Command("Add-AppxPackage", args...)
-	outputBytes, err := cmd.CombinedOutput()
-	output := string(outputBytes)
+	// Use timeout-aware command execution
+	output, err := runCMDWithTimeout("Add-AppxPackage", args, cfg.InstallerTimeoutMinutes)
 
 	if err != nil {
+		if strings.Contains(err.Error(), "timed out") {
+			logging.Error("MSIX installer timed out - likely waiting for user interaction",
+				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			return output, fmt.Errorf("MSIX installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
+		}
 		logging.Error("MSIX installation failed", "item", item.Name, "error", err, "output", output)
 		return output, err
 	}
@@ -978,7 +989,7 @@ func runMSIXUninstaller(_ string, item catalog.Item) (string, error) {
 }
 
 // runEXEInstaller: supports human-friendly syntax for installer flags in pkginfo YAML.
-func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
+func runEXEInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	installerPath := localFile
 	args := []string{}
 
@@ -1046,18 +1057,21 @@ func runEXEInstaller(item catalog.Item, localFile string) (string, error) {
 		}
 	}
 
-	logging.Info("Executing EXE installer", "path", installerPath, "args", args)
-	logging.Debug("runEXEInstaller => final command",
-		"exe", installerPath, "args", strings.Join(args, " "))
+	logging.Info("Executing EXE installer with timeout", "path", installerPath, "args", args, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
 
-	cmd := exec.Command(installerPath, args...)
-	output, err := cmd.CombinedOutput()
+	// Use timeout-aware command execution
+	output, err := runCMDWithTimeout(installerPath, args, cfg.InstallerTimeoutMinutes)
 	if err != nil {
-		logging.Error("EXE installer execution failed", "error", err, "output", string(output))
-		return string(output), err
+		if strings.Contains(err.Error(), "timed out") {
+			logging.Error("EXE installer timed out - likely waiting for user interaction",
+				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			return output, fmt.Errorf("EXE installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
+		}
+		logging.Error("EXE installer execution failed", "error", err, "output", output)
+		return output, err
 	}
-	logging.Info("EXE installer executed successfully", "output", string(output))
-	return string(output), nil
+	logging.Info("EXE installer executed successfully", "output", output)
+	return output, nil
 }
 
 // detectMSIFlagStyle determines the correct flag format for MSI installers
@@ -1158,14 +1172,24 @@ func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
 }
 
 // runPS1Installer: powershell -File <localFile>
-func runPS1Installer(item catalog.Item, localFile string) (string, error) {
+func runPS1Installer(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	_ = item
 	psArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", localFile}
 
-	logging.Debug("runPS1Installer => final command",
-		"exe", commandPs1, "args", strings.Join(psArgs, " "))
+	logging.Info("Executing PowerShell installer with timeout",
+		"file", localFile, "args", psArgs, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
 
-	return runCMD(commandPs1, psArgs)
+	// Use timeout-aware command execution
+	output, err := runCMDWithTimeout(commandPs1, psArgs, cfg.InstallerTimeoutMinutes)
+	if err != nil {
+		if strings.Contains(err.Error(), "timed out") {
+			logging.Error("PowerShell installer timed out - likely waiting for user interaction",
+				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			return output, fmt.Errorf("PowerShell installer timed out after %d minutes - script may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
+		}
+		return output, err
+	}
+	return output, nil
 }
 
 func runPS1Uninstaller(absFile string) (string, error) {
@@ -1265,6 +1289,57 @@ func runCMD(command string, arguments []string) (string, error) {
 	errStr := stderr.String()
 
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode := exitErr.ExitCode()
+			logging.Error("Command failed",
+				"command", command, "args", arguments, "exitCode", exitCode, "stderr", errStr)
+			// Include stderr in the error message for better debugging
+			if errStr != "" {
+				return outStr, fmt.Errorf("command failed exit code=%d: %s", exitCode, strings.TrimSpace(errStr))
+			}
+			return outStr, fmt.Errorf("command failed exit code=%d", exitCode)
+		}
+		logging.Error("Failed to run cmd",
+			"command", command, "args", arguments, "error", err)
+		return outStr, err
+	}
+	return outStr, nil
+}
+
+// runCMDWithTimeout runs a command with a timeout to prevent hanging on interactive installers
+func runCMDWithTimeout(command string, arguments []string, timeoutMinutes int) (string, error) {
+	logging.Debug("runCMDWithTimeout => about to run with timeout",
+		"command", command, "args", strings.Join(arguments, " "), "timeoutMinutes", timeoutMinutes)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, command, arguments...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Set up process attributes to hide console window and prevent GUI inheritance
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP, // Prevent GUI inheritance
+		}
+	}
+
+	err := cmd.Run()
+	outStr := stdout.String()
+	errStr := stderr.String()
+
+	if err != nil {
+		// Check if it was a timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			logging.Error("Command timed out after timeout period",
+				"command", command, "args", arguments, "timeoutMinutes", timeoutMinutes)
+			return outStr, fmt.Errorf("installer timed out after %d minutes - likely waiting for user interaction", timeoutMinutes)
+		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			logging.Error("Command failed",
