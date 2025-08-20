@@ -752,6 +752,26 @@ func cimianImport(
 			metadata.SupportedArch = existingPkg.SupportedArch
 			metadata.Catalogs = existingPkg.Catalogs
 
+			// Bring forward scripts from the existing template if they exist and no command-line scripts were provided
+			if scripts.Preinstall == "" && existingPkg.PreinstallScript != "" {
+				scripts.Preinstall = "template" // Mark as coming from template
+			}
+			if scripts.Postinstall == "" && existingPkg.PostinstallScript != "" {
+				scripts.Postinstall = "template"
+			}
+			if scripts.Preuninstall == "" && existingPkg.PreuninstallScript != "" {
+				scripts.Preuninstall = "template"
+			}
+			if scripts.Postuninstall == "" && existingPkg.PostuninstallScript != "" {
+				scripts.Postuninstall = "template"
+			}
+			if scripts.InstallCheck == "" && existingPkg.InstallCheckScript != "" {
+				scripts.InstallCheck = "template"
+			}
+			if scripts.UninstallCheck == "" && existingPkg.UninstallCheckScript != "" {
+				scripts.UninstallCheck = "template"
+			}
+
 			// Extract repo path from installer location
 			if existingPkg.Installer != nil && existingPkg.Installer.Location != "" {
 				metadata.RepoPath = filepath.Dir(existingPkg.Installer.Location)
@@ -766,12 +786,12 @@ func cimianImport(
 	metadata = promptForAllMetadata(packagePath, metadata, conf)
 
 	// Step 5: gather script contents
-	preinstallScriptContent, _ := loadScriptContent(scripts.Preinstall)
-	postinstallScriptContent, _ := loadScriptContent(scripts.Postinstall)
-	preuninstallScriptContent, _ := loadScriptContent(scripts.Preuninstall)
-	postuninstallScriptContent, _ := loadScriptContent(scripts.Postuninstall)
-	installCheckScriptContent, _ := loadScriptContent(scripts.InstallCheck)
-	uninstallCheckScriptContent, _ := loadScriptContent(scripts.UninstallCheck)
+	preinstallScriptContent := loadScriptContentOrTemplate(scripts.Preinstall, existingPkg, "preinstall")
+	postinstallScriptContent := loadScriptContentOrTemplate(scripts.Postinstall, existingPkg, "postinstall")
+	preuninstallScriptContent := loadScriptContentOrTemplate(scripts.Preuninstall, existingPkg, "preuninstall")
+	postuninstallScriptContent := loadScriptContentOrTemplate(scripts.Postuninstall, existingPkg, "postuninstall")
+	installCheckScriptContent := loadScriptContentOrTemplate(scripts.InstallCheck, existingPkg, "installcheck")
+	uninstallCheckScriptContent := loadScriptContentOrTemplate(scripts.UninstallCheck, existingPkg, "uninstallcheck")
 
 	// Step 6: handle uninstaller if any
 	uninstaller, err := processUninstaller(uninstallerPath,
@@ -1134,6 +1154,36 @@ func loadScriptContent(path string) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// loadScriptContentOrTemplate loads script content from file path or from template
+func loadScriptContentOrTemplate(path string, existingPkg *PkgsInfo, scriptType string) string {
+	if path == "" {
+		return ""
+	}
+
+	// If marked as template, get content from existing package
+	if path == "template" && existingPkg != nil {
+		switch scriptType {
+		case "preinstall":
+			return existingPkg.PreinstallScript
+		case "postinstall":
+			return existingPkg.PostinstallScript
+		case "preuninstall":
+			return existingPkg.PreuninstallScript
+		case "postuninstall":
+			return existingPkg.PostuninstallScript
+		case "installcheck":
+			return existingPkg.InstallCheckScript
+		case "uninstallcheck":
+			return existingPkg.UninstallCheckScript
+		}
+		return ""
+	}
+
+	// Otherwise load from file path
+	content, _ := loadScriptContent(path)
+	return content
 }
 
 // processUninstaller copies the uninstaller if provided
