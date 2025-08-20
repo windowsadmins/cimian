@@ -40,10 +40,43 @@ const BootstrapFlagFile = `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
 
 var logger *logging.Logger
 
+// Single instance mutex name for preventing concurrent executions
+const mutexName = "Global\\CimianManagedSoftwareUpdate_v2"
+
 // LASTINPUTINFO is used to track user idle time.
 type LASTINPUTINFO struct {
 	CbSize uint32
 	DwTime uint32
+}
+
+// checkSingleInstance ensures only one instance of managedsoftwareupdate.exe runs at a time
+func checkSingleInstance() (windows.Handle, error) {
+	// Create or open a named mutex
+	mutexNamePtr, err := windows.UTF16PtrFromString(mutexName)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create mutex name: %v", err)
+	}
+
+	mutex, err := windows.CreateMutex(nil, true, mutexNamePtr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create mutex: %v", err)
+	}
+
+	// Check if another instance is already running
+	if err := windows.GetLastError(); err == windows.ERROR_ALREADY_EXISTS {
+		windows.CloseHandle(mutex)
+		return 0, fmt.Errorf("another instance of managedsoftwareupdate.exe is already running")
+	}
+
+	return mutex, nil
+}
+
+// releaseSingleInstance releases the single instance mutex
+func releaseSingleInstance(mutex windows.Handle) {
+	if mutex != 0 {
+		windows.ReleaseMutex(mutex)
+		windows.CloseHandle(mutex)
+	}
 }
 
 // enableANSIConsole enables ANSI colors in the console.
@@ -95,6 +128,16 @@ func restartCimianWatcherService() error {
 
 func main() {
 	enableANSIConsole()
+	
+	// Check for single instance - prevent multiple concurrent executions
+	mutex, err := checkSingleInstance()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	// Ensure mutex is released when the program exits
+	defer releaseSingleInstance(mutex)
+	
 	// Define command-line flags.
 	showConfig := pflag.Bool("show-config", false, "Display the current configuration and exit.")
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")
