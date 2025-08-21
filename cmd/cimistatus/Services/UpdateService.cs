@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Cimian.Status.Models;
@@ -215,21 +216,130 @@ namespace Cimian.Status.Services
                 Message = "Requesting administrator privileges..." 
             });
 
-            // Execute the process with elevation and status reporting enabled
-            var processInfo = new ProcessStartInfo
-            {
-                FileName = execPath,
-                Arguments = "--auto --show-status -vv",  // Enable max verbosity for detailed logging
-                UseShellExecute = true,              // Required for elevation
-                Verb = "runas",                      // Request elevation
-                CreateNoWindow = false,              // Show window for elevated process
-                WindowStyle = ProcessWindowStyle.Hidden  // Hide the console window
-            };
+            // Try multiple elevation methods for compatibility with different domain environments
+            Process? process = null;
+            Exception? lastException = null;
 
-            using var process = Process.Start(processInfo);
+            // Method 1: Standard UAC elevation (works well on Entra Joined devices)
+            try
+            {
+                var processInfo = new ProcessStartInfo
+                {
+                FileName = execPath,
+                Arguments = "--auto --show-status -vv",
+                UseShellExecute = true,
+                Verb = "runas",
+                CreateNoWindow = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+                };
+
+                process = Process.Start(processInfo);
+                if (process != null)
+                {
+                    _logger.LogInformation("Successfully started with UAC elevation (Method 1)");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("UAC elevation method failed: {Error}", ex.Message);
+                lastException = ex;
+                process = null;
+            }
+
+            // Method 2: Try PowerShell Start-Process with -Verb RunAs (better for domain environments)
             if (process == null)
             {
-                throw new InvalidOperationException("Failed to start process or user denied elevation");
+                try
+                {
+                    ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                    { 
+                        Percentage = 15, 
+                        Message = "Trying PowerShell elevation method..." 
+                    });
+
+                    var psArgs = $"-Command \"Start-Process -FilePath '{execPath}' -ArgumentList '--auto','--show-status','-vv' -Verb RunAs -WindowStyle Hidden\"";
+                    var processInfo = new ProcessStartInfo
+                    {
+                        FileName = "powershell.exe",
+                        Arguments = psArgs,
+                        UseShellExecute = true,
+                        CreateNoWindow = true,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    };
+
+                    var psProcess = Process.Start(processInfo);
+                    if (psProcess != null)
+                    {
+                        await Task.Run(() => psProcess.WaitForExit(10000)); // Wait up to 10 seconds for PowerShell to launch the process
+                        
+                        // Look for the actual managedsoftwareupdate process
+                        await Task.Delay(2000); // Give it time to start
+                        var managedProcesses = Process.GetProcessesByName("managedsoftwareupdate");
+                        if (managedProcesses.Length > 0)
+                        {
+                            process = managedProcesses.OrderByDescending(p => p.StartTime).First();
+                            _logger.LogInformation("Successfully started with PowerShell elevation (Method 2), PID: {ProcessId}", process.Id);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("PowerShell elevation method failed: {Error}", ex.Message);
+                    lastException = ex;
+                }
+            }
+
+            // Method 3: Try with SYSTEM account via scheduled task (for difficult domain environments)
+            if (process == null)
+            {
+                try
+                {
+                    ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                    { 
+                        Percentage = 20, 
+                        Message = "Trying scheduled task elevation method..." 
+                    });
+
+                    // Create a temporary scheduled task to run with SYSTEM privileges
+                    var taskName = $"CimianElevated_{Guid.NewGuid():N}";
+                    var createTaskArgs = $"/Create /TN \"{taskName}\" /TR \"\\\"{execPath}\\\" --auto --show-status -vv\" /SC ONCE /ST 23:59 /RU SYSTEM /F";
+                    
+                    var createResult = await RunCommandAsync("schtasks.exe", createTaskArgs);
+                    if (createResult.ExitCode == 0)
+                    {
+                        // Run the task immediately
+                        var runTaskArgs = $"/Run /TN \"{taskName}\"";
+                        var runResult = await RunCommandAsync("schtasks.exe", runTaskArgs);
+                        
+                        if (runResult.ExitCode == 0)
+                        {
+                            await Task.Delay(3000); // Give it time to start
+                            var managedProcesses = Process.GetProcessesByName("managedsoftwareupdate");
+                            if (managedProcesses.Length > 0)
+                            {
+                                process = managedProcesses.OrderByDescending(p => p.StartTime).First();
+                                _logger.LogInformation("Successfully started with scheduled task elevation (Method 3), PID: {ProcessId}", process.Id);
+                            }
+                        }
+                        
+                        // Clean up the task
+                        var deleteTaskArgs = $"/Delete /TN \"{taskName}\" /F";
+                        await RunCommandAsync("schtasks.exe", deleteTaskArgs);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Scheduled task elevation method failed: {Error}", ex.Message);
+                    lastException = ex;
+                }
+            }
+
+            if (process == null)
+            {
+                var errorMessage = lastException != null 
+                    ? $"All elevation methods failed. Last error: {lastException.Message}" 
+                    : "Failed to start process with any elevation method";
+                throw new InvalidOperationException(errorMessage);
             }
 
             ProgressChanged?.Invoke(this, new ProgressEventArgs 
@@ -500,6 +610,35 @@ namespace Cimian.Status.Services
                 _logger.LogError(ex, "Failed to trigger headless update");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Helper method to run command-line tools asynchronously
+        /// </summary>
+        private async Task<(int ExitCode, string Output)> RunCommandAsync(string fileName, string arguments)
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            
+            var output = await process.StandardOutput.ReadToEndAsync();
+            var error = await process.StandardError.ReadToEndAsync();
+            
+            await process.WaitForExitAsync();
+            
+            var fullOutput = string.IsNullOrEmpty(error) ? output : $"{output}\n{error}";
+            return (process.ExitCode, fullOutput);
         }
     }
 }
