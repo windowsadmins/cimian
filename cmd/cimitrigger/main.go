@@ -86,13 +86,14 @@ func runDirectUpdate(mode string) error {
 	}
 
 	var args []string
-	if mode == "gui" {
+	switch mode {
+	case "gui":
 		args = []string{"--auto", "--show-status", "-vv"}
 		fmt.Println("Starting direct GUI update with elevation...")
-	} else if mode == "headless" {
+	case "headless":
 		args = []string{"--auto"}
 		fmt.Println("Starting direct headless update with elevation...")
-	} else {
+	default:
 		return fmt.Errorf("invalid direct mode: %s (must be 'gui' or 'headless')", mode)
 	}
 
@@ -150,7 +151,7 @@ func runWithPowerShell(execPath string, args []string) error {
 	// Method 2: PowerShell Start-Process with -Verb RunAs
 	argsStr := strings.Join(args, "','")
 	psCommand := fmt.Sprintf("Start-Process -FilePath '%s' -ArgumentList '%s' -Verb RunAs", execPath, argsStr)
-	cmd := exec.Command("powershell.exe", "-Command", psCommand)
+	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-Command", psCommand)
 	return cmd.Start()
 }
 
