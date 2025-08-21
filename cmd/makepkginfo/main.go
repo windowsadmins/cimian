@@ -444,7 +444,7 @@ func main() {
 	flag.StringVar(&identifierFlag, "identifier", "", "Optional pkg identifier (nuspec id)")
 	flag.StringVar(&displayName, "displayname", "", "Display name override")
 	flag.StringVar(&description, "description", "", "Description")
-	flag.StringVar(&versionString, "version", "", "Version override")
+	flag.StringVar(&versionString, "pkg-version", "", "Version override")
 	flag.StringVar(&minOSVersion, "minimum_os_version", "", "Minimum OS version required")
 	flag.StringVar(&maxOSVersion, "maximum_os_version", "", "Maximum OS version supported")
 	flag.BoolVar(&unattendedInstall, "unattended_install", false, "Set 'unattended_install: true'")
@@ -452,12 +452,12 @@ func main() {
 	flag.BoolVar(&onDemand, "OnDemand", false, "Set 'OnDemand: true' - items that can be run multiple times and are never considered installed")
 	flag.BoolVar(&newPkg, "new", false, "Create a new pkginfo stub")
 	flag.Var(&filePaths, "f", "Add extra files to 'installs' array (multiple -f flags allowed)")
-	showMakePkgInfoVersion := flag.Bool("makepkginfo_version", false, "Print the version and exit.")
+	showMakePkgInfoVersion := flag.Bool("version", false, "Print the version and exit.")
 	flag.Parse()
 
 	logger = logging.New(false)
 	if *showMakePkgInfoVersion {
-		version.Print()
+		version.PrintVersion()
 		return
 	}
 

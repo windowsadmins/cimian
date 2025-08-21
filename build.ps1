@@ -139,6 +139,53 @@ function Find-WiXBinPath {
     }
     return $null
 }
+
+# Function to clean up generated .syso files
+function Remove-VersionResources {
+    Write-Log "Cleaning up generated version resource files..." "INFO"
+    Get-ChildItem -Path "cmd" -Recurse -Filter "resource.syso" | ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Force
+            Write-Log "Removed version resource: $($_.FullName)" "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to remove version resource: $($_.FullName) - $_" "WARNING"
+        }
+    }
+    
+    # Also clean up any temporary version info JSON files
+    Get-ChildItem -Path "." -Filter "versioninfo_*.json" | ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Force
+        }
+        catch {
+            # Ignore errors for temporary files
+        }
+    }
+}
+
+# Function to generate Windows version information for a binary
+function New-VersionInfo {
+    param (
+        [Parameter(Mandatory)]
+        [string]$BinaryName,
+        [Parameter(Mandatory)]
+        [string]$BinaryPath,
+        [Parameter(Mandatory)]
+        [string]$Version,
+        [Parameter(Mandatory)]
+        [string]$SemanticVersion
+    )
+    
+    Write-Log "Preparing version information for $BinaryName..." "INFO"
+    
+    # For now, we'll rely on the ldflags to set the version information
+    # Windows file properties require a .syso file which is being blocked by security software
+    # The --version flag will work correctly with the ldflags approach
+    
+    Write-Log "Version information will be embedded via Go build flags for $BinaryName" "INFO"
+    return $true
+}
 # Function to retry an action with delay
 function Invoke-Retry {
     param (
@@ -737,6 +784,10 @@ if ($Binaries -or $Binary) {
         foreach ($dir in $binaryDirs) {
             $binaryName = $dir.Name
             Write-Log "Building $binaryName for $arch..." "INFO"
+            
+            # Generate Windows version information for this binary
+            New-VersionInfo -BinaryName $binaryName -BinaryPath $dir.FullName -Version $env:RELEASE_VERSION -SemanticVersion $env:SEMANTIC_VERSION
+            
             # Check if this is a C# project
             $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
             $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
@@ -925,6 +976,10 @@ if ($Binaries -or $Binary) {
     } else {
         Write-Log "Binaries-only build completed successfully." "SUCCESS"
     }
+    
+    # Clean up generated version resource files
+    Remove-VersionResources
+    
     Write-Log "Built binaries are available in:" "INFO"
     Get-ChildItem -Path "release" -Recurse -Filter "*.exe" | ForEach-Object {
         Write-Host "  $($_.FullName)"
@@ -1006,6 +1061,30 @@ $archs = @("x64", "arm64")
 $goarchMap = @{
     "x64"   = "amd64"
     "arm64" = "arm64"
+}
+
+# Function to clean up generated .syso files
+function Remove-VersionResources {
+    Write-Log "Cleaning up generated version resource files..." "INFO"
+    Get-ChildItem -Path "cmd" -Recurse -Filter "resource.syso" | ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Force
+            Write-Log "Removed version resource: $($_.FullName)" "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to remove version resource: $($_.FullName) - $_" "WARNING"
+        }
+    }
+    
+    # Also clean up any temporary version info JSON files
+    Get-ChildItem -Path "." -Filter "versioninfo_*.json" | ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Force
+        }
+        catch {
+            # Ignore errors for temporary files
+        }
+    }
 }
 
 # Function to ensure Chocolatey is installed
@@ -1274,6 +1353,10 @@ foreach ($arch in $archs) {
     foreach ($dir in $binaryDirs) {
         $binaryName = $dir.Name
         Write-Log "Building $binaryName for $arch..." "INFO"
+        
+        # Generate Windows version information for this binary
+        New-VersionInfo -BinaryName $binaryName -BinaryPath $dir.FullName -Version $env:RELEASE_VERSION -SemanticVersion $env:SEMANTIC_VERSION
+        
         # Check if this is a C# project
         $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
         $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
@@ -1414,6 +1497,9 @@ foreach ($arch in $archs) {
     }
 }
 Write-Log "All binaries built for all architectures." "SUCCESS"
+
+# Clean up generated version resource files
+Remove-VersionResources
 #  SIGN EVERY EXE (once) IN ITS OWN ARCH FOLDER 
 if ($Sign) {
     Write-Log "Signing all EXEs in each release\<arch>\ folder..." "INFO"
