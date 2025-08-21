@@ -20,6 +20,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/selfupdate"
+	"github.com/windowsadmins/cimian/pkg/version"
 )
 
 const (
@@ -64,6 +65,9 @@ func main() {
 
 	cmd := os.Args[1]
 	switch cmd {
+	case "--version":
+		version.PrintVersion()
+		return
 	case "debug":
 		runService(serviceName, true)
 		return

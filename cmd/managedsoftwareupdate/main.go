@@ -191,6 +191,12 @@ func main() {
 	pflag.CountVarP(&verbosity, "verbose", "v", "Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)")
 	pflag.Parse()
 
+	// Handle --version flag first, before any other initialization.
+	if *versionFlag {
+		version.PrintVersion()
+		os.Exit(0)
+	}
+
 	// Load configuration (only once)
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -230,12 +236,6 @@ func main() {
 	// Update the item filter with the initialized logger
 	logger = logging.New(verbosity >= 2) // Create properly initialized logger for compatibility
 	itemFilter.SetLogger(logger)
-
-	// Handle --version flag.
-	if *versionFlag {
-		version.Print()
-		os.Exit(0)
-	}
 
 	// Handle bootstrap mode flags first - these exit immediately
 	if *setBootstrapMode {

@@ -24,6 +24,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/extract"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/utils"
+	"github.com/windowsadmins/cimian/pkg/version"
 )
 
 var (
@@ -210,13 +211,14 @@ func (s NoQuoteEmptyString) MarshalYAML() (interface{}, error) {
 //  4. single flags => stored in otherFlags["flag"] = "true" (boolean style)
 //  5. a special boolean configRequested if user typed --config
 //
-// Returns (packagePath, filePaths, otherFlags, configRequested).
-func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool, bool) {
+// Returns (packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested).
+func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool, bool, bool) {
 	var packagePath string
 	filePaths := []string{}
 	otherFlags := make(map[string]string)
 	configRequested := false
 	helpRequested := false
+	versionRequested := false
 	configAuto = false
 
 	skipNext := false
@@ -230,6 +232,11 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 		// Check --help or -h
 		if arg == "--help" || arg == "-h" {
 			helpRequested = true
+			continue
+		}
+		// Check --version
+		if arg == "--version" {
+			versionRequested = true
 			continue
 		}
 		// Check --config-auto
@@ -284,7 +291,7 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 		}
 	}
 
-	return packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto
+	return packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested
 }
 
 func main() {
@@ -299,7 +306,13 @@ func main() {
 	//   - -i or --installs-array => user filePaths
 	//   - everything else => otherFlags
 	//   - and check if user typed --config / --help / --config-auto
-	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto := parseCustomArgs(os.Args)
+	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested := parseCustomArgs(os.Args)
+
+	// If user typed --version
+	if versionRequested {
+		version.PrintVersion()
+		os.Exit(0)
+	}
 
 	// If user typed --help or -h
 	if helpRequested {

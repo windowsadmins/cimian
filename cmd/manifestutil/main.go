@@ -193,7 +193,7 @@ func main() {
 	section := flag.String("section", "managed_installs", "Manifest section (managed_installs, managed_uninstalls, managed_updates, optional_installs)")
 	manifestName := flag.String("manifest", "", "Manifest to operate on")
 	removePackage := flag.String("remove-pkg", "", "Package to remove from manifest")
-	showManifestUtilVersion := flag.Bool("manifestutil_version", false, "Print the version and exit.")
+	showVersion := flag.Bool("version", false, "Print the version and exit.")
 
 	// Self-service flags
 	selfServiceRequest := flag.String("selfservice-request", "", "Add package to self-service manifest for installation")
@@ -202,8 +202,8 @@ func main() {
 	flag.Parse()
 
 	// Handle --version flag
-	if *showManifestUtilVersion {
-		version.Print()
+	if *showVersion {
+		version.PrintVersion()
 		return
 	}
 

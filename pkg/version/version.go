@@ -43,6 +43,12 @@ func Print() {
 	fmt.Printf("%s %s\n", appName, v.Version)
 }
 
+// PrintVersion outputs only the version string.
+func PrintVersion() {
+	v := Version()
+	fmt.Printf("%s\n", v.Version)
+}
+
 // PrintFull prints the application name and detailed version information.
 func PrintFull() {
 	v := Version()
