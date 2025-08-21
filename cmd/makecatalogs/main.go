@@ -227,14 +227,14 @@ func main() {
 	repoFlag := flag.String("repo_path", "", "Path to the Cimian repo. If empty, uses config.")
 	skipFlag := flag.Bool("skip_payload_check", false, "Disable checking for .Installer/.Uninstaller files.")
 	silentFlag := flag.Bool("silent", false, "Minimize output.")
-	showVersionFlag := flag.Bool("makecatalog_version", false, "Print version and exit.")
+	showVersionFlag := flag.Bool("version", false, "Print version and exit.")
 	flag.Parse()
 
 	// Initialize logger
 	logger = logging.New(!*silentFlag) // Enable verbose mode if not silent
 
 	if *showVersionFlag {
-		version.Print()
+		version.PrintVersion()
 		os.Exit(0)
 	}
 
