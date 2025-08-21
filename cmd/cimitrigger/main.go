@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/windowsadmins/cimian/pkg/version"
 )
 
 const (
@@ -22,6 +24,12 @@ func main() {
 	}
 
 	mode := os.Args[1]
+
+	// Handle --version flag
+	if mode == "--version" {
+		version.PrintVersion()
+		return
+	}
 
 	switch mode {
 	case "gui":
