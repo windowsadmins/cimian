@@ -61,6 +61,7 @@ namespace Cimian.Status
                     services.AddSingleton<IStatusServer, StatusServer>();
                     services.AddSingleton<IUpdateService, UpdateService>();
                     services.AddSingleton<ILogService, LogService>();
+                    services.AddSingleton<IServiceStatusService, ServiceStatusService>();
                     
                     // Register ViewModels
                     services.AddTransient<MainViewModel>();
@@ -94,6 +95,7 @@ namespace Cimian.Status
                 .ConfigureServices((context, services) =>
                 {
                     services.AddSingleton<IStatusServer, StatusServer>();
+                    services.AddSingleton<IServiceStatusService, ServiceStatusService>();
                     services.AddHostedService<BackgroundStatusService>();
                 })
                 .UseWindowsService()
