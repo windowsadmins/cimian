@@ -39,6 +39,28 @@ var (
 	chocolateyBin = filepath.Join(os.Getenv("ProgramData"), "chocolatey", "bin", "choco.exe")
 )
 
+// buildPowerShellArgs creates a consistent set of PowerShell arguments with execution policy bypass
+func buildPowerShellArgs(cfg *config.Configuration, args ...string) []string {
+	baseArgs := []string{"-NoProfile"}
+
+	// Add execution policy bypass if configured (default: true)
+	if cfg == nil || cfg.ForceExecutionPolicyBypass {
+		baseArgs = append(baseArgs, "-ExecutionPolicy", "Bypass")
+	}
+
+	// Add any additional arguments
+	baseArgs = append(baseArgs, args...)
+	return baseArgs
+}
+
+// buildStandardPowerShellArgs creates the standard PowerShell arguments with execution policy bypass
+// This function provides a consistent set of arguments for PowerShell execution across all Cimian components
+func buildStandardPowerShellArgs(args ...string) []string {
+	baseArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass"}
+	baseArgs = append(baseArgs, args...)
+	return baseArgs
+}
+
 // storeInstalledVersionInRegistry writes an installed version to HKLM\Software\ManagedInstalls\<Name>.
 func storeInstalledVersionInRegistry(item catalog.Item) {
 	regPath := `Software\ManagedInstalls\` + item.Name
@@ -768,8 +790,8 @@ func processUninstallPowerShell(uninstallItem catalog.InstallItem, item catalog.
 		return "", fmt.Errorf("PowerShell uninstall script not found: %s", scriptPath)
 	}
 
-	// Build PowerShell arguments starting with basic execution policy
-	psArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath}
+	// Build PowerShell arguments starting with standard execution policy bypass
+	psArgs := buildStandardPowerShellArgs("-File", scriptPath)
 
 	// Add switches and flags as script parameters
 	for _, sw := range uninstallItem.Switches {
@@ -1174,7 +1196,7 @@ func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
 // runPS1Installer: powershell -File <localFile>
 func runPS1Installer(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	_ = item
-	psArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", localFile}
+	psArgs := buildPowerShellArgs(cfg, "-File", localFile)
 
 	logging.Info("Executing PowerShell installer with timeout",
 		"file", localFile, "args", psArgs, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
@@ -1193,7 +1215,7 @@ func runPS1Installer(item catalog.Item, localFile string, cfg *config.Configurat
 }
 
 func runPS1Uninstaller(absFile string) (string, error) {
-	psArgs := []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", absFile}
+	psArgs := buildStandardPowerShellArgs("-NonInteractive", "-File", absFile)
 
 	logging.Debug("runPS1Uninstaller => final command",
 		"exe", commandPs1, "args", strings.Join(psArgs, " "))
@@ -1263,7 +1285,9 @@ func runPS1FromScript(item catalog.Item, localFile, cachePath string) (string, e
 		return "", fmt.Errorf("failed writing .ps1: %w", err)
 	}
 	defer os.Remove(psFile)
-	cmd := exec.Command(commandPs1, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", psFile)
+
+	psArgs := buildStandardPowerShellArgs("-File", psFile)
+	cmd := exec.Command(commandPs1, psArgs...)
 	hideConsoleWindow(cmd)
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -1389,12 +1413,7 @@ func extractNupkgMetadata(nupkgPath string) (string, string, error) {
 // runPowerShellInline is used by needsUpdateOld.
 func runPowerShellInline(script string) (int, error) {
 	psExe := "powershell.exe"
-	cmdArgs := []string{
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-Command", script,
-	}
+	cmdArgs := buildStandardPowerShellArgs("-NonInteractive", "-Command", script)
 	cmd := exec.Command(psExe, cmdArgs...)
 	err := cmd.Run()
 	if err == nil {
@@ -1478,12 +1497,7 @@ func extractAndRunChocolateyBeforeInstall(nupkgPath string, item catalog.Item) e
 	// Run the PowerShell script
 	logging.Info("Executing chocolateyBeforeInstall.ps1 script", "item", item.Name, "script", tempScriptPath)
 
-	cmdArgs := []string{
-		"-ExecutionPolicy", "Bypass",
-		"-NoProfile",
-		"-NonInteractive",
-		"-File", tempScriptPath,
-	}
+	cmdArgs := buildStandardPowerShellArgs("-NonInteractive", "-File", tempScriptPath)
 
 	out, err := runCMD(commandPs1, cmdArgs)
 	if err != nil {
@@ -1564,12 +1578,7 @@ func runNopkgScript(script utils.LiteralString, cachePath, scriptType string) (s
 	}()
 
 	// Execute the PowerShell script
-	cmdArgs := []string{
-		"-ExecutionPolicy", "Bypass",
-		"-NoProfile",
-		"-NonInteractive",
-		"-File", tempFile,
-	}
+	cmdArgs := buildStandardPowerShellArgs("-NonInteractive", "-File", tempFile)
 
 	output, err := runCMD("powershell.exe", cmdArgs)
 	if err != nil {

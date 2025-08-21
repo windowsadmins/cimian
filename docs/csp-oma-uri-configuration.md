@@ -55,6 +55,12 @@ All major Cimian configuration options are supported via CSP registry settings:
 | `ForceBasicAuth` | REG_DWORD or REG_SZ | Force basic authentication | `1` or `"true"` |
 | `NoPreflight` | REG_DWORD or REG_SZ | Skip preflight scripts | `0` or `"false"` |
 | `OpenImportedYaml` | REG_DWORD or REG_SZ | Auto-open imported YAML | `1` or `"true"` |
+| `ForceExecutionPolicyBypass` | REG_DWORD or REG_SZ | Force PowerShell execution policy bypass for all scripts | `1` or `"true"` (default: true) |
+
+### Integer Values
+| Registry Value | Type | Description | Example |
+|---|---|---|---|
+| `InstallerTimeoutMinutes` | REG_DWORD or REG_SZ | Timeout for installer execution (minutes) | `15` or `"30"` |
 
 ### Array Values
 | Registry Value | Type | Description | Example |
@@ -263,6 +269,62 @@ Expected output when using CSP fallback:
 2025/08/15 11:13:54 CSP: Loaded Debug = true
 2025/08/15 11:13:54 Successfully loaded configuration from CSP OMA-URI registry settings
 ```
+
+## PowerShell Execution Policy Bypass
+
+### Built-in Execution Policy Management
+
+Cimian includes **built-in PowerShell execution policy bypass** to prevent OS execution policy restrictions from blocking script execution. This feature ensures that all PowerShell scripts run reliably in enterprise environments.
+
+### How It Works
+
+- **All PowerShell script executions** in Cimian automatically include `-ExecutionPolicy Bypass`
+- **Applies to all script types**: preinstall, postinstall, check scripts, uninstall scripts, etc.
+- **Enabled by default** for maximum compatibility
+- **Configurable** via `ForceExecutionPolicyBypass` setting
+
+### Affected Script Types
+
+The execution policy bypass applies to:
+- **Installation scripts** (.ps1 installers)
+- **Preinstall scripts** (chocolateyBeforeInstall.ps1, PreScript)
+- **Postinstall scripts** (custom postinstall scripts)
+- **Check scripts** (install verification scripts)
+- **Uninstall scripts** (PowerShell uninstallers)
+- **nopkg scripts** (script-only packages)
+
+### Configuration Options
+
+#### YAML Configuration (Config.yaml)
+```yaml
+# Force execution policy bypass for all PowerShell scripts (default: true)
+ForceExecutionPolicyBypass: true
+```
+
+#### CSP OMA-URI Configuration
+```
+Name: Cimian Force Execution Policy Bypass
+Description: Force PowerShell execution policy bypass for all scripts
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/Software/Cimian/Config/ForceExecutionPolicyBypass
+Data type: Integer
+Value: 1
+```
+
+### Security Considerations
+
+- **Scripts run with same privileges** as managedsoftwareupdate.exe (typically SYSTEM)
+- **Only affects Cimian-executed scripts**, not system-wide PowerShell policy
+- **Temporary bypass** for specific script execution only
+- **No permanent policy changes** to the system
+
+### Example Script Headers
+
+All Cimian PowerShell executions automatically include:
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File script.ps1
+```
+
+This ensures consistent script execution regardless of system execution policy settings.
 
 ## Best Practices
 
