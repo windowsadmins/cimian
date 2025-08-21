@@ -47,6 +47,10 @@ type Configuration struct {
 	// Installer timeout settings
 	InstallerTimeoutMinutes int `yaml:"InstallerTimeoutMinutes"` // Default timeout for installers (in minutes)
 
+	// PowerShell execution policy settings
+	// Forces execution policy bypass for all PowerShell script executions to prevent OS execution policy restrictions
+	ForceExecutionPolicyBypass bool `yaml:"ForceExecutionPolicyBypass"` // Force -ExecutionPolicy Bypass on all PowerShell executions (default: true)
+
 	// Internal flag to skip self-service manifest processing (not exposed in YAML)
 	SkipSelfService bool `yaml:"-"`
 }
@@ -131,25 +135,26 @@ func GetDefaultConfig() *Configuration {
 		programFiles = `C:\Program Files`
 	}
 	return &Configuration{
-		LogLevel:                "INFO",
-		InstallPath:             filepath.Join(programFiles, "Cimian"),
-		RepoPath:                `C:\ProgramData\ManagedInstalls\repo`,
-		CatalogsPath:            `C:\ProgramData\ManagedInstalls\catalogs`,
-		CachePath:               `C:\ProgramData\ManagedInstalls\Cache`,
-		Debug:                   false,
-		Verbose:                 false,
-		CheckOnly:               false,
-		ClientIdentifier:        "",
-		SoftwareRepoURL:         "https://cimian.example.com",
-		DefaultArch:             "x64,arm64",
-		DefaultCatalog:          "testing",
-		CloudProvider:           "none",
-		CloudBucket:             "",
-		ForceBasicAuth:          false,
-		OpenImportedYaml:        true,
-		PreflightFailureAction:  "continue", // Default: continue on preflight failure
-		PostflightFailureAction: "continue", // Default: continue on postflight failure
-		InstallerTimeoutMinutes: 15,         // Default: 15 minute timeout for installers
+		LogLevel:                   "INFO",
+		InstallPath:                filepath.Join(programFiles, "Cimian"),
+		RepoPath:                   `C:\ProgramData\ManagedInstalls\repo`,
+		CatalogsPath:               `C:\ProgramData\ManagedInstalls\catalogs`,
+		CachePath:                  `C:\ProgramData\ManagedInstalls\Cache`,
+		Debug:                      false,
+		Verbose:                    false,
+		CheckOnly:                  false,
+		ClientIdentifier:           "",
+		SoftwareRepoURL:            "https://cimian.example.com",
+		DefaultArch:                "x64,arm64",
+		DefaultCatalog:             "testing",
+		CloudProvider:              "none",
+		CloudBucket:                "",
+		ForceBasicAuth:             false,
+		OpenImportedYaml:           true,
+		PreflightFailureAction:     "continue", // Default: continue on preflight failure
+		PostflightFailureAction:    "continue", // Default: continue on postflight failure
+		InstallerTimeoutMinutes:    15,         // Default: 15 minute timeout for installers
+		ForceExecutionPolicyBypass: true,       // Default: Force -ExecutionPolicy Bypass for all PowerShell scripts
 	}
 }
 
@@ -222,6 +227,7 @@ func loadCSPFromRegistryPath(registryPath string, config *Configuration) error {
 	loadBoolFromRegistry(key, "ForceBasicAuth", &config.ForceBasicAuth)
 	loadBoolFromRegistry(key, "NoPreflight", &config.NoPreflight)
 	loadBoolFromRegistry(key, "OpenImportedYaml", &config.OpenImportedYaml)
+	loadBoolFromRegistry(key, "ForceExecutionPolicyBypass", &config.ForceExecutionPolicyBypass)
 
 	// Load array configuration values
 	loadStringArrayFromRegistry(key, "Catalogs", &config.Catalogs)
