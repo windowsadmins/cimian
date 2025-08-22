@@ -216,6 +216,11 @@ func (sum *SelfUpdateManager) PerformSelfUpdate(cfg *config.Configuration) error
 		return updateErr
 	}
 
+	// Self-update successful - update registry with new version
+	if err := config.WriteCimianVersionToRegistry(version); err != nil {
+		logging.Warn("Failed to update Cimian version in registry after self-update", "error", err)
+	}
+
 	// Self-update successful - clean up
 	if err := sum.cleanupAfterSuccess(); err != nil {
 		logging.Warn("Failed to clean up after successful self-update", "error", err)

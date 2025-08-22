@@ -19,6 +19,9 @@ const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
 // CSP OMA-URI registry path for enterprise policy configuration
 const CSPRegistryPath = `SOFTWARE\Cimian\Config`
 
+// Registry path for Cimian installation information
+const CimianRegistryPath = `SOFTWARE\Cimian`
+
 // Configuration holds the configurable options for Cimian in YAML format
 type Configuration struct {
 	Catalogs                []string `yaml:"Catalogs"`
@@ -319,4 +322,30 @@ func loadStringArrayFromRegistry(key registry.Key, valueName string, target *[]s
 			log.Printf("CSP: Loaded %s = %v", valueName, filtered)
 		}
 	}
+}
+
+// WriteCimianVersionToRegistry writes Cimian's version to the registry at HKLM\SOFTWARE\Cimian\Version
+// This allows administrators and other tools to easily identify the installed Cimian version
+func WriteCimianVersionToRegistry(version string) error {
+	if version == "" {
+		version = "unknown"
+	}
+
+	// Create or open the Cimian registry key
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, CimianRegistryPath, registry.SET_VALUE)
+	if err != nil {
+		log.Printf("Failed to create Cimian registry key: %v", err)
+		return fmt.Errorf("failed to create registry key %s: %w", CimianRegistryPath, err)
+	}
+	defer key.Close()
+
+	// Write the version string
+	err = key.SetStringValue("Version", version)
+	if err != nil {
+		log.Printf("Failed to set Version value in Cimian registry key: %v", err)
+		return fmt.Errorf("failed to set Version value: %w", err)
+	}
+
+	log.Printf("Successfully wrote Cimian version %s to registry", version)
+	return nil
 }
