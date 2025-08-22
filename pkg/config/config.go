@@ -94,6 +94,11 @@ func LoadConfig() (*Configuration, error) {
 		config.CatalogsPath = filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`)
 	}
 
+	// Set default timeout if not configured (0 means not set)
+	if config.InstallerTimeoutMinutes == 0 {
+		config.InstallerTimeoutMinutes = 10 // Default to 10 minutes as requested
+	}
+
 	// Create required directories
 	for _, path := range []string{config.CachePath, config.CatalogsPath} {
 		if err := os.MkdirAll(path, 0755); err != nil {
@@ -153,7 +158,7 @@ func GetDefaultConfig() *Configuration {
 		OpenImportedYaml:           true,
 		PreflightFailureAction:     "continue", // Default: continue on preflight failure
 		PostflightFailureAction:    "continue", // Default: continue on postflight failure
-		InstallerTimeoutMinutes:    15,         // Default: 15 minute timeout for installers
+		InstallerTimeoutMinutes:    10,         // Default: 10 minute timeout for installers
 		ForceExecutionPolicyBypass: true,       // Default: Force -ExecutionPolicy Bypass for all PowerShell scripts
 	}
 }
