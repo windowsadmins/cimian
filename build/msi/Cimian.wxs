@@ -109,6 +109,7 @@
         <!-- Component to Modify PATH Environment Variable -->
         <Component Id="SetPathComponent" Guid="A5F2C571-89DF-4C71-967F-EC9D3EF4CDD0">
           <RegistryValue Root="HKLM" Key="Software\Cimian" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
+          <RegistryValue Root="HKLM" Key="Software\Cimian" Name="Version" Value="$(var.ProductVersion)" Type="string" />
           <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
         </Component>
 
