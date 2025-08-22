@@ -742,8 +742,9 @@ if ($Binaries -or $Binary) {
         }
     }
     # Set version for binaries (inline to avoid function dependency)
-    $fullVersion     = Get-Date -Format "yyyy.MM.dd"
-    $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
+    $currentTime = Get-Date
+    $fullVersion     = $currentTime.ToString("yyyy.MM.dd.HHmm")
+    $semanticVersion = "{0}.{1}.{2}.{3}" -f $($currentTime.Year - 2000), $currentTime.Month, $currentTime.Day, $currentTime.ToString("HHmm")
     $env:RELEASE_VERSION   = $fullVersion
     $env:SEMANTIC_VERSION  = $semanticVersion
     Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
@@ -1327,8 +1328,9 @@ Write-Log "Setting up Go environment variables..." "INFO"
 Write-Log "Go environment variables set." "SUCCESS"
 # Step 6: Prepare Release Version
 function Set-Version {
-    $fullVersion     = Get-Date -Format "yyyy.MM.dd"
-    $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
+    $currentTime = Get-Date
+    $fullVersion     = $currentTime.ToString("yyyy.MM.dd.HHmm")
+    $semanticVersion = "{0}.{1}.{2}.{3}" -f $($currentTime.Year - 2000), $currentTime.Month, $currentTime.Day, $currentTime.ToString("HHmm")
     $env:RELEASE_VERSION   = $fullVersion
     $env:SEMANTIC_VERSION  = $semanticVersion
     Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
