@@ -84,6 +84,16 @@ func storeInstalledVersionInRegistry(item catalog.Item) {
 	}
 	logging.Debug("Wrote local installed version to registry",
 		"item", item.Name, "version", versionStr)
+
+	// If this is a Cimian package, also write to the main Cimian registry key
+	itemName := strings.ToLower(strings.TrimSpace(item.Name))
+	if itemName == "cimian" || itemName == "cimiantools" || strings.HasPrefix(itemName, "cimian-") || strings.HasPrefix(itemName, "cimiantools-") {
+		if err := config.WriteCimianVersionToRegistry(versionStr); err != nil {
+			logging.Warn("Failed to write Cimian version to main registry key", "error", err)
+		} else {
+			logging.Info("Updated Cimian version in registry", "version", versionStr)
+		}
+	}
 }
 
 // removeInstalledVersionFromRegistry deletes HKLM\Software\ManagedInstalls\<Name>.
