@@ -79,7 +79,6 @@ namespace Cimian.Status
 
             // Create and run WPF application
             var app = new App();
-            app.InitializeComponent();
             
             // Set the main window from DI container
             app.MainWindow = host.Services.GetRequiredService<MainWindow>();
