@@ -56,12 +56,15 @@ jobs:
         id: set_version
         shell: pwsh
         run: |
-          $year = (Get-Date).Year - 2000
-          $month = (Get-Date).Month.ToString("00")
-          $day = (Get-Date).Day.ToString("00")
+          $currentTime = Get-Date
+          $year = $currentTime.Year - 2000
+          $month = $currentTime.Month.ToString("00")
+          $day = $currentTime.Day.ToString("00")
+          $hhmm = $currentTime.ToString("HHmm")
           
-          $version = "{0}.{1}.{2}" -f $year, $month, $day
-          echo "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          $version = "{0}.{1}.{2}.{3}" -f $year, $month, $day, $hhmm
+          $fullVersion = $currentTime.ToString("yyyy.MM.dd.HHmm")
+          echo "RELEASE_VERSION=$fullVersion" >> $env:GITHUB_ENV
           echo "SEMANTIC_VERSION=$version" >> $env:GITHUB_ENV
           
           # Update the WiX XML with the new version
