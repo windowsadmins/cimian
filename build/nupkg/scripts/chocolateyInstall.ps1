@@ -104,12 +104,54 @@ try {
         Write-Warning "Scheduled task installation script not found: $taskInstallScript"
     }
 
+    # Write Cimian version to registry
+    Write-Host "Writing Cimian version to registry..."
+    try {
+        # Get version from the chocolatey package environment variable
+        $packageVersion = $env:ChocolateyPackageVersion
+        if ([string]::IsNullOrEmpty($packageVersion)) {
+            # Fallback: try to get version from the executable
+            $cimiwatcherExe = Join-Path $InstallDir "cimiwatcher.exe"
+            if (Test-Path $cimiwatcherExe) {
+                try {
+                    $versionInfo = (Get-ItemProperty $cimiwatcherExe).VersionInfo
+                    $packageVersion = $versionInfo.ProductVersion
+                    if ([string]::IsNullOrEmpty($packageVersion)) {
+                        $packageVersion = $versionInfo.FileVersion
+                    }
+                } catch {
+                    Write-Warning "Could not extract version from executable: $_"
+                }
+            }
+        }
+        
+        # Final fallback
+        if ([string]::IsNullOrEmpty($packageVersion)) {
+            $packageVersion = "unknown"
+            Write-Warning "Could not determine Cimian version, using 'unknown'"
+        }
+        
+        # Create registry key and write version
+        $registryPath = "HKLM:\SOFTWARE\Cimian"
+        if (-not (Test-Path $registryPath)) {
+            New-Item -Path $registryPath -Force | Out-Null
+        }
+        Set-ItemProperty -Path $registryPath -Name "Version" -Value $packageVersion -Type String
+        Set-ItemProperty -Path $registryPath -Name "InstallPath" -Value $InstallDir -Type String
+        
+        Write-Host "Successfully wrote Cimian version '$packageVersion' to registry" -ForegroundColor Green
+    } catch {
+        Write-Warning "Failed to write version to registry: $_"
+        Write-Warning "Version information will not be available in registry"
+    }
+
     Write-Host "CimianTools installed successfully to ARM64-safe path!" -ForegroundColor Green
     Write-Host "Installation Directory: $InstallDir" -ForegroundColor Green
     Write-Host "Architecture: $arch" -ForegroundColor Green
     Write-Host "Added to system PATH" -ForegroundColor Green
     Write-Host "CimianWatcher service installed and started for responsive bootstrap monitoring" -ForegroundColor Green
     Write-Host "Scheduled task created for automatic hourly updates" -ForegroundColor Green
+    Write-Host "Version information written to registry: HKLM\SOFTWARE\Cimian\Version" -ForegroundColor Green
 }
 catch {
     Write-Host "Installation failed: $_" -ForegroundColor Red
