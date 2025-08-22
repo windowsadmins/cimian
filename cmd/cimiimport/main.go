@@ -547,6 +547,14 @@ func configureCimianImport(conf *config.Configuration) error {
 	if err := config.SaveConfig(conf); err != nil {
 		return err
 	}
+
+	// Write Cimian version to registry during installation
+	versionInfo := version.Version()
+	if err := config.WriteCimianVersionToRegistry(versionInfo.Version); err != nil {
+		// Log warning but don't fail installation
+		logger.Warning("Failed to write Cimian version to registry: %v", err)
+	}
+
 	return nil
 }
 
@@ -588,6 +596,14 @@ func configureCimianImportNonInteractive(conf *config.Configuration) error {
 	if err := config.SaveConfig(conf); err != nil {
 		return fmt.Errorf("failed to save non-interactive config: %v", err)
 	}
+
+	// Write Cimian version to registry during installation
+	versionInfo := version.Version()
+	if err := config.WriteCimianVersionToRegistry(versionInfo.Version); err != nil {
+		// Log warning but don't fail installation
+		logger.Warning("Failed to write Cimian version to registry: %v", err)
+	}
+
 	return nil
 }
 
