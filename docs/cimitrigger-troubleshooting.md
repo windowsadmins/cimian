@@ -39,6 +39,18 @@ The service may not have permissions to read/delete the trigger files in `C:\Pro
 ### 3. **Service Not Monitoring Correctly**
 The service might be running but not polling the trigger files properly.
 
+### 4. **Session 0 Isolation (Common Issue)**
+Windows services run in Session 0, which is isolated from user sessions. When CimianWatcher service starts CimianStatus.exe, it starts in Session 0 where users cannot see or interact with GUI applications.
+
+**Check for this issue:**
+```cmd
+tasklist /fi "imagename eq cimistatus.exe" /fo table
+```
+
+If you see `Session#` as `0` (Services), the GUI is running but hidden from users.
+
+**This is why `--force gui` method works** - it starts the GUI in the user session instead of the service session.
+
 ## Diagnostic Steps
 
 ### Step 1: Use the Enhanced Diagnostic Tools
@@ -95,13 +107,15 @@ sc start CimianWatcher
 cimitrigger gui
 ```
 
-### Solution 2: Direct Elevation (Bypass Service)
+### Solution 2: Direct Elevation (Recommended for Domain Environments)
 
-Use the new direct elevation method that bypasses the service entirely:
+Use the direct elevation method that bypasses the service and starts GUI in user session:
 
 ```cmd
 cimitrigger --force gui
 ```
+
+**This method is now recommended for domain-joined devices** because it avoids Session 0 isolation issues.
 
 This will try multiple elevation methods:
 1. Standard UAC elevation
