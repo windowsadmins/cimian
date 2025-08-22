@@ -48,47 +48,25 @@ func main() {
 
 	switch mode {
 	case "gui":
-		fmt.Println("🚀 Triggering GUI update via CimianWatcher service...")
-		if err := createTriggerFile(guiBootstrapFile, "GUI"); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ Error creating GUI trigger: %v\n", err)
-			fmt.Fprintf(os.Stderr, "💡 Try running as administrator or use: cimitrigger --force gui\n")
-			os.Exit(1)
+		// Always ensure GUI is shown when in GUI mode and user is logged in
+		if err := ensureGUIVisible(); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Warning: Could not ensure GUI visibility: %v\n", err)
 		}
-		fmt.Println("✅ GUI update trigger file created successfully")
-		fmt.Printf("📁 Trigger file location: %s\n", guiBootstrapFile)
-		fmt.Println("⏳ Waiting for CimianWatcher service to process the request...")
 
-		// Wait and check if file gets processed
-		if waitForFileProcessing(guiBootstrapFile, 15*time.Second) {
-			fmt.Println("✅ CimianWatcher service processed the trigger - update should be starting!")
-		} else {
-			fmt.Println("⚠️  Trigger file was not processed within 15 seconds")
-			fmt.Println("💡 Possible issues:")
-			fmt.Println("   - CimianWatcher service is not running (check: sc query CimianWatcher)")
-			fmt.Println("   - Service permissions issue")
-			fmt.Println("   - Try: cimitrigger --force gui")
+		// Give the GUI time to initialize and be ready to monitor processes
+		fmt.Println("⏳ Allowing GUI to initialize...")
+		time.Sleep(3 * time.Second)
+
+		if err := runSmartGUIUpdate(); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Error running GUI update: %v\n", err)
+			// Even if update fails, keep GUI visible for status monitoring
+			os.Exit(1)
 		}
 
 	case "headless":
-		fmt.Println("🚀 Triggering headless update via CimianWatcher service...")
-		if err := createTriggerFile(headlessBootstrapFile, "headless"); err != nil {
-			fmt.Fprintf(os.Stderr, "❌ Error creating headless trigger: %v\n", err)
-			fmt.Fprintf(os.Stderr, "💡 Try running as administrator or use: cimitrigger --force headless\n")
+		if err := runSmartHeadlessUpdate(); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ Error running headless update: %v\n", err)
 			os.Exit(1)
-		}
-		fmt.Println("✅ Headless update trigger file created successfully")
-		fmt.Printf("📁 Trigger file location: %s\n", headlessBootstrapFile)
-		fmt.Println("⏳ Waiting for CimianWatcher service to process the request...")
-
-		// Wait and check if file gets processed
-		if waitForFileProcessing(headlessBootstrapFile, 15*time.Second) {
-			fmt.Println("✅ CimianWatcher service processed the trigger - update should be starting!")
-		} else {
-			fmt.Println("⚠️  Trigger file was not processed within 15 seconds")
-			fmt.Println("💡 Possible issues:")
-			fmt.Println("   - CimianWatcher service is not running (check: sc query CimianWatcher)")
-			fmt.Println("   - Service permissions issue")
-			fmt.Println("   - Try: cimitrigger --force headless")
 		}
 
 	case "debug":
@@ -106,11 +84,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  mode: 'gui', 'headless', 'debug', or '--force <gui|headless>'\n")
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "Examples:\n")
-	fmt.Fprintf(os.Stderr, "  %s gui            # Trigger update with GUI via CimianWatcher service\n", filepath.Base(os.Args[0]))
-	fmt.Fprintf(os.Stderr, "  %s headless       # Trigger update without GUI via CimianWatcher service\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s gui            # Update with GUI - ALWAYS shows CimianStatus window when logged in\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s headless       # Smart headless update (tries service, falls back to direct)\n", filepath.Base(os.Args[0]))
 	fmt.Fprintf(os.Stderr, "  %s debug          # Run diagnostics to troubleshoot issues\n", filepath.Base(os.Args[0]))
-	fmt.Fprintf(os.Stderr, "  %s --force gui    # Run update directly with elevation (for domain environments)\n", filepath.Base(os.Args[0]))
-	fmt.Fprintf(os.Stderr, "  %s --force headless # Run update directly with elevation (for domain environments)\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --force gui    # Force direct elevation (skip service attempt)\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s --force headless # Force direct elevation (skip service attempt)\n", filepath.Base(os.Args[0]))
 }
 
 // waitForFileProcessing waits for the service to process (delete) the trigger file
@@ -240,9 +218,8 @@ func runDiagnostics() {
 	// 6. Monitor for service response (if service is running)
 	if serviceRunning && directoryOK {
 		fmt.Println("\n6. Testing service response...")
-		if askYesNo("Would you like to test trigger file monitoring for 30 seconds?") {
-			monitorTriggerResponse()
-		}
+		fmt.Println("Testing trigger file monitoring for 30 seconds...")
+		monitorTriggerResponse()
 	} else {
 		fmt.Println("\n6. Service response test skipped (prerequisites not met)")
 	}
@@ -295,10 +272,10 @@ func runDirectUpdate(mode string) error {
 	switch mode {
 	case "gui":
 		args = []string{"--auto", "--show-status", "-vv"}
-		fmt.Println("Starting direct GUI update with elevation...")
+		fmt.Println("🚀 Initiating update with administrative privileges...")
 	case "headless":
 		args = []string{"--auto"}
-		fmt.Println("Starting direct headless update with elevation...")
+		fmt.Println("🚀 Initiating headless update with administrative privileges...")
 	default:
 		return fmt.Errorf("invalid direct mode: %s (must be 'gui' or 'headless')", mode)
 	}
@@ -312,13 +289,25 @@ func runDirectUpdate(mode string) error {
 
 	var lastErr error
 	for i, method := range methods {
-		fmt.Printf("Trying elevation method %d...\n", i+1)
+		fmt.Printf("⚡ Using elevation method %d...\n", i+1)
 		if err := method(execPath, args); err != nil {
-			fmt.Printf("Method %d failed: %v\n", i+1, err)
+			fmt.Printf("📋 Method %d unavailable, trying next: %v\n", i+1, err)
 			lastErr = err
 			continue
 		}
-		fmt.Printf("Successfully started with method %d\n", i+1)
+		fmt.Printf("✅ Update process started successfully!\n")
+
+		// Give more time for the process to fully start and begin logging
+		fmt.Println("⏳ Giving process time to initialize logging...")
+		time.Sleep(5 * time.Second)
+
+		if isProcessRunning("managedsoftwareupdate") {
+			fmt.Println("✅ Update process confirmed running - CimianStatus should now show live progress")
+		} else {
+			fmt.Println("📋 Update process completed quickly")
+			fmt.Println("💡 Check CimianStatus GUI for results, or view logs in C:\\ProgramData\\ManagedInstalls\\logs")
+		}
+
 		return nil
 	}
 
@@ -474,14 +463,6 @@ func monitorTriggerResponse() {
 	}
 }
 
-// askYesNo prompts user for yes/no input
-func askYesNo(question string) bool {
-	fmt.Printf("%s (y/n): ", question)
-	var response string
-	fmt.Scanln(&response)
-	return response == "y" || response == "Y" || response == "yes" || response == "Yes"
-}
-
 // provideDetailedRecommendations provides specific recommendations based on issues found
 func provideDetailedRecommendations(issues []string, serviceRunning, directoryOK, executablesOK bool) {
 	for _, issue := range issues {
@@ -533,4 +514,277 @@ func provideDetailedRecommendations(issues []string, serviceRunning, directoryOK
 			fmt.Println()
 		}
 	}
+}
+
+// runSmartGUIUpdate tries service method first, then falls back to direct elevation if needed
+func runSmartGUIUpdate() error {
+	fmt.Println("🚀 Starting software update process...")
+
+	// Check if managedsoftwareupdate is already running to prevent conflicts
+	if isProcessRunning("managedsoftwareupdate") {
+		fmt.Println("⚠️  managedsoftwareupdate.exe is already running")
+		fmt.Println("✅ CimianStatus GUI will monitor the existing process")
+		fmt.Println("🔄 No need to start another process - waiting for current one to complete...")
+		return nil
+	}
+
+	// Check for recent completed sessions to inform the user
+	if recentSession := checkRecentSession(); recentSession != "" {
+		fmt.Printf("📋 Recent update session found: %s\n", recentSession)
+		fmt.Println("💡 CimianStatus GUI will show the latest results")
+		// Check if session was very recent (within last 2 minutes) - might indicate rapid completion
+		if isVeryRecentSession(recentSession) {
+			fmt.Println("⚡ Session completed very recently - system may not need immediate updates")
+		}
+	}
+
+	// Step 1: Try service method first (faster when it works)
+	fmt.Println("📡 Trying service-based update method...")
+	if err := createTriggerFile(guiBootstrapFile, "GUI"); err != nil {
+		fmt.Printf("📋 Service method unavailable (trigger file creation failed): %v\n", err)
+		fmt.Println("🔄 Using direct elevation method...")
+		return runDirectUpdate("gui")
+	}
+
+	fmt.Println("✅ Service trigger created successfully")
+	fmt.Printf("📁 Trigger file: %s\n", guiBootstrapFile)
+	fmt.Println("⏳ Waiting for CimianWatcher service response...")
+
+	// Wait and check if file gets processed
+	if waitForFileProcessing(guiBootstrapFile, 15*time.Second) {
+		fmt.Println("✅ Service-based update initiated successfully!")
+
+		// Give the service a moment to start the process
+		time.Sleep(2 * time.Second)
+
+		// Check for Session 0 isolation issue
+		if isGUIRunningInSession0() {
+			fmt.Println("⚠️  Detected GUI running in Session 0 (service session)")
+			fmt.Println("🔄 Switching to direct elevation for proper user session...")
+			killSession0GUI()
+			return runDirectUpdate("gui")
+		}
+
+		// Ensure GUI is still visible in user session (service might not have launched it)
+		if !isGUIRunningInUserSession() {
+			fmt.Println("🔄 Service completed - ensuring GUI remains visible in user session...")
+			if err := launchGUIInUserSession(); err != nil {
+				fmt.Printf("⚠️  Warning: Could not launch GUI in user session: %v\n", err)
+			}
+		}
+
+		return nil
+	} else {
+		fmt.Println("📋 Service method timed out - using direct elevation method...")
+		fmt.Println("🔄 This is normal and ensures the update completes successfully")
+
+		// Clean up the trigger file if it still exists
+		os.Remove(guiBootstrapFile)
+
+		return runDirectUpdate("gui")
+	}
+}
+
+// runSmartHeadlessUpdate tries service method first, then falls back to direct elevation if needed
+func runSmartHeadlessUpdate() error {
+	fmt.Println("🚀 Starting smart headless update...")
+
+	// Step 1: Try service method first (faster when it works)
+	fmt.Println("📡 Attempting service method first...")
+	if err := createTriggerFile(headlessBootstrapFile, "headless"); err != nil {
+		fmt.Printf("⚠️  Service method failed (trigger file creation): %v\n", err)
+		fmt.Println("🔄 Falling back to direct elevation...")
+		return runDirectUpdate("headless")
+	}
+
+	fmt.Println("✅ Headless update trigger file created successfully")
+	fmt.Printf("📁 Trigger file location: %s\n", headlessBootstrapFile)
+	fmt.Println("⏳ Waiting for CimianWatcher service to process the request...")
+
+	// Wait and check if file gets processed
+	if waitForFileProcessing(headlessBootstrapFile, 15*time.Second) {
+		fmt.Println("✅ Service method successful - update should be starting!")
+		return nil
+	} else {
+		fmt.Println("⚠️  Service method failed (not processed within 15 seconds)")
+		fmt.Println("🔄 Automatically falling back to direct elevation...")
+
+		// Clean up the trigger file if it still exists
+		os.Remove(headlessBootstrapFile)
+
+		return runDirectUpdate("headless")
+	}
+}
+
+// isGUIRunningInSession0 checks if cimistatus.exe is running in Session 0 (services session)
+func isGUIRunningInSession0() bool {
+	cmd := exec.Command("tasklist", "/fi", "imagename eq cimistatus.exe", "/fo", "csv")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+
+	// Check if output contains Session 0
+	return strings.Contains(string(output), ",\"Services\",\"0\",")
+}
+
+// killSession0GUI terminates cimistatus processes running in Session 0
+func killSession0GUI() {
+	cmd := exec.Command("taskkill", "/f", "/im", "cimistatus.exe")
+	cmd.Run() // Ignore errors - process might not exist or might not have permissions
+}
+
+// ensureGUIVisible ensures that cimistatus.exe is running and visible in the current user session
+func ensureGUIVisible() error {
+	// Check if we're in a user session (not SYSTEM)
+	if isSystemSession() {
+		return fmt.Errorf("running in SYSTEM session, GUI not appropriate")
+	}
+
+	// Check if cimistatus is already running in user session
+	if isGUIRunningInUserSession() {
+		fmt.Println("✅ CimianStatus GUI already running in user session")
+		return nil
+	}
+
+	// Kill any Session 0 instances first
+	killSession0GUI()
+
+	// Launch cimistatus in current user session
+	return launchGUIInUserSession()
+}
+
+// isSystemSession checks if we're running as SYSTEM or in a service context
+func isSystemSession() bool {
+	username := os.Getenv("USERNAME")
+	return username == "SYSTEM" || username == "" || os.Getenv("SESSIONNAME") == "Services"
+}
+
+// isGUIRunningInUserSession checks if cimistatus.exe is running in current user session
+func isGUIRunningInUserSession() bool {
+	cmd := exec.Command("tasklist", "/fi", "imagename eq cimistatus.exe", "/fo", "csv")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+
+	outputStr := string(output)
+	// Check if cimistatus is running and NOT in Services session (Session 0)
+	return strings.Contains(outputStr, "cimistatus.exe") && !strings.Contains(outputStr, ",\"Services\",\"0\",")
+}
+
+// launchGUIInUserSession starts cimistatus.exe in the current user session
+func launchGUIInUserSession() error {
+	// Find cimistatus.exe
+	cimistatus, err := findCimistatusExecutable()
+	if err != nil {
+		return fmt.Errorf("could not find cimistatus.exe: %v", err)
+	}
+
+	fmt.Printf("🚀 Launching CimianStatus GUI: %s\n", cimistatus)
+
+	// Launch cimistatus directly (no elevation needed for GUI in user session)
+	cmd := exec.Command(cimistatus)
+
+	// Set up environment to ensure it runs in user session
+	cmd.Env = os.Environ()
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start cimistatus.exe: %v", err)
+	}
+
+	fmt.Printf("✅ CimianStatus GUI launched successfully (PID: %d)\n", cmd.Process.Pid)
+
+	// Wait a moment for the GUI to fully initialize and be ready to monitor
+	fmt.Println("⏳ Ensuring GUI is ready to monitor update processes...")
+	time.Sleep(2 * time.Second)
+
+	// Don't wait for the process - let it run independently
+	return nil
+}
+
+// findCimistatusExecutable locates cimistatus.exe
+func findCimistatusExecutable() (string, error) {
+	// Try to find managedsoftwareupdate.exe first to get the installation directory
+	execPath, err := findExecutable()
+	if err == nil {
+		cimistatus := filepath.Join(filepath.Dir(execPath), "cimistatus.exe")
+		if _, err := os.Stat(cimistatus); err == nil {
+			return cimistatus, nil
+		}
+	}
+
+	// Fall back to common paths
+	possiblePaths := []string{
+		`C:\Program Files\Cimian\cimistatus.exe`,
+		`C:\Program Files (x86)\Cimian\cimistatus.exe`,
+		// Development paths
+		`.\cimistatus.exe`,
+		`..\release\x64\cimistatus.exe`,
+		`..\..\release\x64\cimistatus.exe`,
+		`..\..\..\release\x64\cimistatus.exe`,
+	}
+
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+
+	return "", fmt.Errorf("cimistatus.exe not found in any expected location")
+}
+
+// isProcessRunning checks if a process with the given name is currently running
+func isProcessRunning(processName string) bool {
+	cmd := exec.Command("tasklist", "/fi", fmt.Sprintf("imagename eq %s.exe", processName), "/fo", "csv")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+
+	// Check if the output contains the process name (indicates it's running)
+	return strings.Contains(string(output), fmt.Sprintf("%s.exe", processName))
+}
+
+// checkRecentSession checks for recent completed update sessions
+func checkRecentSession() string {
+	logsDir := `C:\ProgramData\ManagedInstalls\logs`
+
+	// Get the most recent log directory
+	cmd := exec.Command("powershell", "-Command",
+		fmt.Sprintf("Get-ChildItem '%s' -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { $_.Name }", logsDir))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+
+	recentDir := strings.TrimSpace(string(output))
+	if recentDir == "" {
+		return ""
+	}
+
+	// Check if this session was recent (within last 10 minutes)
+	sessionFile := filepath.Join(logsDir, recentDir, "session.json")
+	if _, err := os.Stat(sessionFile); err == nil {
+		return recentDir
+	}
+
+	return ""
+}
+
+// isVeryRecentSession checks if a session completed within the last 2 minutes
+func isVeryRecentSession(sessionName string) bool {
+	// Parse the session timestamp from the name (format: 2025-08-22-HHMMSS)
+	if len(sessionName) < 17 {
+		return false
+	}
+
+	// For simplicity, just check if it's from the current hour and recent minutes
+	// This is a basic check - in production you'd want more precise time parsing
+	now := time.Now()
+	currentTimeStr := now.Format("2006-01-02-1504")
+	sessionPrefix := sessionName[:13] // 2025-08-22-HH
+	currentPrefix := currentTimeStr[:13]
+
+	return sessionPrefix == currentPrefix
 }

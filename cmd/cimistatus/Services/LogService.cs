@@ -366,11 +366,28 @@ namespace Cimian.Status.Services
                 _liveProcess = processes[0];
                 
                 LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Found running managedsoftwareupdate.exe process (PID: {_liveProcess.Id})");
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Note: Cannot capture output from already running process");
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Use 'Run Now' button for live output capture, or monitor log file...");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Monitoring existing process (started by cimitrigger or service)");
+                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Switching to log file monitoring for live updates...");
                 
-                // Fall back to file monitoring since we can't capture output from existing process
-                return false;
+                // Monitor the existing process without trying to start another one
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _liveProcess.WaitForExitAsync();
+                        var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                        LogLineReceived?.Invoke(this, $"[{timestamp}] Process completed with exit code: {_liveProcess.ExitCode}");
+                        _isProcessTailing = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error monitoring process exit");
+                    }
+                });
+                
+                // Return true to indicate we successfully attached to an existing process
+                // This prevents the caller from trying to start another process
+                return true;
             }
             catch (Exception ex)
             {
