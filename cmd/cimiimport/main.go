@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -32,6 +33,47 @@ var (
 	configAuto     bool
 	logger         *logging.Logger
 )
+
+// parseVersion normalizes version strings to Cimian's standard YYYY.MM.DD format.
+// This handles cases where NuGet has stripped leading zeros (2025.8.22 -> 2025.08.22)
+// or converts 2-digit years to 4-digit years (25.8.22 -> 2025.08.22).
+func parseVersion(versionStr string) string {
+	if versionStr == "" {
+		return versionStr
+	}
+
+	parts := strings.Split(versionStr, ".")
+	if len(parts) != 3 {
+		// Not a date-based version, return as-is
+		return versionStr
+	}
+
+	year := parts[0]
+	month := parts[1]
+	day := parts[2]
+
+	// Convert 2-digit year to 4-digit year
+	if len(year) == 2 {
+		if yearInt, err := strconv.Atoi(year); err == nil {
+			// Assume years 00-50 are 20xx, 51-99 are 19xx
+			if yearInt <= 50 {
+				year = "20" + year
+			} else {
+				year = "19" + year
+			}
+		}
+	}
+
+	// Ensure month and day are zero-padded
+	if monthInt, err := strconv.Atoi(month); err == nil && monthInt >= 1 && monthInt <= 12 {
+		month = fmt.Sprintf("%02d", monthInt)
+	}
+	if dayInt, err := strconv.Atoi(day); err == nil && dayInt >= 1 && dayInt <= 31 {
+		day = fmt.Sprintf("%02d", dayInt)
+	}
+
+	return year + "." + month + "." + day
+}
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
 type PkgsInfo struct {
@@ -987,7 +1029,7 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		}
 
 		metadata.Title = name
-		metadata.Version = ver
+		metadata.Version = parseVersion(ver) // Normalize version to YYYY.MM.DD format
 		metadata.Developer = dev
 		metadata.Description = desc
 		metadata.InstallerType = "nupkg"
@@ -1012,7 +1054,7 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		name, ver, dev, desc, prodCode, upgCode := extract.MsiMetadata(packagePath)
 		metadata.Title = name
 		metadata.ID = name
-		metadata.Version = ver
+		metadata.Version = parseVersion(ver) // Normalize version to YYYY.MM.DD format
 		metadata.Developer = dev
 		metadata.Description = desc
 		metadata.InstallerType = "msi"
@@ -1034,9 +1076,10 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 
 		metadata.Title = parsePackageName(filepath.Base(packagePath))
 		metadata.ID = metadata.Title
-		metadata.Version = versionString
 		if err != nil {
 			metadata.Version = ""
+		} else {
+			metadata.Version = parseVersion(versionString) // Normalize version to YYYY.MM.DD format
 		}
 
 		if devErr == nil && devName != "" {
@@ -1115,7 +1158,7 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 
 	// read each field
 	m.ID = readLineWithDefault(reader, "Name", defaultID)
-	m.Version = readLineWithDefault(reader, "Version", defaultVersion)
+	m.Version = parseVersion(readLineWithDefault(reader, "Version", defaultVersion)) // Normalize version input
 	m.Developer = readLineWithDefault(reader, "Developer", defaultDeveloper)
 	m.Description = readLineWithDefault(reader, "Description", defaultDescription)
 	m.Category = readLineWithDefault(reader, "Category", defaultCategory)
