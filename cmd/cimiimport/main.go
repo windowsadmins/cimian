@@ -34,45 +34,60 @@ var (
 	logger         *logging.Logger
 )
 
-// parseVersion normalizes version strings to Cimian's standard YYYY.MM.DD format.
-// This handles cases where NuGet has stripped leading zeros (2025.8.22 -> 2025.08.22)
-// or converts 2-digit years to 4-digit years (25.8.22 -> 2025.08.22).
+// parseVersion handles version normalization for date-based versions while preserving other formats.
+// Date formats like YYYY.MM.DD or YYYY.MM.DD.HHmm are normalized to full format (YYYY.MM.DD).
+// All other version formats are passed through unchanged.
 func parseVersion(versionStr string) string {
 	if versionStr == "" {
 		return versionStr
 	}
 
 	parts := strings.Split(versionStr, ".")
-	if len(parts) != 3 {
-		// Not a date-based version, return as-is
-		return versionStr
-	}
 
-	year := parts[0]
-	month := parts[1]
-	day := parts[2]
+	// Handle date-based versions: YYYY.MM.DD or YYYY.MM.DD.HHmm
+	if len(parts) == 3 || len(parts) == 4 {
+		// Check if this looks like a date format by validating the first part as a year
+		if yearNum, err := strconv.Atoi(parts[0]); err == nil && yearNum >= 2000 && yearNum <= 2100 {
+			// Validate all parts are numeric for date format
+			var numericParts []int
+			allNumeric := true
+			for _, part := range parts {
+				if num, err := strconv.Atoi(part); err == nil {
+					numericParts = append(numericParts, num)
+				} else {
+					allNumeric = false
+					break
+				}
+			}
 
-	// Convert 2-digit year to 4-digit year
-	if len(year) == 2 {
-		if yearInt, err := strconv.Atoi(year); err == nil {
-			// Assume years 00-50 are 20xx, 51-99 are 19xx
-			if yearInt <= 50 {
-				year = "20" + year
-			} else {
-				year = "19" + year
+			if allNumeric && len(numericParts) >= 3 {
+				year := numericParts[0]
+				month := numericParts[1]
+				day := numericParts[2]
+
+				// Convert 2-digit year to 4-digit year
+				if year < 100 {
+					if year <= 50 {
+						year = 2000 + year
+					} else {
+						year = 1900 + year
+					}
+				}
+
+				// Ensure month and day are zero-padded for date-based versions
+				if len(numericParts) == 4 {
+					// 4-part date version: YYYY.MM.DD.HHmm
+					return fmt.Sprintf("%d.%02d.%02d.%d", year, month, day, numericParts[3])
+				} else {
+					// 3-part date version: YYYY.MM.DD
+					return fmt.Sprintf("%d.%02d.%02d", year, month, day)
+				}
 			}
 		}
 	}
 
-	// Ensure month and day are zero-padded
-	if monthInt, err := strconv.Atoi(month); err == nil && monthInt >= 1 && monthInt <= 12 {
-		month = fmt.Sprintf("%02d", monthInt)
-	}
-	if dayInt, err := strconv.Atoi(day); err == nil && dayInt >= 1 && dayInt <= 31 {
-		day = fmt.Sprintf("%02d", dayInt)
-	}
-
-	return year + "." + month + "." + day
+	// For all other version formats (like 1.1.2, 1.2.3.4, etc.), pass through unchanged
+	return versionStr
 }
 
 // PkgsInfo represents the structure of the pkginfo YAML file.
