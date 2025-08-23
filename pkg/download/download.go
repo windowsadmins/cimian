@@ -5,7 +5,6 @@ package download
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,7 +35,7 @@ func (e NonRetryableError) Unwrap() error {
 
 const (
 	CacheExpirationDays = 30
-	Timeout             = 10 * time.Minute // Increased back to 10 minutes for large files
+	Timeout             = 10 * time.Minute  // Increased back to 10 minutes for large files
 	LargeFileThreshold  = 100 * 1024 * 1024 // 100MB threshold for large files
 )
 
@@ -287,56 +286,142 @@ func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configur
 	}
 
 	resultPaths := make(map[string]string)
+	var downloadErrors []error
+	successCount := 0
+	failureCount := 0
 
 	for name, url := range downloadItems {
 		if url == "" {
-			logging.Warn("Empty URL for package", "package", name)
+			logging.Warn("Empty URL for package, skipping", "package", name)
+			failureCount++
 			continue
 		}
 		logging.Debug("Processing download item", "name", name, "url", url)
 
-		// Call DownloadFile
+		// Call DownloadFile - individual failures should not stop the entire batch
 		if err := DownloadFile(url, "", cfg); err != nil {
-			logging.Error("Failed to download", "name", name, "error", err)
-
-			// Check if this is a non-retryable error and propagate it accordingly
-			var nonRetryableErr NonRetryableError
-			if errors.As(err, &nonRetryableErr) {
-				return nil, NonRetryableError{Err: fmt.Errorf("failed to download %s: %v", name, err)}
-			}
-
-			return nil, fmt.Errorf("failed to download %s: %v", name, err)
+			logging.Error("Failed to download item, continuing with remaining downloads",
+				"name", name, "url", url, "error", err)
+			downloadErrors = append(downloadErrors, fmt.Errorf("failed to download %s: %v", name, err))
+			failureCount++
+			continue // Continue processing other downloads - this is critical!
 		}
 
 		// Reconstruct exact local path the file ended up in (MUST match DownloadFile logic)
-		subPath := getSubPathFromURL(url, cfg)
-		localFilePath := filepath.Join(cfg.CachePath, subPath)
-		localFilePath = filepath.Clean(localFilePath)
+		localFilePath := getActualFilePathFromURL(url, cfg)
+
+		// Verify the file actually exists at the expected location
+		if _, err := os.Stat(localFilePath); err != nil {
+			logging.Error("Downloaded file not found at expected location, continuing with remaining downloads",
+				"name", name, "expected_path", localFilePath, "error", err)
+			downloadErrors = append(downloadErrors, fmt.Errorf("downloaded file not found for %s at %s: %v", name, localFilePath, err))
+			failureCount++
+			continue
+		}
 
 		resultPaths[name] = localFilePath
-		logging.Info("Successfully downloaded", "name", name, "path", localFilePath)
+		successCount++
+		logging.Info("Successfully processed download item", "name", name, "path", localFilePath)
 	}
 
+	// Log summary of download results
+	totalCount := len(downloadItems)
+	logging.Info("Download batch completed",
+		"total_items", totalCount,
+		"successful", successCount,
+		"failed", failureCount)
+
+	// Return partial results even if some downloads failed - this allows installation to proceed
+	// with whatever was successfully downloaded
+	if len(downloadErrors) > 0 {
+		var combinedErr error
+		if len(downloadErrors) == 1 {
+			combinedErr = downloadErrors[0]
+		} else {
+			combinedErr = fmt.Errorf("multiple download failures (%d out of %d items failed): %v",
+				failureCount, totalCount, downloadErrors)
+		}
+
+		// Log detailed error information but still return partial results
+		logging.Warn("Some downloads failed but continuing with successful ones",
+			"successful_count", successCount,
+			"failed_count", failureCount,
+			"partial_results", len(resultPaths))
+
+		return resultPaths, combinedErr
+	}
+
+	logging.Info("All downloads completed successfully", "count", successCount)
 	return resultPaths, nil
 }
 
-// getSubPathFromURL mirrors the logic in DownloadFile to consistently generate paths
-func getSubPathFromURL(url string, cfg *config.Configuration) string {
-	lowerURL := strings.ToLower(url)
-	var subPath string
-
-	switch {
-	case strings.Contains(lowerURL, "/catalogs/"):
-		subPath = strings.SplitN(url, "/catalogs/", 2)[1]
-	case strings.Contains(lowerURL, "/manifests/"):
-		subPath = strings.SplitN(url, "/manifests/", 2)[1]
-	case strings.Contains(lowerURL, "/pkgs/"):
-		idx := strings.Index(lowerURL, "/pkgs/")
-		subPath = url[idx+len("/pkgs/"):]
-	default:
-		subPath = filepath.Base(url)
+// getActualFilePathFromURL reconstructs the exact full path where DownloadFile places files
+// This function MUST exactly mirror the complete logic in DownloadFile including base directory selection
+func getActualFilePathFromURL(url string, cfg *config.Configuration) string {
+	// Set defaults exactly like DownloadFile
+	if cfg.CatalogsPath == "" {
+		cfg.CatalogsPath = `C:\ProgramData\ManagedInstalls\catalogs`
 	}
-	return filepath.FromSlash(subPath)
+	if cfg.CachePath == "" {
+		cfg.CachePath = `C:\ProgramData\ManagedInstalls\Cache`
+	}
+	manifestsPath := `C:\ProgramData\ManagedInstalls\manifests`
+
+	// Apply the same logic as DownloadFile
+	lowerURL := strings.ToLower(url)
+	isCatalog := strings.Contains(lowerURL, "/catalogs/")
+	isManifest := strings.Contains(lowerURL, "/manifests/")
+	isPackage := (!isCatalog && !isManifest)
+
+	// Apply URL modification logic (same as DownloadFile)
+	if isPackage && strings.HasPrefix(lowerURL, strings.ToLower(cfg.SoftwareRepoURL)) {
+		if !strings.Contains(lowerURL, "/pkgs/") {
+			trimmedRepo := strings.TrimSuffix(cfg.SoftwareRepoURL, "/")
+			url = trimmedRepo + "/pkgs" + strings.TrimPrefix(url, trimmedRepo)
+			lowerURL = strings.ToLower(url)
+		}
+	}
+
+	// Decide base directory exactly like DownloadFile
+	var baseDir string
+	if isManifest {
+		baseDir = manifestsPath
+	} else if isCatalog {
+		baseDir = cfg.CatalogsPath
+	} else {
+		baseDir = cfg.CachePath
+	}
+
+	// Determine subPath exactly like DownloadFile
+	var subPath string
+	switch {
+	case isManifest:
+		parts := strings.SplitN(url, "/manifests/", 2)
+		if len(parts) == 2 {
+			subPath = parts[1]
+		} else {
+			subPath = filepath.Base(url)
+		}
+
+	case isCatalog:
+		parts := strings.SplitN(url, "/catalogs/", 2)
+		if len(parts) == 2 {
+			subPath = parts[1]
+		} else {
+			subPath = filepath.Base(url)
+		}
+
+	default:
+		if idx := strings.Index(lowerURL, "/pkgs/"); idx >= 0 {
+			subPath = url[idx+len("/pkgs/"):]
+		} else {
+			subPath = filepath.Base(url)
+		}
+	}
+
+	// Build and return the full path exactly like DownloadFile
+	dest := filepath.Join(baseDir, subPath)
+	return filepath.Clean(dest)
 }
 
 // calculateHash returns the SHA256 hex of a file.
