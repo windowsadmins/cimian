@@ -537,7 +537,10 @@ function Install-MsiPackage {
     if (Get-Command "sudo" -ErrorAction SilentlyContinue) {
         Write-Log "Using 'sudo' for elevation..." "INFO"
         try {
-            $sudoArgs = @("msiexec.exe", "/i", "`"$MsiPath`"", "/qn", "/l*v", "`"$env:TEMP\cimian_install.log`"")
+            # Ensure we use absolute path for sudo as well
+            $absoluteMsiPath = (Resolve-Path $MsiPath).Path
+            Write-Log "Installing MSI from absolute path via sudo: $absoluteMsiPath" "INFO"
+            $sudoArgs = @("msiexec.exe", "/i", "`"$absoluteMsiPath`"", "/qn", "/l*v", "`"$env:TEMP\cimian_install.log`"")
             $sudoProcess = Start-Process -FilePath "sudo" -ArgumentList $sudoArgs -Wait -PassThru
             if ($sudoProcess.ExitCode -eq 0) {
                 Write-Log "MSI installation completed successfully via sudo." "SUCCESS"
@@ -1949,23 +1952,44 @@ if ($Install) {
     Write-Log "Install flag detected. Attempting to install MSI package..." "INFO"
     # Determine the current architecture for installation
     $currentArch = if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") { "x64" } else { "arm64" }
+    
+    # If RELEASE_VERSION is not set, try to detect it from existing MSI files
+    if (-not $env:RELEASE_VERSION) {
+        $existingMsi = Get-ChildItem -Path "release" -Filter "Cimian-$currentArch-*.msi" | Select-Object -First 1
+        if ($existingMsi) {
+            # Extract version from filename: Cimian-arm64-2025.08.22.1948.msi -> 2025.08.22.1948
+            if ($existingMsi.Name -match "Cimian-$currentArch-(.+)\.msi") {
+                $env:RELEASE_VERSION = $matches[1]
+                Write-Log "Detected RELEASE_VERSION from existing MSI: $env:RELEASE_VERSION" "INFO"
+            }
+        }
+    }
+    
     $msiToInstall = "release\Cimian-$currentArch-$env:RELEASE_VERSION.msi"
     # Check if the MSI for current architecture exists
     if (-not (Test-Path $msiToInstall)) {
         Write-Log "MSI package for current architecture ($currentArch) not found at '$msiToInstall'" "WARNING"
-        # Try the other architecture as fallback
-        $fallbackArch = if ($currentArch -eq "x64") { "arm64" } else { "x64" }
-        $fallbackMsi = "release\Cimian-$fallbackArch-$env:RELEASE_VERSION.msi"
-        if (Test-Path $fallbackMsi) {
-            Write-Log "Using fallback MSI for $fallbackArch architecture: $fallbackMsi" "INFO"
-            $msiToInstall = $fallbackMsi
+        
+        # Try to find any MSI for current architecture with any version
+        $currentArchMsis = Get-ChildItem -Path "release" -Filter "Cimian-$currentArch-*.msi"
+        if ($currentArchMsis.Count -gt 0) {
+            $msiToInstall = $currentArchMsis[0].FullName
+            Write-Log "Found MSI for current architecture: $($currentArchMsis[0].Name)" "INFO"
         } else {
-            Write-Log "No MSI packages found for installation. Available files in release:" "ERROR"
-            Get-ChildItem -Path "release" -Filter "*.msi" | ForEach-Object {
-                Write-Log "  $($_.Name)" "INFO"
+            # Try the other architecture as fallback
+            $fallbackArch = if ($currentArch -eq "x64") { "arm64" } else { "x64" }
+            $fallbackMsis = Get-ChildItem -Path "release" -Filter "Cimian-$fallbackArch-*.msi"
+            if ($fallbackMsis.Count -gt 0) {
+                $msiToInstall = $fallbackMsis[0].FullName
+                Write-Log "Using fallback MSI for $fallbackArch architecture: $($fallbackMsis[0].Name)" "INFO"
+            } else {
+                Write-Log "No MSI packages found for installation. Available files in release:" "ERROR"
+                Get-ChildItem -Path "release" -Filter "*.msi" | ForEach-Object {
+                    Write-Log "  $($_.Name)" "INFO"
+                }
+                Write-Log "Installation aborted." "ERROR"
+                exit 1
             }
-            Write-Log "Installation aborted." "ERROR"
-            exit 1
         }
     }
     
