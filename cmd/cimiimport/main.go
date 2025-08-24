@@ -104,6 +104,8 @@ type PkgsInfo struct {
 	SupportedArch        []string           `yaml:"supported_architectures"`
 	UnattendedInstall    bool               `yaml:"unattended_install"`
 	UnattendedUninstall  bool               `yaml:"unattended_uninstall"`
+	Requires             []string           `yaml:"requires,omitempty"`
+	UpdateFor            []string           `yaml:"update_for,omitempty"`
 	MinOSVersion         string             `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
 	MaxOSVersion         string             `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
 	Installer            *Installer         `yaml:"installer"`
@@ -225,20 +227,24 @@ type ScriptPaths struct {
 
 // Metadata holds extracted metadata.
 type Metadata struct {
-	Title         string
-	ID            string
-	Version       string
-	Developer     string
-	Category      string
-	Description   string
-	ProductCode   string
-	UpgradeCode   string
-	Architecture  string
-	SupportedArch []string
-	InstallerType string
-	Installs      []InstallItem
-	Catalogs      []string
-	RepoPath      string
+	Title               string
+	ID                  string
+	Version             string
+	Developer           string
+	Category            string
+	Description         string
+	ProductCode         string
+	UpgradeCode         string
+	Architecture        string
+	SupportedArch       []string
+	InstallerType       string
+	Installs            []InstallItem
+	Catalogs            []string
+	RepoPath            string
+	UnattendedInstall   bool
+	UnattendedUninstall bool
+	Requires            []string
+	UpdateFor           []string
 }
 
 // NoQuoteEmptyString ensures empty strings appear without quotes.
@@ -858,6 +864,12 @@ func cimianImport(
 				scripts.UninstallCheck = "template"
 			}
 
+			// Bring forward additional fields from template
+			metadata.UnattendedInstall = existingPkg.UnattendedInstall
+			metadata.UnattendedUninstall = existingPkg.UnattendedUninstall
+			metadata.Requires = existingPkg.Requires
+			metadata.UpdateFor = existingPkg.UpdateFor
+
 			// Extract repo path from installer location
 			if existingPkg.Installer != nil && existingPkg.Installer.Location != "" {
 				metadata.RepoPath = filepath.Dir(existingPkg.Installer.Location)
@@ -923,8 +935,10 @@ func cimianImport(
 			UpgradeCode: strings.TrimSpace(metadata.UpgradeCode),
 		},
 		Uninstaller:         uninstaller,
-		UnattendedInstall:   false,
-		UnattendedUninstall: false,
+		UnattendedInstall:   metadata.UnattendedInstall,
+		UnattendedUninstall: metadata.UnattendedUninstall,
+		Requires:            metadata.Requires,
+		UpdateFor:           metadata.UpdateFor,
 
 		PreinstallScript:     preinstallScriptContent,
 		PostinstallScript:    postinstallScriptContent,
