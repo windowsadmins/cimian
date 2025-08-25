@@ -981,17 +981,26 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 }
 
 func runMSIXInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
-	args := []string{localFile}
-	logging.Info("Invoking MSIX install with timeout", "msix", localFile, "item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+	// Silent installation arguments for MSIX packages
+	args := []string{
+		localFile,
+		"-AllowUnsigned",            // Skip signature verification prompts
+		"-ForceApplicationShutdown", // Close app if running
+		"-Volume", "C:",             // Specify volume to avoid selection dialogs
+		"-ForceUpdateFromAnyVersion", // Allow updates from any version
+		"-DisableDevelopmentMode",    // Ensure not in dev mode
+	}
+
+	logging.Info("Invoking MSIX install with silent arguments and timeout", "msix", localFile, "item", item.Name, "args", args, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
 
 	// Use timeout-aware command execution
 	output, err := runCMDWithTimeout("Add-AppxPackage", args, cfg.InstallerTimeoutMinutes)
 
 	if err != nil {
 		if strings.Contains(err.Error(), "timed out") {
-			logging.Error("MSIX installer timed out - likely waiting for user interaction",
+			logging.Error("MSIX installer timed out despite silent arguments",
 				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
-			return output, fmt.Errorf("MSIX installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
+			return output, fmt.Errorf("MSIX installer timed out after %d minutes - check if package requires additional privileges or has dependency issues", cfg.InstallerTimeoutMinutes)
 		}
 		logging.Error("MSIX installation failed", "item", item.Name, "error", err, "output", output)
 		return output, err
