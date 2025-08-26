@@ -86,8 +86,16 @@ function Test-Command {
 function Get-SigningCertThumbprint {
     [OutputType([string])]
     param()
-    Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
-       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint
+    # Check both CurrentUser and LocalMachine certificate stores
+    $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+       Sort-Object NotAfter -Descending | Select-Object -First 1
+    
+    if (-not $cert) {
+        $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+           Sort-Object NotAfter -Descending | Select-Object -First 1
+    }
+    
+    return $cert.Thumbprint
 }
 function Test-SignTool {
     $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
@@ -361,6 +369,8 @@ function Invoke-SignArtifact {
         $attempt++
         foreach ($tsa in $tsas) {
             & signtool.exe sign `
+                /s My `
+                /sm `
                 /sha1 $Thumbprint `
                 /fd SHA256 `
                 /td SHA256 `
