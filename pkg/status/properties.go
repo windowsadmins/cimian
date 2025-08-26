@@ -56,9 +56,9 @@ func GetFileMetadata(path string) WindowsMetadata {
 	}
 
 	rawVersion := fixed.FileVersion()
-	finalMetadata.versionMajor = int(rawVersion & 0xFFFF000000000000 >> 48)
-	finalMetadata.versionMinor = int(rawVersion & 0x0000FFFF00000000 >> 32)
-	finalMetadata.versionPatch = int(rawVersion & 0x00000000FFFF0000 >> 16)
+	finalMetadata.versionMajor = int((rawVersion & 0xFFFF000000000000) >> 48)
+	finalMetadata.versionMinor = int((rawVersion & 0x0000FFFF00000000) >> 32)
+	finalMetadata.versionPatch = int((rawVersion & 0x00000000FFFF0000) >> 16)
 	finalMetadata.versionBuild = int(rawVersion & 0x000000000000FFFF)
 
 	finalMetadata.versionString = fmt.Sprintf("%d.%d.%d.%d",
