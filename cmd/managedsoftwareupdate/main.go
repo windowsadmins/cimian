@@ -415,15 +415,13 @@ func main() {
 		logging.Info("→ Cleaning catalogs directory", "path", catalogsDir)
 	}
 	if err := cleanManifestsCatalogsPreRun(catalogsDir); err != nil {
-		logging.Error("Failed to clean catalogs directory", "error", err)
-		os.Exit(1)
+		logging.Warn("Failed to clean catalogs directory, continuing anyway", "error", err)
 	}
 	if verbosity >= 2 {
 		logging.Info("→ Cleaning manifests directory", "path", manifestsDir)
 	}
 	if err := cleanManifestsCatalogsPreRun(manifestsDir); err != nil {
-		logging.Error("Failed to clean manifests directory", "error", err)
-		os.Exit(1)
+		logging.Warn("Failed to clean manifests directory, continuing anyway", "error", err)
 	}
 
 	// Handle system signals for graceful shutdown.
@@ -827,6 +825,12 @@ func main() {
 		} else {
 			logging.Info("--item flag with explicit --checkonly: will check only specified items")
 		}
+	}
+
+	// Special fallback for --manifest flag: if no catalogs were loaded from the manifest, use Production
+	if *manifestTarget != "" && len(cfg.Catalogs) == 0 {
+		cfg.Catalogs = []string{"Production"}
+		logging.Info("No catalogs found in manifest when using --manifest flag, falling back to Production catalog")
 	}
 
 	logging.Info("----------------------------------------------------------------------")
