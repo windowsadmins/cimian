@@ -5,6 +5,8 @@ package status
 import (
 	"bytes"
 	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -400,7 +402,7 @@ func checkPath(catalogItem catalog.Item) (bool, error) {
 		}
 
 		if checkFile.Hash != "" && !download.Verify(path, checkFile.Hash) {
-			logging.Info("MD5 mismatch, installation/update required", "item", catalogItem.Name, "path", path)
+			logging.Info("Hash mismatch, installation/update required", "item", catalogItem.Name, "path", path)
 			return true, nil
 		}
 
@@ -457,32 +459,32 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 				return true, nil
 			}
 
-			var md5VerificationPassed bool
+			var hashVerificationPassed bool
 			if install.MD5Checksum != "" {
-				match, computedMD5, err := verifyMD5WithHash(install.Path, install.MD5Checksum)
+				match, computedHash, err := verifyMD5WithHash(install.Path, install.MD5Checksum)
 				if err != nil {
-					logging.Warn("MD5 verification error",
+					logging.Warn("Hash verification error",
 						"item", item.Name, "path", install.Path, "error", err)
 					return true, err
 				}
 				if !match {
-					logging.Info("Installs array verification failed - MD5 mismatch, reinstallation needed",
+					logging.Info("Installs array verification failed - hash mismatch, reinstallation needed",
 						"item", item.Name,
 						"path", install.Path,
-						"localHash", computedMD5,
+						"localHash", computedHash,
 						"expectedHash", install.MD5Checksum,
 					)
 					return true, nil
 				}
-				md5VerificationPassed = true
-				logging.Info("MD5 verification passed",
+				hashVerificationPassed = true
+				logging.Info("Hash verification passed",
 					"item", item.Name, "path", install.Path, "hash", install.MD5Checksum)
 			}
 
 			if install.Version != "" {
 				fileVersion, err := getFileVersion(install.Path)
 				if err != nil || fileVersion == "" {
-					if md5VerificationPassed {
+					if hashVerificationPassed {
 						logging.Info("File version metadata unavailable - executable doesn't have embedded version info (normal for some executables), but MD5 verification passed - accepting installation",
 							"item", item.Name, "path", install.Path, "error", err)
 					} else {
@@ -491,8 +493,8 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 						return true, nil
 					}
 				} else if IsOlderVersion(fileVersion, install.Version) {
-					if md5VerificationPassed {
-						logging.Info("File version appears outdated, but MD5 verification passed - accepting installation",
+					if hashVerificationPassed {
+						logging.Info("File version appears outdated, but hash verification passed - accepting installation",
 							"item", item.Name, "path", install.Path,
 							"fileVersion", fileVersion,
 							"expectedVersion", install.Version)
@@ -603,7 +605,7 @@ func checkUninstaller(item catalog.Item, installType string) (bool, error) {
 	return false, nil
 }
 
-// verifyMD5WithHash computes MD5 hash and returns match status and computed hash explicitly.
+// verifyMD5WithHash computes hash (MD5, SHA1, or SHA256) based on expected hash length and returns match status and computed hash explicitly.
 func verifyMD5WithHash(filePath, expected string) (bool, string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -611,12 +613,38 @@ func verifyMD5WithHash(filePath, expected string) (bool, string, error) {
 	}
 	defer f.Close()
 
-	hasher := md5.New()
-	if _, err := io.Copy(hasher, f); err != nil {
-		return false, "", err
+	// Detect hash type by length and compute appropriate hash
+	expectedLen := len(expected)
+	
+	var computed string
+	switch expectedLen {
+	case 32: // MD5
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, f); err != nil {
+			return false, "", err
+		}
+		computed = hex.EncodeToString(hasher.Sum(nil))
+	case 40: // SHA1
+		hasher := sha1.New()
+		if _, err := io.Copy(hasher, f); err != nil {
+			return false, "", err
+		}
+		computed = hex.EncodeToString(hasher.Sum(nil))
+	case 64: // SHA256
+		hasher := sha256.New()
+		if _, err := io.Copy(hasher, f); err != nil {
+			return false, "", err
+		}
+		computed = hex.EncodeToString(hasher.Sum(nil))
+	default:
+		// Default to MD5 for backward compatibility
+		hasher := md5.New()
+		if _, err := io.Copy(hasher, f); err != nil {
+			return false, "", err
+		}
+		computed = hex.EncodeToString(hasher.Sum(nil))
 	}
 
-	computed := hex.EncodeToString(hasher.Sum(nil))
 	return strings.EqualFold(computed, expected), computed, nil
 }
 
