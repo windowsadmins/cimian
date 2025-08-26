@@ -1319,14 +1319,21 @@ func runPS1FromScript(item catalog.Item, localFile, cachePath string) (string, e
 }
 
 // runCMD runs a command, capturing stdout/stderr. Non-zero exit yields an error.
+// On Windows, ensures proper elevation inheritance for admin privileges.
 func runCMD(command string, arguments []string) (string, error) {
 	logging.Debug("runCMD => about to run",
 		"command", command, "args", strings.Join(arguments, " "))
+
+	// On Windows, use PowerShell wrapper to ensure proper elevation inheritance
+	if runtime.GOOS == "windows" {
+		return runCMDWithWindowsElevation(command, arguments)
+	}
 
 	cmd := exec.Command(command, arguments...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
 	err := cmd.Run()
 	outStr := stdout.String()
 	errStr := stderr.String()
@@ -1349,10 +1356,78 @@ func runCMD(command string, arguments []string) (string, error) {
 	return outStr, nil
 }
 
+// runCMDWithWindowsElevation runs commands through PowerShell to ensure proper elevation inheritance
+func runCMDWithWindowsElevation(command string, arguments []string) (string, error) {
+	// Build the command with proper argument escaping
+	var argBuilder strings.Builder
+	for i, arg := range arguments {
+		if i > 0 {
+			argBuilder.WriteString(" ")
+		}
+		// Escape arguments that contain spaces or special characters
+		if strings.Contains(arg, " ") || strings.Contains(arg, "'") || strings.Contains(arg, "\"") {
+			// Use PowerShell-style escaping
+			escaped := strings.ReplaceAll(arg, "'", "''")
+			argBuilder.WriteString("'")
+			argBuilder.WriteString(escaped)
+			argBuilder.WriteString("'")
+		} else {
+			argBuilder.WriteString(arg)
+		}
+	}
+
+	// Create PowerShell command that inherits elevation properly
+	psCommand := fmt.Sprintf("& '%s' %s", command, argBuilder.String())
+	
+	logging.Debug("runCMDWithWindowsElevation => PowerShell command",
+		"psCommand", psCommand)
+
+	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-Command", psCommand)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Configure for proper Windows elevation inheritance
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
+		// No special creation flags - let PowerShell handle elevation inheritance
+	}
+
+	err := cmd.Run()
+	outStr := stdout.String()
+	errStr := stderr.String()
+
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode := exitErr.ExitCode()
+			logging.Error("PowerShell command failed",
+				"command", command, "args", arguments, "exitCode", exitCode, 
+				"stderr", errStr, "psCommand", psCommand)
+			// Include stderr in the error message for better debugging
+			if errStr != "" {
+				return outStr, fmt.Errorf("command failed exit code=%d: %s", exitCode, strings.TrimSpace(errStr))
+			}
+			return outStr, fmt.Errorf("command failed exit code=%d", exitCode)
+		}
+		logging.Error("Failed to run PowerShell command",
+			"command", command, "args", arguments, "error", err, "psCommand", psCommand)
+		return outStr, err
+	}
+	
+	logging.Debug("PowerShell command completed successfully",
+		"command", command, "args", arguments, "output", outStr)
+	return outStr, nil
+}
+
 // runCMDWithTimeout runs a command with a timeout to prevent hanging on interactive installers
 func runCMDWithTimeout(command string, arguments []string, timeoutMinutes int) (string, error) {
 	logging.Debug("runCMDWithTimeout => about to run with timeout",
 		"command", command, "args", strings.Join(arguments, " "), "timeoutMinutes", timeoutMinutes)
+
+	// On Windows, use PowerShell wrapper to ensure proper elevation inheritance
+	if runtime.GOOS == "windows" {
+		return runCMDWithTimeoutWindows(command, arguments, timeoutMinutes)
+	}
 
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
@@ -1362,14 +1437,6 @@ func runCMDWithTimeout(command string, arguments []string, timeoutMinutes int) (
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
-	// Set up process attributes to hide console window and prevent GUI inheritance
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			HideWindow:    true,
-			CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP, // Prevent GUI inheritance
-		}
-	}
 
 	err := cmd.Run()
 	outStr := stdout.String()
@@ -1397,6 +1464,80 @@ func runCMDWithTimeout(command string, arguments []string, timeoutMinutes int) (
 			"command", command, "args", arguments, "error", err)
 		return outStr, err
 	}
+	return outStr, nil
+}
+
+// runCMDWithTimeoutWindows runs commands through PowerShell with timeout on Windows
+func runCMDWithTimeoutWindows(command string, arguments []string, timeoutMinutes int) (string, error) {
+	// Build the command with proper argument escaping
+	var argBuilder strings.Builder
+	for i, arg := range arguments {
+		if i > 0 {
+			argBuilder.WriteString(" ")
+		}
+		// Escape arguments that contain spaces or special characters
+		if strings.Contains(arg, " ") || strings.Contains(arg, "'") || strings.Contains(arg, "\"") {
+			// Use PowerShell-style escaping
+			escaped := strings.ReplaceAll(arg, "'", "''")
+			argBuilder.WriteString("'")
+			argBuilder.WriteString(escaped)
+			argBuilder.WriteString("'")
+		} else {
+			argBuilder.WriteString(arg)
+		}
+	}
+
+	// Create PowerShell command that inherits elevation properly
+	psCommand := fmt.Sprintf("& '%s' %s", command, argBuilder.String())
+	
+	logging.Debug("runCMDWithTimeoutWindows => PowerShell command",
+		"psCommand", psCommand, "timeoutMinutes", timeoutMinutes)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-ExecutionPolicy", "Bypass", "-Command", psCommand)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Set up process attributes to hide console window and prevent GUI inheritance
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP, // Prevent GUI inheritance
+	}
+
+	err := cmd.Run()
+	outStr := stdout.String()
+	errStr := stderr.String()
+
+	if err != nil {
+		// Check if it was a timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			logging.Error("PowerShell command timed out after timeout period",
+				"command", command, "args", arguments, "timeoutMinutes", timeoutMinutes, "psCommand", psCommand)
+			return outStr, fmt.Errorf("installer timed out after %d minutes - likely waiting for user interaction", timeoutMinutes)
+		}
+
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode := exitErr.ExitCode()
+			logging.Error("PowerShell command failed",
+				"command", command, "args", arguments, "exitCode", exitCode, 
+				"stderr", errStr, "psCommand", psCommand)
+			// Include stderr in the error message for better debugging
+			if errStr != "" {
+				return outStr, fmt.Errorf("command failed exit code=%d: %s", exitCode, strings.TrimSpace(errStr))
+			}
+			return outStr, fmt.Errorf("command failed exit code=%d", exitCode)
+		}
+		logging.Error("Failed to run PowerShell command with timeout",
+			"command", command, "args", arguments, "error", err, "psCommand", psCommand)
+		return outStr, err
+	}
+	
+	logging.Debug("PowerShell command with timeout completed successfully",
+		"command", command, "args", arguments, "output", outStr, "timeoutMinutes", timeoutMinutes)
 	return outStr, nil
 }
 
