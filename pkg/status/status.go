@@ -457,6 +457,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 				return true, nil
 			}
 
+			var md5VerificationPassed bool
 			if install.MD5Checksum != "" {
 				match, computedMD5, err := verifyMD5WithHash(install.Path, install.MD5Checksum)
 				if err != nil {
@@ -473,22 +474,36 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					)
 					return true, nil
 				}
+				md5VerificationPassed = true
+				logging.Info("MD5 verification passed",
+					"item", item.Name, "path", install.Path, "hash", install.MD5Checksum)
 			}
 
 			if install.Version != "" {
 				fileVersion, err := getFileVersion(install.Path)
 				if err != nil || fileVersion == "" {
-					logging.Info("File version metadata unavailable or unreadable, action needed",
-						"item", item.Name, "path", install.Path, "error", err)
-					return true, nil
-				}
-				if IsOlderVersion(fileVersion, install.Version) {
-					logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
-						"item", item.Name, "path", install.Path,
-						"fileVersion", fileVersion,
-						"expectedVersion", install.Version,
-					)
-					return true, nil
+					if md5VerificationPassed {
+						logging.Info("File version metadata unavailable - executable doesn't have embedded version info (normal for some executables), but MD5 verification passed - accepting installation",
+							"item", item.Name, "path", install.Path, "error", err)
+					} else {
+						logging.Info("File version metadata unavailable or unreadable, action needed",
+							"item", item.Name, "path", install.Path, "error", err)
+						return true, nil
+					}
+				} else if IsOlderVersion(fileVersion, install.Version) {
+					if md5VerificationPassed {
+						logging.Info("File version appears outdated, but MD5 verification passed - accepting installation",
+							"item", item.Name, "path", install.Path,
+							"fileVersion", fileVersion,
+							"expectedVersion", install.Version)
+					} else {
+						logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
+							"item", item.Name, "path", install.Path,
+							"fileVersion", fileVersion,
+							"expectedVersion", install.Version,
+						)
+						return true, nil
+					}
 				}
 			}
 		} else if strings.ToLower(install.Type) == "directory" {
