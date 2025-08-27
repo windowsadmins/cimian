@@ -84,18 +84,30 @@ function Test-Command {
     return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
 }
 function Get-SigningCertThumbprint {
-    [OutputType([string])]
+    [OutputType([hashtable])]
     param()
     # Check both CurrentUser and LocalMachine certificate stores
     $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
        Sort-Object NotAfter -Descending | Select-Object -First 1
     
-    if (-not $cert) {
-        $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
-           Sort-Object NotAfter -Descending | Select-Object -First 1
+    if ($cert) {
+        return @{
+            Thumbprint = $cert.Thumbprint
+            Store = "CurrentUser"
+        }
     }
     
-    return $cert.Thumbprint
+    $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+       Sort-Object NotAfter -Descending | Select-Object -First 1
+    
+    if ($cert) {
+        return @{
+            Thumbprint = $cert.Thumbprint
+            Store = "LocalMachine"
+        }
+    }
+    
+    return $null
 }
 function Test-SignTool {
     $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
@@ -224,9 +236,10 @@ function Invoke-Retry {
 $autoDetectedThumbprint = $null
 if (-not $Sign -and -not $NoSign -and -not $Thumbprint) {
     try {
-        $autoDetectedThumbprint = Get-SigningCertThumbprint
-        if ($autoDetectedThumbprint) {
-            Write-Log "Auto-detected enterprise certificate $autoDetectedThumbprint - will sign binaries for security." "INFO"
+        $certInfo = Get-SigningCertThumbprint
+        if ($certInfo) {
+            $autoDetectedThumbprint = $certInfo.Thumbprint
+            Write-Log "Auto-detected enterprise certificate $autoDetectedThumbprint in $($certInfo.Store) store - will sign binaries for security." "INFO"
             $Sign = $true
             $Thumbprint = $autoDetectedThumbprint
         } else {
@@ -290,13 +303,13 @@ if ($NoSign) {
 if ($Sign) {
     Test-SignTool
     if (-not $Thumbprint) {
-        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
-       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint)
-        if (-not $Thumbprint) {
+        $certInfo = Get-SigningCertThumbprint
+        if (-not $certInfo) {
             Write-Log "No valid EmilyCarrU certificate with a private key found - aborting." "ERROR"
             exit 1
         }
-        Write-Log "Auto-selected signing cert $Thumbprint" "INFO"
+        $Thumbprint = $certInfo.Thumbprint
+        Write-Log "Auto-selected signing cert $Thumbprint from $($certInfo.Store) store" "INFO"
     } else {
         Write-Log "Using signing certificate $Thumbprint" "INFO"
     }
@@ -353,6 +366,7 @@ function Invoke-SignArtifact {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Thumbprint,
+        [string]$Store = "LocalMachine",
         [int]$MaxAttempts = 4
     )
 
@@ -364,19 +378,23 @@ function Invoke-SignArtifact {
         'http://timestamp.entrust.net/TSS/RFC3161sha2TS'
     )
 
+    # Set store parameter based on which store the certificate is in
+    $storeParam = if ($Store -eq "CurrentUser") { "/s", "My" } else { "/s", "My", "/sm" }
+
     $attempt = 0
     while ($attempt -lt $MaxAttempts) {
         $attempt++
         foreach ($tsa in $tsas) {
-            & signtool.exe sign `
-                /s My `
-                /sm `
-                /sha1 $Thumbprint `
-                /fd SHA256 `
-                /td SHA256 `
-                /tr $tsa `
-                /v `
-                "$Path"
+            $signArgs = @("sign") + $storeParam + @(
+                "/sha1", $Thumbprint,
+                "/fd", "SHA256",
+                "/td", "SHA256",
+                "/tr", $tsa,
+                "/v",
+                $Path
+            )
+            
+            & signtool.exe @signArgs
             $code = $LASTEXITCODE
 
             if ($code -eq 0) {
@@ -470,7 +488,11 @@ function signPackage {
     
     # Use the new hardened signing function
     try {
-        Invoke-SignArtifact -Path $FilePath -Thumbprint $Thumbprint
+        # Get certificate store information
+        $certInfo = Get-SigningCertThumbprint
+        $store = if ($certInfo) { $certInfo.Store } else { "LocalMachine" }
+        
+        Invoke-SignArtifact -Path $FilePath -Thumbprint $Thumbprint -Store $store
         Write-Log "Signed '$FilePath' successfully" "SUCCESS"
         return $true
     }
@@ -489,8 +511,8 @@ function signNuget {
     }
     $tsa = 'http://timestamp.digicert.com'
     if (-not $Thumbprint) {
-        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
-       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint)
+        $certInfo = Get-SigningCertThumbprint
+        $Thumbprint = if ($certInfo) { $certInfo.Thumbprint } else { $null }
     }
     if (-not $Thumbprint) {
         Write-Log "No enterprise code-signing cert present - skipping NuGet repo sign." "WARNING"
@@ -677,13 +699,13 @@ if ($SignMSI) {
     # Ensure signing tools and certificate are available
     Test-SignTool
     if (-not $Thumbprint) {
-        $Thumbprint = (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
-       Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint)
-        if (-not $Thumbprint) {
+        $certInfo = Get-SigningCertThumbprint
+        if (-not $certInfo) {
             Write-Log "No valid EmilyCarrU certificate with a private key found - aborting." "ERROR"
             exit 1
         }
-        Write-Log "Auto-selected signing cert $Thumbprint for MSI signing" "INFO"
+        $Thumbprint = $certInfo.Thumbprint
+        Write-Log "Auto-selected signing cert $Thumbprint from $($certInfo.Store) store for MSI signing" "INFO"
     } else {
         Write-Log "Using signing certificate $Thumbprint for MSI signing" "INFO"
     }
