@@ -177,6 +177,7 @@ func main() {
 
 	// Munki-compatible flags for preflight bypass and manifest override
 	noPreflight := pflag.Bool("no-preflight", false, "Skip preflight script execution.")
+	noPostflight := pflag.Bool("no-postflight", false, "Skip postflight script execution.")
 	localOnlyManifest := pflag.String("local-only-manifest", "", "Use specified local manifest file instead of server manifest.")
 
 	// Manifest targeting flag - process only a specific manifest from server
@@ -556,11 +557,13 @@ func main() {
 		"manifest_target": *manifestTarget,
 		"show_status":     *showStatus,
 		"skip_preflight":  skipPreflight,
+		"skip_postflight": *noPostflight || cfg.NoPostflight,
 		"flags": map[string]bool{
 			"checkonly":       *checkOnly,
 			"installonly":     *installOnly,
 			"auto":            *auto,
 			"no_preflight":    *noPreflight,
+			"no_postflight":   *noPostflight,
 			"show_config":     *showConfig,
 			"set_bootstrap":   *setBootstrapMode,
 			"clear_bootstrap": *clearBootstrapMode,
@@ -1185,18 +1188,38 @@ func main() {
 	statusReporter.Message("Finalizing installation...")
 	statusReporter.Percent(90)
 
-	// Run postflight script.
-	if verbosity > 0 {
-		logger.Info("----------------------------------------------------------------------")
-		logger.Info("🔄 POSTFLIGHT EXECUTION")
-		logger.Info("----------------------------------------------------------------------")
-	}
-	statusReporter.Detail("Running post-installation scripts...")
-	runPostflightIfNeeded(verbosity, cfg)
-	if verbosity > 0 {
-		logger.Success("✓ Postflight script completed")
+	// Run postflight script (unless bypassed by flag or config).
+	skipPostflight := *noPostflight || cfg.NoPostflight
+	if !skipPostflight {
+		if verbosity > 0 {
+			logger.Info("----------------------------------------------------------------------")
+			logger.Info("🔄 POSTFLIGHT EXECUTION")
+			logger.Info("----------------------------------------------------------------------")
+		}
+		statusReporter.Detail("Running post-installation scripts...")
+		runPostflightIfNeeded(verbosity, cfg)
+		if verbosity > 0 {
+			logger.Success("✓ Postflight script completed")
+		} else {
+			logger.Success("Postflight script completed.")
+		}
 	} else {
-		logger.Success("Postflight script completed.")
+		if verbosity > 0 {
+			logging.Info("----------------------------------------------------------------------")
+			logging.Info("⏭️  POSTFLIGHT SCRIPT BYPASSED")
+			if *noPostflight {
+				logging.Info("   Reason: --no-postflight flag")
+			} else {
+				logging.Info("   Reason: NoPostflight config setting")
+			}
+			logging.Info("----------------------------------------------------------------------")
+		} else {
+			if *noPostflight {
+				logging.Info("Postflight script execution bypassed by --no-postflight flag")
+			} else {
+				logging.Info("Postflight script execution bypassed by NoPostflight configuration setting")
+			}
+		}
 	}
 
 	// Generate reports for external monitoring tools

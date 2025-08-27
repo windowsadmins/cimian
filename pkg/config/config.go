@@ -40,6 +40,7 @@ type Configuration struct {
 	LocalOnlyManifest       string   `yaml:"LocalOnlyManifest"` // Munki-compatible: path to local-only manifest
 	LogLevel                string   `yaml:"LogLevel"`
 	NoPreflight             bool     `yaml:"NoPreflight"`             // Munki-compatible: skip preflight script
+	NoPostflight            bool     `yaml:"NoPostflight"`            // Munki-compatible: skip postflight script
 	PreflightFailureAction  string   `yaml:"PreflightFailureAction"`  // "continue", "abort", or "warn" (default: continue)
 	PostflightFailureAction string   `yaml:"PostflightFailureAction"` // "continue", "abort", or "warn" (default: continue)
 	OpenImportedYaml        bool     `yaml:"OpenImportedYaml"`
@@ -234,6 +235,7 @@ func loadCSPFromRegistryPath(registryPath string, config *Configuration) error {
 	loadBoolFromRegistry(key, "CheckOnly", &config.CheckOnly)
 	loadBoolFromRegistry(key, "ForceBasicAuth", &config.ForceBasicAuth)
 	loadBoolFromRegistry(key, "NoPreflight", &config.NoPreflight)
+	loadBoolFromRegistry(key, "NoPostflight", &config.NoPostflight)
 	loadBoolFromRegistry(key, "OpenImportedYaml", &config.OpenImportedYaml)
 	loadBoolFromRegistry(key, "ForceExecutionPolicyBypass", &config.ForceExecutionPolicyBypass)
 
