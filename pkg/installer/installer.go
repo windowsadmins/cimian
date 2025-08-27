@@ -1378,7 +1378,7 @@ func runCMDWithWindowsElevation(command string, arguments []string) (string, err
 
 	// Create PowerShell command that inherits elevation properly
 	psCommand := fmt.Sprintf("& '%s' %s", command, argBuilder.String())
-	
+
 	logging.Debug("runCMDWithWindowsElevation => PowerShell command",
 		"psCommand", psCommand)
 
@@ -1401,7 +1401,7 @@ func runCMDWithWindowsElevation(command string, arguments []string) (string, err
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			logging.Error("PowerShell command failed",
-				"command", command, "args", arguments, "exitCode", exitCode, 
+				"command", command, "args", arguments, "exitCode", exitCode,
 				"stderr", errStr, "psCommand", psCommand)
 			// Include stderr in the error message for better debugging
 			if errStr != "" {
@@ -1413,7 +1413,7 @@ func runCMDWithWindowsElevation(command string, arguments []string) (string, err
 			"command", command, "args", arguments, "error", err, "psCommand", psCommand)
 		return outStr, err
 	}
-	
+
 	logging.Debug("PowerShell command completed successfully",
 		"command", command, "args", arguments, "output", outStr)
 	return outStr, nil
@@ -1489,7 +1489,7 @@ func runCMDWithTimeoutWindows(command string, arguments []string, timeoutMinutes
 
 	// Create PowerShell command that inherits elevation properly
 	psCommand := fmt.Sprintf("& '%s' %s", command, argBuilder.String())
-	
+
 	logging.Debug("runCMDWithTimeoutWindows => PowerShell command",
 		"psCommand", psCommand, "timeoutMinutes", timeoutMinutes)
 
@@ -1523,7 +1523,7 @@ func runCMDWithTimeoutWindows(command string, arguments []string, timeoutMinutes
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
 			logging.Error("PowerShell command failed",
-				"command", command, "args", arguments, "exitCode", exitCode, 
+				"command", command, "args", arguments, "exitCode", exitCode,
 				"stderr", errStr, "psCommand", psCommand)
 			// Include stderr in the error message for better debugging
 			if errStr != "" {
@@ -1535,7 +1535,7 @@ func runCMDWithTimeoutWindows(command string, arguments []string, timeoutMinutes
 			"command", command, "args", arguments, "error", err, "psCommand", psCommand)
 		return outStr, err
 	}
-	
+
 	logging.Debug("PowerShell command with timeout completed successfully",
 		"command", command, "args", arguments, "output", outStr, "timeoutMinutes", timeoutMinutes)
 	return outStr, nil
@@ -1683,7 +1683,24 @@ func immediateCleanupAfterInstall(item catalog.Item, localFile string) {
 		return
 	}
 
-	// Verify the installation was successful using the installs array
+	// IMPORTANT: Get the current catalog definition instead of using the potentially stale item
+	// This prevents verification failures when the catalog has been updated since the item was cached
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		logging.Warn("Failed to read configuration for catalog refresh, using original item",
+			"item", item.Name, "error", err)
+	} else {
+		catalogMap := catalog.AuthenticatedGetEnhanced(*cfg)
+		if currentItem, found := catalog.GetItemByName(item.Name, catalogMap); found {
+			logging.Debug("Using refreshed catalog item for verification",
+				"item", item.Name, "originalVersion", item.Version, "currentVersion", currentItem.Version)
+			item = currentItem
+		} else {
+			logging.Debug("Item not found in current catalog, using original item", "item", item.Name)
+		}
+	}
+
+	// Verify the installation was successful using the current installs array
 	needsAction, err := status.CheckStatus(item, "install", "")
 	if err != nil {
 		logging.Warn("Error verifying installation for immediate cleanup",
