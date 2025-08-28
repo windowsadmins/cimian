@@ -11,11 +11,11 @@ Cimian simplifies the software lifecycle management process, from creating packa
 - **Automated Package Management**: Streamline software packaging, metadata management, and distribution
 - **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based config files
 - **Multi-format Installer Support**: Supports MSI, MSIX, EXE, PowerShell scripts, and NuGet package formats
-- **Bootstrap Mode**: Windows equivalent of Munki's bootstrap system for zero-touch deployment and system provisioning
-- **Conditional Items**: NSPredicate-style conditional evaluation for dynamic software deployment based on system facts (hostname, architecture, OS version, domain, etc.)
+- **Bootstrap Mode**: for zero-touch deployment and system provisioning
+- **Conditional Items**: Advanced evaluation system for dynamic software deployment based on system facts (hostname, architecture, OS version, domain, machine type, etc.) with simplified string syntax
 - **Modern GUI**: Native WPF status application with Windows 11-inspired design
-- **Enterprise Integration**: Built for Microsoft Intune and other MDM platforms with .intunewin support
-- **Real-time Monitoring**: Responsive Windows service for near-instantaneous deployment triggers
+- **Enterprise Integration**: Built for Microsoft Intune with .intunewin support and any other Deployment Management Services.
+- **Simplified Conditional Syntax**: New streamlined string format for conditional items (e.g., `"hostname DOES_NOT_CONTAIN Camera"`)
 
 ## Architecture Overview
 
@@ -24,36 +24,6 @@ Cimian consists of a comprehensive suite of command-line tools, services, and GU
 ### Core Binaries
 
 All binaries are built for both x64 and ARM64 architectures and installed to `C:\Program Files\Cimian\`.
-
-#### Package Management Tools
-
-**`cimiimport.exe`** - *Package Import and Metadata Generator*
-- Automates importing software installers and generating deployment metadata
-- Supports MSI, EXE, PowerShell scripts, and file-based installations
-- Extracts metadata automatically (version, product codes, dependencies)
-- Generates YAML pkginfo files with installation instructions
-- Integrates with cloud storage (AWS S3, Azure Blob Storage) for package distribution
-- Handles script integration (pre/post install/uninstall scr
-- Features interactive and non-interactive configuration modes
-
-**`cimipkg.exe`** - *NuGet Package Creator*
-- Creates deployable NuGet packages (.nupkg) from project directories
-- Supports both installer-type and copy-type package deployments
-- Generates Chocolatey-compatible installation scripts
-- Handles PowerShell script signing and embedding
-- Creates .intunewin packages for Microsoft Intune deployment
-- Manages version normalization and metadata validation
-
-**`makecatalogs.exe`** - *Software Catalog Generator*
-- Scans repository and generates software catalogs from pkginfo metadata
-- Creates organized YAML catalog files (Testing, Production, All, etc.)
-- Validates package payload integrity and reports missing files
-- Supports catalog-based software targeting and deployment
-
-**`makepkginfo.exe`** - *Package Info Generator*
-- Creates pkginfo metadata files for software packages
-- Extracts installer metadata and generates deployment configurations
-- Supports direct package analysis and metadata generation workflows
 
 #### Client-Side Management
 
@@ -73,6 +43,36 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Supports adding/removing packages from managed installations
 - Handles self-service software request management
 - Provides manifest validation and organization
+
+#### Package Management Tools
+
+**`cimiimport.exe`** - *Package Import and Metadata Generator*
+- Automates importing software installers and generating deployment metadata
+- Supports MSI, EXE, PowerShell scripts, and file-based installations
+- Extracts metadata automatically (version, product codes, dependencies)
+- Generates YAML pkginfo files with installation instructions
+- Integrates with cloud storage (AWS S3, Azure Blob Storage) for package distribution
+- Handles script integration (pre/post install/uninstall scr
+- Features interactive and non-interactive configuration modes
+
+**`cimipkg.exe`** - *NuGet Package Creator*
+- Creates deployable NuGet packages (.nupkg) from project directories
+- Supports both installer-type and copy-type package deployments
+- Generates Chocolatey-compatible installation scripts
+- Handles PowerShell script signing and embedding
+- Optionally creates .intunewin packages for Microsoft Intune deployment
+- Manages version normalization and metadata validation
+
+**`makecatalogs.exe`** - *Software Catalog Generator*
+- Scans repository and generates software catalogs from pkginfo metadata
+- Creates organized YAML catalog files (Testing, Production, All, etc.)
+- Validates package payload integrity and reports missing files
+- Supports catalog-based software targeting and deployment
+
+**`makepkginfo.exe`** - *Package Info Generator*
+- Creates pkginfo metadata files for software packages
+- Extracts installer metadata and generates deployment configurations
+- Supports direct package analysis and metadata generation workflows
 
 #### Deployment Triggers and Monitoring
 
@@ -102,6 +102,71 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Integration with logging and status reporting systems
 - Built using Modern WPF UI framework for contemporary appearance
 
+## Conditional Items System
+
+Cimian features a powerful conditional items system inspired by Munki's NSPredicate-style conditions, allowing dynamic software deployment based on system facts like hostname, architecture, domain membership, and more.
+
+### Simplified Conditional Syntax
+
+Cimian supports both a new simplified string format and the legacy verbose format for maximum flexibility:
+
+#### New Simplified Format (Recommended)
+```yaml
+conditional_items:
+  # Install on non-Camera machines
+  - condition: "hostname DOES_NOT_CONTAIN Camera"
+    managed_installs:
+      - StandardSoftware
+      
+  # Architecture-specific deployment
+  - condition: "arch == x64"
+    managed_installs:
+      - ModernApplication
+      
+  # Multiple conditions with AND logic
+  - conditions:
+      - "domain == CORPORATE"
+      - "hostname BEGINSWITH WS"
+    condition_type: "AND"
+    managed_installs:
+      - CorporateTools
+```
+
+#### Legacy Verbose Format (Deprecated)
+```yaml
+conditional_items:
+  - condition:
+      key: "hostname"
+      operator: "DOES_NOT_CONTAIN"
+      value: "Camera"
+    managed_installs:
+      - StandardSoftware
+```
+
+### Supported Operators
+
+- **==** / **EQUALS**: Exact equality
+- **!=** / **NOT_EQUALS**: Not equal  
+- **CONTAINS**: String contains substring
+- **DOES_NOT_CONTAIN**: String does not contain substring
+- **BEGINSWITH**: String starts with value
+- **ENDSWITH**: String ends with value
+- **>** / **<** / **>=** / **<=**: Comparison operators
+- **IN**: Value is in a list of options
+- **LIKE**: Wildcard pattern matching
+
+### Available System Facts
+
+- **hostname**: System hostname
+- **arch**: System architecture (x64, arm64, x86)
+- **os_version**: Windows OS version
+- **domain**: Windows domain name
+- **machine_type**: "laptop" or "desktop"
+- **machine_model**: Computer model
+- **joined_type**: "domain", "hybrid", "entra", or "workgroup"
+- **catalogs**: Available catalogs (array)
+- **username**: Current username
+- **date**: Current date and time
 
 ## Configuration
 
@@ -146,6 +211,351 @@ custom_user_agent: "Cimian/1.0"
 - **Interactive Setup**: Run `cimiimport.exe --config` for guided configuration
 - **Automatic Setup**: Use `cimiimport.exe --config-auto` for non-interactive configuration
 - **Validation**: Configuration is validated on startup with detailed error reporting
+
+## Manifests and Package Info Examples
+
+### Sample Manifest Files
+
+Manifests define what software should be installed on specific groups of computers. They are stored in the `manifests/` directory of your repository.
+
+#### Basic Site Default Manifest (`manifests/site_default.yaml`)
+
+```yaml
+name: "Site Default - Corporate Baseline"
+catalogs:
+  - Production
+
+# Base software for all systems
+managed_installs:
+  - Firefox
+  - GoogleChrome
+  - AdobeReader
+  - 7zip
+  - WindowsUpdates
+
+# Optional software available for installation
+optional_installs:
+  - VLCMediaPlayer
+  - GIMP
+  - NotePadPlusPlus
+
+# Software to remove if found
+managed_uninstalls:
+  - OldSoftware
+  - BloatwareApp
+```
+
+#### Advanced Conditional Manifest (`manifests/computer_groups/lab_computers.yaml`)
+
+```yaml
+name: "Lab Computers - Educational Environment"
+catalogs:
+  - Testing
+  - Education
+
+# Base software for all lab computers
+managed_installs:
+  - BaseSecurityAgent
+  - StudentMonitoringSoftware
+  - SharedPrinterDrivers
+
+# Conditional software based on system facts
+conditional_items:
+  # Engineering labs get CAD software
+  - condition: "hostname CONTAINS ENG-LAB"
+    managed_installs:
+      - AutoCAD
+      - SolidWorks
+      - MATLAB
+    
+  # Art labs get creative software  
+  - condition: "hostname CONTAINS ART-LAB"
+    managed_installs:
+      - AdobeCreativeSuite
+      - Blender
+      - SketchUp
+      
+  # x64 systems get modern applications
+  - condition: "arch == x64"
+    managed_installs:
+      - ModernVideoEditor
+    managed_uninstalls:
+      - LegacyX86Software
+
+# Microsoft Intune integration
+managed_profiles:
+  - EducationalWiFiProfile
+  - StudentEmailProfile
+  
+managed_apps:
+  - "Microsoft Teams"
+  - "Microsoft Office"
+  - "OneNote"
+```
+
+#### Enterprise Workstation Manifest (`manifests/workstations.yaml`)
+
+```yaml
+name: "Corporate Workstations"
+catalogs:
+  - Production
+  - Corporate
+
+managed_installs:
+  - EnterpriseAntivirus
+  - OfficeTools
+  - CorporateVPN
+
+# Complex conditional logic
+conditional_items:
+  # Executive workstations
+  - conditions:
+      - "hostname BEGINSWITH EXEC"
+      - "domain == CORPORATE"
+    condition_type: "AND"
+    managed_installs:
+      - ExecutiveSuite
+      - PremiumOfficeAddins
+      - VIPSupportTools
+      
+  # Developer machines
+  - condition: "hostname CONTAINS DEV"
+    managed_installs:
+      - VisualStudio
+      - GitForWindows
+      - DockerDesktop
+    optional_installs:
+      - AdvancedDebugger
+      - PerformanceProfiler
+      
+  # Domain join type specific software
+  - condition: "joined_type == entra"
+    managed_installs:
+      - EntraIDTools
+      - AzureADSync
+  - condition: "joined_type == domain"
+    managed_installs:
+      - TraditionalDomainTools
+```
+
+### Sample Package Info Files
+
+Package info files define individual software packages and their installation details. They are stored in the `pkgsinfo/` directory.
+
+#### MSI Package Example (`pkgsinfo/Adobe/AdobeReader.yaml`)
+
+```yaml
+name: AdobeReader
+display_name: "Adobe Acrobat Reader DC"
+identifier: com.adobe.reader.dc
+version: "24.003.20054"
+description: "Adobe Acrobat Reader DC - Free PDF viewer"
+catalogs:
+  - Testing
+  - Production
+category: "PDF Tools"
+developer: "Adobe Inc."
+
+# Installation details
+installer:
+  type: msi
+  size: 245760000
+  location: Adobe/AcroRdrDC_2400320054_MUI.msi
+  hash: "sha256:a1b2c3d4e5f6789..."
+  product_code: "{AC76BA86-7AD7-1033-7B44-AC0F074E4100}"
+  upgrade_code: "{AC76BA86-7AD7-1033-7B44-AC0F074E4100}"
+
+# What files this package installs
+installs:
+  - type: file
+    path: "C:\Program Files\Adobe\Acrobat DC\Reader\AcroRd32.exe"
+    md5checksum: "d41d8cd98f00b204e9800998ecf8427e"
+    version: "24.003.20054"
+
+# System requirements
+supported_architectures:
+  - x64
+  - x86
+minimum_os_version: "10.0.19041"
+unattended_install: true
+unattended_uninstall: true
+```
+
+#### EXE Package with Scripts (`pkgsinfo/Development/VisualStudio.yaml`)
+
+```yaml
+name: VisualStudio
+display_name: "Microsoft Visual Studio Community 2022"
+identifier: com.microsoft.visualstudio.community.2022
+version: "17.8.3"
+description: "Microsoft Visual Studio Community 2022 - Free IDE"
+catalogs:
+  - Development
+  - Testing
+category: "Development Tools"
+developer: "Microsoft Corporation"
+
+# EXE installer with custom arguments
+installer:
+  type: exe
+  size: 4294967296
+  location: Microsoft/VisualStudio/vs_community_2022.exe
+  hash: "sha256:f8e7d6c5b4a39..."
+  flags:
+    - quiet
+    - wait
+    - add Microsoft.VisualStudio.Workload.ManagedDesktop
+    - add Microsoft.VisualStudio.Workload.NetWeb
+
+# Installation tracking
+installs:
+  - type: file
+    path: "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
+    version: "17.8.34316.72"
+
+# Custom scripts
+preinstall_script: |
+  # Check system requirements
+  $ram = (Get-WmiObject -Class Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+  if ($ram -lt 8) {
+    throw "Visual Studio requires at least 8GB RAM"
+  }
+  Write-Host "System meets requirements"
+
+postinstall_script: |
+  # Configure Visual Studio settings
+  $vsPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community"
+  if (Test-Path $vsPath) {
+    Write-Host "Visual Studio installed successfully"
+    # Additional configuration here
+  }
+
+# Uninstaller
+uninstaller:
+  location: Microsoft/VisualStudio/vs_community_2022.exe
+  arguments:
+    - uninstall
+    - --quiet
+    - --wait
+
+supported_architectures:
+  - x64
+minimum_os_version: "10.0.17763"
+unattended_install: true
+unattended_uninstall: true
+```
+
+#### PowerShell Script Package (`pkgsinfo/Scripts/SystemConfiguration.yaml`)
+
+```yaml
+name: SystemConfiguration
+display_name: "Corporate System Configuration"
+identifier: com.company.systemconfig
+version: "1.2.0"
+description: "Applies corporate system configuration settings"
+catalogs:
+  - Production
+category: "System Configuration"
+developer: "IT Department"
+
+# PowerShell script installer
+installer:
+  type: ps1
+  size: 8192
+  location: Scripts/SystemConfiguration.ps1
+  hash: "sha256:1a2b3c4d5e6f..."
+
+# Script content (can also be external file)
+preinstall_script: |
+  # Backup current settings
+  $backupPath = "C:\Temp\SystemBackup-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+  New-Item -ItemType Directory -Path $backupPath -Force
+
+postinstall_script: |
+  # Verify configuration applied successfully
+  Write-Host "System configuration completed"
+  
+  # Set registry values
+  Set-ItemProperty -Path "HKLM:\SOFTWARE\Company\Config" -Name "LastUpdate" -Value (Get-Date)
+
+# This is a script-only package - no file tracking needed
+supported_architectures:
+  - x64
+  - arm64
+  - x86
+unattended_install: true
+unattended_uninstall: false  # Scripts can't be "uninstalled"
+OnDemand: false  # Run during normal update cycles
+```
+
+#### Complex Package with Dependencies (`pkgsinfo/Microsoft/Office365.yaml`)
+
+```yaml
+name: Office365
+display_name: "Microsoft 365 Apps for Enterprise"
+identifier: com.microsoft.office365.enterprise
+version: "16.0.17126.20132"
+description: "Microsoft 365 Apps for Enterprise suite"
+catalogs:
+  - Production
+  - Corporate
+category: "Office Applications"
+developer: "Microsoft Corporation"
+
+# Complex installer with configuration
+installer:
+  type: exe
+  size: 6442450944
+  location: Microsoft/Office365/setup.exe
+  hash: "sha256:9f8e7d6c5b4a3..."
+  arguments:
+    - /configure
+    - /quiet
+    - /config:configuration.xml
+
+# Multiple file installations tracked
+installs:
+  - type: file
+    path: "C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE"
+    version: "16.0.17126.20132"
+  - type: file  
+    path: "C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE"
+    version: "16.0.17126.20132"
+  - type: file
+    path: "C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE" 
+    version: "16.0.17126.20132"
+
+# Prerequisites and dependencies
+requires:
+  - DotNetFramework48
+  - VisualCPPRedistributable
+
+# Advanced uninstall handling
+uninstaller:
+  type: exe
+  location: Microsoft/Office365/setup.exe
+  arguments:
+    - /configure
+    - /quiet
+    - /uninstall
+
+uninstalls:
+  - type: directory
+    path: "C:\Program Files\Microsoft Office"
+    recursive: true
+    force: true
+  - type: registry
+    path: "HKLM\SOFTWARE\Microsoft\Office"
+    recursive: true
+
+# System requirements
+supported_architectures:
+  - x64
+minimum_os_version: "10.0.19041"
+maximum_os_version: ""
+unattended_install: true
+unattended_uninstall: true
+```
 
 ## Repository Structure
 
