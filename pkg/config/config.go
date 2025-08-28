@@ -37,12 +37,12 @@ type Configuration struct {
 	ForceBasicAuth          bool     `yaml:"ForceBasicAuth"`
 	InstallPath             string   `yaml:"InstallPath"`
 	LocalManifests          []string `yaml:"LocalManifests"`
-	LocalOnlyManifest       string   `yaml:"LocalOnlyManifest"` // Munki-compatible: path to local-only manifest
+	LocalOnlyManifest       string   `yaml:"LocalOnlyManifest"`
 	LogLevel                string   `yaml:"LogLevel"`
-	NoPreflight             bool     `yaml:"NoPreflight"`             // Munki-compatible: skip preflight script
-	NoPostflight            bool     `yaml:"NoPostflight"`            // Munki-compatible: skip postflight script
-	PreflightFailureAction  string   `yaml:"PreflightFailureAction"`  // "continue", "abort", or "warn" (default: continue)
-	PostflightFailureAction string   `yaml:"PostflightFailureAction"` // "continue", "abort", or "warn" (default: continue)
+	NoPreflight             bool     `yaml:"NoPreflight"`
+	NoPostflight            bool     `yaml:"NoPostflight"`
+	PreflightFailureAction  string   `yaml:"PreflightFailureAction"`
+	PostflightFailureAction string   `yaml:"PostflightFailureAction"`
 	OpenImportedYaml        bool     `yaml:"OpenImportedYaml"`
 	RepoPath                string   `yaml:"RepoPath"`
 	SoftwareRepoURL         string   `yaml:"SoftwareRepoURL"`

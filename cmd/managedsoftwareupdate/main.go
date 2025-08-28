@@ -775,11 +775,6 @@ func main() {
 		if verbosity > 0 {
 			logging.Success("✓ Retrieved manifest items", "count", len(manifestItems), "duration", manifestDuration)
 		}
-
-		// Display manifest tree structure
-		if verbosity >= 2 {
-			displayManifestTree(manifestItems)
-		}
 	}
 
 	// Apply item filter if specified
@@ -929,7 +924,7 @@ func main() {
 	// Print summary of planned actions.
 	statusReporter.Detail(fmt.Sprintf("Found %d updates, %d new installs, %d removals", len(toUpdate), len(toInstall), len(toUninstall)))
 
-	printPendingActions(toInstall, toUninstall, toUpdate)
+	printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate, dedupedManifestItems, localCatalogMap)
 
 	// If check-only mode, exit after summary.
 	if *checkOnly {
@@ -2013,7 +2008,7 @@ func printPendingActions(toInstall, toUninstall, toUpdate []catalog.Item) {
 	// Print INSTALL actions section
 	if len(toInstall) > 0 {
 		logger.Info("----------------------------------------------------------------------")
-		logger.Info("⬇️  NEW INSTALLS")
+		logger.Info("⬇️   NEW INSTALLS")
 		logger.Info("----------------------------------------------------------------------")
 		logger.Info("%-27s | %-17s | %-15s", "Package Name", "Version", "Type")
 		logger.Info("----------------------------------------------------------------------")
@@ -2101,6 +2096,226 @@ func truncateString(s string, width int) string {
 		return s[:width]
 	}
 	return s[:width-3] + "..."
+}
+
+// printEnhancedManagedItemsSnapshot prints a comprehensive snapshot of all managed items
+// including pending actions and the complete managed software inventory
+func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalog.Item, manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item) {
+	// Categorize all manifest items by action type
+	var managedInstalls []manifest.Item
+	var managedUpdates []manifest.Item
+	var managedUninstalls []manifest.Item
+	var optionalInstalls []manifest.Item
+	var managedProfiles []manifest.Item
+	var managedApps []manifest.Item
+
+	for _, item := range manifestItems {
+		switch item.Action {
+		case "install":
+			managedInstalls = append(managedInstalls, item)
+		case "update":
+			managedUpdates = append(managedUpdates, item)
+		case "uninstall":
+			managedUninstalls = append(managedUninstalls, item)
+		case "optional":
+			optionalInstalls = append(optionalInstalls, item)
+		case "profile":
+			managedProfiles = append(managedProfiles, item)
+		case "app":
+			managedApps = append(managedApps, item)
+		}
+	}
+
+	// Only show the enhanced inventory if there are actually managed items
+	totalManagedItems := len(managedInstalls) + len(optionalInstalls) + len(managedUpdates) + len(managedUninstalls)
+	totalExternalItems := len(managedProfiles) + len(managedApps)
+	
+	if totalManagedItems == 0 && totalExternalItems == 0 {
+		logger.Info("📋 No managed software inventory found")
+		logger.Info("")
+		return
+	}
+
+	// Display manifest hierarchy with package details
+	displayManifestTreeWithPackages(manifestItems, toInstall, toUpdate, localCatalogMap)
+
+	// Show Managed Installs section
+	if len(managedInstalls) > 0 {
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("📦 MANAGED INSTALLS (%d items)", len(managedInstalls))
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("%-27s | %-17s | %-15s", "Package Name", "Version", "Status")
+		logger.Info("----------------------------------------------------------------------")
+
+		for _, item := range managedInstalls {
+			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			version := item.Version
+			if version == "" {
+				version = "Unknown"
+			}
+			logger.Info("%-27s | %-17s | %-15s",
+				truncateString(item.Name, 25),
+				truncateString(version, 15),
+				truncateString(status, 15))
+		}
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("")
+	}
+
+	// Show Optional Installs section
+	if len(optionalInstalls) > 0 {
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("🔧 OPTIONAL INSTALLS (%d items)", len(optionalInstalls))
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("%-27s | %-17s | %-15s", "Package Name", "Version", "Status")
+		logger.Info("----------------------------------------------------------------------")
+
+		for _, item := range optionalInstalls {
+			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			version := item.Version
+			if version == "" {
+				version = "Unknown"
+			}
+			logger.Info("%-27s | %-17s | %-15s",
+				truncateString(item.Name, 25),
+				truncateString(version, 15),
+				truncateString(status, 15))
+		}
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("")
+	}
+
+	// Show Managed Updates section
+	if len(managedUpdates) > 0 {
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("🔄 MANAGED UPDATES (%d items)", len(managedUpdates))
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("%-27s | %-17s | %-15s", "Package Name", "Version", "Status")
+		logger.Info("----------------------------------------------------------------------")
+
+		for _, item := range managedUpdates {
+			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			version := item.Version
+			if version == "" {
+				version = "Unknown"
+			}
+			logger.Info("%-27s | %-17s | %-15s",
+				truncateString(item.Name, 25),
+				truncateString(version, 15),
+				truncateString(status, 15))
+		}
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("")
+	}
+
+	// Show Managed Uninstalls section
+	if len(managedUninstalls) > 0 {
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("🗑️  MANAGED UNINSTALLS (%d items)", len(managedUninstalls))
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("%-27s | %-17s | %-15s", "Package Name", "Version", "Status")
+		logger.Info("----------------------------------------------------------------------")
+
+		for _, item := range managedUninstalls {
+			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			version := item.Version
+			if version == "" {
+				version = "Unknown"
+			}
+			logger.Info("%-27s | %-17s | %-15s",
+				truncateString(item.Name, 25),
+				truncateString(version, 15),
+				truncateString(status, 15))
+		}
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("")
+	}
+
+	// Show Managed Profiles section (external MDM management)
+	if len(managedProfiles) > 0 {
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("📋 MANAGED PROFILES (%d items) - External MDM Management", len(managedProfiles))
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("%-45s | %-15s", "Profile Name", "Source")
+		logger.Info("----------------------------------------------------------------------")
+
+		for _, item := range managedProfiles {
+			source := item.SourceManifest
+			if source == "" {
+				source = "Unknown"
+			}
+			logger.Info("%-45s | %-15s",
+				truncateString(item.Name, 43),
+				truncateString(source, 15))
+		}
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("")
+	}
+
+	// Show Managed Apps section (external MDM management)
+	if len(managedApps) > 0 {
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("📱 MANAGED APPS (%d items) - External MDM Management", len(managedApps))
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("%-45s | %-15s", "App Name", "Source")
+		logger.Info("----------------------------------------------------------------------")
+
+		for _, item := range managedApps {
+			source := item.SourceManifest
+			if source == "" {
+				source = "Unknown"
+			}
+			logger.Info("%-45s | %-15s",
+				truncateString(item.Name, 43),
+				truncateString(source, 15))
+		}
+		logger.Info("----------------------------------------------------------------------")
+		logger.Info("")
+	}
+
+	// Summary footer with complete inventory statistics
+	totalItems := totalManagedItems + totalExternalItems
+
+	logger.Info("📊 INVENTORY SUMMARY")
+	logger.Info("   Total managed items: %d", totalItems)
+	logger.Info("   📦 Installs: %d | 🔧 Optionals: %d | 🔄 Updates: %d | 🗑️  Uninstalls: %d", 
+		len(managedInstalls), len(optionalInstalls), len(managedUpdates), len(managedUninstalls))
+	if totalExternalItems > 0 {
+		logger.Info("   📋 Managed profiles: %d | 📱 Managed apps: %d", len(managedProfiles), len(managedApps))
+	}
+	logger.Info("")
+	logger.Info("⚡ PENDING ACTIONS SUMMARY")
+	totalActions := len(toInstall) + len(toUpdate) + len(toUninstall)
+	logger.Info("   Total pending actions: %d", totalActions)
+	logger.Info("   ⬇️  New installs: %d | 🔄 Updates: %d | 🗑️  Removals: %d", len(toInstall), len(toUpdate), len(toUninstall))
+	logger.Info("")
+}
+
+// getPackageStatusDisplay determines the display status for a package in the inventory
+func getPackageStatusDisplay(manifestItem manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) string {
+	itemName := strings.ToLower(manifestItem.Name)
+	
+	// Check if it's in pending installs
+	for _, installItem := range toInstall {
+		if strings.ToLower(installItem.Name) == itemName {
+			return "Pending Install"
+		}
+	}
+	
+	// Check if it's in pending updates
+	for _, updateItem := range toUpdate {
+		if strings.ToLower(updateItem.Name) == itemName {
+			return "Pending Update"
+		}
+	}
+	
+	// Check if it exists in local catalog (installed)
+	if _, exists := localCatalogMap[itemName]; exists {
+		return "Installed"
+	}
+	
+	// Default status
+	return "Not Installed"
 }
 
 // installOneCatalogItem installs a single catalog item using the installer package.
@@ -2428,8 +2643,9 @@ func displayManifestTree(manifestItems []manifest.Item) {
 		manifestCounts[sourceManifest]++
 	}
 
-	logger.Info("📁 Manifest Hierarchy (%d manifests found)", len(manifestCounts))
-	logger.Info("")
+	logger.Info("----------------------------------------------------------------------")
+	logger.Info("📁 Manifest Hierarchy (%d manifests with managed items)", len(manifestCounts))
+	logger.Info("----------------------------------------------------------------------")
 
 	// Build the tree structure based on manifest path hierarchy
 	manifestTree := buildManifestHierarchy(manifestCounts)
@@ -2595,6 +2811,124 @@ func displayManifestHierarchy(node *ManifestNode, prefix string, isLast bool) {
 			child := node.Children[name]
 			isChildLast := i == len(names)-1
 			displayManifestHierarchy(child, childPrefix, isChildLast)
+		}
+	}
+}
+
+// displayManifestTreeWithPackages shows the manifest hierarchy with package details embedded
+func displayManifestTreeWithPackages(manifestItems []manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) {
+	// Group items by their source manifest
+	manifestPackages := make(map[string][]manifest.Item)
+	manifestCounts := make(map[string]int)
+
+	// Categorize items by manifest and action type
+	for _, item := range manifestItems {
+		sourceManifest := item.SourceManifest
+		if sourceManifest == "" {
+			sourceManifest = "Unknown"
+		}
+		
+		// Only include items with action "install" for the main display
+		if item.Action == "install" {
+			manifestPackages[sourceManifest] = append(manifestPackages[sourceManifest], item)
+		}
+		
+		// Count all items for the hierarchy numbers
+		manifestCounts[sourceManifest]++
+	}
+
+	logger.Info("----------------------------------------------------------------------")
+	logger.Info("📁 MANIFEST HIERARCHY WITH PACKAGES (%d manifests found)", len(manifestCounts))
+	logger.Info("----------------------------------------------------------------------")
+
+	// Build and display the tree structure with package details
+	manifestTree := buildManifestHierarchy(manifestCounts)
+	displayManifestHierarchyWithPackages(manifestTree, "", true, manifestPackages, toInstall, toUpdate, localCatalogMap)
+
+	logger.Info("")
+}
+
+// displayManifestHierarchyWithPackages recursively displays the manifest tree with package details
+func displayManifestHierarchyWithPackages(node *ManifestNode, prefix string, isLast bool, manifestPackages map[string][]manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) {
+	if node.Name == "root" {
+		// Display root children
+		names := make([]string, 0, len(node.Children))
+		for name := range node.Children {
+			names = append(names, name)
+		}
+
+		for i, name := range names {
+			child := node.Children[name]
+			isChildLast := i == len(names)-1
+			displayManifestHierarchyWithPackages(child, "", isChildLast, manifestPackages, toInstall, toUpdate, localCatalogMap)
+		}
+		return
+	}
+
+	// Display this node
+	connector := "├─"
+	if isLast {
+		connector = "└─"
+	}
+
+	logger.Info("%s%s 📄 %s (%d items)", prefix, connector, node.Name, node.ItemCount)
+
+	// Display packages from this manifest
+	if packages, exists := manifestPackages[node.Name]; exists && len(packages) > 0 {
+		for i, pkg := range packages {
+			status := getPackageStatusDisplay(pkg, toInstall, toUpdate, localCatalogMap)
+			version := pkg.Version
+			if version == "" {
+				version = "Unknown"
+			}
+
+			// Determine status icon
+			statusIcon := "✅"
+			if status == "Pending Install" {
+				statusIcon = "⬇️"
+			} else if status == "Pending Update" {
+				statusIcon = "🔄"
+			}
+
+			isLastPackage := i == len(packages)-1
+			var pkgConnector string
+			var pkgPrefix string
+			
+			if isLast {
+				pkgPrefix = prefix + "   "
+			} else {
+				pkgPrefix = prefix + "│  "
+			}
+			
+			if isLastPackage && len(node.Children) == 0 {
+				pkgConnector = "└─"
+			} else {
+				pkgConnector = "├─"
+			}
+
+			logger.Info("%s%s %s %s (%s)", pkgPrefix, pkgConnector, statusIcon, 
+				truncateString(pkg.Name, 30), truncateString(version, 15))
+		}
+	}
+
+	// Display children if any
+	if len(node.Children) > 0 {
+		childPrefix := prefix
+		if isLast {
+			childPrefix += "   "
+		} else {
+			childPrefix += "│  "
+		}
+
+		names := make([]string, 0, len(node.Children))
+		for name := range node.Children {
+			names = append(names, name)
+		}
+
+		for i, name := range names {
+			child := node.Children[name]
+			isChildLast := i == len(names)-1
+			displayManifestHierarchyWithPackages(child, childPrefix, isChildLast, manifestPackages, toInstall, toUpdate, localCatalogMap)
 		}
 	}
 }
