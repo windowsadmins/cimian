@@ -97,8 +97,50 @@ type ManifestFile struct {
 // Condition represents a single predicate condition
 type Condition struct {
 	Key      string      `yaml:"key" json:"key"`           // The fact key to evaluate (e.g., "hostname", "os_version")
-	Operator string      `yaml:"operator" json:"operator"` // Comparison operator (==, !=, >, <, >=, <=, LIKE, IN, CONTAINS)
+	Operator string      `yaml:"operator" json:"operator"` // Comparison operator (==, !=, >, <, >=, <=, LIKE, IN, CONTAINS, DOES_NOT_CONTAIN, BEGINSWITH, ENDSWITH)
 	Value    interface{} `yaml:"value" json:"value"`       // The value to compare against
+}
+
+// UnmarshalYAML implements custom YAML unmarshaling to support both formats:
+// 1. Simple string format: "hostname DOES_NOT_CONTAIN Camera"
+// 2. Legacy verbose format: {key: "hostname", operator: "DOES_NOT_CONTAIN", value: "Camera"}
+func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
+	// Try to unmarshal as a simple string first
+	if value.Kind == yaml.ScalarNode {
+		return c.parseSimpleCondition(value.Value)
+	}
+
+	// Fall back to the verbose format
+	type conditionAlias Condition
+	aux := (*conditionAlias)(c)
+	return value.Decode(aux)
+}
+
+// parseSimpleCondition parses the simplified string format: "key operator value"
+func (c *Condition) parseSimpleCondition(conditionStr string) error {
+	parts := strings.Fields(conditionStr)
+	if len(parts) < 3 {
+		return fmt.Errorf("invalid condition format: '%s'. Expected format: 'key operator value'", conditionStr)
+	}
+
+	c.Key = parts[0]
+	c.Operator = strings.ToUpper(parts[1])
+	
+	// Join the remaining parts as the value (handles multi-word values)
+	c.Value = strings.Join(parts[2:], " ")
+
+	// Validate operator
+	validOperators := []string{"==", "EQUALS", "!=", "NOT_EQUALS", ">", "GREATER_THAN", 
+		"<", "LESS_THAN", ">=", "GREATER_THAN_OR_EQUAL", "<=", "LESS_THAN_OR_EQUAL",
+		"LIKE", "IN", "CONTAINS", "DOES_NOT_CONTAIN", "BEGINSWITH", "ENDSWITH"}
+	
+	for _, op := range validOperators {
+		if c.Operator == op {
+			return nil
+		}
+	}
+	
+	return fmt.Errorf("invalid operator '%s' in condition '%s'", c.Operator, conditionStr)
 }
 
 // ConditionalItem represents an item with conditional evaluation
@@ -770,6 +812,8 @@ func compareValues(factValue interface{}, operator string, conditionValue interf
 		return compareIn(factValue, conditionValue), nil
 	case "CONTAINS":
 		return compareContains(factValue, conditionValue), nil
+	case "DOES_NOT_CONTAIN":
+		return !compareContains(factValue, conditionValue), nil
 	case "BEGINSWITH":
 		return compareBeginsWith(factValue, conditionValue), nil
 	case "ENDSWITH":
