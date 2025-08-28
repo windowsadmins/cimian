@@ -205,6 +205,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle --show-config flag early, before preflight and other processing
+	if *showConfig {
+		fmt.Printf("Configuration file location: %s\n", config.ConfigPath)
+		if cfgYaml, err := yaml.Marshal(cfg); err == nil {
+			fmt.Printf("Current configuration:\n%s", string(cfgYaml))
+		} else {
+			fmt.Printf("Error marshaling configuration: %v\n", err)
+		}
+		os.Exit(0)
+	}
+
 	// Dynamically override LogLevel based on the number of -v flags.
 	// 0 => ERROR and SUCCESS, 1 => WARN, 2 => INFO, 3+ => DEBUG
 	switch verbosity {
@@ -436,7 +447,7 @@ func main() {
 	}()
 
 	// Run preflight script (unless bypassed by flag or config).
-	skipPreflight := *noPreflight || cfg.NoPreflight || (*manifestTarget != "")
+	skipPreflight := *noPreflight || cfg.NoPreflight || (*manifestTarget != "") || *showConfig
 	if !skipPreflight {
 		logging.Info("----------------------------------------------------------------------")
 		logging.Info("🔄 PREFLIGHT EXECUTION")
@@ -492,14 +503,6 @@ func main() {
 	// Reinitialize the logger so that any changes in cfg take effect.
 	if err := logging.ReInit(cfg); err != nil {
 		logging.Fatal("Error re-initializing logger after preflight: %v", err)
-	}
-
-	// Show configuration if requested.
-	if *showConfig {
-		if cfgYaml, err := yaml.Marshal(cfg); err == nil {
-			logging.Info("Current configuration", "config", string(cfgYaml))
-		}
-		os.Exit(0)
 	}
 
 	// Ensure mutually exclusive flags are not set.
