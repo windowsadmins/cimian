@@ -442,6 +442,9 @@ func (fc *FactsCollector) compareValues(factValue interface{}, operator string, 
 		return fc.compareIn(factValue, conditionValue)
 	case "CONTAINS":
 		return fc.compareContains(factValue, conditionValue)
+	case "DOES_NOT_CONTAIN":
+		result, err := fc.compareContains(factValue, conditionValue)
+		return !result, err
 	case "BEGINSWITH":
 		return fc.compareBeginsWith(factValue, conditionValue)
 	case "ENDSWITH":
