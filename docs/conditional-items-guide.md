@@ -42,6 +42,7 @@ Cimian automatically gathers the following system facts for conditional evaluati
 - **LIKE**: Wildcard pattern matching (simplified)
 - **IN**: Value is in a list of options
 - **CONTAINS**: String contains substring
+- **DOES_NOT_CONTAIN**: String does not contain substring
 - **BEGINSWITH**: String starts with value
 - **ENDSWITH**: String ends with value
 
@@ -60,39 +61,53 @@ managed_installs:
 
 # Conditional items
 conditional_items:
-  - condition:
-      key: "hostname"
-      operator: "CONTAINS"
-      value: "LAB"
+  - condition: "hostname DOES_NOT_CONTAIN Camera"
     managed_installs:
       - LabSoftware
 ```
 
 ## Condition Formats
 
-### Single Condition
+Cimian supports two formats for conditions:
+
+### Simple String Format (Recommended)
+
+```yaml
+conditional_items:
+  - condition: "hostname DOES_NOT_CONTAIN Camera"
+    managed_installs:
+      - StandardApps
+      
+  - condition: "arch == x64"
+    managed_installs:
+      - x64OnlyApp
+
+  - condition: "machine_model CONTAINS OptiPlex"
+    managed_installs:
+      - DellDrivers
+```
+
+### Legacy Verbose Format (Deprecated)
 
 ```yaml
 conditional_items:
   - condition:
-      key: "arch"
-      operator: "=="
-      value: "x64"
+      key: "hostname"
+      operator: "DOES_NOT_CONTAIN"
+      value: "Camera"
     managed_installs:
-      - x64OnlyApp
+      - StandardApps
 ```
+
+**Note**: The simple string format is preferred for new manifests. The verbose format is maintained for backward compatibility but is deprecated.
 
 ### Multiple Conditions (AND Logic)
 
 ```yaml
 conditional_items:
   - conditions:
-      - key: "domain"
-        operator: "=="
-        value: "CORPORATE"
-      - key: "arch"
-        operator: "=="
-        value: "x64"
+      - "domain == CORPORATE"
+      - "arch == x64"
     condition_type: "AND"  # Default is AND
     managed_installs:
       - CorporateX64App
@@ -103,12 +118,8 @@ conditional_items:
 ```yaml
 conditional_items:
   - conditions:
-      - key: "hostname"
-        operator: "CONTAINS"
-        value: "DEV"
-      - key: "hostname"
-        operator: "CONTAINS"
-        value: "TEST"
+      - "hostname CONTAINS DEV"
+      - "hostname CONTAINS TEST"
     condition_type: "OR"
     managed_installs:
       - DeveloperTools
@@ -128,6 +139,15 @@ conditional_items:
     managed_installs:
       - LabManagementSoftware
       - StudentTools
+
+# Install production software on machines that do NOT contain "LAB" in hostname
+  - condition:
+      key: "hostname"
+      operator: "DOES_NOT_CONTAIN"
+      value: "LAB"
+    managed_installs:
+      - ProductionSoftware
+      - EnterpriseTools
 ```
 
 ### 2. Architecture-Specific Software
