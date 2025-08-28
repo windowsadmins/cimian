@@ -33,7 +33,7 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Extracts metadata automatically (version, product codes, dependencies)
 - Generates YAML pkginfo files with installation instructions
 - Integrates with cloud storage (AWS S3, Azure Blob Storage) for package distribution
-- Handles script integration (pre/post install/uninstall scripts)
+- Handles script integration (pre/post install/uninstall scr
 - Features interactive and non-interactive configuration modes
 
 **`cimipkg.exe`** - *NuGet Package Creator*
@@ -50,10 +50,10 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Validates package payload integrity and reports missing files
 - Supports catalog-based software targeting and deployment
 
-**`makepkginfo.exe`** - *Legacy Package Info Generator*
+**`makepkginfo.exe`** - *Package Info Generator*
 - Creates pkginfo metadata files for software packages
-- Provides compatibility layer for legacy workflows
 - Extracts installer metadata and generates deployment configurations
+- Supports direct package analysis and metadata generation workflows
 
 #### Client-Side Management
 
@@ -101,93 +101,6 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Single-instance application with window management
 - Integration with logging and status reporting systems
 - Built using Modern WPF UI framework for contemporary appearance
-
-## Bootstrap System
-
-Cimian includes a sophisticated bootstrap system similar to Munki's, designed for zero-touch deployment scenarios where machines must complete all required software installations before users can log in.
-
-### How Bootstrap Works
-
-1. **Trigger Files**: 
-   - `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` - Bootstrap with GUI status window
-   - `C:\ProgramData\ManagedInstalls\.cimian.headless` - Bootstrap without GUI (silent)
-
-2. **CimianWatcher Service**: A Windows service monitors bootstrap trigger files every 10 seconds and automatically initiates software deployment
-
-3. **Dual Mode Operation**: 
-   - **GUI Mode**: Shows CimianStatus window for visual progress monitoring
-   - **Headless Mode**: Silent operation for automated scenarios
-
-4. **Automatic Process Management**: The service handles process elevation, error recovery, and cleanup automatically
-
-5. **Integration Points**: Works seamlessly with MDM platforms like Microsoft Intune for enterprise deployment
-
-### Bootstrap Commands
-
-| Action | Command | Description |
-|--------|---------|-------------|
-| Enter GUI Bootstrap | `managedsoftwareupdate.exe --set-bootstrap-mode` | Creates GUI bootstrap trigger |
-| Enter Headless Bootstrap | `cimitrigger.exe headless` | Initiates silent bootstrap |
-| Clear Bootstrap | `managedsoftwareupdate.exe --clear-bootstrap-mode` | Removes bootstrap flags |
-| Trigger GUI Update | `cimitrigger.exe gui` | Force GUI update process |
-| Diagnostic Mode | `cimitrigger.exe debug` | Run diagnostics |
-
-### Enterprise Use Cases
-
-- **Zero-touch deployment**: Ship Windows machines with only Cimian installed; bootstrap completes the configuration
-- **System rebuilds**: Ensure all required software is installed before first user login  
-- **Provisioning automation**: Integrate with deployment tools for fully automated system setup
-- **MDM Integration**: Deploy via Microsoft Intune with .intunewin packages
-- **Responsive Updates**: Near-real-time software deployment when triggered by management systems
-
-## Installation and Deployment
-
-### Distribution Formats
-
-Cimian is distributed in multiple formats to support different deployment scenarios:
-
-- **MSI Packages**: `Cimian-x64-{version}.msi` and `Cimian-arm64-{version}.msi` for traditional Windows deployment
-- **NuGet Packages**: `CimianTools-x64-{version}.nupkg` and `CimianTools-arm64-{version}.nupkg` for Chocolatey-based deployment  
-- **Intune Packages**: `.intunewin` files for Microsoft Intune deployment
-
-### Quick Start
-
-1. **Download and Install**: Deploy the appropriate MSI package for your architecture
-2. **Configure Repository**: Edit `C:\ProgramData\ManagedInstalls\Config.yaml` with your repository settings
-3. **Import Software**: Use `cimiimport.exe` to import software packages into your repository
-4. **Generate Catalogs**: Run `makecatalogs.exe` to create software catalogs
-5. **Deploy**: Use bootstrap mode or direct execution for software deployment
-
-## Development and Building
-
-### Build System
-
-The project uses a comprehensive PowerShell build system (`build.ps1`) that:
-
-- Builds all binaries for x64 and ARM64 architectures
-- Handles code signing with enterprise certificates
-- Creates MSI and NuGet packages automatically
-- Supports development mode for rapid iteration
-- Integrates with CI/CD pipelines
-
-### Build Commands
-
-```powershell
-# Full build with automatic signing
-.\build.ps1
-
-# Development mode (fast iteration)
-.\build.ps1 -Dev -Install
-
-# Build specific binary only
-.\build.ps1 -Binary cimistatus -Sign
-
-# Create Intune packages
-.\build.ps1 -IntuneWin
-
-# Package existing binaries
-.\build.ps1 -PackageOnly
-```
 
 
 ## Configuration
@@ -256,9 +169,36 @@ CimianRepo/
     └── Microsoft/
 ```
 
-## API and Integration
+## Command Line Examples
 
-### Command Line Examples
+`managedsoftwareupdate`:
+
+```powershell
+sudo managedsoftwareupdate --help   
+Usage of C:\Program Files\Cimian\managedsoftwareupdate.exe:
+      --auto                         Perform automatic updates.
+      --cache-status                 Show cache status and statistics.
+      --check-selfupdate             Check if self-update is pending.
+      --checkonly                    Check for updates, but don't install them.
+      --clear-bootstrap-mode         Disable bootstrap mode.
+      --clear-selfupdate             Clear pending self-update flag.
+      --installonly                  Install pending updates without checking for new ones.
+      --item strings                 Install only the specified package name(s). Can be repeated or given as a comma-separated list.
+      --local-only-manifest string   Use specified local manifest file instead of server manifest.
+      --manifest string              Process only the specified manifest from server (e.g., 'Shared/Curriculum/RenderingFarm'). Automatically skips preflight.
+      --no-postflight                Skip postflight script execution.
+      --no-preflight                 Skip preflight script execution.
+      --perform-selfupdate           Perform pending self-update (internal use).
+      --restart-service              Restart CimianWatcher service and exit.
+      --selfupdate-status            Show self-update status and exit.
+      --set-bootstrap-mode           Enable bootstrap mode for next boot.
+      --show-config                  Display the current configuration and exit.
+      --show-status                  Show status window during operations (bootstrap mode).
+      --validate-cache               Validate cache integrity and remove corrupt files.
+  -v, --verbose count                Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)
+      --version                      Print the version and exit.
+pflag: help requested
+```
 
 ```powershell
 # Import a new software package
@@ -283,6 +223,62 @@ cimitrigger.exe gui
 cimitrigger.exe debug
 ```
 
+## Installation and Deployment
+
+### Distribution Formats
+
+Cimian is distributed in multiple formats to support different deployment scenarios:
+
+- **MSI Packages**: `Cimian-x64-{version}.msi` and `Cimian-arm64-{version}.msi` for traditional Windows deployment
+- **NuGet Packages**: `CimianTools-x64-{version}.nupkg` and `CimianTools-arm64-{version}.nupkg` for Chocolatey-based deployment  
+- **Intune Packages**: `.intunewin` files for Microsoft Intune deployment
+
+### Quick Start
+
+1. **Download and Install**: Deploy the appropriate MSI package for your architecture
+2. **Configure Repository**: Edit `C:\ProgramData\ManagedInstalls\Config.yaml` with your repository settings
+3. **Import Software**: Use `cimiimport.exe` to import software packages into your repository
+4. **Generate Catalogs**: Run `makecatalogs.exe` to create software catalogs
+5. **Deploy**: Use bootstrap mode or direct execution for software deployment
+
+## Bootstrap System
+
+Cimian includes a bootstrap system similar to Munki's, designed for zero-touch deployment scenarios where machines must complete all required software installations before users can log in.
+
+### How Bootstrap Works
+
+1. **Trigger Files**: 
+   - `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` - Bootstrap with GUI status window
+   - `C:\ProgramData\ManagedInstalls\.cimian.headless` - Bootstrap without GUI (silent)
+
+2. **CimianWatcher Service**: A Windows service monitors bootstrap trigger files every 10 seconds and automatically initiates software deployment
+
+3. **Dual Mode Operation**: 
+   - **GUI Mode**: Shows CimianStatus window for visual progress monitoring
+   - **Headless Mode**: Silent operation for automated scenarios
+
+4. **Automatic Process Management**: The service handles process elevation, error recovery, and cleanup automatically
+
+5. **Integration Points**: Works seamlessly with MDM platforms like Microsoft Intune for enterprise deployment
+
+### Bootstrap Commands
+
+| Action | Command | Description |
+|--------|---------|-------------|
+| Enter GUI Bootstrap | `managedsoftwareupdate.exe --set-bootstrap-mode` | Creates GUI bootstrap trigger |
+| Enter Headless Bootstrap | `cimitrigger.exe headless` | Initiates silent bootstrap |
+| Clear Bootstrap | `managedsoftwareupdate.exe --clear-bootstrap-mode` | Removes bootstrap flags |
+| Trigger GUI Update | `cimitrigger.exe gui` | Force GUI update process |
+| Diagnostic Mode | `cimitrigger.exe debug` | Run diagnostics |
+
+### Enterprise Use Cases
+
+- **Zero-touch deployment**: Ship Windows machines with only Cimian installed; bootstrap completes the configuration
+- **System rebuilds**: Ensure all required software is installed before first user login  
+- **Provisioning automation**: Integrate with deployment tools for fully automated system setup
+- **MDM Integration**: Deploy via Microsoft Intune with .intunewin packages
+- **Responsive Updates**: Near-real-time software deployment when triggered by management systems
+
 ### PowerShell Integration
 
 ```powershell
@@ -296,6 +292,37 @@ foreach ($package in $packages) {
 & "C:\Program Files\Cimian\makecatalogs.exe"
 ```
 
+## Development and Building
+
+### Build System
+
+The project uses a comprehensive PowerShell build system (`build.ps1`) that:
+
+- Builds all binaries for x64 and ARM64 architectures
+- Handles code signing with enterprise certificates
+- Creates MSI and NuGet packages automatically
+- Supports development mode for rapid iteration
+- Integrates with CI/CD pipelines
+
+### Build Commands
+
+```powershell
+# Full build with automatic signing
+.\build.ps1
+
+# Development mode (fast iteration)
+.\build.ps1 -Dev -Install
+
+# Build specific binary only
+.\build.ps1 -Binary cimistatus -Sign
+
+# Create Intune packages
+.\build.ps1 -IntuneWin
+
+# Package existing binaries
+.\build.ps1 -PackageOnly
+```
+
 ## Monitoring and Logging
 
 ### Event Logging
@@ -307,12 +334,18 @@ Cimian components write to Windows Event Log under:
 
 ### Log Files
 
+Cimian uses a modern structured logging system with timestamped session directories:
+
 | Component | Log Location | Purpose |
 |-----------|-------------|---------|
-| Client Agent | `C:\ProgramData\ManagedInstalls\Logs\managedsoftwareupdate.log` | Installation operations |
-| Watcher Service | Windows Event Log | Service monitoring events |
-| Status GUI | `C:\ProgramData\ManagedInstalls\Logs\cimistatus.log` | UI operations |
-| Import Tool | Console output + file logs | Package import operations |
+| **Session Logs** | `C:\ProgramData\ManagedInstalls\logs\{YYYY-MM-DD-HHMMss}\` | Individual session data with structured JSON and human-readable logs |
+| **Primary Log** | `C:\ProgramData\ManagedInstalls\logs\{session}\install.log` | Human-readable installation operations log |
+| **Session Metadata** | `C:\ProgramData\ManagedInstalls\logs\{session}\session.json` | Session start/end times, status, statistics |
+| **Event Stream** | `C:\ProgramData\ManagedInstalls\logs\{session}\events.jsonl` | Detailed event tracking for troubleshooting |
+| **Summary Reports** | `C:\ProgramData\ManagedInstalls\reports\sessions.json` | Pre-computed session summaries for monitoring tools |
+| **Event Reports** | `C:\ProgramData\ManagedInstalls\reports\events.json` | Aggregated event data for analysis |
+| **CimianWatcher Service** | Windows Event Log (Application) | Service monitoring and bootstrap events |
+| **Status Runtime** | `C:\ProgramData\ManagedInstalls\LastRunTime.txt` | Last execution timestamp |
 
 ### Status Monitoring
 
@@ -410,7 +443,6 @@ Cimian can complement SCCM deployments:
 - **Approval Workflows**: Configurable approval processes for software deployment
 - **Compliance Reporting**: Built-in reporting for regulatory compliance
 - **Access Controls**: Role-based access control for administrative functions
-
 
 ## License
 
