@@ -106,14 +106,13 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 
 Cimian features a powerful conditional items system inspired by Munki's NSPredicate-style conditions, allowing dynamic software deployment based on system facts like hostname, architecture, domain membership, and more.
 
-### Simplified Conditional Syntax
+### Simple String Format
 
-Cimian supports both a new simplified string format and the legacy verbose format for maximum flexibility:
+Use natural language patterns: `"key operator value"`
 
-#### New Simplified Format (Recommended)
 ```yaml
 conditional_items:
-  # Install on non-Camera machines
+  # Basic hostname exclusion
   - condition: "hostname DOES_NOT_CONTAIN Camera"
     managed_installs:
       - StandardSoftware
@@ -123,24 +122,271 @@ conditional_items:
     managed_installs:
       - ModernApplication
       
-  # Multiple conditions with AND logic
-  - conditions:
-      - "domain == CORPORATE"
-      - "hostname BEGINSWITH WS"
-    condition_type: "AND"
+  # Multiple values using IN operator
+  - condition: "hostname IN LAB-01,LAB-02,LAB-03"
     managed_installs:
-      - CorporateTools
+      - LabSoftware
 ```
 
-#### Legacy Verbose Format (Deprecated)
+### Multiple CONTAINS Examples
+
 ```yaml
 conditional_items:
-  - condition:
-      key: "hostname"
-      operator: "DOES_NOT_CONTAIN"
-      value: "Camera"
+  # Install on machines that contain BOTH "LAB" AND "RENDER" in hostname
+  - conditions:
+      - "hostname CONTAINS LAB"
+      - "hostname CONTAINS RENDER"
+    condition_type: "AND"
+    managed_installs:
+      - RenderFarmSoftware
+      - LabManagementTools
+      
+  # Install on machines that contain ANY of these keywords in hostname
+  - conditions:
+      - "hostname CONTAINS DEV"
+      - "hostname CONTAINS TEST"
+      - "hostname CONTAINS STAGING"
+    condition_type: "OR"
+    managed_installs:
+      - DeveloperTools
+      - TestingUtilities
+      
+  # Complex: Must contain "WORKSTATION" but NOT contain "CAMERA" or "KIOSK"
+  - conditions:
+      - "hostname CONTAINS WORKSTATION"
+      - "hostname DOES_NOT_CONTAIN CAMERA"
+      - "hostname DOES_NOT_CONTAIN KIOSK"
+    condition_type: "AND"
+    managed_installs:
+      - WorkstationSuite
+      - OfficeTools
+```
+
+### Advanced Mixed AND/OR Logic
+
+For complex scenarios, you can create multiple conditional items that work together:
+
+```yaml
+conditional_items:
+  # Executive machines: Must be corporate domain AND (starts with EXEC OR starts with CEO)
+  - conditions:
+      - "domain == CORPORATE"
+      - "hostname BEGINSWITH EXEC"
+    condition_type: "AND"
+    managed_installs:
+      - ExecutiveSuite
+      
+  - conditions:
+      - "domain == CORPORATE" 
+      - "hostname BEGINSWITH CEO"
+    condition_type: "AND"
+    managed_installs:
+      - ExecutiveSuite
+      
+  # Creative labs: Must contain "ART" or "DESIGN" but also be x64 architecture
+  - conditions:
+      - "hostname CONTAINS ART"
+      - "arch == x64"
+    condition_type: "AND"
+    managed_installs:
+      - CreativeSuite
+      - AdobeTools
+      
+  - conditions:
+      - "hostname CONTAINS DESIGN"
+      - "arch == x64"
+    condition_type: "AND"
+    managed_installs:
+      - CreativeSuite
+      - AdobeTools
+      
+  # Engineering workstations: Multiple identification patterns
+  - conditions:
+      - "hostname CONTAINS ENG"
+      - "hostname CONTAINS WORKSTATION"
+      - "machine_model CONTAINS Precision"
+    condition_type: "AND"
+    managed_installs:
+      - CADSoftware
+      - EngineeringTools
+```
+
+### Real-World Complex Examples
+
+```yaml
+conditional_items:
+  # Media production suites (must meet ALL criteria)
+  - conditions:
+      - "hostname CONTAINS MEDIA"
+      - "arch == x64"
+      - "machine_type == desktop"
+      - "hostname DOES_NOT_CONTAIN BACKUP"
+    condition_type: "AND"
+    managed_installs:
+      - AvidMediaComposer
+      - ProTools
+      - AfterEffects
+    managed_uninstalls:
+      - BasicVideoPlayer
+      
+  # Student lab machines (flexible identification)
+  - conditions:
+      - "hostname CONTAINS STUDENT"
+      - "hostname CONTAINS LAB"  
+      - "hostname CONTAINS CLASS"
+    condition_type: "OR"
+    managed_installs:
+      - EducationalSoftware
+      - StudentPortal
+    managed_profiles:
+      - StudentRestrictions
+      
+  # Exclude camera/kiosk/display systems entirely
+  - conditions:
+      - "hostname CONTAINS CAMERA"
+      - "hostname CONTAINS KIOSK"
+      - "hostname CONTAINS DISPLAY" 
+      - "hostname CONTAINS SIGNAGE"
+    condition_type: "OR"
+    managed_uninstalls:
+      - AllStandardSoftware
+      - OfficeApps
+      - UserTools
+```
+
+### Complex OR + AND Logic Patterns
+
+Since each conditional item can only use either AND or OR, you achieve complex logic by using multiple conditional items together. Here are common patterns:
+
+#### Pattern 1: (A OR B) AND C
+Install software if hostname contains "DEV" OR "TEST", but ONLY if it's also x64 architecture:
+
+```yaml
+conditional_items:
+  # Dev machines that are x64
+  - conditions:
+      - "hostname CONTAINS DEV"
+      - "arch == x64"
+    condition_type: "AND"
+    managed_installs:
+      - DeveloperTools
+      
+  # Test machines that are x64  
+  - conditions:
+      - "hostname CONTAINS TEST"
+      - "arch == x64"
+    condition_type: "AND"
+    managed_installs:
+      - DeveloperTools
+```
+
+#### Pattern 2: A AND (B OR C OR D)
+Install on corporate domain machines that have ANY creative designation:
+
+```yaml
+conditional_items:
+  # Corporate + Art designation
+  - conditions:
+      - "domain == CORPORATE"
+      - "hostname CONTAINS ART"
+    condition_type: "AND"
+    managed_installs:
+      - CreativeSuite
+      
+  # Corporate + Design designation
+  - conditions:
+      - "domain == CORPORATE"
+      - "hostname CONTAINS DESIGN"
+    condition_type: "AND"
+    managed_installs:
+      - CreativeSuite
+      
+  # Corporate + Media designation
+  - conditions:
+      - "domain == CORPORATE"
+      - "hostname CONTAINS MEDIA"
+    condition_type: "AND"
+    managed_installs:
+      - CreativeSuite
+```
+
+#### Pattern 3: (A AND B) OR (C AND D)
+Install premium software on either executive machines OR high-end workstations:
+
+```yaml
+conditional_items:
+  # Executive machines (Corporate domain + Executive hostname)
+  - conditions:
+      - "domain == CORPORATE"
+      - "hostname CONTAINS EXECUTIVE"
+    condition_type: "AND"
+    managed_installs:
+      - PremiumSoftwareSuite
+      
+  # High-end workstations (Precision model + x64 arch)
+  - conditions:
+      - "machine_model CONTAINS Precision"
+      - "arch == x64"
+    condition_type: "AND"
+    managed_installs:
+      - PremiumSoftwareSuite
+```
+
+#### Pattern 4: Complex Exclusions with Exceptions
+Install standard software everywhere EXCEPT certain machine types, but with exceptions:
+
+```yaml
+conditional_items:
+  # Standard installation (exclude problematic machine types)
+  - conditions:
+      - "hostname DOES_NOT_CONTAIN CAMERA"
+      - "hostname DOES_NOT_CONTAIN KIOSK"
+      - "hostname DOES_NOT_CONTAIN SIGNAGE"
+      - "hostname DOES_NOT_CONTAIN DISPLAY"
+    condition_type: "AND"
     managed_installs:
       - StandardSoftware
+      
+  # Exception: Special lab cameras that need some software
+  - conditions:
+      - "hostname CONTAINS CAMERA"
+      - "hostname CONTAINS LAB"
+      - "hostname DOES_NOT_CONTAIN PUBLIC"
+    condition_type: "AND"
+    managed_installs:
+      - LabCameraTools
+      - BasicUtilities
+```
+
+#### Pattern 5: Department-Based with Role Variations
+Different software for the same department based on role:
+
+```yaml
+conditional_items:
+  # Engineering department - all get base tools
+  - condition: "hostname CONTAINS ENG"
+    managed_installs:
+      - EngineeringBase
+      - CADViewer
+      
+  # Engineering workstations - additional power tools
+  - conditions:
+      - "hostname CONTAINS ENG"
+      - "hostname CONTAINS WORKSTATION"
+      - "arch == x64"
+    condition_type: "AND"
+    managed_installs:
+      - AdvancedCAD
+      - SimulationSoftware
+      
+  # Engineering managers - get management tools too
+  - conditions:
+      - "hostname CONTAINS ENG"
+      - "hostname CONTAINS MGR"
+    condition_type: "AND"
+    managed_installs:
+      - ProjectManagement
+      - BudgetingTools
 ```
 
 ### Supported Operators
@@ -152,7 +398,7 @@ conditional_items:
 - **BEGINSWITH**: String starts with value
 - **ENDSWITH**: String ends with value
 - **>** / **<** / **>=** / **<=**: Comparison operators
-- **IN**: Value is in a list of options
+- **IN**: Value is in a comma-separated list
 - **LIKE**: Wildcard pattern matching
 
 ### Available System Facts
