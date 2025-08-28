@@ -29,13 +29,13 @@ type Item struct {
 	InstallerLocation string   `yaml:"installer_location,omitempty"`
 	Includes          []string `yaml:"included_manifests,omitempty"`
 
-	// Old arrays for referencing packages by name:
+	// Arrays for referencing packages by name:
 	ManagedInstalls   []string `yaml:"managed_installs,omitempty"`
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty"`
 	ManagedUpdates    []string `yaml:"managed_updates,omitempty"`
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty"`
-	ManagedProfiles   []string `yaml:"managed_profiles,omitempty"` // Device Management Service configuration profiles
-	ManagedApps       []string `yaml:"managed_apps,omitempty"`     // Device Management Service apps
+	ManagedProfiles   []string `yaml:"managed_profiles,omitempty"` // Externally managed by Device Management Service configuration profiles
+	ManagedApps       []string `yaml:"managed_apps,omitempty"`     // Externally managed by Device Management Service apps
 
 	// The catalogs (Development, etc.)
 	Catalogs      []string `yaml:"catalogs,omitempty"`
