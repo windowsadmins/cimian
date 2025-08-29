@@ -104,7 +104,7 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 
 ## Conditional Items System
 
-Cimian features a powerful conditional items system inspired by Munki's NSPredicate-style conditions, allowing dynamic software deployment based on system facts like hostname, architecture, domain membership, and more.
+Cimian features a powerful conditional items system inspired by Munki's NSPredicate-style conditions, allowing dynamic software deployment based on system facts like hostname, architecture, domain membership, and more. The enhanced system now supports complex expressions with OR/AND operators in single condition strings and nested conditional items for hierarchical logic.
 
 ### Simple String Format
 
@@ -126,6 +126,68 @@ conditional_items:
   - condition: "hostname IN LAB-01,LAB-02,LAB-03"
     managed_installs:
       - LabSoftware
+```
+
+### Enhanced Complex Expression Support
+
+The enhanced conditional system now supports complex OR/AND expressions within a single condition string:
+
+```yaml
+conditional_items:
+  # Complex OR expression in single condition
+  - condition: hostname CONTAINS "Design-" OR hostname CONTAINS "Studio-" OR hostname CONTAINS "Edit-"
+    managed_installs:
+      - CreativeApplications
+      - AdvancedTools
+      
+  # Complex AND expression
+  - condition: os_vers_major >= 11 AND arch == "x64"
+    managed_installs:
+      - ModernApplications
+      - x64OptimizedTools
+      
+  # Mixed AND/OR with special operators
+  - condition: NOT hostname CONTAINS "Kiosk" AND (domain == "CORP" OR domain == "EDU")
+    managed_installs:
+      - EnterpriseApplications
+      
+  # ANY operator for catalog checking
+  - condition: ANY catalogs != "Testing"
+    managed_installs:
+      - ProductionSoftware
+```
+
+### Nested Conditional Items
+
+Create hierarchical conditional logic with nested conditional items:
+
+```yaml
+conditional_items:
+  # Main condition with nested subconditions
+  - condition: enrolled_usage == "Shared"
+    conditional_items:
+      # Nested conditions within the main condition
+      - condition: enrolled_area != "Classroom" OR enrolled_area != "Podium"
+        managed_installs:
+          - CollaborativeTools
+          - GroupSoftware
+      
+      # Architecture-specific nested deployment
+      - condition: machine_type == "desktop"
+        conditional_items:
+          # Further nesting for granular control
+          - condition: os_vers_major >= 11 AND arch == "x64"
+            managed_installs:
+              - HighEndApplications
+              - PerformanceTools
+        
+        managed_installs:
+          - BasicDesktopTools
+    
+    # Items for all machines matching the main condition
+    managed_installs:
+      - SharedMachineConfiguration
+      - SecurityHardening
 ```
 
 ### Multiple CONTAINS Examples
