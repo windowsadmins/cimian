@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/windowsadmins/cimian/pkg/config"
@@ -103,7 +104,8 @@ type Condition struct {
 
 // UnmarshalYAML implements custom YAML unmarshaling to support both formats:
 // 1. Simple string format: "hostname DOES_NOT_CONTAIN Camera"
-// 2. Legacy verbose format: {key: "hostname", operator: "DOES_NOT_CONTAIN", value: "Camera"}
+// 2. Complex string format with OR/AND: "key != value OR key != value2"
+// 3. Legacy verbose format: {key: "hostname", operator: "DOES_NOT_CONTAIN", value: "Camera"}
 func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
 	// Try to unmarshal as a simple string first
 	if value.Kind == yaml.ScalarNode {
@@ -116,31 +118,148 @@ func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
 	return value.Decode(aux)
 }
 
-// parseSimpleCondition parses the simplified string format: "key operator value"
+// parseComplexCondition parses complex condition strings with OR/AND operators
+func parseComplexCondition(conditionStr string) ([]*Condition, string, error) {
+	// Normalize the condition string
+	conditionStr = strings.TrimSpace(conditionStr)
+
+	// Check for OR operator (case insensitive)
+	if strings.Contains(strings.ToUpper(conditionStr), " OR ") {
+		parts := strings.Split(conditionStr, " OR ")
+		if len(parts) < 2 {
+			parts = strings.Split(conditionStr, " or ")
+		}
+
+		var conditions []*Condition
+		for _, part := range parts {
+			condition := &Condition{}
+			if err := condition.parseSimpleCondition(strings.TrimSpace(part)); err != nil {
+				return nil, "", err
+			}
+			conditions = append(conditions, condition)
+		}
+		return conditions, "OR", nil
+	}
+
+	// Check for AND operator (case insensitive)
+	if strings.Contains(strings.ToUpper(conditionStr), " AND ") {
+		parts := strings.Split(conditionStr, " AND ")
+		if len(parts) < 2 {
+			parts = strings.Split(conditionStr, " and ")
+		}
+
+		var conditions []*Condition
+		for _, part := range parts {
+			condition := &Condition{}
+			if err := condition.parseSimpleCondition(strings.TrimSpace(part)); err != nil {
+				return nil, "", err
+			}
+			conditions = append(conditions, condition)
+		}
+		return conditions, "AND", nil
+	}
+
+	// Single condition
+	condition := &Condition{}
+	if err := condition.parseSimpleCondition(conditionStr); err != nil {
+		return nil, "", err
+	}
+	return []*Condition{condition}, "AND", nil
+}
 func (c *Condition) parseSimpleCondition(conditionStr string) error {
-	parts := strings.Fields(conditionStr)
+	// Handle quoted values by preserving them during parsing
+	parts := parseConditionParts(conditionStr)
 	if len(parts) < 3 {
 		return fmt.Errorf("invalid condition format: '%s'. Expected format: 'key operator value'", conditionStr)
 	}
 
-	c.Key = parts[0]
-	c.Operator = strings.ToUpper(parts[1])
-	
+	// Handle special prefixes like "ANY" or "NOT"
+	keyIndex := 0
+	if strings.ToUpper(parts[0]) == "ANY" || strings.ToUpper(parts[0]) == "NOT" {
+		keyIndex = 1
+		if len(parts) < 4 {
+			return fmt.Errorf("invalid condition format: '%s'. Expected format: 'ANY/NOT key operator value'", conditionStr)
+		}
+	}
+
+	c.Key = parts[keyIndex]
+	c.Operator = strings.ToUpper(parts[keyIndex+1])
+
+	// Handle special prefixes by modifying the operator
+	if keyIndex == 1 {
+		prefix := strings.ToUpper(parts[0])
+		if prefix == "NOT" {
+			// Invert the operator
+			switch c.Operator {
+			case "==", "EQUALS":
+				c.Operator = "NOT_EQUALS"
+			case "!=", "NOT_EQUALS":
+				c.Operator = "EQUALS"
+			case "CONTAINS":
+				c.Operator = "DOES_NOT_CONTAIN"
+			case "DOES_NOT_CONTAIN":
+				c.Operator = "CONTAINS"
+			}
+		}
+		// For "ANY", we use the operator as-is since it's typically used with collections
+	}
+
 	// Join the remaining parts as the value (handles multi-word values)
-	c.Value = strings.Join(parts[2:], " ")
+	value := strings.Join(parts[keyIndex+2:], " ")
+
+	// Remove surrounding quotes if present
+	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+		value = value[1 : len(value)-1]
+	}
+
+	c.Value = value
 
 	// Validate operator
-	validOperators := []string{"==", "EQUALS", "!=", "NOT_EQUALS", ">", "GREATER_THAN", 
+	validOperators := []string{"==", "EQUALS", "!=", "NOT_EQUALS", ">", "GREATER_THAN",
 		"<", "LESS_THAN", ">=", "GREATER_THAN_OR_EQUAL", "<=", "LESS_THAN_OR_EQUAL",
 		"LIKE", "IN", "CONTAINS", "DOES_NOT_CONTAIN", "BEGINSWITH", "ENDSWITH"}
-	
+
 	for _, op := range validOperators {
 		if c.Operator == op {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("invalid operator '%s' in condition '%s'", c.Operator, conditionStr)
+}
+
+// parseConditionParts splits a condition string into parts while respecting quoted strings
+func parseConditionParts(conditionStr string) []string {
+	var parts []string
+	var current strings.Builder
+	inQuotes := false
+	quoteChar := byte(0)
+
+	for i := 0; i < len(conditionStr); i++ {
+		char := conditionStr[i]
+
+		if !inQuotes && (char == '"' || char == '\'') {
+			inQuotes = true
+			quoteChar = char
+			current.WriteByte(char)
+		} else if inQuotes && char == quoteChar {
+			inQuotes = false
+			current.WriteByte(char)
+		} else if !inQuotes && char == ' ' {
+			if current.Len() > 0 {
+				parts = append(parts, current.String())
+				current.Reset()
+			}
+		} else {
+			current.WriteByte(char)
+		}
+	}
+
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+
+	return parts
 }
 
 // ConditionalItem represents an item with conditional evaluation
@@ -149,6 +268,9 @@ type ConditionalItem struct {
 	Conditions    []*Condition `yaml:"conditions,omitempty" json:"conditions,omitempty"`         // Multiple conditions (AND logic)
 	ConditionType string       `yaml:"condition_type,omitempty" json:"condition_type,omitempty"` // "AND" or "OR" for multiple conditions
 
+	// Nested conditional items (for hierarchical conditions)
+	ConditionalItems []*ConditionalItem `yaml:"conditional_items,omitempty" json:"conditional_items,omitempty"`
+
 	// The actual items to include when conditions are met
 	ManagedInstalls   []string `yaml:"managed_installs,omitempty" json:"managed_installs,omitempty"`
 	ManagedUninstalls []string `yaml:"managed_uninstalls,omitempty" json:"managed_uninstalls,omitempty"`
@@ -156,6 +278,46 @@ type ConditionalItem struct {
 	OptionalInstalls  []string `yaml:"optional_installs,omitempty" json:"optional_installs,omitempty"`
 	ManagedProfiles   []string `yaml:"managed_profiles,omitempty" json:"managed_profiles,omitempty"` // Device Management Service configuration profiles
 	ManagedApps       []string `yaml:"managed_apps,omitempty" json:"managed_apps,omitempty"`         // Device Management Service apps
+}
+
+// UnmarshalYAML implements custom YAML unmarshaling for ConditionalItem to handle complex condition strings
+func (ci *ConditionalItem) UnmarshalYAML(value *yaml.Node) error {
+	// First, try to unmarshal normally
+	type conditionalItemAlias ConditionalItem
+	aux := (*conditionalItemAlias)(ci)
+	if err := value.Decode(aux); err != nil {
+		return err
+	}
+
+	// If we have a single condition that contains OR/AND, parse it into multiple conditions
+	if ci.Condition != nil {
+		conditionStr := ""
+
+		// Extract the condition string if it was parsed as a string
+		if ci.Condition.Key != "" && ci.Condition.Operator != "" {
+			// Already parsed successfully as a simple condition
+			return nil
+		}
+
+		// Try to find the condition string in the YAML node
+		for i, node := range value.Content {
+			if node.Value == "condition" && i+1 < len(value.Content) {
+				conditionStr = value.Content[i+1].Value
+				break
+			}
+		}
+
+		if conditionStr != "" {
+			if conditions, conditionType, err := parseComplexCondition(conditionStr); err == nil && len(conditions) > 1 {
+				// Complex condition detected, convert to multiple conditions
+				ci.Condition = nil
+				ci.Conditions = conditions
+				ci.ConditionType = conditionType
+			}
+		}
+	}
+
+	return nil
 }
 
 // -----------------------------------------------------------------------------
@@ -637,23 +799,18 @@ func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []
 	facts := gatherSystemFacts()
 
 	for _, item := range conditionalItems {
-		matches, err := evaluateConditionalItem(item, facts)
+		installs, uninstalls, updates, optional, profiles, apps, err := evaluateConditionalItemRecursive(item, facts)
 		if err != nil {
 			logging.Warn("Error evaluating conditional item", "error", err)
 			continue
 		}
 
-		if matches {
-			logging.Debug("Conditional item matched, including items")
-			managedInstalls = append(managedInstalls, item.ManagedInstalls...)
-			managedUninstalls = append(managedUninstalls, item.ManagedUninstalls...)
-			managedUpdates = append(managedUpdates, item.ManagedUpdates...)
-			optionalInstalls = append(optionalInstalls, item.OptionalInstalls...)
-			managedProfiles = append(managedProfiles, item.ManagedProfiles...)
-			managedApps = append(managedApps, item.ManagedApps...)
-		} else {
-			logging.Debug("Conditional item did not match, skipping")
-		}
+		managedInstalls = append(managedInstalls, installs...)
+		managedUninstalls = append(managedUninstalls, uninstalls...)
+		managedUpdates = append(managedUpdates, updates...)
+		optionalInstalls = append(optionalInstalls, optional...)
+		managedProfiles = append(managedProfiles, profiles...)
+		managedApps = append(managedApps, apps...)
 	}
 
 	return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps, nil
@@ -681,8 +838,39 @@ func gatherSystemFacts() map[string]interface{} {
 		facts["username"] = username
 	}
 
-	// OS Version (basic implementation without import cycle)
-	facts["os_version"] = getWindowsVersionBasic()
+	// OS Version details
+	osVersion := getWindowsVersionBasic()
+	facts["os_version"] = osVersion
+
+	// Parse OS version for major/minor components
+	if osVersionParts := strings.Split(osVersion, "."); len(osVersionParts) >= 1 {
+		if major, err := strconv.Atoi(osVersionParts[0]); err == nil {
+			facts["os_vers_major"] = major
+		}
+		if len(osVersionParts) >= 2 {
+			if minor, err := strconv.Atoi(osVersionParts[1]); err == nil {
+				facts["os_vers_minor"] = minor
+			}
+		}
+	}
+
+	// Machine type (simplified detection)
+	facts["machine_type"] = getMachineType()
+
+	// Serial number (Windows-specific)
+	facts["serial_number"] = getSerialNumber()
+
+	// OS build number
+	facts["os_build_number"] = getOSBuildNumber()
+
+	// Default values for MDM/enrollment-related facts (these would typically come from MDM enrollment)
+	// These can be overridden by actual MDM data collection in a production environment
+	facts["enrolled_usage"] = getEnrolledUsage()
+	facts["enrolled_area"] = getEnrolledArea()
+	facts["enrolled_room"] = getEnrolledRoom()
+	facts["filevault_status"] = "Off"    // Windows doesn't have FileVault, could map to BitLocker
+	facts["supervised_status"] = "No"    // Windows concept differs from macOS
+	facts["userapproved_status"] = "Yes" // Default assumption
 
 	return facts
 }
@@ -715,6 +903,55 @@ func getWindowsVersionBasic() string {
 	return "10.0" // Default fallback
 }
 
+// getMachineType returns the machine type (desktop, laptop, etc.)
+func getMachineType() string {
+	// This is a simplified implementation
+	// In a production environment, this could use WMI queries to determine chassis type
+	return "desktop" // Default assumption
+}
+
+// getSerialNumber returns the system serial number
+func getSerialNumber() string {
+	// This would typically use WMI query: "SELECT SerialNumber FROM Win32_BIOS"
+	// For now, return a placeholder
+	return "UNKNOWN"
+}
+
+// getOSBuildNumber returns the OS build number
+func getOSBuildNumber() string {
+	// This would typically use registry query: HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\CurrentBuild
+	// For now, return a placeholder
+	return "19044"
+}
+
+// getEnrolledUsage returns the enrollment usage type
+func getEnrolledUsage() string {
+	// This would typically come from MDM enrollment data
+	// Could be read from registry, configuration file, or environment variable
+	if usage := os.Getenv("CIMIAN_ENROLLED_USAGE"); usage != "" {
+		return usage
+	}
+	return "Shared" // Default assumption
+}
+
+// getEnrolledArea returns the enrollment area
+func getEnrolledArea() string {
+	// This would typically come from MDM enrollment data
+	if area := os.Getenv("CIMIAN_ENROLLED_AREA"); area != "" {
+		return area
+	}
+	return "General" // Default assumption
+}
+
+// getEnrolledRoom returns the enrollment room
+func getEnrolledRoom() string {
+	// This would typically come from MDM enrollment data
+	if room := os.Getenv("CIMIAN_ENROLLED_ROOM"); room != "" {
+		return room
+	}
+	return "Unknown" // Default assumption
+}
+
 // evaluateConditionalItem evaluates a single conditional item
 func evaluateConditionalItem(item *ConditionalItem, facts map[string]interface{}) (bool, error) {
 	if item == nil {
@@ -744,6 +981,53 @@ func evaluateConditionalItem(item *ConditionalItem, facts map[string]interface{}
 	default:
 		return false, fmt.Errorf("unknown condition type: %s", conditionType)
 	}
+}
+
+// evaluateConditionalItemRecursive evaluates a conditional item and its nested items recursively
+func evaluateConditionalItemRecursive(item *ConditionalItem, facts map[string]interface{}) ([]string, []string, []string, []string, []string, []string, error) {
+	var managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps []string
+
+	if item == nil {
+		return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps, nil
+	}
+
+	// First evaluate this item's conditions
+	matches, err := evaluateConditionalItem(item, facts)
+	if err != nil {
+		return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps, err
+	}
+
+	if matches {
+		logging.Debug("Conditional item matched, including items")
+
+		// Add direct items from this conditional item
+		managedInstalls = append(managedInstalls, item.ManagedInstalls...)
+		managedUninstalls = append(managedUninstalls, item.ManagedUninstalls...)
+		managedUpdates = append(managedUpdates, item.ManagedUpdates...)
+		optionalInstalls = append(optionalInstalls, item.OptionalInstalls...)
+		managedProfiles = append(managedProfiles, item.ManagedProfiles...)
+		managedApps = append(managedApps, item.ManagedApps...)
+
+		// Recursively evaluate nested conditional items
+		for _, nestedItem := range item.ConditionalItems {
+			nestedInstalls, nestedUninstalls, nestedUpdates, nestedOptional, nestedProfiles, nestedApps, err := evaluateConditionalItemRecursive(nestedItem, facts)
+			if err != nil {
+				logging.Warn("Error evaluating nested conditional item", "error", err)
+				continue
+			}
+
+			managedInstalls = append(managedInstalls, nestedInstalls...)
+			managedUninstalls = append(managedUninstalls, nestedUninstalls...)
+			managedUpdates = append(managedUpdates, nestedUpdates...)
+			optionalInstalls = append(optionalInstalls, nestedOptional...)
+			managedProfiles = append(managedProfiles, nestedProfiles...)
+			managedApps = append(managedApps, nestedApps...)
+		}
+	} else {
+		logging.Debug("Conditional item did not match, skipping")
+	}
+
+	return managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps, nil
 }
 
 // evaluateCondition evaluates a single condition
