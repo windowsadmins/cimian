@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -2633,6 +2634,12 @@ type ManifestNode struct {
 }
 
 // displayManifestTree shows the manifest hierarchy in tree format
+// NOTE: The actual hierarchy is determined by the preflight script (preflight.ps1) which:
+// 1. Downloads computers.csv from the deployment server
+// 2. Matches device serial number to inventory data  
+// 3. Builds manifest paths like: Usage/Catalog/Area/Location/Allocation
+// 4. Sets ClientIdentifier in Config.yaml based on the matched hierarchy
+// This display function only visualizes the resulting manifest structure.
 func displayManifestTree(manifestItems []manifest.Item) {
 	// Create a map to track manifest counts by name
 	manifestCounts := make(map[string]int)
@@ -2657,117 +2664,142 @@ func displayManifestTree(manifestItems []manifest.Item) {
 	logger.Info("")
 }
 
+
 // buildManifestHierarchy creates a tree structure from manifest names and their paths
 func buildManifestHierarchy(manifestCounts map[string]int) *ManifestNode {
 	root := &ManifestNode{
 		Name:     "root",
 		Children: make(map[string]*ManifestNode),
 	}
-
-	// Define known manifest hierarchy from the logs we've seen
-	knownHierarchy := map[string][]string{
-		"RodChristiansen":   {"Assigned", "Staff", "IT", "B1115"},
-		"B1115":             {"Assigned", "Staff", "IT"},
-		"IT":                {"Assigned", "Staff"},
-		"Staff":             {"Assigned"},
-		"Assigned":          {},
-		"Apps":              {"Shared", "Curriculum"},
-		"Curriculum":        {"Shared"},
-		"Shared":            {},
-		"CoreApps":          {},
-		"ManagementTools":   {},
-		"ManagementPrefs":   {},
-		"CoreManifest":      {},
-		"SelfServeManifest": {},
-	}
-
-	// First pass: create all nodes with their hierarchy
-	allNodes := make(map[string]*ManifestNode)
-
-	// Add all manifests that have items
-	for manifestName := range manifestCounts {
-		if manifestName == "Unknown" {
-			continue
-		}
-
-		allNodes[manifestName] = &ManifestNode{
-			Name:      manifestName,
-			ItemCount: manifestCounts[manifestName],
-			Children:  make(map[string]*ManifestNode),
-			IsLeaf:    true,
-		}
-	}
-
-	// Add all known manifests (including those with 0 items) to ensure full hierarchy is shown
-	for manifestName := range knownHierarchy {
-		if allNodes[manifestName] == nil {
-			allNodes[manifestName] = &ManifestNode{
-				Name:      manifestName,
-				ItemCount: 0, // These are parent manifests with 0 direct items
-				Children:  make(map[string]*ManifestNode),
-				IsLeaf:    false,
+	
+	// Read included_manifests for all manifests in the system
+	manifestsPath := `C:\ProgramData\ManagedInstalls\manifests`
+	manifestIncludes := make(map[string][]string)
+	allManifests := make(map[string]bool)
+	
+	// Helper to read manifest includes
+	readManifestIncludes := func(manifestName string) []string {
+		// Try direct file first
+		manifestPath := filepath.Join(manifestsPath, manifestName+".yaml")
+		if data, err := os.ReadFile(manifestPath); err == nil {
+			var mf struct {
+				IncludedManifests []string `yaml:"included_manifests"`
+			}
+			if yaml.Unmarshal(data, &mf) == nil {
+				return mf.IncludedManifests
 			}
 		}
-	}
-
-	// Create parent nodes that might not be in the known hierarchy
-	for manifestName := range manifestCounts {
-		if manifestName == "Unknown" {
-			continue
-		}
-
-		if parents, exists := knownHierarchy[manifestName]; exists {
-			for _, parentName := range parents {
-				if allNodes[parentName] == nil {
-					allNodes[parentName] = &ManifestNode{
-						Name:      parentName,
-						ItemCount: 0, // Parent nodes may have 0 items
-						Children:  make(map[string]*ManifestNode),
-						IsLeaf:    false,
+		
+		// Try nested path - walk subdirectories
+		var includes []string
+		filepath.WalkDir(manifestsPath, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if filepath.Base(path) == manifestName+".yaml" {
+				if data, err := os.ReadFile(path); err == nil {
+					var mf struct {
+						IncludedManifests []string `yaml:"included_manifests"`
 					}
+					if yaml.Unmarshal(data, &mf) == nil {
+						includes = mf.IncludedManifests
+						return filepath.SkipAll
+					}
+				}
+			}
+			return nil
+		})
+		return includes
+	}
+	
+	// Discover ALL manifests in the system by walking the directory
+	filepath.WalkDir(manifestsPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".yaml") {
+			manifestName := strings.TrimSuffix(d.Name(), ".yaml")
+			allManifests[manifestName] = true
+		}
+		return nil
+	})
+	
+	// Read includes for all discovered manifests
+	for manifestName := range allManifests {
+		manifestIncludes[manifestName] = readManifestIncludes(manifestName)
+	}
+	
+	// Create nodes for ALL manifests (including those with 0 items)
+	allNodes := make(map[string]*ManifestNode)
+	for manifestName := range allManifests {
+		itemCount := 0
+		if count, exists := manifestCounts[manifestName]; exists {
+			itemCount = count
+		}
+		
+		allNodes[manifestName] = &ManifestNode{
+			Name:      manifestName,
+			Children:  make(map[string]*ManifestNode),
+			ItemCount: itemCount,
+		}
+	}
+	
+	// Find the foundation manifests (those that don't include anything else)
+	// These should be the root of our hierarchy
+	var foundationManifests []*ManifestNode
+	for manifestName, node := range allNodes {
+		includes := manifestIncludes[manifestName]
+		if len(includes) == 0 {
+			// This manifest doesn't include anything - it's a foundation
+			foundationManifests = append(foundationManifests, node)
+		}
+	}
+	
+	// Add foundation manifests to root
+	for _, node := range foundationManifests {
+		root.Children[node.Name] = node
+	}
+	
+	// Build unified hierarchy avoiding duplicates
+	// Each manifest should appear only once in the tree
+	placed := make(map[string]bool)
+	
+	// Build the hierarchy: if A includes B, then B is parent of A
+	var buildTree func(node *ManifestNode)
+	buildTree = func(node *ManifestNode) {
+		if placed[node.Name] {
+			return // Already placed in the tree
+		}
+		placed[node.Name] = true
+		
+		// Find all manifests that include this one
+		for manifestName, otherNode := range allNodes {
+			if placed[manifestName] {
+				continue
+			}
+			
+			includes := manifestIncludes[manifestName]
+			for _, include := range includes {
+				// Clean include name
+				includeName := strings.TrimSuffix(include, ".yaml")
+				includeName = strings.ReplaceAll(includeName, `\`, `/`)
+				parts := strings.Split(includeName, "/")
+				includedManifestName := parts[len(parts)-1]
+				
+				// If this manifest includes our current node, make it a child
+				if includedManifestName == node.Name {
+					node.Children[manifestName] = otherNode
+					buildTree(otherNode) // Recursively build
 				}
 			}
 		}
 	}
-
-	// Second pass: build the hierarchy
-	for manifestName := range allNodes {
-		if manifestName == "Unknown" {
-			continue
-		}
-
-		node := allNodes[manifestName]
-		if parents, exists := knownHierarchy[manifestName]; exists && len(parents) > 0 {
-			// Find the immediate parent (last in the list)
-			parentName := parents[len(parents)-1]
-			if parentNode, parentExists := allNodes[parentName]; parentExists {
-				parentNode.Children[manifestName] = node
-				parentNode.IsLeaf = false
-			} else {
-				// If parent doesn't exist, add to root
-				root.Children[manifestName] = node
-			}
-		} else {
-			// No known hierarchy, add to root
-			root.Children[manifestName] = node
-		}
+	
+	// Build tree from foundation manifests
+	for _, node := range foundationManifests {
+		buildTree(node)
 	}
-
-	// Third pass: add any orphaned nodes to root
-	for nodeName, node := range allNodes {
-		// Check if this node is not already a child of someone
-		isChild := false
-		for _, otherNode := range allNodes {
-			if otherNode.Children[nodeName] != nil {
-				isChild = true
-				break
-			}
-		}
-		if !isChild && root.Children[nodeName] == nil {
-			root.Children[nodeName] = node
-		}
-	}
-
+	
 	return root
 }
 
@@ -2779,6 +2811,9 @@ func displayManifestHierarchy(node *ManifestNode, prefix string, isLast bool) {
 		for name := range node.Children {
 			names = append(names, name)
 		}
+		
+		// Sort top-level manifests alphabetically for consistent display
+		sort.Strings(names)
 
 		for i, name := range names {
 			child := node.Children[name]
