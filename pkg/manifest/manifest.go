@@ -109,6 +109,17 @@ type Condition struct {
 func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
 	// Try to unmarshal as a simple string first
 	if value.Kind == yaml.ScalarNode {
+		// Check if this is a complex condition with OR/AND operators
+		conditionStr := strings.TrimSpace(value.Value)
+		if strings.Contains(strings.ToUpper(conditionStr), " OR ") || 
+		   strings.Contains(strings.ToUpper(conditionStr), " AND ") {
+			// This is a complex condition, which should be handled at the ConditionalItem level
+			// For now, we'll store the raw string and let ConditionalItem handle the parsing
+			c.Key = "complex_condition"
+			c.Operator = "RAW"
+			c.Value = conditionStr
+			return nil
+		}
 		return c.parseSimpleCondition(value.Value)
 	}
 
@@ -291,15 +302,34 @@ func (ci *ConditionalItem) UnmarshalYAML(value *yaml.Node) error {
 
 	// If we have a single condition that contains OR/AND, parse it into multiple conditions
 	if ci.Condition != nil {
-		conditionStr := ""
-
-		// Extract the condition string if it was parsed as a string
+		// Check if this is a complex condition that was marked as RAW
+		if ci.Condition.Operator == "RAW" && ci.Condition.Key == "complex_condition" {
+			conditionStr := ci.Condition.Value.(string)
+			if conditions, conditionType, err := parseComplexCondition(conditionStr); err == nil && len(conditions) > 1 {
+				// Complex condition detected, convert to multiple conditions
+				ci.Condition = nil
+				ci.Conditions = conditions
+				ci.ConditionType = conditionType
+			} else {
+				// If parsing failed, try to parse as a single simple condition
+				newCondition := &Condition{}
+				if err := newCondition.parseSimpleCondition(conditionStr); err == nil {
+					ci.Condition = newCondition
+				} else {
+					return fmt.Errorf("failed to parse condition: %s, error: %v", conditionStr, err)
+				}
+			}
+			return nil
+		}
+		
+		// Check if it was already parsed successfully as a simple condition
 		if ci.Condition.Key != "" && ci.Condition.Operator != "" {
 			// Already parsed successfully as a simple condition
 			return nil
 		}
 
-		// Try to find the condition string in the YAML node
+		// Try to find the condition string in the YAML node (fallback)
+		conditionStr := ""
 		for i, node := range value.Content {
 			if node.Value == "condition" && i+1 < len(value.Content) {
 				conditionStr = value.Content[i+1].Value
