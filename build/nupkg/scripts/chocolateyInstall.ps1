@@ -26,6 +26,32 @@ $arch = $env:PROCESSOR_ARCHITECTURE
 Write-Host "Target architecture: $arch" -ForegroundColor Green
 
 try {
+    # Stop CimianWatcher service if it's running (needed for upgrades)
+    Write-Host "Checking for existing CimianWatcher service..."
+    $existingService = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
+    
+    if ($existingService) {
+        Write-Host "Found existing CimianWatcher service with status: $($existingService.Status)"
+        if ($existingService.Status -eq "Running") {
+            Write-Host "Stopping CimianWatcher service for upgrade..."
+            try {
+                Stop-Service -Name "CimianWatcher" -Force -ErrorAction Stop
+                Start-Sleep -Seconds 3
+                Write-Host "CimianWatcher service stopped successfully"
+            } catch {
+                Write-Warning "Failed to stop CimianWatcher service: $_"
+                Write-Host "Attempting to forcefully terminate cimiwatcher.exe processes..."
+                try {
+                    Get-Process -Name "cimiwatcher" -ErrorAction SilentlyContinue | Stop-Process -Force
+                    Start-Sleep -Seconds 2
+                    Write-Host "Forcefully terminated cimiwatcher.exe processes"
+                } catch {
+                    Write-Warning "Failed to terminate cimiwatcher.exe processes: $_"
+                }
+            }
+        }
+    }
+    
     # Create native Program Files\Cimian directory (never x86)
     Write-Host "Creating ARM64-safe installation directory: $InstallDir"
     if (-not (Test-Path $InstallDir)) {
@@ -63,15 +89,44 @@ try {
     $cimiwatcherExe = Join-Path $InstallDir "cimiwatcher.exe"
     if (Test-Path $cimiwatcherExe) {
         try {
-            # Install the service
-            Write-Host "Installing CimianWatcher service..."
-            & $cimiwatcherExe install
-            Start-Sleep -Seconds 2
-            
-            # Start the service
-            Write-Host "Starting CimianWatcher service..."
-            & $cimiwatcherExe start
-            Start-Sleep -Seconds 2
+            # If service was already installed, we may just need to start it
+            if ($existingService) {
+                Write-Host "CimianWatcher service already installed, restarting it..."
+                try {
+                    Start-Service -Name "CimianWatcher" -ErrorAction Stop
+                    Start-Sleep -Seconds 2
+                    Write-Host "CimianWatcher service restarted successfully"
+                } catch {
+                    Write-Warning "Failed to restart existing service, attempting full reinstall: $_"
+                    # Uninstall and reinstall the service
+                    try {
+                        & $cimiwatcherExe uninstall
+                        Start-Sleep -Seconds 2
+                    } catch {
+                        Write-Warning "Failed to uninstall existing service: $_"
+                    }
+                    
+                    # Install fresh
+                    Write-Host "Installing CimianWatcher service..."
+                    & $cimiwatcherExe install
+                    Start-Sleep -Seconds 2
+                    
+                    # Start the service
+                    Write-Host "Starting CimianWatcher service..."
+                    & $cimiwatcherExe start
+                    Start-Sleep -Seconds 2
+                }
+            } else {
+                # Fresh installation
+                Write-Host "Installing CimianWatcher service..."
+                & $cimiwatcherExe install
+                Start-Sleep -Seconds 2
+                
+                # Start the service
+                Write-Host "Starting CimianWatcher service..."
+                & $cimiwatcherExe start
+                Start-Sleep -Seconds 2
+            }
             
             # Verify service is running
             $service = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
