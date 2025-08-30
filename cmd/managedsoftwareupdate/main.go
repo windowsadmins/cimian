@@ -73,17 +73,20 @@ func checkSingleInstance() (windows.Handle, error) {
 	}
 
 	mutex, err := windows.CreateMutex(nil, true, mutexNamePtr)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create mutex: %v", err)
-	}
-
+	
 	// Check if another instance is already running
-	if err := windows.GetLastError(); err == windows.ERROR_ALREADY_EXISTS {
-		windows.CloseHandle(mutex)
-		return 0, fmt.Errorf("another instance of managedsoftwareupdate.exe is already running")
+	// Note: CreateMutex can succeed even when the mutex already exists
+	if err == nil {
+		if lastErr := windows.GetLastError(); lastErr == windows.ERROR_ALREADY_EXISTS {
+			windows.CloseHandle(mutex)
+			return 0, fmt.Errorf("Another instance of managedsoftwareupdate is running. Exiting.")
+		}
+		return mutex, nil
 	}
 
-	return mutex, nil
+	// If CreateMutex failed, it could be due to permissions or another instance
+	// Check if it's a permission issue and provide the Munki-compatible message
+	return 0, fmt.Errorf("Another instance of managedsoftwareupdate is running. Exiting.")
 }
 
 // releaseSingleInstance releases the single instance mutex
@@ -147,7 +150,12 @@ func main() {
 	// Check for single instance - prevent multiple concurrent executions
 	mutex, err := checkSingleInstance()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		// Check if this is the "another instance running" error
+		if strings.Contains(err.Error(), "Another instance of managedsoftwareupdate is running") {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
 		os.Exit(1)
 	}
 	// Ensure mutex is released when the program exits
