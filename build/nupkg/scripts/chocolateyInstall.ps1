@@ -52,6 +52,31 @@ try {
         }
     }
     
+    # Stop any running managedsoftwareupdate.exe processes (needed for upgrades)
+    Write-Host "Checking for running managedsoftwareupdate.exe processes..."
+    $managedSoftwareProcesses = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+    if ($managedSoftwareProcesses) {
+        Write-Host "Found $($managedSoftwareProcesses.Count) running managedsoftwareupdate.exe process(es)"
+        Write-Host "Terminating managedsoftwareupdate.exe processes for upgrade..."
+        try {
+            $managedSoftwareProcesses | Stop-Process -Force
+            Start-Sleep -Seconds 3
+            Write-Host "Successfully terminated managedsoftwareupdate.exe processes"
+        } catch {
+            Write-Warning "Failed to terminate some managedsoftwareupdate.exe processes: $_"
+            # Try a more aggressive approach
+            try {
+                Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Stop-Process -Force
+                Start-Sleep -Seconds 2
+                Write-Host "Forcefully terminated remaining managedsoftwareupdate.exe processes"
+            } catch {
+                Write-Warning "Failed to forcefully terminate managedsoftwareupdate.exe processes: $_"
+            }
+        }
+    } else {
+        Write-Host "No running managedsoftwareupdate.exe processes found"
+    }
+    
     # Create native Program Files\Cimian directory (never x86)
     Write-Host "Creating ARM64-safe installation directory: $InstallDir"
     if (-not (Test-Path $InstallDir)) {
@@ -70,8 +95,47 @@ try {
     
     foreach ($exe in $exeFiles) {
         $destPath = Join-Path $InstallDir $exe.Name
-        Copy-Item -Path $exe.FullName -Destination $destPath -Force
-        Write-Host "Copied $($exe.Name)"
+        
+        # Check if the destination file is locked and try to handle it
+        if (Test-Path $destPath) {
+            Write-Host "Checking if $($exe.Name) is in use..."
+            $retryCount = 0
+            $maxRetries = 5
+            $copySucceeded = $false
+            
+            while ($retryCount -lt $maxRetries -and -not $copySucceeded) {
+                try {
+                    Copy-Item -Path $exe.FullName -Destination $destPath -Force -ErrorAction Stop
+                    Write-Host "Copied $($exe.Name)"
+                    $copySucceeded = $true
+                } catch {
+                    $retryCount++
+                    Write-Warning "Attempt $retryCount failed to copy $($exe.Name): $_"
+                    
+                    if ($exe.Name -eq "managedsoftwareupdate.exe") {
+                        # Special handling for managedsoftwareupdate.exe
+                        Write-Host "Attempting to terminate any remaining managedsoftwareupdate.exe processes..."
+                        try {
+                            Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Stop-Process -Force
+                            Start-Sleep -Seconds 2
+                        } catch {
+                            Write-Warning "Failed to terminate managedsoftwareupdate.exe: $_"
+                        }
+                    }
+                    
+                    if ($retryCount -lt $maxRetries) {
+                        Write-Host "Waiting 2 seconds before retry..."
+                        Start-Sleep -Seconds 2
+                    } else {
+                        throw "Failed to copy $($exe.Name) after $maxRetries attempts: $_"
+                    }
+                }
+            }
+        } else {
+            # File doesn't exist, simple copy
+            Copy-Item -Path $exe.FullName -Destination $destPath -Force
+            Write-Host "Copied $($exe.Name)"
+        }
     }
 
     # Add to PATH
