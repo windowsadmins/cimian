@@ -70,7 +70,6 @@ func AuthenticatedGetEnhanced(cfg config.Configuration) map[int]map[string]Item 
 		return catalogMap
 	}
 
-	logging.Info("📦 Enhanced catalog loading started", "catalogs", len(cfg.Catalogs))
 
 	// Loop through each catalog name in config.Catalogs
 	for _, catalogName := range cfg.Catalogs {
@@ -87,10 +86,10 @@ func AuthenticatedGetEnhanced(cfg config.Configuration) map[int]map[string]Item 
 		if exists && time.Now().Before(cachedData.ExpiresAt) {
 			// Use cached data
 			indexedItems = cachedData.Items
-			logging.Info("   ⚡ Using cached catalog", "name", catalogName, "items", len(indexedItems))
+			logging.Info("Using catalog", "name", catalogName, "items", len(indexedItems))
 		} else {
 			// Download fresh catalog
-			logging.Info("   📥 Downloading catalog", "name", catalogName)
+			logging.Info("Downloading catalog", "name", catalogName)
 
 			// Build the catalog URL and local destination path
 			catalogURL := fmt.Sprintf("%s/catalogs/%s.yaml",
@@ -139,7 +138,7 @@ func AuthenticatedGetEnhanced(cfg config.Configuration) map[int]map[string]Item 
 			}
 			cache.mutex.Unlock()
 
-			logging.Info("   ✅ Downloaded and cached", "name", catalogName,
+			logging.Info("Downloaded and cached", "name", catalogName,
 				"items", len(indexedItems),
 				"duration_ms", time.Since(catalogStartTime).Milliseconds())
 		}
@@ -147,7 +146,7 @@ func AuthenticatedGetEnhanced(cfg config.Configuration) map[int]map[string]Item 
 		catalogMap[catalogCount] = indexedItems
 	}
 
-	logging.Info("📦 Enhanced catalog loading completed",
+	logging.Info("Enhanced catalog loading completed",
 		"catalogs", catalogCount,
 		"total_duration_ms", time.Since(startTime).Milliseconds())
 
