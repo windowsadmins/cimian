@@ -185,6 +185,22 @@
                   Property="SystemFolder"
                   ExeCommand="cmd.exe /c &quot;net stop CimianWatcher /y 2>nul &amp;&amp; taskkill /f /im cimiwatcher.exe 2>nul &amp;&amp; taskkill /f /im cimiwatcher.exe /t 2>nul || exit 0&quot;" />
 
+    <!-- Forcefully stop any existing managedsoftwareupdate.exe processes -->
+    <CustomAction Id="StopExistingManagedSoftwareUpdate"
+                  Execute="immediate"
+                  Impersonate="no"
+                  Return="ignore"
+                  Property="SystemFolder"
+                  ExeCommand="cmd.exe /c &quot;taskkill /f /im managedsoftwareupdate.exe 2>nul &amp;&amp; timeout /t 2 /nobreak >nul 2>&amp;1 || exit 0&quot;" />
+
+    <!-- Additional force stop for managedsoftwareupdate.exe processes -->
+    <CustomAction Id="ForceStopManagedSoftwareUpdate"
+                  Execute="immediate"
+                  Impersonate="no"
+                  Return="ignore"
+                  Property="SystemFolder"
+                  ExeCommand="cmd.exe /c &quot;taskkill /f /im managedsoftwareupdate.exe /t 2>nul &amp;&amp; timeout /t 1 /nobreak >nul 2>&amp;1 || exit 0&quot;" />
+
     <CustomAction Id="StopCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
@@ -205,6 +221,10 @@
       <Custom Action="ForceStopCimianWatcher" After="LaunchConditions" Condition="NOT REMOVE AND CIMIANWATCHER_SERVICE_EXISTS" />
       <!-- Stop any existing CimianWatcher service/process before installing files, only if service exists -->
       <Custom Action="StopExistingCimianWatcher" Before="InstallFiles" Condition="NOT REMOVE AND CIMIANWATCHER_SERVICE_EXISTS" />
+      
+      <!-- Force stop any existing managedsoftwareupdate.exe processes before installing files -->
+      <Custom Action="ForceStopManagedSoftwareUpdate" After="LaunchConditions" Condition="NOT REMOVE" />
+      <Custom Action="StopExistingManagedSoftwareUpdate" Before="InstallFiles" Condition="NOT REMOVE" />
       
       <!-- Service management is handled through util:ServiceConfig -->
       
