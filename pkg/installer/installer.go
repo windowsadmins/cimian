@@ -25,6 +25,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/retry"
 	"github.com/windowsadmins/cimian/pkg/selfservice"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/utils"
@@ -130,12 +131,26 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		// Architecture check
 		sysArch := status.GetSystemArchitecture()
 		if !status.SupportsArchitecture(item, sysArch) {
-			// Log the architecture failure as a warning (repository issue) for ReportMate
+			// Log the architecture failure as both warning and failed for proper ReportMate tracking
+			detailedError := fmt.Sprintf("Architecture mismatch: system arch %s not supported (package supports: %v)", sysArch, item.SupportedArch)
+			
+			// Log as warning for configuration awareness
 			logging.LogEventEntry("install", "architecture_check", logging.StatusWarning,
-				fmt.Sprintf("Architecture mismatch: system arch %s not supported (package supports: %v)", sysArch, item.SupportedArch),
+				detailedError,
 				logging.WithContext("item", item.Name),
 				logging.WithContext("system_arch", sysArch),
+				logging.WithContext("supported_arch", fmt.Sprintf("%v", item.SupportedArch)),
+				logging.WithContext("error_type", "architecture_incompatibility"))
+			
+			// Also log as failed installation for proper failure tracking
+			logging.LogEventEntry("install", "install_package", logging.StatusError,
+				fmt.Sprintf("Installation failed: %s", detailedError),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("detailed_error", detailedError),
+				logging.WithContext("failure_reason", "architecture_incompatibility"),
+				logging.WithContext("system_arch", sysArch),
 				logging.WithContext("supported_arch", fmt.Sprintf("%v", item.SupportedArch)))
+				
 			return "", fmt.Errorf("system arch %s not in supported_arch=%v for item %s",
 				sysArch, item.SupportedArch, item.Name)
 		}
@@ -230,7 +245,7 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 
 		// Attempt immediate cleanup if item has installs array for verification
 		// This provides faster cache cleanup than waiting for the next run
-		immediateCleanupAfterInstall(item, localFile)
+		immediateCleanupAfterInstall(item, localFile, cfg)
 
 		logging.Info("Installed item successfully", "item", item.Name)
 		// Log successful installation event for ItemRecord tracking
@@ -470,20 +485,20 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 	if checkErr != nil {
 		logging.Warn("Could not detect if nupkg is installed; forcing install",
 			"pkgID", nupkgID, "err", checkErr)
-		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item)
+		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item, cfg)
 	}
 
 	if !installed {
 		logging.Info("Nupkg not installed; installing", "pkgID", nupkgID)
-		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item)
+		return doChocoInstall(downloadedFile, nupkgID, nupkgVer, cachePath, item, cfg)
 	}
 
 	logging.Info("Nupkg is installed; forcing upgrade/downgrade", "pkgID", nupkgID)
-	return doChocoUpgrade(downloadedFile, nupkgID, nupkgVer, cachePath, item)
+	return doChocoUpgrade(downloadedFile, nupkgID, nupkgVer, cachePath, item, cfg)
 }
 
 // doChocoInstall runs choco install with the given nupkg file.
-func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
+func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item, cfg *config.Configuration) (string, error) {
 	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
 	extractAndRunChocolateyBeforeInstall(filePath, item)
 
@@ -525,14 +540,14 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	})
 
 	// Attempt immediate cleanup if item has installs array for verification
-	immediateCleanupAfterInstall(item, filePath)
+	immediateCleanupAfterInstall(item, filePath, cfg)
 
 	logging.Info("Choco install succeeded", "pkgID", pkgID)
 	return out, nil
 }
 
 // doChocoUpgrade runs choco upgrade with the given nupkg file.
-func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item) (string, error) {
+func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item, cfg *config.Configuration) (string, error) {
 	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
 	extractAndRunChocolateyBeforeInstall(filePath, item)
 
@@ -574,7 +589,7 @@ func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	})
 
 	// Attempt immediate cleanup if item has installs array for verification
-	immediateCleanupAfterInstall(item, filePath)
+	immediateCleanupAfterInstall(item, filePath, cfg)
 
 	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
 	return out, nil
@@ -1861,7 +1876,7 @@ func extractAndRunChocolateyBeforeInstall(nupkgPath string, item catalog.Item) e
 // immediateCleanupAfterInstall verifies installation using the installs array
 // and immediately removes the cached installer file if verification passes.
 // This provides instant cleanup for items with trackable installation verification.
-func immediateCleanupAfterInstall(item catalog.Item, localFile string) {
+func immediateCleanupAfterInstall(item catalog.Item, localFile string, cfg *config.Configuration) {
 	// Only proceed if the item has an installs array for verification
 	if len(item.Installs) == 0 {
 		logging.Debug("No installs array found, skipping immediate cleanup", "item", item.Name)
@@ -1870,10 +1885,8 @@ func immediateCleanupAfterInstall(item catalog.Item, localFile string) {
 
 	// IMPORTANT: Get the current catalog definition instead of using the potentially stale item
 	// This prevents verification failures when the catalog has been updated since the item was cached
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		logging.Warn("Failed to read configuration for catalog refresh, using original item",
-			"item", item.Name, "error", err)
+	if cfg == nil {
+		logging.Warn("No configuration provided for catalog refresh, using original item", "item", item.Name)
 	} else {
 		catalogMap := catalog.AuthenticatedGetEnhanced(*cfg)
 		if currentItem, found := catalog.GetItemByName(item.Name, catalogMap); found {
@@ -1898,11 +1911,18 @@ func immediateCleanupAfterInstall(item catalog.Item, localFile string) {
 		logging.Info("Installation verified via installs array, performing cache cleanup",
 			"item", item.Name, "cachedFile", localFile)
 
-		// Remove the cached installer file
+		// Remove the cached installer file with retry logic for Windows file locking
 		if localFile != "" && localFile != "." {
-			err := os.Remove(localFile)
+			retryConfig := retry.RetryConfig{
+				MaxRetries:      3,
+				InitialInterval: time.Second,
+				Multiplier:      2.0,
+			}
+			err := retry.Retry(retryConfig, func() error {
+				return os.Remove(localFile)
+			})
 			if err != nil {
-				logging.Warn("Failed to remove cached installer file",
+				logging.Debug("Failed to remove cached installer file after retries, will be cleaned up at end of run",
 					"item", item.Name, "file", localFile, "error", err)
 			} else {
 				logging.Info("Successfully removed cached installer file after installation verification",
