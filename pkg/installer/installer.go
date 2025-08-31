@@ -115,6 +115,9 @@ func removeInstalledVersionFromRegistry(item catalog.Item) {
 
 // Install is the main entry point for installing/updating/uninstalling a catalog item.
 func Install(item catalog.Item, action, localFile, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
+	// DEBUG: Add explicit logging at start of Install function
+	logging.Info("installer.Install called", "item", item.Name, "action", action, "localFile", localFile, "checkOnly", checkOnly)
+	
 	// If we are only checking, do not proceed with actual installation.
 	if checkOnly {
 		logging.Info("CheckOnly mode: would perform action",
@@ -127,6 +130,12 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		// Architecture check
 		sysArch := status.GetSystemArchitecture()
 		if !status.SupportsArchitecture(item, sysArch) {
+			// Log the architecture failure as a warning (repository issue) for ReportMate
+			logging.LogEventEntry("install", "architecture_check", logging.StatusWarning,
+				fmt.Sprintf("Architecture mismatch: system arch %s not supported (package supports: %v)", sysArch, item.SupportedArch),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("system_arch", sysArch),
+				logging.WithContext("supported_arch", fmt.Sprintf("%v", item.SupportedArch)))
 			return "", fmt.Errorf("system arch %s not in supported_arch=%v for item %s",
 				sysArch, item.SupportedArch, item.Name)
 		}
@@ -172,13 +181,37 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 
 		// If it's a nupkg, handle it via Chocolatey logic
 		if strings.ToLower(item.Installer.Type) == "nupkg" {
-			return installOrUpgradeNupkg(item, localFile, cachePath, cfg)
+			result, err := installOrUpgradeNupkg(item, localFile, cachePath, cfg)
+			if err != nil {
+				logging.Error("NUPKG installation failed", "item", item.Name, "error", err)
+				// Log event for ItemRecord tracking
+				status := logging.StatusFromError("nupkg_install", err)
+				logging.LogEventEntry("install", "install_package", status,
+					fmt.Sprintf("NUPKG installation failed: %v", err),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("error", err.Error()),
+					logging.WithContext("installer_type", "nupkg"))
+				return result, err
+			}
+			// Log successful nupkg installation
+			logging.LogEventEntry("install", "install_package", logging.StatusInstalled,
+				"NUPKG installation completed successfully",
+				logging.WithContext("item", item.Name),
+				logging.WithContext("installer_type", "nupkg"))
+			return result, err
 		}
 
 		// Otherwise, handle MSI/EXE/Powershell, etc.
 		err := installNonNupkg(item, localFile, cachePath, cfg)
 		if err != nil {
 			logging.Error("Installation failed", "item", item.Name, "error", err)
+			// Log event for ItemRecord tracking
+			status := logging.StatusFromError("package_install", err)
+			logging.LogEventEntry("install", "install_package", status,
+				fmt.Sprintf("Package installation failed: %v", err),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("error", err.Error()),
+				logging.WithContext("installer_type", item.Installer.Type))
 			return "", err
 		}
 
@@ -200,6 +233,11 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		immediateCleanupAfterInstall(item, localFile)
 
 		logging.Info("Installed item successfully", "item", item.Name)
+		// Log successful installation event for ItemRecord tracking
+		logging.LogEventEntry("install", "install_package", logging.StatusInstalled,
+			"Package installation completed successfully",
+			logging.WithContext("item", item.Name),
+			logging.WithContext("installer_type", item.Installer.Type))
 		return "Installation success", nil
 
 	case "uninstall":
@@ -299,20 +337,45 @@ func needsUpdateOld(item manifest.Item, _ *config.Configuration) bool {
 
 // installNonNupkg handles MSI/EXE/Powershell items.
 func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config.Configuration) error {
+	// DEBUG: Add explicit logging at start of installNonNupkg
+	logging.Info("installNonNupkg called", "item", item.Name, "type", item.Installer.Type, "localFile", localFile)
+	
 	switch strings.ToLower(item.Installer.Type) {
 	case "msi":
+		logging.Info("Executing MSI installer", "item", item.Name, "localFile", localFile)
 		out, err := runMSIInstaller(item, localFile, cfg)
 		if err != nil {
+			logging.Error("MSI installer failed", "item", item.Name, "error", err)
+			
+			// Log the MSI failure as an error (actual software installation failure) for ReportMate
+			status := logging.StatusFromError("msi_execution", err)
+			logging.LogEventEntry("install", "msi_execution", status,
+				fmt.Sprintf("MSI installer failed: %s", err.Error()),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("installer_type", "msi"),
+				logging.WithContext("installer_path", localFile),
+				logging.WithContext("error_details", err.Error()))
 			return err
 		}
 		logging.Debug("MSI install output", "output", out)
 		return nil
 
 	case "exe":
+		logging.Info("Executing EXE installer", "item", item.Name, "localFile", localFile)
 		// Run preinstall script if present
 		if item.PreScript != "" {
 			out, err := runPreinstallScript(item, localFile, cachePath)
 			if err != nil {
+				logging.Error("Preinstall script failed", "item", item.Name, "error", err)
+				
+				// Log the PreScript failure as an event for ReportMate
+				status := logging.StatusFromError("prescript", err)
+				logging.LogEventEntry("install", "prescript_execution", status,
+					fmt.Sprintf("Preinstall script failed: %s", err.Error()),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("script_type", "preinstall"),
+					logging.WithContext("installer_path", localFile),
+					logging.WithContext("error_details", err.Error()))
 				return err
 			}
 			logging.Debug("Preinstall script for EXE completed", "output", out)
@@ -320,6 +383,14 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		// Always run the EXE afterwards
 		out, err := runEXEInstaller(item, localFile, cfg)
 		if err != nil {
+			// Log the EXE failure as an error (actual software installation failure) for ReportMate
+			status := logging.StatusFromError("exe_execution", err)
+			logging.LogEventEntry("install", "exe_execution", status,
+				fmt.Sprintf("EXE installer failed: %s", err.Error()),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("installer_type", "exe"),
+				logging.WithContext("installer_path", localFile),
+				logging.WithContext("error_details", err.Error()))
 			return err
 		}
 		logging.Debug("EXE install output", "output", out)
@@ -328,6 +399,14 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 	case "powershell":
 		out, err := runPS1Installer(item, localFile, cfg)
 		if err != nil {
+			// Log the PowerShell failure as an error (actual software installation failure) for ReportMate
+			status := logging.StatusFromError("powershell_execution", err)
+			logging.LogEventEntry("install", "powershell_execution", status,
+				fmt.Sprintf("PowerShell installer failed: %s", err.Error()),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("installer_type", "powershell"),
+				logging.WithContext("installer_path", localFile),
+				logging.WithContext("error_details", err.Error()))
 			return err
 		}
 		logging.Debug("PS1 install output", "output", out)
@@ -427,6 +506,16 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	out, err := runCMD(chocolateyBin, cmdArgs)
 	if err != nil {
 		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
+		
+		// Log the Chocolatey failure as an event for ReportMate
+		status := logging.StatusFromError("chocolatey_install", err)
+		logging.LogEventEntry("install", "chocolatey_install", status,
+			fmt.Sprintf("Chocolatey install failed: %s", err.Error()),
+			logging.WithContext("item", item.Name),
+			logging.WithContext("package_id", pkgID),
+			logging.WithContext("package_version", pkgVer),
+			logging.WithContext("chocolatey_command", fmt.Sprintf("choco install %s --version %s", pkgID, pkgVer)),
+			logging.WithContext("error_details", err.Error()))
 		return out, err
 	}
 
@@ -466,6 +555,16 @@ func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	out, err := runCMD(chocolateyBin, cmdArgs)
 	if err != nil {
 		logging.Error("Choco upgrade failed", "pkgID", pkgID, "error", err)
+		
+		// Log the Chocolatey upgrade failure as an event for ReportMate
+		status := logging.StatusFromError("chocolatey_upgrade", err)
+		logging.LogEventEntry("install", "chocolatey_upgrade", status,
+			fmt.Sprintf("Chocolatey upgrade failed: %s", err.Error()),
+			logging.WithContext("item", item.Name),
+			logging.WithContext("package_id", pkgID),
+			logging.WithContext("package_version", pkgVer),
+			logging.WithContext("chocolatey_command", fmt.Sprintf("choco upgrade %s --version %s", pkgID, pkgVer)),
+			logging.WithContext("error_details", err.Error()))
 		return out, err
 	}
 
@@ -940,6 +1039,17 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 		if strings.Contains(err.Error(), "timed out") {
 			logging.Error("MSI installer timed out - likely waiting for user interaction",
 				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			
+			// Log timeout as specific event for ReportMate
+			timeoutErr := fmt.Errorf("MSI installer timed out after %d minutes", cfg.InstallerTimeoutMinutes)
+			status := logging.StatusFromError("msi_timeout", timeoutErr)
+			logging.LogEventEntry("install", "msi_timeout", status,
+				fmt.Sprintf("MSI installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("timeout_minutes", fmt.Sprintf("%d", cfg.InstallerTimeoutMinutes)),
+				logging.WithContext("installer_path", localFile),
+				logging.WithContext("likely_cause", "interactive_dialog"))
+			
 			return output, fmt.Errorf("MSI installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
 		}
 
@@ -951,13 +1061,51 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 				if code, parseErr := strconv.Atoi(codeStr); parseErr == nil {
 					switch code {
 					case 1603:
+						// Log MSI fatal error as specific event for ReportMate
+						fatalErr := fmt.Errorf("MSI installer failed with exit code 1603 (fatal error)")
+						status := logging.StatusFromError("msi_fatal", fatalErr)
+						logging.LogEventEntry("install", "msi_fatal_error", status,
+							"MSI installer failed with exit code 1603 (fatal error) - installation cannot proceed",
+							logging.WithContext("item", item.Name),
+							logging.WithContext("exit_code", "1603"),
+							logging.WithContext("exit_meaning", "fatal_installation_error"),
+							logging.WithContext("installer_path", localFile),
+							logging.WithContext("recommended_action", "check_msi_logs_and_requirements"))
 						return output, fmt.Errorf("msiexec exit code 1603 (fatal) - skipping re-try")
 					case 1618:
+						// Log MSI conflict error as specific event for ReportMate
+						conflictErr := fmt.Errorf("MSI installer failed with exit code 1618 (another installation in progress)")
+						status := logging.StatusFromError("msi_conflict", conflictErr)
+						logging.LogEventEntry("install", "msi_conflict_error", status,
+							"MSI installer failed with exit code 1618 (another installation in progress)",
+							logging.WithContext("item", item.Name),
+							logging.WithContext("exit_code", "1618"),
+							logging.WithContext("exit_meaning", "another_installation_in_progress"),
+							logging.WithContext("installer_path", localFile),
+							logging.WithContext("recommended_action", "wait_and_retry_later"))
 						return output, fmt.Errorf("msiexec exit code 1618 (another install in progress)")
 					case 3010:
 						logging.Warn("MSI installed but requires reboot (3010)", "item", item.Name)
+						
+						// Log MSI reboot required as warning event for ReportMate
+						logging.LogEventEntry("install", "msi_reboot_required", logging.StatusWarning,
+							"MSI installation completed successfully but requires system reboot",
+							logging.WithContext("item", item.Name),
+							logging.WithContext("exit_code", "3010"),
+							logging.WithContext("exit_meaning", "success_reboot_required"),
+							logging.WithContext("installer_path", localFile),
+							logging.WithContext("recommended_action", "schedule_system_reboot"))
 						return output, nil
 					default:
+						// Log other MSI exit codes as events for ReportMate
+						exitCodeErr := fmt.Errorf("MSI installer failed with exit code %d", code)
+						status := logging.StatusFromError("msi_exit", exitCodeErr)
+						logging.LogEventEntry("install", "msi_exit_code_error", status,
+							fmt.Sprintf("MSI installer failed with exit code %d", code),
+							logging.WithContext("item", item.Name),
+							logging.WithContext("exit_code", fmt.Sprintf("%d", code)),
+							logging.WithContext("installer_path", localFile),
+							logging.WithContext("recommended_action", "check_msi_documentation_for_exit_code"))
 						return output, fmt.Errorf("msiexec exit code %d", code)
 					}
 				}
@@ -1106,8 +1254,45 @@ func runEXEInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 		if strings.Contains(err.Error(), "timed out") {
 			logging.Error("EXE installer timed out - likely waiting for user interaction",
 				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			
+			// Log EXE timeout as specific event for ReportMate
+			timeoutErr := fmt.Errorf("EXE installer timed out after %d minutes", cfg.InstallerTimeoutMinutes)
+			status := logging.StatusFromError("exe_timeout", timeoutErr)
+			logging.LogEventEntry("install", "exe_timeout", status,
+				fmt.Sprintf("EXE installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("timeout_minutes", fmt.Sprintf("%d", cfg.InstallerTimeoutMinutes)),
+				logging.WithContext("installer_path", installerPath),
+				logging.WithContext("likely_cause", "interactive_dialog"))
+			
 			return output, fmt.Errorf("EXE installer timed out after %d minutes - installer may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
 		}
+		
+		// Log general EXE execution failures with exit codes if available
+		if strings.Contains(err.Error(), "exit code=") {
+			parts := strings.Split(err.Error(), "exit code=")
+			if len(parts) > 1 {
+				codeStr := strings.Split(parts[1], " ")[0]
+				exitCodeErr := fmt.Errorf("EXE installer failed with exit code %s", codeStr)
+				status := logging.StatusFromError("exe_exit", exitCodeErr)
+				logging.LogEventEntry("install", "exe_exit_code_error", status,
+					fmt.Sprintf("EXE installer failed with exit code %s", codeStr),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("exit_code", codeStr),
+					logging.WithContext("installer_path", installerPath),
+					logging.WithContext("installer_output", output))
+			}
+		} else {
+			// Log other EXE execution errors
+			status := logging.StatusFromError("exe_execution", err)
+			logging.LogEventEntry("install", "exe_execution_error", status,
+				fmt.Sprintf("EXE installer execution failed: %s", err.Error()),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("installer_path", installerPath),
+				logging.WithContext("error_details", err.Error()),
+				logging.WithContext("installer_output", output))
+		}
+		
 		logging.Error("EXE installer execution failed", "error", err, "output", output)
 		return output, err
 	}
