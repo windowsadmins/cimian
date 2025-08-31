@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -938,7 +939,7 @@ func main() {
 		logging.Info("Generating reports for external monitoring tools...")
 		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
 		exporter := reporting.NewDataExporter(baseDir)
-		if err := exporter.ExportToReportsDirectory(48); err != nil {
+		if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 48 to 3 days for ReportMate efficiency
 			logging.Warn("Failed to export reports: %v", err)
 		}
 		
@@ -974,7 +975,7 @@ func main() {
 	// Print summary of planned actions.
 	statusReporter.Detail(fmt.Sprintf("Found %d updates, %d new installs, %d removals", len(toUpdate), len(toInstall), len(toUninstall)))
 
-	printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate, dedupedManifestItems, localCatalogMap)
+	printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate, dedupedManifestItems, localCatalogMap, cfg)
 
 	// If check-only mode, exit after summary.
 	if *checkOnly {
@@ -1001,7 +1002,7 @@ func main() {
 		logging.Info("Generating reports for external monitoring tools...")
 		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
 		exporter := reporting.NewDataExporter(baseDir)
-		if err := exporter.ExportToReportsDirectory(48); err != nil {
+		if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 48 to 3 days for ReportMate efficiency
 			logging.Warn("Failed to export reports: %v", err)
 		}
 
@@ -1270,7 +1271,7 @@ func main() {
 	// Generate reports for external monitoring tools
 	statusReporter.Detail("Generating system reports...")
 	exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
-	if err := exporter.ExportToReportsDirectory(7); err != nil { // Export last 7 days
+	if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 7 to 3 days for optimal ReportMate performance
 		logger.Warning("Failed to generate reports: %v", err)
 	} else {
 		logger.Info("Reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
@@ -1584,6 +1585,8 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 	_ = cfg // dummy reference to suppress "unused parameter" warning
 
 	var toInstall []catalog.Item
+	sysArch := status.GetSystemArchitecture()
+	
 	for _, mItem := range manifestItems {
 		if mItem.Name == "" {
 			continue
@@ -1615,6 +1618,25 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 				},
 				SupportedArch: mItem.SupportedArch,
 			}
+			
+			// Check architecture compatibility before adding to install queue
+			if !status.SupportsArchitecture(newCatItem, sysArch) {
+				logging.Warn("Architecture mismatch, skipping new install",
+					"item", newCatItem.Name,
+					"systemArch", sysArch,
+					"supportedArch", newCatItem.SupportedArch,
+				)
+				
+				// Create event for ReportMate integration
+				logging.LogEventEntry("install", "architecture_check", "warning",
+					fmt.Sprintf("Architecture mismatch: system arch %s not supported (package supports: %v)", sysArch, newCatItem.SupportedArch),
+					logging.WithContext("item", newCatItem.Name),
+					logging.WithContext("system_arch", sysArch),
+					logging.WithContext("supported_arch", fmt.Sprintf("%v", newCatItem.SupportedArch)))
+				
+				continue
+			}
+			
 			toInstall = append(toInstall, newCatItem)
 		}
 	}
@@ -2166,7 +2188,7 @@ func truncateString(s string, width int) string {
 
 // printEnhancedManagedItemsSnapshot prints a comprehensive snapshot of all managed items
 // including pending actions and the complete managed software inventory
-func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalog.Item, manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item) {
+func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalog.Item, manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration) {
 	// Categorize all manifest items by action type
 	var managedInstalls []manifest.Item
 	var managedUpdates []manifest.Item
@@ -2203,7 +2225,7 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 	}
 
 	// Display manifest hierarchy with package details
-	displayManifestTreeWithPackages(manifestItems, toInstall, toUpdate, localCatalogMap)
+	displayManifestTreeWithPackages(manifestItems, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
 
 	// Show Managed Installs section
 	if len(managedInstalls) > 0 {
@@ -2214,7 +2236,7 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 		logger.Info("----------------------------------------------------------------------")
 
 		for _, item := range managedInstalls {
-			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
 			version := item.Version
 			if version == "" {
 				version = "Unknown"
@@ -2237,7 +2259,7 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 		logger.Info("----------------------------------------------------------------------")
 
 		for _, item := range optionalInstalls {
-			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
 			version := item.Version
 			if version == "" {
 				version = "Unknown"
@@ -2260,7 +2282,7 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 		logger.Info("----------------------------------------------------------------------")
 
 		for _, item := range managedUpdates {
-			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
 			version := item.Version
 			if version == "" {
 				version = "Unknown"
@@ -2283,7 +2305,7 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 		logger.Info("----------------------------------------------------------------------")
 
 		for _, item := range managedUninstalls {
-			status := getPackageStatusDisplay(item, toInstall, toUpdate, localCatalogMap)
+			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
 			version := item.Version
 			if version == "" {
 				version = "Unknown"
@@ -2357,31 +2379,208 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 	logger.Info("")
 }
 
-// getPackageStatusDisplay determines the display status for a package in the inventory
-func getPackageStatusDisplay(manifestItem manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) string {
+// getPackageStatusDisplayQuiet determines the display status for a package without debug logging
+func getPackageStatusDisplayQuiet(manifestItem manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item, cachePath string) string {
 	itemName := strings.ToLower(manifestItem.Name)
 	
-	// Check if it's in pending installs
+	// Get the catalog item for status checking
+	var catItem catalog.Item
+	var exists bool
+	
+	// First check if it exists in local catalog
+	if catItem, exists = localCatalogMap[itemName]; !exists {
+		// If not in local catalog, check if it's in install/update lists
+		for _, installItem := range toInstall {
+			if strings.ToLower(installItem.Name) == itemName {
+				catItem = installItem
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			for _, updateItem := range toUpdate {
+				if strings.ToLower(updateItem.Name) == itemName {
+					catItem = updateItem
+					exists = true
+					break
+				}
+			}
+		}
+	}
+	
+	if !exists {
+		return "Not Available"
+	}
+
+	// Check if in install queue
 	for _, installItem := range toInstall {
 		if strings.ToLower(installItem.Name) == itemName {
 			return "Pending Install"
 		}
 	}
 	
-	// Check if it's in pending updates
+	// Check if in update queue  
 	for _, updateItem := range toUpdate {
 		if strings.ToLower(updateItem.Name) == itemName {
 			return "Pending Update"
 		}
 	}
 	
-	// Check if it exists in local catalog (installed)
-	if _, exists := localCatalogMap[itemName]; exists {
-		return "Installed"
+	// Use the CheckStatusWithResultQuiet to get detailed status without debug logging
+	result := status.CheckStatusWithResultQuiet(catItem, "update", cachePath, true)
+	
+	if result.Error != nil {
+		return "Error"
 	}
 	
-	// Default status
-	return "Not Installed"
+	if result.NeedsAction {
+		return "Pending Install"
+	}
+	
+	// Item doesn't need action, check the status classification
+	switch result.Status {
+	case "warning":
+		return "Warning"
+	case "installed":
+		return "Installed"
+	case "error":
+		return "Error"
+	case "pending":
+		return "Pending"
+	case "removed":
+		return "Removed"
+	default:
+		return "Installed" // Default fallback
+	}
+}
+
+// getInstalledVersion returns the installed version of the package, or empty string if not installed
+func getInstalledVersion(catItem catalog.Item) string {
+	// For now, just return the catalog version since we don't have a separate installed version field
+	// This would need to be enhanced to check actual installed versions from registry/filesystem
+	return catItem.Version
+}
+
+// isNumeric checks if a string is numeric
+func isNumeric(s string) bool {
+	_, err := strconv.Atoi(s)
+	return err == nil
+}
+
+// compareVersions compares two version strings and returns:
+// -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+func compareVersions(v1, v2 string) int {
+	if v1 == v2 {
+		return 0
+	}
+
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var p1, p2 int
+		
+		if i < len(parts1) {
+			p1, _ = strconv.Atoi(parts1[i])
+		}
+		if i < len(parts2) {
+			p2, _ = strconv.Atoi(parts2[i])
+		}
+
+		if p1 < p2 {
+			return -1
+		} else if p1 > p2 {
+			return 1
+		}
+	}
+
+	return 0
+}
+
+// getPackageStatusDisplay determines the display status for a package in the inventory
+func getPackageStatusDisplay(manifestItem manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) string {
+	itemName := strings.ToLower(manifestItem.Name)
+	
+	// Get the catalog item for status checking
+	var catItem catalog.Item
+	var exists bool
+	
+	// First check if it exists in local catalog
+	if catItem, exists = localCatalogMap[itemName]; !exists {
+		// If not in local catalog, check if it's in install/update lists
+		for _, installItem := range toInstall {
+			if strings.ToLower(installItem.Name) == itemName {
+				catItem = installItem
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			for _, updateItem := range toUpdate {
+				if strings.ToLower(updateItem.Name) == itemName {
+					catItem = updateItem
+					exists = true
+					break
+				}
+			}
+		}
+	}
+	
+	if !exists {
+		return "Not Available"
+	}
+	
+	// Use the new CheckStatusWithResult for accurate status determination (quiet mode for display)
+	result := status.CheckStatusWithResultQuiet(catItem, "update", "", true)
+	
+	// Convert status result to display format
+	switch result.Status {
+	case "installed":
+		return "Installed"
+	case "warning":
+		// Be more specific about warning types for display
+		if strings.Contains(result.Reason, "Architecture mismatch") {
+			return "Architecture Warning"
+		} else if strings.Contains(result.Reason, "OS version") {
+			return "OS Incompatible"
+		} else if strings.Contains(result.Reason, "Downgrade refused") {
+			return "Version Warning"
+		} else if strings.Contains(result.Reason, "uninstallable") {
+			return "Protected"
+		}
+		return "Warning"
+	case "error":
+		return "Error"
+	case "pending":
+		if result.NeedsAction {
+			// Check if it's specifically in our action lists
+			for _, installItem := range toInstall {
+				if strings.ToLower(installItem.Name) == itemName {
+					return "Pending Install"
+				}
+			}
+			for _, updateItem := range toUpdate {
+				if strings.ToLower(updateItem.Name) == itemName {
+					return "Pending Update"
+				}
+			}
+			// If not in action lists but needs action, show based on current state
+			if strings.Contains(result.Reason, "Not installed") {
+				return "Pending Install"
+			}
+			return "Update Available"
+		}
+		return "Pending"
+	case "removed":
+		return "Not Installed"
+	default:
+		return "Unknown"
+	}
 }
 
 // installOneCatalogItem installs a single catalog item using the installer package.
@@ -2917,7 +3116,7 @@ func displayManifestHierarchy(node *ManifestNode, prefix string, isLast bool) {
 }
 
 // displayManifestTreeWithPackages shows the manifest hierarchy with package details embedded
-func displayManifestTreeWithPackages(manifestItems []manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) {
+func displayManifestTreeWithPackages(manifestItems []manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item, cachePath string) {
 	// Group items by their source manifest
 	manifestPackages := make(map[string][]manifest.Item)
 	manifestCounts := make(map[string]int)
@@ -2944,13 +3143,13 @@ func displayManifestTreeWithPackages(manifestItems []manifest.Item, toInstall, t
 
 	// Build and display the tree structure with package details
 	manifestTree := buildManifestHierarchy(manifestCounts)
-	displayManifestHierarchyWithPackages(manifestTree, "", true, manifestPackages, toInstall, toUpdate, localCatalogMap)
+	displayManifestHierarchyWithPackages(manifestTree, "", true, manifestPackages, toInstall, toUpdate, localCatalogMap, cachePath)
 
 	logger.Info("")
 }
 
 // displayManifestHierarchyWithPackages recursively displays the manifest tree with package details
-func displayManifestHierarchyWithPackages(node *ManifestNode, prefix string, isLast bool, manifestPackages map[string][]manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item) {
+func displayManifestHierarchyWithPackages(node *ManifestNode, prefix string, isLast bool, manifestPackages map[string][]manifest.Item, toInstall, toUpdate []catalog.Item, localCatalogMap map[string]catalog.Item, cachePath string) {
 	if node.Name == "root" {
 		// Display root children
 		names := make([]string, 0, len(node.Children))
@@ -2961,7 +3160,7 @@ func displayManifestHierarchyWithPackages(node *ManifestNode, prefix string, isL
 		for i, name := range names {
 			child := node.Children[name]
 			isChildLast := i == len(names)-1
-			displayManifestHierarchyWithPackages(child, "", isChildLast, manifestPackages, toInstall, toUpdate, localCatalogMap)
+			displayManifestHierarchyWithPackages(child, "", isChildLast, manifestPackages, toInstall, toUpdate, localCatalogMap, cachePath)
 		}
 		return
 	}
@@ -2977,7 +3176,7 @@ func displayManifestHierarchyWithPackages(node *ManifestNode, prefix string, isL
 	// Display packages from this manifest
 	if packages, exists := manifestPackages[node.Name]; exists && len(packages) > 0 {
 		for i, pkg := range packages {
-			status := getPackageStatusDisplay(pkg, toInstall, toUpdate, localCatalogMap)
+			status := getPackageStatusDisplayQuiet(pkg, toInstall, toUpdate, localCatalogMap, cachePath)
 			version := pkg.Version
 			if version == "" {
 				version = "Unknown"
@@ -3029,7 +3228,7 @@ func displayManifestHierarchyWithPackages(node *ManifestNode, prefix string, isL
 		for i, name := range names {
 			child := node.Children[name]
 			isChildLast := i == len(names)-1
-			displayManifestHierarchyWithPackages(child, childPrefix, isChildLast, manifestPackages, toInstall, toUpdate, localCatalogMap)
+			displayManifestHierarchyWithPackages(child, childPrefix, isChildLast, manifestPackages, toInstall, toUpdate, localCatalogMap, cachePath)
 		}
 	}
 }
