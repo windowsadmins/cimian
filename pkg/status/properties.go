@@ -33,17 +33,27 @@ import (
 // GetFileMetadata retrieves Windows metadata from the file at 'path'.
 // The returned WindowsMetadata struct includes the version string and product name if present.
 func GetFileMetadata(path string) WindowsMetadata {
+	return GetFileMetadataQuiet(path, false)
+}
+
+// GetFileMetadataQuiet is like GetFileMetadata but with optional quiet mode (no logging)
+func GetFileMetadataQuiet(path string, quiet bool) WindowsMetadata {
 	var finalMetadata WindowsMetadata
 
 	bufferSize := w32.GetFileVersionInfoSize(path)
 	if bufferSize <= 0 {
-		logging.Info("No metadata found:", path)
+		// Suppress all logging in quiet mode - no exceptions
+		if !quiet {
+			logging.Info("No metadata found:", path)
+		}
 		return finalMetadata
 	}
 
 	rawMetadata := make([]byte, bufferSize)
 	if !w32.GetFileVersionInfo(path, rawMetadata) {
-		logging.Warn("Unable to get metadata:", path)
+		if !quiet {
+			logging.Warn("Unable to get metadata:", path)
+		}
 		return finalMetadata
 	}
 
@@ -51,7 +61,9 @@ func GetFileMetadata(path string) WindowsMetadata {
 	// VerQueryValueRoot fetches the 'fixed' portion of version info from the file.
 	fixed, ok := w32.VerQueryValueRoot(rawMetadata)
 	if !ok {
-		logging.Warn("Unable to get file version:", path)
+		if !quiet {
+			logging.Warn("Unable to get file version:", path)
+		}
 		return finalMetadata
 	}
 
