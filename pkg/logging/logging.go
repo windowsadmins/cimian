@@ -40,6 +40,69 @@ const (
 	LevelDebug
 )
 
+// Status constants - only 5 types allowed per item
+const (
+	StatusInstalled = "installed"  // Software was successfully installed/updated
+	StatusWarning   = "warning"    // Repository/configuration issues (arch mismatch, manifest problems, download issues, etc.)
+	StatusError     = "error"      // Software installation execution failed (.exe, .msi, .nupkg, scripts returned non-zero)
+	StatusPending   = "pending"    // Installation is waiting (blocking apps, unattended mode restrictions, etc.)
+	StatusRemoved   = "removed"    // Software was successfully uninstalled
+)
+
+// StatusFromError determines the appropriate status based on error context
+func StatusFromError(action string, err error) string {
+	if err == nil {
+		return StatusInstalled
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	
+	// Check action context for specific categorization
+	switch action {
+	case "architecture_check":
+		return StatusWarning // Architecture mismatch is a repo/config issue
+	case "download", "fetch":
+		return StatusWarning // Download issues are repo/network issues
+	case "manifest_load", "catalog_load", "config_load":
+		return StatusWarning // Configuration/manifest issues
+	case "msi_execution", "exe_execution", "install_package", "script_execution":
+		return StatusError // Actual software installation failures
+	case "cache_cleanup", "cache_clear":
+		return StatusWarning // Cache management issues
+	case "dependency_check":
+		return StatusWarning // Missing dependencies are repo issues
+	case "blocking_check":
+		return StatusPending // Blocking applications mean installation is waiting
+	default:
+		// Check error message for context clues
+		if strings.Contains(errMsg, "exit code") || strings.Contains(errMsg, "exit status") ||
+		   strings.Contains(errMsg, "execution failed") || strings.Contains(errMsg, "process failed") ||
+		   strings.Contains(errMsg, "installer failed") || strings.Contains(errMsg, "installation failed") {
+			return StatusError // Actual software execution failures
+		}
+		if strings.Contains(errMsg, "blocking") || strings.Contains(errMsg, "unattended") {
+			return StatusPending // Installation waiting conditions
+		}
+		// Default to warning for repo/configuration issues
+		return StatusWarning
+	}
+}
+
+// IsErrorStatus returns true if the status represents an actual installation error
+func IsErrorStatus(status string) bool {
+	return status == StatusError
+}
+
+// IsWarningStatus returns true if the status represents a repository/configuration warning
+func IsWarningStatus(status string) bool {
+	return status == StatusWarning
+}
+
+// IsSuccessStatus returns true if the status represents successful installation
+func IsSuccessStatus(status string) bool {
+	return status == StatusInstalled
+}
+
 // String returns the string representation of the LogLevel.
 func (ll LogLevel) String() string {
 	switch ll {

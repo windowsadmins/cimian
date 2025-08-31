@@ -29,14 +29,15 @@ type RetentionConfig struct {
 
 // LogSession represents a complete installation/update session
 type LogSession struct {
-	SessionID   string                 `json:"session_id"`
-	StartTime   time.Time              `json:"start_time"`
-	EndTime     *time.Time             `json:"end_time,omitempty"`
-	RunType     string                 `json:"run_type"` // auto, manual, bootstrap, ondemand
-	Status      string                 `json:"status"`   // running, completed, failed, interrupted
-	Summary     SessionSummary         `json:"summary"`
-	Environment map[string]interface{} `json:"environment"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	SessionID       string                 `json:"session_id"`
+	StartTime       time.Time              `json:"start_time"`
+	EndTime         *time.Time             `json:"end_time,omitempty"`
+	RunType         string                 `json:"run_type"` // auto, manual, bootstrap, ondemand
+	Status          string                 `json:"status"`   // running, completed, failed, interrupted
+	DurationSeconds *int64                 `json:"duration_seconds,omitempty"`
+	Summary         SessionSummary         `json:"summary"`
+	Environment     map[string]interface{} `json:"environment"`
+	Metadata        map[string]interface{} `json:"metadata"`
 }
 
 // SessionSummary provides high-level session metrics
@@ -215,6 +216,10 @@ func (sl *StructuredLogger) EndSession(status string, summary SessionSummary, st
 	existingSession.EndTime = &now
 	existingSession.Status = status
 	existingSession.Summary = summary
+	
+	// Calculate duration in seconds for reporting compatibility
+	durationSeconds := int64(now.Sub(startTime).Seconds())
+	existingSession.DurationSeconds = &durationSeconds
 
 	if err := sl.writeSession(existingSession); err != nil {
 		return fmt.Errorf("failed to write final session: %w", err)

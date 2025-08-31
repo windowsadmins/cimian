@@ -201,7 +201,8 @@ func (sum *SelfUpdateManager) PerformSelfUpdate(cfg *config.Configuration) error
 		logging.Error("Self-update failed, attempting rollback", "error", updateErr)
 
 		// Log self-update failure
-		logging.LogEventEntry("selfupdate", "execute", "failed",
+		status := logging.StatusFromError("selfupdate", updateErr)
+		logging.LogEventEntry("selfupdate", "execute", status,
 			fmt.Sprintf("Self-update failed for %s: %v", itemName, updateErr),
 			logging.WithPackage(itemName, version),
 			logging.WithError(updateErr))

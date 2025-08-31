@@ -637,10 +637,8 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	// Log summary of results
 	if len(failedItems) > 0 {
 		logging.Warn("Some items failed to install:", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
-		// Only return error if ALL items failed
-		if successCount == 0 {
-			return fmt.Errorf("all %d items failed to install: %v", len(itemNames), failedItems)
-		}
+		// Return error if ANY items failed to ensure proper session status tracking
+		return fmt.Errorf("failed: %v succeeded: %d total: %d", failedItems, successCount, len(itemNames))
 	} else {
 		if successCount > 0 {
 			logging.Info("All items installed successfully", "count", successCount)
@@ -757,15 +755,23 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 		} else {
 			// Download the file first, then install it
 			logging.Debug("Not script-only item in processInstallWithAdvancedLogic", "item", item.Name)
+			logging.Info("CRITICAL DEBUG: About to call downloadItemFile", "item", item.Name)
 			localFile, err := downloadItemFile(item, cfg)
+			logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", err)
 			if err != nil {
+				logging.Error("CRITICAL DEBUG: downloadItemFile failed", "item", item.Name, "error", err)
 				return fmt.Errorf("failed to download item %s: %v", itemName, err)
 			}
 
+			// DEBUG: Add explicit logging before installer call
+			logging.Info("About to call installerInstall", "item", item.Name, "localFile", localFile)
+			logging.Info("CRITICAL DEBUG: Calling installerInstall now", "item", item.Name, "action", "install", "localFile", localFile, "cachePath", cachePath, "checkOnly", checkOnly)
 			_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 			if err != nil {
+				logging.Error("installerInstall returned error", "item", item.Name, "error", err)
 				return fmt.Errorf("failed to install item %s: %v", itemName, err)
 			}
+			logging.Info("installerInstall completed successfully", "item", item.Name)
 		}
 	}
 
