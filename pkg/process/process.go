@@ -18,6 +18,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/status"
+	"gopkg.in/yaml.v3"
 )
 
 // Global map to track item sources for debugging and logging
@@ -73,43 +74,118 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 
 	// Track which catalogs were searched for better error reporting
 	var searchedCatalogs []string
+	var candidateItems []catalog.Item
+	sysArch := status.GetSystemArchitecture()
 
-	// Loop through each catalog and return if we find a match
-	for _, k := range keys {
-		// Map catalog index to catalog name (1-based indexing from AuthenticatedGet)
-		var catalogName string
-		if cfg != nil && len(cfg.Catalogs) >= k && k >= 1 {
-			catalogName = cfg.Catalogs[k-1] // k is 1-based, slice is 0-based
-		} else {
-			catalogName = fmt.Sprintf("catalog-%d", k)
-		}
-		searchedCatalogs = append(searchedCatalogs, catalogName)
+	// Search for all items with matching name across all catalogs by reading YAML directly
+	// This bypasses the map key collision issue where multiple items with same name overwrite each other
+	if cfg != nil {
+		for _, catalogName := range cfg.Catalogs {
+			searchedCatalogs = append(searchedCatalogs, catalogName)
+			
+			// Read the catalog YAML file directly to find all items with matching name
+			catalogPath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalogName+".yaml")
+			yamlFile, err := os.ReadFile(catalogPath)
+			if err != nil {
+				logging.Debug("Failed to read catalog file for architecture search", "catalog", catalogName, "error", err)
+				continue
+			}
 
-		if item, exists := catalogsMap[k][itemName]; exists {
-			// Check if it's a valid install or uninstall item
-			validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
-			validUninstallItem := len(item.Uninstaller) > 0
-			validScriptOnlyItem := (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "")
+			// Parse the catalog to get all items
+			type catalogWrapper struct {
+				Items []catalog.Item `yaml:"items"`
+			}
+			var wrapper catalogWrapper
+			if err := yaml.Unmarshal(yamlFile, &wrapper); err != nil {
+				logging.Debug("Failed to parse catalog YAML for architecture search", "catalog", catalogName, "error", err)
+				continue
+			}
 
-			if validInstallItem || validUninstallItem || validScriptOnlyItem {
-				// Don't modify the location here, return it as-is
-				return item, nil
+			// Find all items with matching name
+			for _, item := range wrapper.Items {
+				if strings.EqualFold(item.Name, itemName) {
+					logging.Debug("Found item in catalog", "item", itemName, "catalog", catalogName, "installer_location", item.Installer.Location, "supported_arch", item.SupportedArch)
+					// Check if it's a valid install or uninstall item
+					validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
+					validUninstallItem := len(item.Uninstaller) > 0
+					validScriptOnlyItem := (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "")
+
+					if validInstallItem || validUninstallItem || validScriptOnlyItem {
+						candidateItems = append(candidateItems, item)
+						logging.Debug("Added candidate item", "item", itemName, "catalog", catalogName, "installer_location", item.Installer.Location, "candidate_count", len(candidateItems))
+					}
+				}
 			}
 		}
 	}
 
-	// Create a more informative error message that includes which catalogs were searched
-	catalogList := strings.Join(searchedCatalogs, ", ")
+	// If no items found using direct YAML search, fall back to the original map-based search
+	if len(candidateItems) == 0 {
+		// Loop through each catalog and collect all matching items
+		for _, k := range keys {
+			// Map catalog index to catalog name (1-based indexing from AuthenticatedGet)
+			var catalogName string
+			if cfg != nil && len(cfg.Catalogs) >= k && k >= 1 {
+				catalogName = cfg.Catalogs[k-1] // k is 1-based, slice is 0-based
+			} else {
+				catalogName = fmt.Sprintf("catalog-%d", k)
+			}
+			if len(searchedCatalogs) == 0 {
+				searchedCatalogs = append(searchedCatalogs, catalogName)
+			}
 
-	// Log source information when item is not found
-	if source, exists := GetItemSource(itemName); exists {
-		logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
-		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
+			if item, exists := catalogsMap[k][itemName]; exists {
+				logging.Debug("Found item in catalog (fallback)", "item", itemName, "catalog", catalogName, "installer_location", item.Installer.Location, "supported_arch", item.SupportedArch)
+				// Check if it's a valid install or uninstall item
+				validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
+				validUninstallItem := len(item.Uninstaller) > 0
+				validScriptOnlyItem := (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "")
+
+				if validInstallItem || validUninstallItem || validScriptOnlyItem {
+					candidateItems = append(candidateItems, item)
+					logging.Debug("Added candidate item (fallback)", "item", itemName, "catalog", catalogName, "installer_location", item.Installer.Location, "candidate_count", len(candidateItems))
+				}
+			} else {
+				logging.Debug("Item not found in catalog", "item", itemName, "catalog", catalogName)
+			}
+		}
 	}
 
-	// If no source information is available, provide generic error
-	logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing", "catalogs_searched", catalogList)
-	return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown, searched catalogs: %s)", itemName, catalogList)}
+	// If no items found, return error
+	if len(candidateItems) == 0 {
+		catalogList := strings.Join(searchedCatalogs, ", ")
+		// Log source information when item is not found
+		if source, exists := GetItemSource(itemName); exists {
+			logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
+			return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
+		}
+
+		// If no source information is available, provide generic error
+		logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing", "catalogs_searched", catalogList)
+		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown, searched catalogs: %s)", itemName, catalogList)}
+	}
+
+	// Filter by architecture compatibility
+	var compatibleItems []catalog.Item
+	for _, item := range candidateItems {
+		isCompatible := status.SupportsArchitecture(item, sysArch)
+		logging.Debug("Checking architecture compatibility", "item", itemName, "system_arch", sysArch, "item_supported_arch", item.SupportedArch, "compatible", isCompatible, "installer_location", item.Installer.Location)
+		if isCompatible {
+			compatibleItems = append(compatibleItems, item)
+		}
+	}
+
+	// Return the first architecture-compatible item
+	if len(compatibleItems) > 0 {
+		selectedItem := compatibleItems[0]
+		logging.Debug("Selected architecture-compatible item", "item", itemName, "arch", sysArch, "supported_arch", selectedItem.SupportedArch, "installer_location", selectedItem.Installer.Location)
+		return selectedItem, nil
+	}
+
+	// If no architecture-compatible items, return the first item with a warning
+	selectedItem := candidateItems[0]
+	logging.Warn("No architecture-compatible version found, using first available", "item", itemName, "system_arch", sysArch, "selected_arch", selectedItem.SupportedArch)
+	return selectedItem, nil
 }
 
 // Manifests iterates through manifests, processes items from managed arrays, and ensures manifest names are excluded.
@@ -768,7 +844,17 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 			logging.Info("CRITICAL DEBUG: Calling installerInstall now", "item", item.Name, "action", "install", "localFile", localFile, "cachePath", cachePath, "checkOnly", checkOnly)
 			_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 			if err != nil {
-				logging.Error("installerInstall returned error", "item", item.Name, "error", err)
+				// Log detailed error with proper event for reporting system
+				logging.Error("Installation failed", "item", item.Name, "error", err)
+				
+				// Create detailed event for ReportMate with full error context
+				logging.LogEventEntry("install", "install_package", logging.StatusError,
+					fmt.Sprintf("Installation failed: %v", err),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("detailed_error", err.Error()),
+					logging.WithContext("installer_path", localFile),
+					logging.WithError(err))
+				
 				return fmt.Errorf("failed to install item %s: %v", itemName, err)
 			}
 			logging.Info("installerInstall completed successfully", "item", item.Name)
