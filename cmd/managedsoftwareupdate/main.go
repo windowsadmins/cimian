@@ -662,8 +662,8 @@ func main() {
 			statusReporter.Error(fmt.Errorf("failed to load specific manifest: %v", mErr))
 			logging.Error("Failed to load specific manifest '%s': %v", *manifestTarget, mErr)
 
-			// Log manifest loading failure
-			logging.LogEventEntry("manifest", "load", "failed",
+			// Log manifest loading failure as config warning (repository issue)
+			logging.LogEventEntry("manifest", "load", logging.StatusWarning,
 				fmt.Sprintf("Failed to load specific manifest: %s", *manifestTarget),
 				logging.WithContext("manifest_type", "specific"),
 				logging.WithContext("manifest_target", *manifestTarget),
@@ -708,8 +708,8 @@ func main() {
 			statusReporter.Error(fmt.Errorf("failed to load local-only manifest: %v", mErr))
 			logging.Error("Failed to load local-only manifest: %v", mErr)
 
-			// Log manifest loading failure
-			logging.LogEventEntry("manifest", "load", "failed",
+			// Log manifest loading failure as config warning (repository issue)
+			logging.LogEventEntry("manifest", "load", logging.StatusWarning,
 				fmt.Sprintf("Failed to load local-only manifest: %s", localManifestPath),
 				logging.WithContext("manifest_type", "local_only"),
 				logging.WithContext("manifest_path", localManifestPath),
@@ -765,8 +765,8 @@ func main() {
 			statusReporter.Error(fmt.Errorf("failed to retrieve manifests: %v", mErr))
 			logging.Error("Failed to retrieve manifests: %v", mErr)
 
-			// Log manifest loading failure
-			logging.LogEventEntry("manifest", "load", "failed",
+			// Log manifest loading failure as config warning (repository issue)
+			logging.LogEventEntry("manifest", "load", logging.StatusWarning,
 				"Failed to retrieve manifests from server",
 				logging.WithContext("manifest_type", "server"),
 				logging.WithContext("client_identifier", cfg.ClientIdentifier),
@@ -896,6 +896,21 @@ func main() {
 		if err := downloadAndInstallPerItem(itemsToInstall, cfg, statusReporter); err != nil {
 			statusReporter.Error(fmt.Errorf("failed to install pending updates: %v", err))
 			logging.Error("Failed to install pending updates (install-only): %v", err)
+			
+			// End session with failure status
+			summary := logging.SessionSummary{
+				TotalActions:    len(itemsToInstall),
+				Installs:        len(itemsToInstall),
+				Updates:         0,
+				Removals:        0,
+				Successes:       0,
+				Failures:        len(itemsToInstall),
+				PackagesHandled: extractPackageNamesFromDownloadItems(itemsToInstall),
+			}
+			if err := logging.EndSession("failed", summary); err != nil {
+				logging.Warn("Failed to end structured logging session: %v", err)
+			}
+			
 			os.Exit(1)
 		}
 
@@ -904,6 +919,29 @@ func main() {
 		} else {
 			statusReporter.Message("Installation completed successfully!")
 		}
+		
+		// End session with success status before exit
+		summary := logging.SessionSummary{
+			TotalActions:    len(itemsToInstall),
+			Installs:        len(itemsToInstall),
+			Updates:         0,
+			Removals:        0,
+			Successes:       len(itemsToInstall),
+			Failures:        0,
+			PackagesHandled: extractPackageNamesFromDownloadItems(itemsToInstall),
+		}
+		if err := logging.EndSession("completed", summary); err != nil {
+			logging.Warn("Failed to end structured logging session: %v", err)
+		}
+		
+		// Generate reports for external monitoring tools
+		logging.Info("Generating reports for external monitoring tools...")
+		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
+		exporter := reporting.NewDataExporter(baseDir)
+		if err := exporter.ExportToReportsDirectory(48); err != nil {
+			logging.Warn("Failed to export reports: %v", err)
+		}
+		
 		os.Exit(0)
 	}
 
@@ -1352,7 +1390,8 @@ func runPreflightIfNeeded(verbosity int, cfg *config.Configuration) {
 		}
 
 		// Log structured event for preflight failure
-		logging.LogEventEntry("preflight", "execute", "failed",
+		status := logging.StatusFromError("preflight", err)
+		logging.LogEventEntry("preflight", "execute", status,
 			fmt.Sprintf("Preflight script failed (action=%s): %v", failureAction, err),
 			logging.WithError(err),
 			logging.WithContext("failure_action", failureAction),
@@ -1469,7 +1508,8 @@ func runPostflightIfNeeded(verbosity int, cfg *config.Configuration) {
 		}
 
 		// Log structured event for postflight failure
-		logging.LogEventEntry("postflight", "execute", "failed",
+		status := logging.StatusFromError("postflight", err)
+		logging.LogEventEntry("postflight", "execute", status,
 			fmt.Sprintf("Postflight script failed (action=%s): %v", failureAction, err),
 			logging.WithError(err),
 			logging.WithContext("failure_action", failureAction),
@@ -1637,7 +1677,8 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 			logger.Error("Failed to uninstall item, continuing with others: %s, error: %v", item.Name, err)
 
 			// Log detailed failure information
-			logging.LogEventEntry("uninstall", "complete", "failed",
+			status := logging.StatusFromError("uninstall", err)
+			logging.LogEventEntry("uninstall", "complete", status,
 				fmt.Sprintf("Failed to uninstall %s: %v", item.Name, err),
 				logging.WithPackage(item.Name, item.Version),
 				logging.WithDuration(uninstallDuration),
@@ -1761,6 +1802,15 @@ func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, 
 	return finalMap, nil
 }
 
+// extractPackageNamesFromDownloadItems extracts package names from catalog items
+func extractPackageNamesFromDownloadItems(items []catalog.Item) []string {
+	names := make([]string, len(items))
+	for i, item := range items {
+		names[i] = item.Name
+	}
+	return names
+}
+
 // prepareDownloadItemsWithCatalog returns the catalog items that need to be installed/updated,
 // using the deduplicated manifest items.
 func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[string]catalog.Item, cfg *config.Configuration) []catalog.Item {
@@ -1827,7 +1877,7 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 
 		if cItem.Installer.Location == "" {
 			logger.Warning("No installer location found for item: %s", cItem.Name)
-			logging.LogEventEntry("install", "prepare", "failed",
+			logging.LogEventEntry("install", "prepare", logging.StatusWarning,
 				fmt.Sprintf("No installer location found for %s", cItem.Name),
 				logging.WithPackage(cItem.Name, cItem.Version),
 				logging.WithError(fmt.Errorf("missing installer location")))
@@ -1898,10 +1948,12 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 			localFile, exists = downloadedPaths[cItem.Name]
 			if !exists {
 				logger.Error("Downloaded path not found for item: %s", cItem.Name)
-				logging.LogEventEntry("install", "start", "failed",
+				err := fmt.Errorf("downloaded path not found")
+				status := logging.StatusFromError("install_start", err)
+				logging.LogEventEntry("install", "start", status,
 					fmt.Sprintf("Downloaded path not found for %s", cItem.Name),
 					logging.WithPackage(cItem.Name, cItem.Version),
-					logging.WithError(fmt.Errorf("downloaded path not found")))
+					logging.WithError(err))
 				failCount++
 				continue
 			}
@@ -1920,7 +1972,8 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 		if err := installOneCatalogItem(cItem, localFile, cfg); err != nil {
 			duration := time.Since(installStart)
 			logger.Error("Installation command failed: %s, error: %v", cItem.Name, err)
-			logging.LogEventEntry("install", "complete", "failed",
+			status := logging.StatusFromError("install_complete", err)
+			logging.LogEventEntry("install", "complete", status,
 				fmt.Sprintf("Failed to install %s: %v", cItem.Name, err),
 				logging.WithPackage(cItem.Name, cItem.Version),
 				logging.WithDuration(duration),
@@ -1974,10 +2027,11 @@ func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[in
 	}
 
 	statusReporter.Detail(fmt.Sprintf("Processing %d items for installation...", len(itemNames)))
-	// Use the new advanced dependency processing
-	process.InstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg)
-
-	return nil
+	// Use the new advanced dependency processing and properly return its result
+	err := process.InstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg)
+	
+	// Return the actual result from the installation process
+	return err
 }
 
 // uninstallWithAdvancedLogic handles uninstalling with advanced dependency logic
@@ -2379,8 +2433,9 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 	installDuration := time.Since(installStart)
 
 	if installErr != nil {
-		// Log detailed failure information
-		logging.LogEventEntry("install", "execute", "failed",
+		// Log detailed failure information - use smart status classification
+		status := logging.StatusFromError("install_package", installErr)
+		logging.LogEventEntry("install", "execute", status,
 			fmt.Sprintf("Installation of %s failed: %v", cItem.Name, installErr),
 			logging.WithPackage(cItem.Name, cItem.Version),
 			logging.WithDuration(installDuration),

@@ -296,14 +296,19 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				Config:          sessionConfig, // Add configuration data
 			}
 
-			// Calculate duration
-			if session.EndTime != nil {
+			// Calculate duration - prioritize session-level duration_seconds
+			if session.DurationSeconds != nil {
+				// Use the pre-calculated duration_seconds from session
+				record.Duration = *session.DurationSeconds
+			} else if session.EndTime != nil {
+				// Fallback to calculating duration from timestamps
 				record.EndTime = session.EndTime.Format(time.RFC3339)
 				if !session.StartTime.IsZero() {
 					record.Duration = int64(session.EndTime.Sub(session.StartTime).Seconds())
-				} else {
-					record.Duration = int64(session.Summary.Duration.Seconds())
 				}
+			} else if session.Summary.Duration > 0 {
+				// Last fallback to summary duration (convert from nanoseconds)
+				record.Duration = int64(session.Summary.Duration.Seconds())
 			}
 
 			// Extract environment info - handle both map types
@@ -1206,11 +1211,13 @@ func (exp *DataExporter) writeJSONFile(path string, v interface{}) error {
 
 // Helper session data structure for reading session.json
 type SessionData struct {
-	SessionID string `json:"session_id"`
-	StartTime string `json:"start_time"`
-	RunType   string `json:"run_type"`
-	Status    string `json:"status"`
-	Summary   struct {
+	SessionID       string     `json:"session_id"`
+	StartTime       string     `json:"start_time"`
+	EndTime         *string    `json:"end_time,omitempty"`
+	RunType         string     `json:"run_type"`
+	Status          string     `json:"status"`
+	DurationSeconds *int64     `json:"duration_seconds,omitempty"`
+	Summary         struct {
 		TotalActions    int      `json:"total_actions"`
 		Installs        int      `json:"installs"`
 		Updates         int      `json:"updates"`
@@ -1220,6 +1227,7 @@ type SessionData struct {
 		Duration        int64    `json:"duration"`
 		PackagesHandled []string `json:"packages_handled"`
 	} `json:"summary"`
+	Environment map[string]interface{} `json:"environment"`
 }
 
 func (exp *DataExporter) extractPackageFromMessage(message string) string {
