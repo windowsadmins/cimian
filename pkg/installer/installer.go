@@ -253,6 +253,14 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			"Package installation completed successfully",
 			logging.WithContext("item", item.Name),
 			logging.WithContext("installer_type", item.Installer.Type))
+		
+		// Additional cache cleanup attempt for items that don't have installs arrays
+		if len(item.Installs) == 0 && localFile != "" && localFile != "." {
+			if cleanupErr := cleanupInstallerFile(localFile, item.Name); cleanupErr == nil {
+				logging.Info("Successfully performed fallback cache cleanup for item without installs array", "item", item.Name)
+			}
+		}
+		
 		return "Installation success", nil
 
 	case "uninstall":
@@ -1426,10 +1434,49 @@ func runPS1Installer(item catalog.Item, localFile string, cfg *config.Configurat
 		if strings.Contains(err.Error(), "timed out") {
 			logging.Error("PowerShell installer timed out - likely waiting for user interaction",
 				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			
+			// Log PowerShell timeout as specific event for ReportMate
+			timeoutErr := fmt.Errorf("PowerShell installer timed out after %d minutes", cfg.InstallerTimeoutMinutes)
+			status := logging.StatusFromError("powershell_timeout", timeoutErr)
+			logging.LogEventEntry("install", "powershell_timeout", status,
+				fmt.Sprintf("PowerShell installer timed out after %d minutes - script may have shown interactive dialog", cfg.InstallerTimeoutMinutes),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("timeout_minutes", fmt.Sprintf("%d", cfg.InstallerTimeoutMinutes)),
+				logging.WithContext("script_path", localFile),
+				logging.WithContext("likely_cause", "interactive_dialog"))
+			
 			return output, fmt.Errorf("PowerShell installer timed out after %d minutes - script may have shown interactive dialog", cfg.InstallerTimeoutMinutes)
 		}
+		
+		// Log PowerShell execution errors with exit codes if available
+		if strings.Contains(err.Error(), "exit code=") {
+			parts := strings.Split(err.Error(), "exit code=")
+			if len(parts) > 1 {
+				codeStr := strings.Split(parts[1], " ")[0]
+				exitCodeErr := fmt.Errorf("PowerShell installer failed with exit code %s", codeStr)
+				status := logging.StatusFromError("powershell_exit", exitCodeErr)
+				logging.LogEventEntry("install", "powershell_exit_code_error", status,
+					fmt.Sprintf("PowerShell installer failed with exit code %s", codeStr),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("exit_code", codeStr),
+					logging.WithContext("script_path", localFile),
+					logging.WithContext("script_output", output))
+			}
+		} else {
+			// Log other PowerShell execution errors
+			status := logging.StatusFromError("powershell_execution", err)
+			logging.LogEventEntry("install", "powershell_execution_error", status,
+				fmt.Sprintf("PowerShell installer execution failed: %s", err.Error()),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("script_path", localFile),
+				logging.WithContext("error_details", err.Error()),
+				logging.WithContext("script_output", output))
+		}
+		
+		logging.Error("PowerShell installer execution failed", "error", err, "output", output)
 		return output, err
 	}
+	logging.Info("PowerShell installer executed successfully", "output", output)
 	return output, nil
 }
 
@@ -1664,6 +1711,9 @@ func runCMDWithTimeout(command string, arguments []string, timeoutMinutes int) (
 			"command", command, "args", arguments, "error", err)
 		return outStr, err
 	}
+	
+	logging.Debug("Command completed successfully",
+		"command", command, "args", arguments, "output", outStr, "timeoutMinutes", timeoutMinutes)
 	return outStr, nil
 }
 
@@ -1968,4 +2018,37 @@ func runNopkgScript(script utils.LiteralString, cachePath, scriptType string) (s
 	}
 
 	return output, nil
+}
+
+// cleanupInstallerFile safely removes installer files with retry logic for Windows file locking
+func cleanupInstallerFile(filePath, itemName string) error {
+	if filePath == "" || filePath == "." {
+		return nil
+	}
+	
+	// Check if file exists before attempting cleanup
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		logging.Debug("Installer file already cleaned up", "item", itemName, "file", filePath)
+		return nil
+	}
+	
+	retryConfig := retry.RetryConfig{
+		MaxRetries:      5,
+		InitialInterval: 500 * time.Millisecond,
+		Multiplier:      2.0,
+	}
+	
+	return retry.Retry(retryConfig, func() error {
+		err := os.Remove(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// File was already removed, consider this success
+				return nil
+			}
+			logging.Debug("Retrying file cleanup", "item", itemName, "file", filePath, "error", err)
+			return err
+		}
+		logging.Debug("Successfully cleaned up installer file", "item", itemName, "file", filePath)
+		return nil
+	})
 }
