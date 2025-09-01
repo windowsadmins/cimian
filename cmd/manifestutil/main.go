@@ -168,7 +168,7 @@ func handleSelfServiceRequest(packageName string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✓ Successfully added '%s' to self-service manifest\n", packageName)
+	fmt.Printf("Successfully added '%s' to self-service manifest\n", packageName)
 	fmt.Println("Package will be processed on next 'managedsoftwareupdate' run.")
 }
 
@@ -182,7 +182,7 @@ func handleSelfServiceRemove(packageName string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✓ Successfully removed '%s' from self-service manifest\n", packageName)
+	fmt.Printf("Successfully removed '%s' from self-service manifest\n", packageName)
 }
 
 func main() {
