@@ -1281,6 +1281,12 @@ func main() {
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
 	currentLogDir := logging.GetCurrentLogDir()
 	clearCacheFolderSelective(cacheFolder, currentLogDir)
+	
+	// Clear chocolatey cache as well to prevent accumulation
+	clearChocolateyCache()
+	
+	// Also clear Windows installer cache for MSI files
+	clearWindowsInstallerCache()
 
 	// Clear bootstrap mode if we completed successfully
 	if isBootstrap {
@@ -2811,6 +2817,119 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 		}
 	}
 	logger.Info("Selective cache clearing complete for folder: %s", cachePath)
+}
+
+// clearChocolateyCache clears the chocolatey cache directory
+func clearChocolateyCache() {
+	chocoTempPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "temp")
+	chocoLibPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "lib-bad")
+	chocoCachePath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", ".chocolatey")
+	
+	// Clear chocolatey temp directory
+	if _, err := os.Stat(chocoTempPath); err == nil {
+		err := os.RemoveAll(chocoTempPath)
+		if err != nil {
+			logger.Warning("Failed to clear chocolatey temp directory: %v", err)
+		} else {
+			logger.Debug("Cleared chocolatey temp directory: %s", chocoTempPath)
+		}
+		// Recreate the temp directory
+		if err := os.MkdirAll(chocoTempPath, 0755); err != nil {
+			logger.Warning("Failed to recreate chocolatey temp directory: %v", err)
+		}
+	}
+	
+	// Clear lib-bad directory (failed installations)
+	if _, err := os.Stat(chocoLibPath); err == nil {
+		err := os.RemoveAll(chocoLibPath)
+		if err != nil {
+			logger.Warning("Failed to clear chocolatey lib-bad directory: %v", err)
+		} else {
+			logger.Debug("Cleared chocolatey lib-bad directory: %s", chocoLibPath)
+		}
+	}
+	
+	// Clear .chocolatey cache directory
+	if _, err := os.Stat(chocoCachePath); err == nil {
+		err := os.RemoveAll(chocoCachePath)
+		if err != nil {
+			logger.Warning("Failed to clear chocolatey cache directory: %v", err)
+		} else {
+			logger.Debug("Cleared chocolatey cache directory: %s", chocoCachePath)
+		}
+		// Recreate the cache directory
+		if err := os.MkdirAll(chocoCachePath, 0755); err != nil {
+			logger.Warning("Failed to recreate chocolatey cache directory: %v", err)
+		}
+	}
+	
+	// Also run choco cache clear command if chocolatey is available
+	chocoExe := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "bin", "choco.exe")
+	if _, err := os.Stat(chocoExe); err == nil {
+		cmd := exec.Command(chocoExe, "cache", "clear", "--yes")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			logger.Warning("Failed to run 'choco cache clear': %v", err)
+		} else {
+			logger.Debug("Executed 'choco cache clear': %s", string(output))
+		}
+	}
+	
+	logger.Info("Chocolatey cache clearing complete")
+}
+
+// clearWindowsInstallerCache clears the Windows Installer cache directory
+func clearWindowsInstallerCache() {
+	windowsInstallerCache := filepath.Join(os.Getenv("WINDIR"), "Installer", "$PatchCache$")
+	windowsTemp := filepath.Join(os.Getenv("WINDIR"), "Temp")
+	
+	// Clear Windows Installer patch cache (safe to clear old entries)
+	if _, err := os.Stat(windowsInstallerCache); err == nil {
+		// Only clear files older than 7 days to avoid breaking active installations
+		err := filepath.Walk(windowsInstallerCache, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && time.Since(info.ModTime()) > 7*24*time.Hour {
+				if err := os.Remove(path); err != nil {
+					logger.Warning("Failed to remove old installer cache file: %s", err)
+				} else {
+					logger.Debug("Removed old installer cache file: %s", path)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			logger.Warning("Failed to clean Windows Installer cache: %v", err)
+		}
+	}
+	
+	// Clear Windows temp files related to MSI installations (only .msi and .tmp files older than 1 day)
+	if _, err := os.Stat(windowsTemp); err == nil {
+		err := filepath.Walk(windowsTemp, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && time.Since(info.ModTime()) > 24*time.Hour {
+				fileName := info.Name()
+				if strings.HasSuffix(strings.ToLower(fileName), ".msi") || 
+					strings.HasSuffix(strings.ToLower(fileName), ".tmp") ||
+					strings.Contains(strings.ToLower(fileName), "msi") {
+					if err := os.Remove(path); err != nil {
+						logger.Debug("Could not remove temp file (may be in use): %s", path)
+					} else {
+						logger.Debug("Removed old temp file: %s", path)
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			logger.Warning("Failed to clean Windows temp directory: %v", err)
+		}
+	}
+	
+	logger.Info("Windows Installer cache clearing complete")
 }
 
 func cleanManifestsCatalogsPreRun(dirPath string) error {
