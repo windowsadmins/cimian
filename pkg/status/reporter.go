@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/utils"
 )
 
 // StatusMessage represents the wire format for IPC messages
@@ -24,18 +25,7 @@ type StatusMessage struct {
 	Error   bool   `json:"error,omitempty"`
 }
 
-// Reporter interface abstracts the status reporting functionality
-type Reporter interface {
-	Start(ctx context.Context) error
-	Message(txt string)
-	Detail(txt string)
-	Percent(pct int) // -1 = indeterminate
-	ShowLog(path string)
-	Error(err error)
-	Stop()
-}
-
-// PipeReporter implements Reporter using Windows named pipes
+// PipeReporter implements utils.Reporter using Windows named pipes
 type PipeReporter struct {
 	pipeName     string
 	conn         net.Conn
@@ -47,7 +37,7 @@ type PipeReporter struct {
 }
 
 // NewPipeReporter creates a new pipe-based status reporter
-func NewPipeReporter() *PipeReporter {
+func NewPipeReporter() utils.Reporter {
 	return &PipeReporter{
 		pipeName:     `\\.\pipe\cimianstatus`,
 		useNamedPipe: true, // Try named pipe first, fall back to TCP if needed
@@ -270,18 +260,3 @@ func (r *PipeReporter) Stop() {
 
 	logging.Debug("CimianStatus reporter stopped")
 }
-
-// NoOpReporter implements Reporter but does nothing (for headless operation)
-type NoOpReporter struct{}
-
-func NewNoOpReporter() *NoOpReporter {
-	return &NoOpReporter{}
-}
-
-func (r *NoOpReporter) Start(ctx context.Context) error { return nil }
-func (r *NoOpReporter) Message(txt string)              {}
-func (r *NoOpReporter) Detail(txt string)               {}
-func (r *NoOpReporter) Percent(pct int)                 {}
-func (r *NoOpReporter) ShowLog(path string)             {}
-func (r *NoOpReporter) Error(err error)                 {}
-func (r *NoOpReporter) Stop()                           {}

@@ -42,7 +42,8 @@ const (
 // DownloadFile retrieves a file from `url` and saves it to the correct local path.
 // If the URL indicates a catalog or manifest, it goes in the corresponding folder.
 // Otherwise, it's treated as a package and goes to cfg.CachePath.
-func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
+// verbosity and reporter are optional parameters for enhanced progress display
+func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity int, reporter utils.Reporter) error {
 	if url == "" {
 		return fmt.Errorf("DownloadFile: URL cannot be empty")
 	}
@@ -221,7 +222,17 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration) error {
 			expectedSize = parseContentLength(contentLength)
 		}
 
-		written, err := io.Copy(out, resp.Body)
+		// Copy with optional waterfall progress tracking for -vvv mode
+		var written int64
+		
+		if verbosity >= 3 && expectedSize > 0 {
+			// Waterfall progress for very verbose mode
+			fileName := filepath.Base(dest)
+			written, err = copyWithWaterfallProgress(out, resp.Body, expectedSize, fileName)
+		} else {
+			// Simple copy without progress tracking
+			written, err = io.Copy(out, resp.Body)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to write downloaded data: %v", err)
 		}
@@ -278,7 +289,7 @@ func Verify(file string, expectedHash string) bool {
 }
 
 // InstallPendingUpdates downloads files and returns a map[name]localFilePath
-func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configuration) (map[string]string, error) {
+func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configuration, verbosity int, reporter utils.Reporter) (map[string]string, error) {
 	logging.Info("Starting pending downloads...")
 
 	if err := os.MkdirAll(cfg.CachePath, 0755); err != nil {
@@ -299,7 +310,7 @@ func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configur
 		logging.Debug("Processing download item", "name", name, "url", url)
 
 		// Call DownloadFile - individual failures should not stop the entire batch
-		if err := DownloadFile(url, "", cfg); err != nil {
+		if err := DownloadFile(url, "", cfg, verbosity, reporter); err != nil {
 			logging.Error("Failed to download item, continuing with remaining downloads",
 				"name", name, "url", url, "error", err)
 			downloadErrors = append(downloadErrors, fmt.Errorf("failed to download %s: %v", name, err))
@@ -565,4 +576,148 @@ func validateNupkgFile(path string) error {
 	}
 
 	return nil
+}
+
+// copyWithWaterfallProgress copies data with waterfall progress display for -vvv mode
+func copyWithWaterfallProgress(dst io.Writer, src io.Reader, totalSize int64, fileName string) (int64, error) {
+	const bufSize = 32 * 1024 // 32KB buffer
+	const updateInterval = 100 * time.Millisecond // Update every 100ms
+	
+	buf := make([]byte, bufSize)
+	var written int64
+	lastUpdate := time.Now()
+	startTime := time.Now()
+	
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = fmt.Errorf("invalid write result")
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				return written, ew
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
+			}
+			
+			// Update waterfall progress every 100ms
+			now := time.Now()
+			if now.Sub(lastUpdate) >= updateInterval || written == totalSize {
+				percentage := int((written * 100) / totalSize)
+				elapsed := now.Sub(startTime)
+				
+				// Calculate speed and ETA
+				var speed string
+				var eta string
+				if elapsed.Seconds() > 0 {
+					bytesPerSecond := float64(written) / elapsed.Seconds()
+					speed = formatSpeed(bytesPerSecond)
+					
+					if bytesPerSecond > 0 && written < totalSize {
+						remainingBytes := totalSize - written
+						etaSeconds := float64(remainingBytes) / bytesPerSecond
+						eta = formatDuration(time.Duration(etaSeconds * float64(time.Second)))
+					}
+				}
+				
+				// Generate waterfall bar
+				waterfallBar := generateWaterfallBar(percentage, fileName, speed, eta)
+				fmt.Printf("\r%s", waterfallBar)
+				
+				lastUpdate = now
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				return written, er
+			}
+			break
+		}
+	}
+	
+	// Final newline to complete the waterfall display
+	fmt.Println()
+	
+	return written, nil
+}
+
+// generateWaterfallBar creates a Unicode waterfall progress bar
+func generateWaterfallBar(percentage int, fileName, speed, eta string) string {
+	const barWidth = 40
+	filled := (percentage * barWidth) / 100
+	
+	// Unicode characters for waterfall effect
+	waterfall := []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
+	empty := "░"
+	
+	bar := strings.Builder{}
+	
+	// Progress indicator
+	prefix := "[DL]"
+	if percentage == 100 {
+		prefix = "[OK]"
+	}
+	
+	// Build the progress bar with waterfall effect
+	bar.WriteString(fmt.Sprintf("%s %s: [", prefix, truncateFileName(fileName, 20)))
+	
+	for i := 0; i < barWidth; i++ {
+		if i < filled {
+			// Use different heights for visual effect
+			waterfallIndex := (i * len(waterfall)) / barWidth
+			if waterfallIndex >= len(waterfall) {
+				waterfallIndex = len(waterfall) - 1
+			}
+			bar.WriteString(waterfall[waterfallIndex])
+		} else {
+			bar.WriteString(empty)
+		}
+	}
+	
+	// Add percentage, speed, and ETA
+	bar.WriteString(fmt.Sprintf("] %d%%", percentage))
+	if speed != "" {
+		bar.WriteString(fmt.Sprintf(" @ %s", speed))
+	}
+	if eta != "" {
+		bar.WriteString(fmt.Sprintf(" ETA: %s", eta))
+	}
+	
+	return bar.String()
+}
+
+// truncateFileName truncates a filename to fit display
+func truncateFileName(fileName string, maxLen int) string {
+	if len(fileName) <= maxLen {
+		return fileName
+	}
+	return fileName[:maxLen-3] + "..."
+}
+
+// formatSpeed formats bytes per second into human-readable format
+func formatSpeed(bytesPerSecond float64) string {
+	if bytesPerSecond < 1024 {
+		return fmt.Sprintf("%.0f B/s", bytesPerSecond)
+	} else if bytesPerSecond < 1024*1024 {
+		return fmt.Sprintf("%.1f KB/s", bytesPerSecond/1024)
+	} else {
+		return fmt.Sprintf("%.1f MB/s", bytesPerSecond/(1024*1024))
+	}
+}
+
+// formatDuration formats duration into human-readable format
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	} else if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	} else {
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
 }

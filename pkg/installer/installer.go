@@ -358,16 +358,39 @@ func needsUpdateOld(item manifest.Item, _ *config.Configuration) bool {
 	return false
 }
 
-// installNonNupkg handles MSI/EXE/Powershell items.
+// installNonNupkg handles MSI/EXE/Powershell items with progress tracking.
 func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config.Configuration) error {
 	// DEBUG: Add explicit logging at start of installNonNupkg
 	logging.Info("installNonNupkg called", "item", item.Name, "type", item.Installer.Type, "localFile", localFile)
 	
+	phases := getInstallPhases(item.Installer.Type)
+	currentPhase := 0
+	
+	// Show initial phase
+	if len(phases) > 0 {
+		showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+		currentPhase++
+	}
+	
 	switch strings.ToLower(item.Installer.Type) {
 	case "msi":
+		// Show validation phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		logging.Info("Executing MSI installer", "item", item.Name, "localFile", localFile)
+		
+		// Show installing phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		out, err := runMSIInstaller(item, localFile, cfg)
 		if err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
 			logging.Error("MSI installer failed", "item", item.Name, "error", err)
 			
 			// Log the MSI failure as an error (actual software installation failure) for ReportMate
@@ -380,15 +403,29 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 				logging.WithContext("error_details", err.Error()))
 			return err
 		}
+		
+		// Show completion phases
+		for currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		logging.Debug("MSI install output", "output", out)
 		return nil
 
 	case "exe":
+		// Show preparation phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		logging.Info("Executing EXE installer", "item", item.Name, "localFile", localFile)
 		// Run preinstall script if present
 		if item.PreScript != "" {
 			out, err := runPreinstallScript(item, localFile, cachePath)
 			if err != nil {
+				showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
 				logging.Error("Preinstall script failed", "item", item.Name, "error", err)
 				
 				// Log the PreScript failure as an event for ReportMate
@@ -403,9 +440,17 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 			}
 			logging.Debug("Preinstall script for EXE completed", "output", out)
 		}
+		
+		// Show launching phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		// Always run the EXE afterwards
 		out, err := runEXEInstaller(item, localFile, cfg)
 		if err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
 			// Log the EXE failure as an error (actual software installation failure) for ReportMate
 			status := logging.StatusFromError("exe_execution", err)
 			logging.LogEventEntry("install", "exe_execution", status,
@@ -416,12 +461,32 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 				logging.WithContext("error_details", err.Error()))
 			return err
 		}
+		
+		// Show completion phases
+		for currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		logging.Debug("EXE install output", "output", out)
 		return nil
 
 	case "powershell":
+		// Show preparation and loading phases
+		for currentPhase < len(phases)-2 {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
+		// Show executing phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		out, err := runPS1Installer(item, localFile, cfg)
 		if err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
 			// Log the PowerShell failure as an error (actual software installation failure) for ReportMate
 			status := logging.StatusFromError("powershell_execution", err)
 			logging.LogEventEntry("install", "powershell_execution", status,
@@ -432,14 +497,40 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 				logging.WithContext("error_details", err.Error()))
 			return err
 		}
+		
+		// Show finalizing phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+		}
+		
 		logging.Debug("PS1 install output", "output", out)
 		return nil
 
 	case "msix":
+		// Show preparation and validation phases
+		for currentPhase < len(phases)-3 {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
+		// Show registering phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		out, err := runMSIXInstaller(item, localFile, cfg)
 		if err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
 			return err
 		}
+		
+		// Show completion phases
+		for currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
 		logging.Debug("MSIX install output", "output", out)
 		return nil
 
@@ -447,10 +538,17 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		// Handle script-only packages with no installer file
 		logging.Debug("Processing nopkg item (script-only)", "item", item.Name)
 
+		// Show preparing phase
+		if len(phases) > 0 {
+			showInstallProgress(item.Name, "script", phases[0], 0)
+		}
+
 		// Run preinstall script if present
 		if item.PreScript != "" {
+			showInstallProgress(item.Name, "script", "Executing PreScript", 0)
 			out, err := runNopkgScript(item.PreScript, cachePath, "preinstall")
 			if err != nil {
+				showInstallProgress(item.Name, "script", "Failed", 0)
 				return fmt.Errorf("preinstall script failed: %w", err)
 			}
 			logging.Debug("Preinstall script completed", "item", item.Name, "output", out)
@@ -458,13 +556,17 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 
 		// Run postinstall script if present
 		if item.PostScript != "" {
+			showInstallProgress(item.Name, "script", "Executing PostScript", 0)
 			out, err := runNopkgScript(item.PostScript, cachePath, "postinstall")
 			if err != nil {
+				showInstallProgress(item.Name, "script", "Failed", 0)
 				return fmt.Errorf("postinstall script failed: %w", err)
 			}
 			logging.Debug("Postinstall script completed", "item", item.Name, "output", out)
 		}
 
+		// Show completion
+		showInstallProgress(item.Name, "script", "Completed", 0)
 		return nil
 
 	default:
@@ -472,7 +574,7 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 	}
 }
 
-// installOrUpgradeNupkg handles local .nupkg installs/updates using Chocolatey without unnecessary renaming.
+// installOrUpgradeNupkg handles local .nupkg installs/updates using Chocolatey with progress tracking.
 func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, cfg *config.Configuration) (string, error) {
 	nupkgID, nupkgVer, metaErr := extractNupkgMetadata(downloadedFile)
 	if metaErr != nil {
@@ -1423,6 +1525,7 @@ func runEXEUninstaller(absFile string, item catalog.Item) (string, error) {
 // runPS1Installer: powershell -File <localFile>
 func runPS1Installer(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	_ = item
+	
 	psArgs := buildPowerShellArgs(cfg, "-File", localFile)
 
 	logging.Info("Executing PowerShell installer with timeout",
@@ -2052,3 +2155,68 @@ func cleanupInstallerFile(filePath, itemName string) error {
 		return nil
 	})
 }
+
+// showInstallProgress displays installation progress for different installer types
+func showInstallProgress(itemName, installerType, phase string, verbosity int) {
+	if verbosity >= 2 {
+		indicator := getPhaseIndicator(phase)
+		fmt.Printf("%s Installing %s (%s): %s\n", indicator, itemName, strings.ToUpper(installerType), phase)
+	}
+}
+
+// getPhaseIndicator returns appropriate text indicator for installation phases
+func getPhaseIndicator(phase string) string {
+	switch strings.ToLower(phase) {
+	case "preparing":
+		return "[PREP]"
+	case "validating":
+		return "[CHEK]"
+	case "extracting":
+		return "[EXTR]"
+	case "installing":
+		return "[INST]"
+	case "configuring":
+		return "[CONF]"
+	case "finalizing":
+		return "[FINL]"
+	case "launching":
+		return "[LNCH]"
+	case "dependencies":
+		return "[DEPS]"
+	case "scripts":
+		return "[SCRP]"
+	case "loading":
+		return "[LOAD]"
+	case "executing":
+		return "[EXEC]"
+	case "registering":
+		return "[REGI]"
+	case "processing":
+		return "[PROC]"
+	case "completed":
+		return "[ OK ]"
+	case "failed":
+		return "[FAIL]"
+	default:
+		return "[WORK]"
+	}
+}
+
+// getInstallPhases returns the installation phases for different installer types
+func getInstallPhases(installerType string) []string {
+	switch strings.ToLower(installerType) {
+	case "msi":
+		return []string{"Preparing", "Validating", "Installing", "Configuring", "Finalizing"}
+	case "exe":
+		return []string{"Preparing", "Launching", "Installing", "Finalizing"}
+	case "nupkg":
+		return []string{"Preparing", "Extracting", "Dependencies", "Installing", "Scripts", "Finalizing"}
+	case "pwsh", "powershell":
+		return []string{"Preparing", "Loading", "Executing", "Finalizing"}
+	case "msix":
+		return []string{"Preparing", "Validating", "Registering", "Installing", "Finalizing"}
+	default:
+		return []string{"Preparing", "Processing", "Installing", "Finalizing"}
+	}
+}
+
