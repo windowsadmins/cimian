@@ -833,16 +833,17 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 			logging.Debug("Not script-only item in processInstallWithAdvancedLogic", "item", item.Name)
 			logging.Info("CRITICAL DEBUG: About to call downloadItemFile", "item", item.Name)
 			localFile, err := downloadItemFile(item, cfg)
-			logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", err)
 			if err != nil {
 				logging.Error("CRITICAL DEBUG: downloadItemFile failed", "item", item.Name, "error", err)
+				logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "FAILED")
 				return fmt.Errorf("failed to download item %s: %v", itemName, err)
 			}
+			logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "<nil>")
 
 			// DEBUG: Add explicit logging before installer call
 			logging.Info("About to call installerInstall", "item", item.Name, "localFile", localFile)
 			logging.Info("CRITICAL DEBUG: Calling installerInstall now", "item", item.Name, "action", "install", "localFile", localFile, "cachePath", cachePath, "checkOnly", checkOnly)
-			_, err = installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
+			result, err := installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 			if err != nil {
 				// Log detailed error with proper event for reporting system
 				logging.Error("Installation failed", "item", item.Name, "error", err)
@@ -857,7 +858,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 				
 				return fmt.Errorf("failed to install item %s: %v", itemName, err)
 			}
-			logging.Info("installerInstall completed successfully", "item", item.Name)
+			logging.Info("installerInstall completed successfully", "item", item.Name, "result", result)
 		}
 	}
 

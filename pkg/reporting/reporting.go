@@ -724,6 +724,9 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 
 	// Load catalog data to get authoritative version information
 	catalogVersions := exp.loadCatalogVersions()
+	
+	// Load catalog display names for proper display name information
+	catalogDisplayNames := exp.loadCatalogDisplayNames()
 
 	// Process all sessions to build complete history
 	for _, sessionDir := range allSessions {
@@ -914,10 +917,13 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 		// Generate standard reporting ID (lowercase, no spaces)
 		itemID := strings.ToLower(strings.ReplaceAll(stats.Name, " ", "-"))
 
-		// Determine display name (capitalize first letter of each word)
+		// Determine display name - prioritize catalog display_name over generated title case
 		displayName := stats.Name
-		if strings.Contains(stats.Name, "-") || strings.Contains(stats.Name, "_") {
-			// Convert package-name or package_name to Package Name
+		if catalogDisplayName, hasCatalogDisplayName := catalogDisplayNames[strings.ToLower(stats.Name)]; hasCatalogDisplayName && catalogDisplayName != "" {
+			// Use the display_name from catalog (authoritative source)
+			displayName = catalogDisplayName
+		} else if strings.Contains(stats.Name, "-") || strings.Contains(stats.Name, "_") {
+			// Convert package-name or package_name to Package Name as fallback
 			parts := strings.FieldsFunc(stats.Name, func(c rune) bool {
 				return c == '-' || c == '_'
 			})
@@ -1635,6 +1641,55 @@ func (exp *DataExporter) loadCatalogVersions() map[string]string {
 
 	logging.Debug("Loaded catalog versions for reporting", "count", len(versions))
 	return versions
+}
+
+// loadCatalogDisplayNames reads catalog files to extract authoritative display name information
+func (exp *DataExporter) loadCatalogDisplayNames() map[string]string {
+	displayNames := make(map[string]string)
+
+	// Try to load from catalogs directory
+	catalogsPath := `C:\ProgramData\ManagedInstalls\catalogs`
+
+	entries, err := os.ReadDir(catalogsPath)
+	if err != nil {
+		logging.Debug("Could not read catalogs directory for display name data", "path", catalogsPath, "error", err)
+		return displayNames
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+
+		catalogPath := filepath.Join(catalogsPath, entry.Name())
+		data, err := os.ReadFile(catalogPath)
+		if err != nil {
+			continue
+		}
+
+		// Parse catalog file using the same structure as main code
+		var wrapper struct {
+			Items []struct {
+				Name        string `yaml:"name"`
+				DisplayName string `yaml:"display_name"`
+			} `yaml:"items"`
+		}
+
+		if err := yaml.Unmarshal(data, &wrapper); err != nil {
+			continue
+		}
+
+		// Extract display name information for each item
+		for _, item := range wrapper.Items {
+			if item.Name != "" && item.DisplayName != "" {
+				// Store with lowercase key for case-insensitive lookup
+				displayNames[strings.ToLower(item.Name)] = item.DisplayName
+			}
+		}
+	}
+
+	logging.Debug("Loaded catalog display names for reporting", "count", len(displayNames))
+	return displayNames
 }
 
 // getInstalledVersionFromRegistry attempts to get the installed version of a package from Windows registry
