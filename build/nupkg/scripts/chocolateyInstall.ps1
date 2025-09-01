@@ -59,14 +59,33 @@ try {
         Write-Host "Found $($managedSoftwareProcesses.Count) running managedsoftwareupdate.exe process(es)"
         Write-Host "Terminating managedsoftwareupdate.exe processes for upgrade..."
         try {
+            # First attempt: graceful termination
             $managedSoftwareProcesses | Stop-Process -Force
-            Start-Sleep -Seconds 3
+            Start-Sleep -Seconds 5
+            
+            # Verify all processes are terminated
+            $remainingProcesses = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+            if ($remainingProcesses) {
+                Write-Host "Some processes still running, attempting forceful termination..."
+                $remainingProcesses | Stop-Process -Force
+                Start-Sleep -Seconds 3
+                
+                # Final check with taskkill
+                $finalCheck = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+                if ($finalCheck) {
+                    Write-Host "Using taskkill for stubborn processes..."
+                    & taskkill /F /IM "managedsoftwareupdate.exe" /T 2>$null
+                    Start-Sleep -Seconds 2
+                }
+            }
+            
             Write-Host "Successfully terminated managedsoftwareupdate.exe processes"
         } catch {
             Write-Warning "Failed to terminate some managedsoftwareupdate.exe processes: $_"
-            # Try a more aggressive approach
+            # Try taskkill as final resort
             try {
-                Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Stop-Process -Force
+                Write-Host "Using taskkill as fallback method..."
+                & taskkill /F /IM "managedsoftwareupdate.exe" /T 2>$null
                 Start-Sleep -Seconds 2
                 Write-Host "Forcefully terminated remaining managedsoftwareupdate.exe processes"
             } catch {
@@ -100,7 +119,7 @@ try {
         if (Test-Path $destPath) {
             Write-Host "Checking if $($exe.Name) is in use..."
             $retryCount = 0
-            $maxRetries = 5
+            $maxRetries = 10  # Increased retries for stubborn processes
             $copySucceeded = $false
             
             while ($retryCount -lt $maxRetries -and -not $copySucceeded) {
@@ -113,19 +132,36 @@ try {
                     Write-Warning "Attempt $retryCount failed to copy $($exe.Name): $_"
                     
                     if ($exe.Name -eq "managedsoftwareupdate.exe") {
-                        # Special handling for managedsoftwareupdate.exe
-                        Write-Host "Attempting to terminate any remaining managedsoftwareupdate.exe processes..."
+                        # Special aggressive handling for managedsoftwareupdate.exe
+                        Write-Host "Attempting aggressive termination of managedsoftwareupdate.exe processes..."
                         try {
+                            # Kill all instances using multiple methods
                             Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Stop-Process -Force
+                            Start-Sleep -Seconds 1
+                            
+                            # Use taskkill for stubborn processes
+                            & taskkill /F /IM "managedsoftwareupdate.exe" /T 2>$null
                             Start-Sleep -Seconds 2
+                            
+                            # Try to unlock the file by temporarily renaming it
+                            if (Test-Path $destPath) {
+                                $tempName = "$destPath.old.$retryCount"
+                                try {
+                                    Move-Item -Path $destPath -Destination $tempName -Force -ErrorAction SilentlyContinue
+                                    Write-Host "Renamed locked file to: $tempName"
+                                } catch {
+                                    Write-Warning "Could not rename locked file: $_"
+                                }
+                            }
                         } catch {
                             Write-Warning "Failed to terminate managedsoftwareupdate.exe: $_"
                         }
                     }
                     
                     if ($retryCount -lt $maxRetries) {
-                        Write-Host "Waiting 2 seconds before retry..."
-                        Start-Sleep -Seconds 2
+                        $waitTime = [Math]::Min(2 * $retryCount, 10)  # Progressive backoff, max 10 seconds
+                        Write-Host "Waiting $waitTime seconds before retry $($retryCount + 1)/$maxRetries..."
+                        Start-Sleep -Seconds $waitTime
                     } else {
                         throw "Failed to copy $($exe.Name) after $maxRetries attempts: $_"
                     }
