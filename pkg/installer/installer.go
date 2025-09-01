@@ -114,6 +114,50 @@ func removeInstalledVersionFromRegistry(item catalog.Item) {
 		"item", item.Name, "key", regPath)
 }
 
+// verifyInstallationBeforeRegistry checks if installation was successful by directly checking installs array
+// This avoids architecture issues with CheckStatus and provides more reliable verification
+func verifyInstallationBeforeRegistry(item catalog.Item, cfg *config.Configuration) bool {
+	logging.Debug("Starting direct installation verification", "item", item.Name, "installsCount", len(item.Installs))
+	
+	// If no installs array is defined, we can't verify - log as warning and assume success for backward compatibility
+	if len(item.Installs) == 0 {
+		logging.Warn("No installs array defined for verification - cannot verify installation success", 
+			"item", item.Name, "recommendation", "Add installs array to catalog for proper verification")
+		
+		// Log this as a warning event so we get notified about missing verification data
+		logging.LogEventEntry("install", "verification_missing", logging.StatusWarning,
+			"Package has no installs array for verification - assuming success but cannot confirm",
+			logging.WithContext("item", item.Name),
+			logging.WithContext("issue_type", "missing_verification_data"),
+			logging.WithContext("recommendation", "Add installs array to catalog"))
+		
+		return true // Assume success for backward compatibility but warn about it
+	}
+
+	// Check each install item directly (avoid CheckStatus to prevent architecture issues)
+	for _, install := range item.Installs {
+		if install.Type == "file" {
+			logging.Debug("Verifying install file exists", "item", item.Name, "path", install.Path)
+			if _, err := os.Stat(install.Path); os.IsNotExist(err) {
+				logging.Warn("Installation verification failed - expected file not found", 
+					"item", item.Name, "missingPath", install.Path)
+				return false
+			}
+		} else if install.Type == "directory" {
+			logging.Debug("Verifying install directory exists", "item", item.Name, "path", install.Path)
+			if _, err := os.Stat(install.Path); os.IsNotExist(err) {
+				logging.Warn("Installation verification failed - expected directory not found", 
+					"item", item.Name, "missingPath", install.Path)
+				return false
+			}
+		}
+		// Add more install types as needed (registry checks, etc.)
+	}
+
+	logging.Debug("Installation verification successful - all expected files/directories found", "item", item.Name)
+	return true
+}
+
 // Install is the main entry point for installing/updating/uninstalling a catalog item.
 func Install(item catalog.Item, action, localFile, cachePath string, checkOnly bool, cfg *config.Configuration) (string, error) {
 	// DEBUG: Add explicit logging at start of Install function
@@ -180,7 +224,14 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 
 			// For OnDemand items, do not store installed version in registry
 			if !item.OnDemand {
-				storeInstalledVersionInRegistry(item)
+				// Verify installation success before writing to registry
+				if verified := verifyInstallationBeforeRegistry(item, cfg); verified {
+					storeInstalledVersionInRegistry(item)
+					logging.Debug("Script-only installation verified and registry updated", "item", item.Name)
+				} else {
+					logging.Warn("Script-only installation verification failed, not updating registry", "item", item.Name)
+					return "", fmt.Errorf("script-only installation verification failed for %s", item.Name)
+				}
 			} else {
 				logging.Info("OnDemand item completed successfully (not marking as installed)", "item", item.Name)
 				// Remove OnDemand items from the self-service manifest after successful execution
@@ -218,8 +269,24 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 
 		// Otherwise, handle MSI/EXE/Powershell, etc.
 		err := installNonNupkg(item, localFile, cachePath, cfg)
+		
+		// CRITICAL: For GUI installers (unattended_install: false), exit code is unreliable
+		// Many GUI installers return exit code 0 even when user cancels installation
+		// We must rely entirely on file verification, not exit codes
+		if !item.UnattendedInstall {
+			logging.Info("GUI installer detected (unattended_install: false) - will verify via installs array regardless of exit code", "item", item.Name)
+		} else {
+			logging.Info("Unattended installer detected (unattended_install: true) - exit codes should be reliable", "item", item.Name)
+		}
+		
 		if err != nil {
-			logging.Error("Installation failed", "item", item.Name, "error", err)
+			// Log the specific exit code for debugging
+			if strings.Contains(err.Error(), "exit code=") {
+				logging.Error("Installation failed with exit code", "item", item.Name, "error", err)
+			} else {
+				logging.Error("Installation failed", "item", item.Name, "error", err)
+			}
+			
 			// Log event for ItemRecord tracking
 			status := logging.StatusFromError("package_install", err)
 			logging.LogEventEntry("install", "install_package", status,
@@ -233,7 +300,25 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		// For OnDemand items, do not store installed version in registry
 		// This allows them to be run repeatedly without being considered "installed"
 		if !item.OnDemand {
-			storeInstalledVersionInRegistry(item)
+			// Verify installation success before writing to registry
+			if verified := verifyInstallationBeforeRegistry(item, cfg); verified {
+				storeInstalledVersionInRegistry(item)
+				logging.Debug("Installation verified and registry updated", "item", item.Name)
+			} else {
+				// Log verification failure as a warning for monitoring
+				logging.Warn("Installation verification failed, not updating registry", "item", item.Name)
+				
+				// Log this as a warning event for ItemRecord tracking so we get notified
+				logging.LogEventEntry("install", "install_verification", logging.StatusWarning,
+					"Installation completed but verification failed - installer may have been cancelled or failed silently",
+					logging.WithContext("item", item.Name),
+					logging.WithContext("installer_type", item.Installer.Type),
+					logging.WithContext("issue_type", "verification_failure"),
+					logging.WithContext("recommendation", "Check catalog installs array or installer behavior"))
+				
+				// Return error to prevent false success reporting - DO NOT CONTINUE TO SUCCESS LOGGING
+				return "", fmt.Errorf("installation verification failed for %s - installer may have been cancelled or failed silently", item.Name)
+			}
 		} else {
 			logging.Info("OnDemand item completed successfully (not marking as installed)", "item", item.Name)
 			// Remove OnDemand items from the self-service manifest after successful execution
@@ -247,6 +332,7 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		// This provides faster cache cleanup than waiting for the next run
 		immediateCleanupAfterInstall(item, localFile, cfg)
 
+		// Only log success if we reach this point (verification passed or OnDemand)
 		logging.Info("Installed item successfully", "item", item.Name)
 		// Log successful installation event for ItemRecord tracking
 		logging.LogEventEntry("install", "install_package", logging.StatusInstalled,
