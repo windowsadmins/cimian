@@ -180,13 +180,6 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return checkRegistry(catalogItem, installType)
 	}
 
-	localVersion, err := getLocalInstalledVersion(catalogItem)
-	if err != nil {
-		logging.Warn("Failed retrieving local version, assuming action needed",
-			"item", catalogItem.Name, "error", err)
-		return true, err
-	}
-
 	sysArch := GetSystemArchitecture()
 	if !SupportsArchitecture(catalogItem, sysArch) {
 		logging.Warn("Architecture mismatch, skipping",
@@ -211,38 +204,21 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return false, nil
 	}
 
-	logging.Debug("Comparing versions explicitly",
-		"item", catalogItem.Name,
-		"localVersion", localVersion,
-		"repoVersion", catalogItem.Version,
-	)
+	// Registry is now purely cosmetic - check for display purposes only
+	registryVersion, registryErr := readInstalledVersionFromRegistry(catalogItem.Name)
+	if registryErr == nil && registryVersion != "" {
+		logging.Info("Found Cimian-managed registry version",
+			"item", catalogItem.Name,
+			"registryVersion", registryVersion,
+		)
+	}
 
 	switch installType {
 	case "install", "update":
-		if localVersion == "" {
-			logging.Info("Not installed on device", "item", catalogItem.Name)
-			return true, nil
-		}
-		if IsOlderVersion(localVersion, catalogItem.Version) {
-			logging.Info("Local version outdated, update needed",
-				"item", catalogItem.Name,
-				"localVersion", localVersion,
-				"repoVersion", catalogItem.Version,
-			)
-			return true, nil
-		}
-		if IsOlderVersion(catalogItem.Version, localVersion) {
-			logging.Warn("Refusing downgrade; local version newer",
-				"item", catalogItem.Name,
-				"localVersion", localVersion,
-				"repoVersion", catalogItem.Version,
-			)
-			return false, nil
-		}
-
-		logging.Info("Versions match exactly; performing file presence, hash, and metadata verification",
+		// For installs/updates, always check actual file presence first
+		// Registry version is logged but doesn't affect the decision
+		logging.Info("Installation verification checks indicate reinstallation needed",
 			"item", catalogItem.Name,
-			"localVersion", localVersion,
 		)
 		needed, err := checkInstalls(catalogItem, installType)
 		if err != nil {
@@ -294,11 +270,26 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			}
 		}
 
-		// Final fallback to registry-based check
-		needed := localVersion != ""
-		logging.Debug("Uninstall decision based on local version registry check",
-			"item", catalogItem.Name, "installed", needed)
-		return needed, nil
+		// Final fallback to registry-based check (cosmetic information only)
+		registryInstalled := registryVersion != ""
+		logging.Debug("Uninstall decision based on file presence checks (registry is cosmetic)",
+			"item", catalogItem.Name, "registryInstalled", registryInstalled)
+		
+		// Use actual file presence rather than registry for uninstall decisions
+		if len(catalogItem.Installs) > 0 {
+			// Check if any tracked files exist
+			for _, install := range catalogItem.Installs {
+				if _, err := os.Stat(install.Path); err == nil {
+					logging.Debug("Found existing file for uninstall", "item", catalogItem.Name, "path", install.Path)
+					return true, nil
+				}
+			}
+			logging.Debug("No tracked files found for uninstall", "item", catalogItem.Name)
+			return false, nil
+		}
+		
+		// If no installs array, use registry as fallback (but note it's cosmetic)
+		return registryInstalled, nil
 
 	default:
 		logging.Warn("Unknown install type provided",
@@ -402,24 +393,18 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 		}
 	}
 
-	// Get local version
-	var localVersion string
-	var err error
+	// Registry is now purely cosmetic - check for display purposes only
+	var registryVersion string
+	var registryErr error
 	if quiet {
-		localVersion, err = getLocalInstalledVersionQuiet(catalogItem)
+		registryVersion, registryErr = readInstalledVersionFromRegistry(catalogItem.Name)
 	} else {
-		localVersion, err = getLocalInstalledVersion(catalogItem)
-	}
-	if err != nil {
-		if !quiet {
-			logging.Warn("Failed retrieving local version, assuming action needed",
-				"item", catalogItem.Name, "error", err)
-		}
-		return CheckResult{
-			NeedsAction: true,
-			Status:      "error",
-			Reason:      fmt.Sprintf("Failed to get local version: %v", err),
-			Error:       err,
+		registryVersion, registryErr = readInstalledVersionFromRegistry(catalogItem.Name)
+		if registryErr == nil && registryVersion != "" {
+			logging.Info("Found Cimian-managed registry version",
+				"item", catalogItem.Name,
+				"registryVersion", registryVersion,
+			)
 		}
 	}
 
@@ -464,62 +449,13 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 		}
 	}
 
-	if !quiet {
-		logging.Debug("Comparing versions explicitly",
-			"item", catalogItem.Name,
-			"localVersion", localVersion,
-			"repoVersion", catalogItem.Version,
-		)
-	}
-
 	switch installType {
 	case "install", "update":
-		if localVersion == "" {
-			if !quiet {
-				logging.Info("Not installed on device", "item", catalogItem.Name)
-			}
-			return CheckResult{
-				NeedsAction: true,
-				Status:      "pending",
-				Reason:      "Not installed",
-				Error:       nil,
-			}
-		}
-		if IsOlderVersion(localVersion, catalogItem.Version) {
-			if !quiet {
-				logging.Info("Local version outdated, update needed",
-					"item", catalogItem.Name,
-					"localVersion", localVersion,
-					"repoVersion", catalogItem.Version,
-				)
-			}
-			return CheckResult{
-				NeedsAction: true,
-				Status:      "pending",
-				Reason:      fmt.Sprintf("Update needed: %s → %s", localVersion, catalogItem.Version),
-				Error:       nil,
-			}
-		}
-		if IsOlderVersion(catalogItem.Version, localVersion) {
-			if !quiet {
-				logging.Warn("Refusing downgrade; local version newer",
-					"item", catalogItem.Name,
-					"localVersion", localVersion,
-					"repoVersion", catalogItem.Version,
-				)
-			}
-			return CheckResult{
-				NeedsAction: false,
-				Status:      "warning",
-				Reason:      fmt.Sprintf("Downgrade refused: local %s newer than repo %s", localVersion, catalogItem.Version),
-				Error:       nil,
-			}
-		}
-
+		// For installs/updates, always check actual file presence first
+		// Registry version is logged but doesn't affect the decision
 		if !quiet {
-			logging.Info("Versions match exactly; performing file presence, hash, and metadata verification",
+			logging.Info("Installation verification checks indicate reinstallation needed",
 				"item", catalogItem.Name,
-				"localVersion", localVersion,
 			)
 		}
 		needed, err := checkInstallsQuiet(catalogItem, installType, quiet)
@@ -574,16 +510,47 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 			}
 		}
 
-		// Uninstall logic (simplified for this context)
-		needed := localVersion != ""
+		// Uninstall logic based on file presence, not registry
+		registryInstalled := registryVersion != ""
+		
+		// Use actual file presence rather than registry for uninstall decisions
+		if len(catalogItem.Installs) > 0 {
+			// Check if any tracked files exist
+			for _, install := range catalogItem.Installs {
+				if _, err := os.Stat(install.Path); err == nil {
+					if !quiet {
+						logging.Debug("Found existing file for uninstall", "item", catalogItem.Name, "path", install.Path)
+					}
+					return CheckResult{
+						NeedsAction: true,
+						Status:      "pending",
+						Reason:      "Files present, needs uninstallation",
+						Error:       nil,
+					}
+				}
+			}
+			if !quiet {
+				logging.Debug("No tracked files found for uninstall", "item", catalogItem.Name)
+			}
+			status := "removed"
+			reason := "Not installed (no tracked files found)"
+			return CheckResult{
+				NeedsAction: false,
+				Status:      status,
+				Reason:      reason,
+				Error:       nil,
+			}
+		}
+		
+		// If no installs array, use registry as fallback (but note it's cosmetic)
 		status := "removed"
 		reason := "Not installed"
-		if needed {
+		if registryInstalled {
 			status = "pending"
-			reason = "Needs uninstallation"
+			reason = "Registry entry exists (cosmetic check)"
 		}
 		return CheckResult{
-			NeedsAction: needed,
+			NeedsAction: registryInstalled,
 			Status:      status,
 			Reason:      reason,
 			Error:       nil,
