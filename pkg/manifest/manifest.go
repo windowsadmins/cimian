@@ -12,6 +12,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -399,7 +400,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		localPath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, currentName)
 
 		// Download the manifest
-		if err := download.DownloadFile(manifestURL, localPath, cfg); err != nil {
+		if err := download.DownloadFile(manifestURL, localPath, cfg, 0, utils.NewNoOpReporter()); err != nil {
 			logging.Warn("Failed to download manifest", "manifestURL", manifestURL, "error", err)
 			continue
 		}
@@ -450,7 +451,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			catLocal := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catName+".yaml")
 
 			// Download the catalog
-			if err := download.DownloadFile(catURL, catLocal, cfg); err != nil {
+			if err := download.DownloadFile(catURL, catLocal, cfg, 0, utils.NewNoOpReporter()); err != nil {
 				logging.Warn("Failed to download catalog", "catalogURL", catURL, "error", err)
 				continue
 			}
@@ -777,7 +778,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		catLocal := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, cfg.DefaultCatalog+".yaml")
 
 		// Download the catalog
-		if err := download.DownloadFile(catURL, catLocal, cfg); err != nil {
+		if err := download.DownloadFile(catURL, catLocal, cfg, 0, utils.NewNoOpReporter()); err != nil {
 			logging.Error("Failed to download default catalog", "catalogURL", catURL, "error", err)
 		} else {
 			logging.Info(fmt.Sprintf("Downloaded default catalog: %s", cfg.DefaultCatalog))

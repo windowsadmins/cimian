@@ -14,6 +14,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,7 +99,7 @@ func AuthenticatedGetEnhanced(cfg config.Configuration) map[int]map[string]Item 
 			catalogFilePath := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalogName+".yaml")
 
 			// Download the catalog file
-			if err := download.DownloadFile(catalogURL, catalogFilePath, &cfg); err != nil {
+			if err := download.DownloadFile(catalogURL, catalogFilePath, &cfg, 0, utils.NewNoOpReporter()); err != nil {
 				logging.Error("Failed to download catalog", "url", catalogURL, "error", err)
 				continue
 			}

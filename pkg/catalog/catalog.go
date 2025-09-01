@@ -128,7 +128,7 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 		logging.Debug("Downloading catalog", "url", catalogURL, "path", catalogFilePath)
 
 		// Download the catalog file
-		if err := download.DownloadFile(catalogURL, catalogFilePath, &cfg); err != nil {
+		if err := download.DownloadFile(catalogURL, catalogFilePath, &cfg, 0, utils.NewNoOpReporter()); err != nil {
 			logging.Error("Failed to download catalog", "url", catalogURL, "error", err)
 			continue
 		}

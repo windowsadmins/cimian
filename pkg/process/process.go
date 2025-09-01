@@ -18,6 +18,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/status"
+	"github.com/windowsadmins/cimian/pkg/utils"
 	"gopkg.in/yaml.v3"
 )
 
@@ -314,7 +315,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 				} else {
 					// Download the file first for dependencies
 					logging.Debug("Calling downloadItemFile from dependency processing", "dependency", validDependency.Name)
-					localFile, err := downloadItemFile(validDependency, cfg)
+					localFile, err := downloadItemFile(validDependency, cfg, 0, nil)
 					if err != nil {
 						logging.Error("Failed to download dependency", "dependency", validDependency.Name, "error", err)
 						continue
@@ -345,7 +346,7 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 				installerInstall(validItem, "install", "", cachePath, CheckOnly, cfg)
 			} else {
 				logging.Debug("Not script-only item, proceeding with download", "item", validItem.Name)
-				localFile, err := downloadItemFile(validItem, cfg)
+				localFile, err := downloadItemFile(validItem, cfg, 0, nil)
 				if err != nil {
 					logging.Error("Failed to download item", "item", validItem.Name, "error", err)
 					continue
@@ -544,7 +545,7 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 				handleOnDemandInstall(validDependency, cachePath, checkOnly, cfg)
 			} else {
 				// Download the file first for dependencies too
-				localFile, err := downloadItemFile(validDependency, cfg)
+				localFile, err := downloadItemFile(validDependency, cfg, 0, nil)
 				if err != nil {
 					logging.Error("Failed to download dependency", "dependency", validDependency.Name, "error", err)
 					continue
@@ -568,7 +569,7 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 		} else {
 			// Download the file first
 			logging.Debug("Not script-only item in ProcessInstallWithDependencies", "item", item.Name)
-			localFile, err := downloadItemFile(item, cfg)
+			localFile, err := downloadItemFile(item, cfg, 0, nil)
 			if err != nil {
 				return fmt.Errorf("failed to download item %s: %v", itemName, err)
 			}
@@ -662,7 +663,7 @@ func InstallsWithDependencies(itemNames []string, catalogsMap map[int]map[string
 	// Process each item recursively with full dependency logic
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
-			processedInstalls, cachePath, checkOnly, cfg); err != nil {
+			processedInstalls, cachePath, checkOnly, cfg, 0, utils.NewNoOpReporter()); err != nil {
 			LogItemSource(itemName, "Failed to process install of item: "+itemName)
 			return err
 		}
@@ -693,7 +694,7 @@ func UninstallsWithDependencies(itemNames []string, catalogsMap map[int]map[stri
 // Recursively handles requires and update_for relationships
 // Returns error only if ALL items fail, continues processing other items if some fail
 func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
-	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration, verbosity int, reporter utils.Reporter) error {
 	// Track processed items to avoid infinite loops
 	processedInstalls := make(map[string]bool)
 	var failedItems []string
@@ -702,7 +703,7 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	// Process each item recursively with full dependency logic
 	for _, itemName := range itemNames {
 		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
-			processedInstalls, cachePath, checkOnly, cfg); err != nil {
+			processedInstalls, cachePath, checkOnly, cfg, verbosity, reporter); err != nil {
 			// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
 			failedItems = append(failedItems, itemName)
 		} else {
@@ -763,7 +764,7 @@ func UninstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[str
 // processInstallWithAdvancedLogic handles installation with full advanced dependency logic
 func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[string]catalog.Item,
 	installedItems []string, processedInstalls map[string]bool,
-	cachePath string, checkOnly bool, cfg *config.Configuration) error {
+	cachePath string, checkOnly bool, cfg *config.Configuration, verbosity int, reporter utils.Reporter) error {
 
 	// Check if already processed to avoid loops
 	if processedInstalls[itemName] {
@@ -804,7 +805,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 			LogItemSource(reqItemName, "Installing required dependency")
 
 			if err := processInstallWithAdvancedLogic(reqItemName, catalogsMap, installedItems,
-				processedInstalls, cachePath, checkOnly, cfg); err != nil {
+				processedInstalls, cachePath, checkOnly, cfg, verbosity, reporter); err != nil {
 				logging.Error("Failed to install required dependency", "dependency", reqItemName, "error", err)
 				return fmt.Errorf("failed to install required dependency %s: %v", reqItemName, err)
 			}
@@ -832,7 +833,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 			// Download the file first, then install it
 			logging.Debug("Not script-only item in processInstallWithAdvancedLogic", "item", item.Name)
 			logging.Info("CRITICAL DEBUG: About to call downloadItemFile", "item", item.Name)
-			localFile, err := downloadItemFile(item, cfg)
+			localFile, err := downloadItemFile(item, cfg, verbosity, reporter)
 			if err != nil {
 				logging.Error("CRITICAL DEBUG: downloadItemFile failed", "item", item.Name, "error", err)
 				logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "FAILED")
@@ -873,7 +874,7 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 			LogItemSource(updateItem, "Installing update item")
 
 			if err := processInstallWithAdvancedLogic(updateItem, catalogsMap, installedItems,
-				processedInstalls, cachePath, checkOnly, cfg); err != nil {
+				processedInstalls, cachePath, checkOnly, cfg, verbosity, reporter); err != nil {
 				logging.Warn("Failed to install update item", "update", updateItem, "error", err)
 				// Don't fail the main install if an update installation fails
 			}
@@ -1073,7 +1074,7 @@ func handleOnDemandInstall(item catalog.Item, cachePath string, checkOnly bool, 
 		localFile = "" // No file needed for script-only items
 	} else {
 		// Download the file first for OnDemand items with installers
-		localFile, err = downloadItemFile(item, cfg)
+		localFile, err = downloadItemFile(item, cfg, 0, nil)
 		if err != nil {
 			logging.Error("Failed to download OnDemand item", "item", item.Name, "error", err)
 			return
@@ -1090,7 +1091,7 @@ func handleOnDemandInstall(item catalog.Item, cachePath string, checkOnly bool, 
 }
 
 // downloadItemFile downloads the installer file for a single catalog item and returns the local file path
-func downloadItemFile(item catalog.Item, cfg *config.Configuration) (string, error) {
+func downloadItemFile(item catalog.Item, cfg *config.Configuration, verbosity int, reporter utils.Reporter) (string, error) {
 	logging.Debug("downloadItemFile called", "item", item.Name, "installer_location", item.Installer.Location, "caller", "check_calling_function")
 
 	if item.Installer.Location == "" {
@@ -1109,8 +1110,8 @@ func downloadItemFile(item catalog.Item, cfg *config.Configuration) (string, err
 
 	logging.Debug("Downloading file for item", "item", item.Name, "url", fullURL)
 
-	// Download the file
-	if err := download.DownloadFile(fullURL, "", cfg); err != nil {
+	// Download the file with enhanced progress tracking
+	if err := download.DownloadFile(fullURL, "", cfg, verbosity, reporter); err != nil {
 		return "", fmt.Errorf("failed to download %s: %v", item.Name, err)
 	}
 
