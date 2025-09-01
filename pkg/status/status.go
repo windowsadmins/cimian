@@ -20,8 +20,8 @@ import (
 	goversion "github.com/hashicorp/go-version"
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/windowsadmins/cimian/pkg/catalog"
-	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/utils"
 	cimiversion "github.com/windowsadmins/cimian/pkg/version"
 	"golang.org/x/sys/windows/registry"
 )
@@ -747,7 +747,7 @@ func checkPath(catalogItem catalog.Item) (bool, error) {
 			continue
 		}
 
-		if checkFile.Hash != "" && !download.Verify(path, checkFile.Hash) {
+		if checkFile.Hash != "" && !utils.Verify(path, checkFile.Hash) {
 			logging.Info("Hash mismatch, installation/update required", "item", catalogItem.Name, "path", path)
 			return true, nil
 		}
@@ -790,7 +790,7 @@ func checkPathQuiet(catalogItem catalog.Item, quiet bool) (bool, error) {
 			continue
 		}
 
-		if checkFile.Hash != "" && !download.Verify(path, checkFile.Hash) {
+		if checkFile.Hash != "" && !utils.Verify(path, checkFile.Hash) {
 			if !quiet {
 				logging.Info("Hash mismatch, installation/update required", "item", catalogItem.Name, "path", path)
 			}
