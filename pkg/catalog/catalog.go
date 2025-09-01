@@ -40,6 +40,10 @@ type Item struct {
 	// OnDemand functionality - items that can be run multiple times and never considered "installed"
 	OnDemand bool `yaml:"OnDemand,omitempty"` // If true, item can be run on-demand and is never considered installed
 
+	// Unattended installation control - critical for --auto mode and scheduled tasks
+	UnattendedInstall   bool  `yaml:"unattended_install"`   // If false, item should not be installed automatically
+	UnattendedUninstall bool  `yaml:"unattended_uninstall"` // If false, item should not be uninstalled automatically
+
 	// Uninstallability - whether the package can be uninstalled
 	Uninstallable *bool `yaml:"uninstallable,omitempty"` // If explicitly false, uninstall will be skipped; if nil, auto-determined
 

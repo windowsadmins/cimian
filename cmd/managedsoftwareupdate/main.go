@@ -1850,12 +1850,23 @@ func loadLocalCatalogItems(cfg *config.Configuration) (map[string]catalog.Item, 
 	}
 
 	// Now deduplicate by picking the highest-version item for each name.
+	// BUT FIRST: Filter by architecture compatibility before deduplication
+	sysArch := status.GetSystemArchitecture()
 	finalMap := make(map[string]catalog.Item)
 	for key, sliceOfItems := range itemsMulti {
 		// Use your existing logic (e.g. status.DeduplicateCatalogItems) to pick a “best” item.
 		// For demonstration, we’ll just pick the first if you don't have version logic:
-		bestItem := status.DeduplicateCatalogItems(sliceOfItems)
-		finalMap[key] = bestItem
+		// Filter by architecture before deduplication to prevent x64/arm64 mismatch
+		var compatibleItems []catalog.Item
+		for _, item := range sliceOfItems {
+			if status.SupportsArchitecture(item, sysArch) {
+				compatibleItems = append(compatibleItems, item)
+			}
+		}
+		if len(compatibleItems) > 0 {
+			bestItem := status.DeduplicateCatalogItems(compatibleItems)
+			finalMap[key] = bestItem
+		}
 	}
 
 	return finalMap, nil
