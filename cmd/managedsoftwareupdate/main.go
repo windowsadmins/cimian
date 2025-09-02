@@ -189,6 +189,8 @@ func main() {
 	// Munki-compatible flags for preflight bypass and manifest override
 	noPreflight := pflag.Bool("no-preflight", false, "Skip preflight script execution.")
 	noPostflight := pflag.Bool("no-postflight", false, "Skip postflight script execution.")
+	preflightOnly := pflag.Bool("preflight-only", false, "Run only the preflight script and exit.")
+	postflightOnly := pflag.Bool("postflight-only", false, "Run only the postflight script and exit.")
 	localOnlyManifest := pflag.String("local-only-manifest", "", "Use specified local manifest file instead of server manifest.")
 
 	// Manifest targeting flag - process only a specific manifest from server
@@ -259,6 +261,25 @@ func main() {
 	// Update the item filter with the initialized logger
 	logger = logging.New(verbosity >= 2) // Create properly initialized logger for compatibility
 	itemFilter.SetLogger(logger)
+
+	// Handle script-only flags early - these exit immediately after running the script
+	if *preflightOnly {
+		logging.Info("================================================================================")
+		logging.Info("PREFLIGHT SCRIPT EXECUTION (STANDALONE)")
+		logging.Info("================================================================================")
+		runPreflightIfNeeded(verbosity, cfg)
+		logging.Success("Preflight script execution completed.")
+		os.Exit(0)
+	}
+
+	if *postflightOnly {
+		logging.Info("================================================================================")
+		logging.Info("POSTFLIGHT SCRIPT EXECUTION (STANDALONE)")
+		logging.Info("================================================================================")
+		runPostflightIfNeeded(verbosity, cfg)
+		logging.Success("Postflight script execution completed.")
+		os.Exit(0)
+	}
 
 	// Handle bootstrap mode flags first - these exit immediately
 	if *setBootstrapMode {
