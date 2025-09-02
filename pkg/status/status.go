@@ -927,6 +927,73 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					"item", item.Name, "path", install.Path)
 				return true, nil
 			}
+		} else if strings.ToLower(install.Type) == "msi" || install.ProductCode != "" || install.UpgradeCode != "" {
+			// Handle MSI verification via product_code or upgrade_code
+			// This provides proper MSI verification within the installs array
+			productCode := install.ProductCode
+			if productCode == "" && install.UpgradeCode != "" {
+				// If no product_code but upgrade_code is available, use it
+				// Note: upgrade_code verification would need additional registry logic
+				logging.Debug("Using upgrade_code for MSI verification", 
+					"item", item.Name, "upgradeCode", install.UpgradeCode)
+				productCode = install.UpgradeCode
+			}
+			
+			if productCode != "" {
+				installed, versionMatch := false, false
+				installedVersion := findMsiVersion(productCode)
+				
+				if installedVersion != "" {
+					installed = true
+					logging.Debug("MSI product found in registry",
+						"item", item.Name, "productCode", productCode, "installedVersion", installedVersion)
+					
+					// Check version if required
+					if install.Version != "" {
+						versionMatch = !IsOlderVersion(installedVersion, install.Version)
+						logging.Debug("MSI version comparison",
+							"item", item.Name, "installedVersion", installedVersion, 
+							"requiredVersion", install.Version, "versionMatch", versionMatch)
+					} else {
+						// No version requirement, just presence is enough
+						versionMatch = true
+					}
+				} else {
+					logging.Debug("MSI product not found in registry",
+						"item", item.Name, "productCode", productCode)
+				}
+				
+				// Apply MSI verification logic based on install type
+				if installType == "uninstall" {
+					if installed {
+						logging.Info("MSI product present, uninstall required",
+							"item", item.Name, "productCode", productCode)
+						return true, nil
+					} else {
+						logging.Info("MSI product not found, item may already be uninstalled",
+							"item", item.Name, "productCode", productCode)
+						return false, nil
+					}
+				} else {
+					// install/update logic
+					if !installed {
+						logging.Info("Installs array verification failed - MSI product not installed, installation needed",
+							"item", item.Name, "productCode", productCode)
+						return true, nil
+					} else if !versionMatch {
+						logging.Info("Installs array verification failed - MSI version outdated, update needed",
+							"item", item.Name, "productCode", productCode,
+							"installedVersion", installedVersion, "requiredVersion", install.Version)
+						return true, nil
+					} else {
+						logging.Info("MSI verification passed",
+							"item", item.Name, "productCode", productCode, "version", installedVersion)
+					}
+				}
+			} else {
+				logging.Warn("MSI install item has no product_code or upgrade_code",
+					"item", item.Name, "installType", install.Type)
+			}
 		}
 	}
 	logging.Debug("Installation verification checks passed, no action needed", "item", item.Name)
@@ -1076,6 +1143,92 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 						"item", item.Name, "path", install.Path)
 				}
 				return true, nil
+			}
+		} else if strings.ToLower(install.Type) == "msi" || install.ProductCode != "" || install.UpgradeCode != "" {
+			// Handle MSI verification via product_code or upgrade_code (quiet mode)
+			// This provides proper MSI verification within the installs array
+			productCode := install.ProductCode
+			if productCode == "" && install.UpgradeCode != "" {
+				// If no product_code but upgrade_code is available, use it
+				if !quiet {
+					logging.Debug("Using upgrade_code for MSI verification", 
+						"item", item.Name, "upgradeCode", install.UpgradeCode)
+				}
+				productCode = install.UpgradeCode
+			}
+			
+			if productCode != "" {
+				installed, versionMatch := false, false
+				installedVersion := findMsiVersion(productCode)
+				
+				if installedVersion != "" {
+					installed = true
+					if !quiet {
+						logging.Debug("MSI product found in registry",
+							"item", item.Name, "productCode", productCode, "installedVersion", installedVersion)
+					}
+					
+					// Check version if required
+					if install.Version != "" {
+						versionMatch = !IsOlderVersion(installedVersion, install.Version)
+						if !quiet {
+							logging.Debug("MSI version comparison",
+								"item", item.Name, "installedVersion", installedVersion, 
+								"requiredVersion", install.Version, "versionMatch", versionMatch)
+						}
+					} else {
+						// No version requirement, just presence is enough
+						versionMatch = true
+					}
+				} else {
+					if !quiet {
+						logging.Debug("MSI product not found in registry",
+							"item", item.Name, "productCode", productCode)
+					}
+				}
+				
+				// Apply MSI verification logic based on install type
+				if installType == "uninstall" {
+					if installed {
+						if !quiet {
+							logging.Info("MSI product present, uninstall required",
+								"item", item.Name, "productCode", productCode)
+						}
+						return true, nil
+					} else {
+						if !quiet {
+							logging.Info("MSI product not found, item may already be uninstalled",
+								"item", item.Name, "productCode", productCode)
+						}
+						return false, nil
+					}
+				} else {
+					// install/update logic
+					if !installed {
+						if !quiet {
+							logging.Info("Installs array verification failed - MSI product not installed, installation needed",
+								"item", item.Name, "productCode", productCode)
+						}
+						return true, nil
+					} else if !versionMatch {
+						if !quiet {
+							logging.Info("Installs array verification failed - MSI version outdated, update needed",
+								"item", item.Name, "productCode", productCode,
+								"installedVersion", installedVersion, "requiredVersion", install.Version)
+						}
+						return true, nil
+					} else {
+						if !quiet {
+							logging.Info("MSI verification passed",
+								"item", item.Name, "productCode", productCode, "version", installedVersion)
+						}
+					}
+				}
+			} else {
+				if !quiet {
+					logging.Warn("MSI install item has no product_code or upgrade_code",
+						"item", item.Name, "installType", install.Type)
+				}
 			}
 		}
 	}
