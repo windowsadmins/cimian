@@ -832,18 +832,18 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 		} else {
 			// Download the file first, then install it
 			logging.Debug("Not script-only item in processInstallWithAdvancedLogic", "item", item.Name)
-			logging.Info("CRITICAL DEBUG: About to call downloadItemFile", "item", item.Name)
+			logging.Info("[DEBUG] About to call downloadItemFile", "item", item.Name)
 			localFile, err := downloadItemFile(item, cfg, verbosity, reporter)
 			if err != nil {
-				logging.Error("CRITICAL DEBUG: downloadItemFile failed", "item", item.Name, "error", err)
-				logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "FAILED")
+				logging.Error("[DEBUG] downloadItemFile failed", "item", item.Name, "error", err)
+				logging.Info("[DEBUG] downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "FAILED")
 				return fmt.Errorf("failed to download item %s: %v", itemName, err)
 			}
-			logging.Info("CRITICAL DEBUG: downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "<nil>")
+			logging.Info("[DEBUG] downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "<nil>")
 
 			// DEBUG: Add explicit logging before installer call
 			logging.Info("About to call installerInstall", "item", item.Name, "localFile", localFile)
-			logging.Info("CRITICAL DEBUG: Calling installerInstall now", "item", item.Name, "action", "install", "localFile", localFile, "cachePath", cachePath, "checkOnly", checkOnly)
+			logging.Info("[DEBUG] Calling installerInstall now", "item", item.Name, "action", "install", "localFile", localFile, "cachePath", cachePath, "checkOnly", checkOnly)
 			result, err := installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 			if err != nil {
 				// Log detailed error with proper event for reporting system
