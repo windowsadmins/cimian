@@ -270,7 +270,7 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 		// Otherwise, handle MSI/EXE/Powershell, etc.
 		err := installNonNupkg(item, localFile, cachePath, cfg)
 		
-		// CRITICAL: For GUI installers (unattended_install: false), exit code is unreliable
+		// For GUI installers (unattended_install: false), exit code is unreliable
 		// Many GUI installers return exit code 0 even when user cancels installation
 		// We must rely entirely on file verification, not exit codes
 		if !item.UnattendedInstall {
