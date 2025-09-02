@@ -1562,13 +1562,13 @@ func shouldUseEqualsFormat(key, value string) bool {
 		return true
 	}
 
-	// If value contains spaces, prefer equals format to avoid parsing issues
+	// If value contains spaces, use space format to avoid parsing issues
 	if strings.Contains(value, " ") {
-		return true
+		return false
 	}
 
-	// Short values without spaces can use either format, prefer equals for consistency
-	return true
+	// For single-word values, use space format for compatibility with most installers
+	return false
 }
 
 // isEnvironmentStyleFlag checks if flag looks like an environment variable
