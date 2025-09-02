@@ -165,6 +165,12 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return false, nil
 	}
 
+	// Check installcheck_script FIRST (highest priority)
+	if string(catalogItem.InstallCheckScript) != "" {
+		logging.Info("Checking status via installcheck_script", "item", catalogItem.Name)
+		return checkInstallCheckScript(catalogItem, cachePath, installType)
+	}
+
 	if catalogItem.Check.Script != "" {
 		logging.Info("Checking status via script", "item", catalogItem.Name)
 		return checkScript(catalogItem, cachePath, installType)
@@ -332,7 +338,27 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 		}
 	}
 
-	// Handle special check types
+	// Handle special check types - installcheck_script has highest priority
+	if string(catalogItem.InstallCheckScript) != "" {
+		needsAction, err := checkInstallCheckScriptQuiet(catalogItem, cachePath, installType, quiet)
+		status := "installed"
+		reason := "InstallCheckScript indicates installed"
+		if needsAction {
+			status = "pending"
+			reason = "InstallCheckScript indicates action needed"
+		}
+		if err != nil {
+			status = "error"
+			reason = fmt.Sprintf("InstallCheckScript failed: %v", err)
+		}
+		return CheckResult{
+			NeedsAction: needsAction,
+			Status:      status,
+			Reason:      reason,
+			Error:       err,
+		}
+	}
+
 	if catalogItem.Check.Script != "" {
 		needsAction, err := checkScriptQuiet(catalogItem, cachePath, installType, quiet)
 		status := "installed"
@@ -1420,6 +1446,76 @@ func checkRegistryQuiet(catalogItem catalog.Item, _ string, quiet bool) (bool, e
 	}
 
 	return false, nil
+}
+
+// checkInstallCheckScript runs an installcheck_script to decide if an item is installed.
+// This follows Munki's proven pattern where installcheck_script has ultimate authority over installation state.
+// Return codes: 0 = not installed (install needed), non-zero = installed (no install needed)
+func checkInstallCheckScript(catalogItem catalog.Item, cachePath string, installType string) (bool, error) {
+	tmpScript := filepath.Join(cachePath, "tmpInstallCheckScript.ps1")
+	if err := os.WriteFile(tmpScript, []byte(catalogItem.InstallCheckScript), 0755); err != nil {
+		return true, fmt.Errorf("failed to write installcheck script: %w", err)
+	}
+	defer os.Remove(tmpScript)
+
+	psExe := filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
+	psArgs := []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpScript}
+
+	cmd := execCommand(psExe, psArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	cmdSuccess := cmd.ProcessState != nil && cmd.ProcessState.Success()
+	outStr, errStr := stdout.String(), stderr.String()
+
+	logging.Debug("InstallCheckScript output", "stdout", outStr, "stderr", errStr, "error", err)
+
+	switch installType {
+	case "uninstall":
+		// If script exit code == 0 => script says "not installed" => no uninstall needed
+		// so we invert the logic. Zero means "no uninstall needed"
+		return !cmdSuccess, nil
+	default:
+		// For install or update: exit code == 0 => "not installed => install needed"
+		return cmdSuccess, nil
+	}
+}
+
+// checkInstallCheckScriptQuiet is like checkInstallCheckScript but with optional quiet mode (no logging)
+func checkInstallCheckScriptQuiet(catalogItem catalog.Item, cachePath string, installType string, quiet bool) (bool, error) {
+	tmpScript := filepath.Join(cachePath, "tmpInstallCheckScript.ps1")
+	if err := os.WriteFile(tmpScript, []byte(catalogItem.InstallCheckScript), 0755); err != nil {
+		return true, fmt.Errorf("failed to write installcheck script: %w", err)
+	}
+	defer os.Remove(tmpScript)
+
+	psExe := filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
+	psArgs := []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpScript}
+
+	cmd := execCommand(psExe, psArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	cmdSuccess := cmd.ProcessState != nil && cmd.ProcessState.Success()
+	outStr, errStr := stdout.String(), stderr.String()
+
+	if !quiet {
+		logging.Debug("InstallCheckScript output", "stdout", outStr, "stderr", errStr, "error", err)
+	}
+
+	switch installType {
+	case "uninstall":
+		// If script exit code == 0 => script says "not installed" => no uninstall needed
+		// so we invert the logic. Zero means "no uninstall needed"
+		return !cmdSuccess, nil
+	default:
+		// For install or update: exit code == 0 => "not installed => install needed"
+		return cmdSuccess, nil
+	}
 }
 
 // checkScript runs a PowerShell script to decide if an item is installed.
