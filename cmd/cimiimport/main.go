@@ -36,6 +36,7 @@ var (
 
 // parseVersion handles version normalization for date-based versions while preserving other formats.
 // Date formats like YYYY.MM.DD or YYYY.MM.DD.HHmm are normalized to full format (YYYY.MM.DD).
+// Handles Chocolatey truncation where 2025.09.01 becomes 25.9.1 and restores to full date format.
 // All other version formats are passed through unchanged.
 func parseVersion(versionStr string) string {
 	if versionStr == "" {
@@ -47,40 +48,61 @@ func parseVersion(versionStr string) string {
 	// Handle date-based versions: YYYY.MM.DD or YYYY.MM.DD.HHmm
 	if len(parts) == 3 || len(parts) == 4 {
 		// Check if this looks like a date format by validating the first part as a year
-		if yearNum, err := strconv.Atoi(parts[0]); err == nil && yearNum >= 2000 && yearNum <= 2100 {
-			// Validate all parts are numeric for date format
-			var numericParts []int
-			allNumeric := true
-			for _, part := range parts {
-				if num, err := strconv.Atoi(part); err == nil {
-					numericParts = append(numericParts, num)
-				} else {
-					allNumeric = false
-					break
+		if yearNum, err := strconv.Atoi(parts[0]); err == nil {
+			// Handle both full years (2000-2100) and Chocolatey-truncated years (00-99)
+			isDateFormat := false
+			
+			// Full 4-digit years
+			if yearNum >= 2000 && yearNum <= 2100 {
+				isDateFormat = true
+			}
+			// Chocolatey-truncated 2-digit years (handle common range 00-99)
+			if yearNum >= 0 && yearNum <= 99 {
+				// Additional validation: check if month and day parts look like date components
+				if len(parts) >= 3 {
+					if monthNum, err := strconv.Atoi(parts[1]); err == nil && monthNum >= 1 && monthNum <= 12 {
+						if dayNum, err := strconv.Atoi(parts[2]); err == nil && dayNum >= 1 && dayNum <= 31 {
+							isDateFormat = true
+						}
+					}
 				}
 			}
-
-			if allNumeric && len(numericParts) >= 3 {
-				year := numericParts[0]
-				month := numericParts[1]
-				day := numericParts[2]
-
-				// Convert 2-digit year to 4-digit year
-				if year < 100 {
-					if year <= 50 {
-						year = 2000 + year
+			
+			if isDateFormat {
+				// Validate all parts are numeric for date format
+				var numericParts []int
+				allNumeric := true
+				for _, part := range parts {
+					if num, err := strconv.Atoi(part); err == nil {
+						numericParts = append(numericParts, num)
 					} else {
-						year = 1900 + year
+						allNumeric = false
+						break
 					}
 				}
 
-				// Ensure month and day are zero-padded for date-based versions
-				if len(numericParts) == 4 {
-					// 4-part date version: YYYY.MM.DD.HHmm
-					return fmt.Sprintf("%d.%02d.%02d.%d", year, month, day, numericParts[3])
-				} else {
-					// 3-part date version: YYYY.MM.DD
-					return fmt.Sprintf("%d.%02d.%02d", year, month, day)
+				if allNumeric && len(numericParts) >= 3 {
+					year := numericParts[0]
+					month := numericParts[1]
+					day := numericParts[2]
+
+					// Convert 2-digit year to 4-digit year (handle Chocolatey truncation)
+					if year < 100 {
+						if year <= 50 {
+							year = 2000 + year
+						} else {
+							year = 1900 + year
+						}
+					}
+
+					// Ensure month and day are zero-padded for date-based versions
+					if len(numericParts) == 4 {
+						// 4-part date version: YYYY.MM.DD.HHmm
+						return fmt.Sprintf("%d.%02d.%02d.%d", year, month, day, numericParts[3])
+					} else {
+						// 3-part date version: YYYY.MM.DD
+						return fmt.Sprintf("%d.%02d.%02d", year, month, day)
+					}
 				}
 			}
 		}
