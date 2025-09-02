@@ -907,6 +907,8 @@ Usage of C:\Program Files\Cimian\managedsoftwareupdate.exe:
       --no-postflight                Skip postflight script execution.
       --no-preflight                 Skip preflight script execution.
       --perform-selfupdate           Perform pending self-update (internal use).
+      --postflight-only              Run only the postflight script and exit.
+      --preflight-only               Run only the preflight script and exit.
       --restart-service              Restart CimianWatcher service and exit.
       --selfupdate-status            Show self-update status and exit.
       --set-bootstrap-mode           Enable bootstrap mode for next boot.
@@ -933,6 +935,12 @@ manifestutil.exe --add-pkg "Firefox" --manifest "site_default"
 
 # Check for and install updates
 managedsoftwareupdate.exe --auto
+
+# Run only preflight script for testing
+managedsoftwareupdate.exe --preflight-only
+
+# Run only postflight script for testing
+managedsoftwareupdate.exe --postflight-only
 
 # Trigger GUI update process
 cimitrigger.exe gui
