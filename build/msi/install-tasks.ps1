@@ -52,21 +52,48 @@ try {
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     
     # Register the scheduled task
-    Register-ScheduledTask `
-        -TaskName "Cimian Managed Software Update Hourly" `
-        -Action $action `
-        -Trigger $trigger `
-        -Settings $settings `
-        -Principal $principal `
-        -Description "Automatically checks for and installs software updates every hour using Cimian managed software system" `
-        -Force `
-        -ErrorAction Stop
-
-    Write-Host "✅ Cimian scheduled task created successfully"
-    Write-Host "   Task Name: Cimian Managed Software Update Hourly"
-    Write-Host "   Schedule: Every hour starting 5 minutes after installation"
-    Write-Host "   Command: $managedSoftwareUpdateExe --auto"
-    Write-Host "   Runs as: SYSTEM (highest privileges)"
+    try {
+        Register-ScheduledTask `
+            -TaskName "Cimian Managed Software Update Hourly" `
+            -Action $action `
+            -Trigger $trigger `
+            -Settings $settings `
+            -Principal $principal `
+            -Description "Automatically checks for and installs software updates every hour using Cimian managed software system" `
+            -Force `
+            -ErrorAction Stop
+        
+        # Verify the task was actually created
+        $createdTask = Get-ScheduledTask -TaskName "Cimian Managed Software Update Hourly" -ErrorAction Stop
+        if ($createdTask.State -eq "Ready") {
+            Write-Host "✅ Cimian scheduled task created successfully"
+            Write-Host "   Task Name: Cimian Managed Software Update Hourly"
+            Write-Host "   Schedule: Every hour starting 5 minutes after installation"
+            Write-Host "   Command: $managedSoftwareUpdateExe --auto"
+            Write-Host "   Runs as: SYSTEM (highest privileges)"
+        } else {
+            throw "Task was created but is not in Ready state. Current state: $($createdTask.State)"
+        }
+    } catch [Microsoft.PowerShell.Cmdletization.Cim.CimJobException] {
+        # Handle the specific case where task already exists with "Access is denied"
+        if ($_.Exception.Message -like "*Access is denied*") {
+            Write-Host "Task registration encountered access denied, checking if task already exists and is functional..."
+            try {
+                $existingTask = Get-ScheduledTask -TaskName "Cimian Managed Software Update Hourly" -ErrorAction Stop
+                if ($existingTask.State -eq "Ready") {
+                    Write-Host "✅ Cimian scheduled task already exists and is functional"
+                    Write-Host "   Task Name: Cimian Managed Software Update Hourly"
+                    Write-Host "   Current State: $($existingTask.State)"
+                } else {
+                    throw "Existing task found but is not functional. State: $($existingTask.State)"
+                }
+            } catch {
+                throw "Access denied during task creation and no functional existing task found: $($_.Exception.Message)"
+            }
+        } else {
+            throw "Failed to register scheduled task: $($_.Exception.Message)"
+        }
+    }
 
 } catch {
     Write-Error "Failed to create Cimian scheduled task: $_"

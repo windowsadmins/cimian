@@ -244,19 +244,87 @@ try {
         Write-Warning "Bootstrap monitoring service will not be available"
     }
 
-    # Install scheduled tasks for automatic software updates
-    Write-Host "Installing scheduled tasks for automatic software updates..."
-    $taskInstallScript = Join-Path $toolsDir "install-scheduled-tasks.ps1"
-    if (Test-Path $taskInstallScript) {
-        try {
-            & $taskInstallScript -InstallPath $InstallDir
-            Write-Host "Scheduled tasks installed successfully"
-        } catch {
-            Write-Warning "Failed to install scheduled tasks: $_"
-            Write-Warning "You may need to manually create scheduled tasks for automatic updates"
+    # Install scheduled tasks for automatic software updates (CRITICAL - MUST WORK)
+    Write-Host "Installing critical hourly scheduled task for automatic software updates..."
+    try {
+        $managedSoftwareUpdateExe = Join-Path $InstallDir "managedsoftwareupdate.exe"
+        
+        # Verify the executable exists
+        if (-not (Test-Path $managedSoftwareUpdateExe)) {
+            throw "managedsoftwareupdate.exe not found at $managedSoftwareUpdateExe"
         }
-    } else {
-        Write-Warning "Scheduled task installation script not found: $taskInstallScript"
+
+        # Create hourly automatic software update task
+        Write-Host "Creating Cimian automatic software update task..."
+        
+        # Task action: run managedsoftwareupdate.exe --auto
+        $action = New-ScheduledTaskAction -Execute $managedSoftwareUpdateExe -Argument "--auto" -WorkingDirectory $InstallDir
+        
+        # Task trigger: start immediately and repeat every hour indefinitely (adds randomization across deployments)
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 1)
+        
+        # Task settings: 30 minute timeout, restart on failure, hidden, run on battery
+        $settings = New-ScheduledTaskSettingsSet `
+            -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
+            -RestartCount 3 `
+            -RestartInterval (New-TimeSpan -Minutes 10) `
+            -RunOnlyIfNetworkAvailable `
+            -Hidden `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -WakeToRun `
+            -StartWhenAvailable
+        
+        # Task principal: run as SYSTEM with highest privileges
+        $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+        
+        # Register the scheduled task
+        try {
+            Register-ScheduledTask `
+                -TaskName "Cimian Managed Software Update Hourly" `
+                -Action $action `
+                -Trigger $trigger `
+                -Settings $settings `
+                -Principal $principal `
+                -Description "Automatically checks for and installs software updates every hour using Cimian managed software system" `
+                -Force `
+                -ErrorAction Stop
+            
+            # Verify the task was actually created
+            $createdTask = Get-ScheduledTask -TaskName "Cimian Managed Software Update Hourly" -ErrorAction Stop
+            if ($createdTask.State -eq "Ready") {
+                Write-Host "✅ CRITICAL scheduled task created successfully" -ForegroundColor Green
+                Write-Host "   Task Name: Cimian Managed Software Update Hourly" -ForegroundColor Green
+                Write-Host "   Schedule: Every hour starting 5 minutes after installation" -ForegroundColor Green
+                Write-Host "   Command: $managedSoftwareUpdateExe --auto" -ForegroundColor Green
+                Write-Host "   Runs as: SYSTEM (highest privileges)" -ForegroundColor Green
+            } else {
+                throw "Task was created but is not in Ready state. Current state: $($createdTask.State)"
+            }
+        } catch [Microsoft.PowerShell.Cmdletization.Cim.CimJobException] {
+            # Handle the specific case where task already exists with "Access is denied"
+            if ($_.Exception.Message -like "*Access is denied*") {
+                Write-Host "Task registration encountered access denied, checking if task already exists and is functional..."
+                try {
+                    $existingTask = Get-ScheduledTask -TaskName "Cimian Managed Software Update Hourly" -ErrorAction Stop
+                    if ($existingTask.State -eq "Ready") {
+                        Write-Host "✅ CRITICAL scheduled task already exists and is functional" -ForegroundColor Green
+                        Write-Host "   Task Name: Cimian Managed Software Update Hourly" -ForegroundColor Green
+                        Write-Host "   Current State: $($existingTask.State)" -ForegroundColor Green
+                    } else {
+                        throw "Existing task found but is not functional. State: $($existingTask.State)"
+                    }
+                } catch {
+                    throw "Access denied during task creation and no functional existing task found: $($_.Exception.Message)"
+                }
+            } else {
+                throw "Failed to register scheduled task: $($_.Exception.Message)"
+            }
+        }
+    } catch {
+        Write-Error "CRITICAL: Failed to install scheduled tasks: $_"
+        Write-Error "Installation cannot continue without scheduled tasks"
+        throw "Scheduled task installation failed: $_"
     }
 
     # Write Cimian version to registry
