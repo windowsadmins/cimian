@@ -234,6 +234,9 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 	// Combine installed and scheduled items
 	allAvailableItems := append(installedItems, scheduledItems...)
 
+	logging.Debug("Checking dependencies for item", "item", item.Name, "requires", item.Requires, 
+		"installedItems", len(installedItems), "scheduledItems", len(scheduledItems))
+
 	for _, reqItem := range item.Requires {
 		// Parse the requirement to handle versioned dependencies
 		reqName, reqVersion := SplitNameAndVersion(reqItem)
@@ -246,6 +249,7 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 			if strings.EqualFold(availableName, reqName) {
 				// If no specific version required, any version satisfies
 				if reqVersion == "" {
+					logging.Debug("Dependency satisfied (no version constraint)", "item", item.Name, "dependency", reqName, "availableItem", availableItem)
 					satisfied = true
 					break
 				}
@@ -255,12 +259,14 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 					// Simple exact version match for now
 					// TODO: Implement more sophisticated version comparison
 					if strings.EqualFold(availableVersion, reqVersion) {
+						logging.Debug("Dependency satisfied (exact version match)", "item", item.Name, "dependency", reqName, "requiredVersion", reqVersion, "availableVersion", availableVersion)
 						satisfied = true
 						break
 					}
 				} else if reqVersion != "" && availableVersion == "" {
 					// Required version specified but available item has no version
 					// For now, assume it's satisfied if name matches
+					logging.Debug("Dependency satisfied (no version info available)", "item", item.Name, "dependency", reqName, "requiredVersion", reqVersion)
 					satisfied = true
 					break
 				}
@@ -268,8 +274,15 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 		}
 
 		if !satisfied {
+			logging.Info("Missing dependency detected", "item", item.Name, "missingDependency", reqItem, "parsedName", reqName, "parsedVersion", reqVersion)
 			missingDeps = append(missingDeps, reqItem)
 		}
+	}
+
+	if len(missingDeps) > 0 {
+		logging.Info("Dependencies check result", "item", item.Name, "totalRequired", len(item.Requires), "missingCount", len(missingDeps), "missingDeps", missingDeps)
+	} else {
+		logging.Debug("All dependencies satisfied", "item", item.Name, "totalRequired", len(item.Requires))
 	}
 
 	return missingDeps

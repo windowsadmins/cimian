@@ -511,9 +511,23 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 
 	// Check and install requires dependencies first
 	if item.Requires != nil {
+		logging.Debug("Processing requires dependencies", "item", itemName, "requiresCount", len(item.Requires), "requires", item.Requires)
 		missingDeps := catalog.CheckDependencies(item, installedItems, scheduledItems)
+		
+		if len(missingDeps) > 0 {
+			logging.Info("Found missing dependencies that need to be installed", "item", itemName, "missingDependencies", missingDeps)
+		}
+		
 		for _, dep := range missingDeps {
 			logging.Info("Installing required dependency", "dependency", dep, "for", itemName)
+
+			// Check if the dependency exists in the catalog before trying to install it
+			depName, _ := catalog.SplitNameAndVersion(dep)
+			_, depErr := firstItem(depName, catalogsMap, cfg)
+			if depErr != nil {
+				logging.Error("Required dependency not found in catalog", "dependency", depName, "for", itemName, "error", depErr)
+				return fmt.Errorf("required dependency %s not found in catalog for %s: %v", depName, itemName, depErr)
+			}
 
 			// Recursively process the dependency
 			if err := ProcessInstallWithDependencies(dep, catalogsMap, installedItems,
@@ -523,7 +537,10 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 			}
 			// Add to scheduled items for future dependency checks
 			scheduledItems = append(scheduledItems, dep)
+			logging.Debug("Successfully processed dependency", "dependency", dep, "for", itemName)
 		}
+	} else {
+		logging.Debug("No requires dependencies defined", "item", itemName)
 	}
 
 	// Handle legacy dependencies field as well
