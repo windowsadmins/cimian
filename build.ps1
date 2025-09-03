@@ -1661,6 +1661,19 @@ foreach ($msiArch in $msiArchs) {
         Copy-Item "build\msi\uninstall-tasks.ps1" $msiTempDir -Force
     }
     
+    # Copy service management script for this architecture
+    if (Test-Path "build\msi\manage-service.ps1") {
+        Copy-Item "build\msi\manage-service.ps1" $msiTempDir -Force
+    }
+    
+    # Copy diagnostic and verification scripts for this architecture
+    if (Test-Path "build\msi\verify-installation.ps1") {
+        Copy-Item "build\msi\verify-installation.ps1" $msiTempDir -Force
+    }
+    if (Test-Path "build\msi\diagnose-cimianwatcher.ps1") {
+        Copy-Item "build\msi\diagnose-cimianwatcher.ps1" $msiTempDir -Force
+    }
+    
     # Build MSI for this arch
     $msiOutput = "release\Cimian-$msiArch-$env:RELEASE_VERSION.msi"
     
