@@ -738,6 +738,9 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	// Attempt immediate cleanup if item has installs array for verification
 	immediateCleanupAfterInstall(item, filePath, cfg)
 
+	// Clear chocolatey cache after successful install to prevent cache-related issues
+	clearChocolateyCache(pkgID)
+
 	logging.Info("Choco install succeeded", "pkgID", pkgID)
 	return out, nil
 }
@@ -786,6 +789,9 @@ func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 
 	// Attempt immediate cleanup if item has installs array for verification
 	immediateCleanupAfterInstall(item, filePath, cfg)
+
+	// Clear chocolatey cache after successful upgrade to prevent cache-related issues
+	clearChocolateyCache(pkgID)
 
 	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
 	return out, nil
@@ -2304,5 +2310,66 @@ func getInstallPhases(installerType string) []string {
 	default:
 		return []string{"Preparing", "Processing", "Installing", "Finalizing"}
 	}
+}
+
+// clearChocolateyCache clears the chocolatey cache directory after successful package install/upgrade
+func clearChocolateyCache(pkgID string) {
+	logging.Debug("Clearing chocolatey cache after successful operation", "pkgID", pkgID)
+	
+	chocoTempPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "temp")
+	chocoLibPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "lib-bad")
+	chocoCachePath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", ".chocolatey")
+	
+	// Clear chocolatey temp directory
+	if _, err := os.Stat(chocoTempPath); err == nil {
+		err := os.RemoveAll(chocoTempPath)
+		if err != nil {
+			logging.Warn("Failed to clear chocolatey temp directory", "path", chocoTempPath, "error", err)
+		} else {
+			logging.Debug("Cleared chocolatey temp directory", "path", chocoTempPath)
+		}
+		// Recreate the temp directory
+		if err := os.MkdirAll(chocoTempPath, 0755); err != nil {
+			logging.Warn("Failed to recreate chocolatey temp directory", "path", chocoTempPath, "error", err)
+		}
+	}
+	
+	// Clear lib-bad directory (failed installations)
+	if _, err := os.Stat(chocoLibPath); err == nil {
+		err := os.RemoveAll(chocoLibPath)
+		if err != nil {
+			logging.Warn("Failed to clear chocolatey lib-bad directory", "path", chocoLibPath, "error", err)
+		} else {
+			logging.Debug("Cleared chocolatey lib-bad directory", "path", chocoLibPath)
+		}
+	}
+	
+	// Clear .chocolatey cache directory
+	if _, err := os.Stat(chocoCachePath); err == nil {
+		err := os.RemoveAll(chocoCachePath)
+		if err != nil {
+			logging.Warn("Failed to clear chocolatey cache directory", "path", chocoCachePath, "error", err)
+		} else {
+			logging.Debug("Cleared chocolatey cache directory", "path", chocoCachePath)
+		}
+		// Recreate the cache directory
+		if err := os.MkdirAll(chocoCachePath, 0755); err != nil {
+			logging.Warn("Failed to recreate chocolatey cache directory", "path", chocoCachePath, "error", err)
+		}
+	}
+	
+	// Also run choco cache clear command if chocolatey is available
+	chocoExe := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "bin", "choco.exe")
+	if _, err := os.Stat(chocoExe); err == nil {
+		cmd := exec.Command(chocoExe, "cache", "clear", "--yes")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			logging.Warn("Failed to run 'choco cache clear'", "error", err)
+		} else {
+			logging.Debug("Executed 'choco cache clear'", "output", string(output))
+		}
+	}
+	
+	logging.Info("Chocolatey cache cleared successfully after package operation", "pkgID", pkgID)
 }
 
