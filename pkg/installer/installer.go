@@ -205,21 +205,13 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			logging.Debug("Processing script-only item (nopkg)", "item", item.Name)
 
 			// Run preinstall script if present
-			if item.PreScript != "" {
-				out, err := runNopkgScript(item.PreScript, cachePath, "preinstall")
-				if err != nil {
-					return "", fmt.Errorf("preinstall script failed: %w", err)
-				}
-				logging.Debug("Preinstall script completed", "item", item.Name, "output", out)
+			if err := executePreInstallScript(item, cachePath); err != nil {
+				return "", err
 			}
 
 			// Run postinstall script if present
-			if item.PostScript != "" {
-				out, err := runNopkgScript(item.PostScript, cachePath, "postinstall")
-				if err != nil {
-					return "", fmt.Errorf("postinstall script failed: %w", err)
-				}
-				logging.Debug("Postinstall script completed", "item", item.Name, "output", out)
+			if err := executePostInstallScript(item, cachePath); err != nil {
+				return "", err
 			}
 
 			// For OnDemand items, do not store installed version in registry
@@ -468,6 +460,12 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		
 		logging.Info("Executing MSI installer", "item", item.Name, "localFile", localFile)
 		
+		// Run preinstall script if present
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
+			return err
+		}
+		
 		// Show installing phase
 		if currentPhase < len(phases) {
 			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
@@ -490,6 +488,9 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 			return err
 		}
 		
+		// Run postinstall script if present
+		executePostInstallScript(item, cachePath)
+		
 		// Show completion phases
 		for currentPhase < len(phases) {
 			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
@@ -508,23 +509,9 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		
 		logging.Info("Executing EXE installer", "item", item.Name, "localFile", localFile)
 		// Run preinstall script if present
-		if item.PreScript != "" {
-			out, err := runPreinstallScript(item, localFile, cachePath)
-			if err != nil {
-				showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
-				logging.Error("Preinstall script failed", "item", item.Name, "error", err)
-				
-				// Log the PreScript failure as an event for ReportMate
-				status := logging.StatusFromError("prescript", err)
-				logging.LogEventEntry("install", "prescript_execution", status,
-					fmt.Sprintf("Preinstall script failed: %s", err.Error()),
-					logging.WithContext("item", item.Name),
-					logging.WithContext("script_type", "preinstall"),
-					logging.WithContext("installer_path", localFile),
-					logging.WithContext("error_details", err.Error()))
-				return err
-			}
-			logging.Debug("Preinstall script for EXE completed", "output", out)
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
+			return err
 		}
 		
 		// Show launching phase
@@ -548,6 +535,9 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 			return err
 		}
 		
+		// Run postinstall script if present
+		executePostInstallScript(item, cachePath)
+		
 		// Show completion phases
 		for currentPhase < len(phases) {
 			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
@@ -562,6 +552,12 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		for currentPhase < len(phases)-2 {
 			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
 			currentPhase++
+		}
+		
+		// Run preinstall script if present
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
+			return err
 		}
 		
 		// Show executing phase
@@ -584,6 +580,9 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 			return err
 		}
 		
+		// Run postinstall script if present
+		executePostInstallScript(item, cachePath)
+		
 		// Show finalizing phase
 		if currentPhase < len(phases) {
 			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
@@ -599,6 +598,12 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 			currentPhase++
 		}
 		
+		// Run preinstall script if present
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
+			return err
+		}
+		
 		// Show registering phase
 		if currentPhase < len(phases) {
 			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
@@ -610,6 +615,9 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
 			return err
 		}
+		
+		// Run postinstall script if present
+		executePostInstallScript(item, cachePath)
 		
 		// Show completion phases
 		for currentPhase < len(phases) {
@@ -630,25 +638,15 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		}
 
 		// Run preinstall script if present
-		if item.PreScript != "" {
-			showInstallProgress(item.Name, "script", "Executing PreScript", 0)
-			out, err := runNopkgScript(item.PreScript, cachePath, "preinstall")
-			if err != nil {
-				showInstallProgress(item.Name, "script", "Failed", 0)
-				return fmt.Errorf("preinstall script failed: %w", err)
-			}
-			logging.Debug("Preinstall script completed", "item", item.Name, "output", out)
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, "script", "Failed", 0)
+			return err
 		}
 
 		// Run postinstall script if present
-		if item.PostScript != "" {
-			showInstallProgress(item.Name, "script", "Executing PostScript", 0)
-			out, err := runNopkgScript(item.PostScript, cachePath, "postinstall")
-			if err != nil {
-				showInstallProgress(item.Name, "script", "Failed", 0)
-				return fmt.Errorf("postinstall script failed: %w", err)
-			}
-			logging.Debug("Postinstall script completed", "item", item.Name, "output", out)
+		if err := executePostInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, "script", "Failed", 0)
+			return err
 		}
 
 		// Show completion
@@ -695,6 +693,11 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 
 // doChocoInstall runs choco install with the given nupkg file.
 func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item, cfg *config.Configuration) (string, error) {
+	// Run catalog preinstall_script if present
+	if err := executePreInstallScript(item, cachePath); err != nil {
+		return "", err
+	}
+
 	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
 	extractAndRunChocolateyBeforeInstall(filePath, item)
 
@@ -741,12 +744,20 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 	// Clear chocolatey cache after successful install to prevent cache-related issues
 	clearChocolateyCache(pkgID)
 
+	// Run catalog postinstall_script if present
+	executePostInstallScript(item, cachePath)
+
 	logging.Info("Choco install succeeded", "pkgID", pkgID)
 	return out, nil
 }
 
 // doChocoUpgrade runs choco upgrade with the given nupkg file.
 func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item, cfg *config.Configuration) (string, error) {
+	// Run catalog preinstall_script if present
+	if err := executePreInstallScript(item, cachePath); err != nil {
+		return "", err
+	}
+
 	// Run chocolateyBeforeInstall.ps1 if it exists in the .nupkg
 	extractAndRunChocolateyBeforeInstall(filePath, item)
 
@@ -792,6 +803,9 @@ func doChocoUpgrade(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 
 	// Clear chocolatey cache after successful upgrade to prevent cache-related issues
 	clearChocolateyCache(pkgID)
+
+	// Run catalog postinstall_script if present
+	executePostInstallScript(item, cachePath)
 
 	logging.Info("Choco upgrade succeeded", "pkgID", pkgID)
 	return out, nil
@@ -844,13 +858,26 @@ func uninstallItem(item catalog.Item, cachePath string) (string, error) {
 		return msg, fmt.Errorf("%v", msg)
 	}
 
-	// If uninstaller array is defined, use it for advanced uninstall operations
-	if len(item.Uninstaller) > 0 {
-		return processUninstallerArray(item, cachePath)
+	// Run catalog preuninstall_script if present
+	if err := executePreUninstallScript(item, cachePath); err != nil {
+		return "", err
 	}
 
-	// Fall back to traditional uninstaller logic
-	return processTraditionalUninstall(item, cachePath)
+	var result string
+	var err error
+
+	// If uninstaller array is defined, use it for advanced uninstall operations
+	if len(item.Uninstaller) > 0 {
+		result, err = processUninstallerArray(item, cachePath)
+	} else {
+		// Fall back to traditional uninstaller logic
+		result, err = processTraditionalUninstall(item, cachePath)
+	}
+
+	// Run catalog postuninstall_script if present, regardless of uninstall success/failure
+	executePostUninstallScript(item, cachePath)
+
+	return result, err
 }
 
 // processUninstallerArray handles uninstall operations using the uninstaller array
@@ -1759,6 +1786,88 @@ func runPS1FromScript(item catalog.Item, localFile, cachePath string) (string, e
 	}
 	return out.String(), nil
 }
+
+// ============================================================================
+// Shared Script Execution Functions - Used by all installer types
+// ============================================================================
+
+// executePreInstallScript runs the preinstall_script if present in the catalog item.
+// This should be called by ALL installer types before installation begins.
+func executePreInstallScript(item catalog.Item, cachePath string) error {
+	if item.PreScript == "" {
+		return nil // No script to run
+	}
+	
+	logging.Info("Executing preinstall script", "item", item.Name)
+	out, err := runNopkgScript(item.PreScript, cachePath, "preinstall")
+	if err != nil {
+		logging.Error("Preinstall script failed", "item", item.Name, "error", err, "output", out)
+		return fmt.Errorf("preinstall script failed: %w", err)
+	}
+	logging.Debug("Preinstall script completed successfully", "item", item.Name, "output", strings.TrimSpace(out))
+	return nil
+}
+
+// executePostInstallScript runs the postinstall_script if present in the catalog item.
+// This should be called by ALL installer types after successful installation.
+func executePostInstallScript(item catalog.Item, cachePath string) error {
+	if item.PostScript == "" {
+		return nil // No script to run
+	}
+	
+	logging.Info("Executing postinstall script", "item", item.Name)
+	out, err := runNopkgScript(item.PostScript, cachePath, "postinstall")
+	if err != nil {
+		logging.Error("Postinstall script failed", "item", item.Name, "error", err, "output", out)
+		// Note: postinstall script failures are often non-fatal
+		// Log as warning but don't fail the installation
+		logging.Warn("Postinstall script failed but installation will continue", "item", item.Name, "error", err)
+		return nil // Don't fail installation for postinstall script errors
+	}
+	logging.Debug("Postinstall script completed successfully", "item", item.Name, "output", strings.TrimSpace(out))
+	return nil
+}
+
+// executePreUninstallScript runs the preuninstall_script if present in the catalog item.
+// This should be called by ALL uninstaller types before uninstallation begins.
+func executePreUninstallScript(item catalog.Item, cachePath string) error {
+	if item.PreUninstallScript == "" {
+		return nil // No script to run
+	}
+	
+	logging.Info("Executing preuninstall script", "item", item.Name)
+	out, err := runNopkgScript(item.PreUninstallScript, cachePath, "preuninstall")
+	if err != nil {
+		logging.Error("Preuninstall script failed", "item", item.Name, "error", err, "output", out)
+		return fmt.Errorf("preuninstall script failed: %w", err)
+	}
+	logging.Debug("Preuninstall script completed successfully", "item", item.Name, "output", strings.TrimSpace(out))
+	return nil
+}
+
+// executePostUninstallScript runs the postuninstall_script if present in the catalog item.
+// This should be called by ALL uninstaller types after successful uninstallation.
+func executePostUninstallScript(item catalog.Item, cachePath string) error {
+	if item.PostUninstallScript == "" {
+		return nil // No script to run
+	}
+	
+	logging.Info("Executing postuninstall script", "item", item.Name)
+	out, err := runNopkgScript(item.PostUninstallScript, cachePath, "postuninstall")
+	if err != nil {
+		logging.Error("Postuninstall script failed", "item", item.Name, "error", err, "output", out)
+		// Note: postuninstall script failures are often non-fatal
+		// Log as warning but don't fail the uninstallation
+		logging.Warn("Postuninstall script failed but uninstallation will continue", "item", item.Name, "error", err)
+		return nil // Don't fail uninstallation for postuninstall script errors
+	}
+	logging.Debug("Postuninstall script completed successfully", "item", item.Name, "output", strings.TrimSpace(out))
+	return nil
+}
+
+// ============================================================================
+// End of Shared Script Execution Functions
+// ============================================================================
 
 // runCMD runs a command, capturing stdout/stderr. Non-zero exit yields an error.
 // On Windows, ensures proper elevation inheritance for admin privileges.
