@@ -106,6 +106,17 @@
           <File Id="TaskUninstallScript" Source="$(var.BIN_DIR)\uninstall-tasks.ps1" />
         </Component>
 
+        <!-- Service Management Script -->
+        <Component Id="ServiceManagementScript" Guid="AF855CDE-1234-5678-9ABC-26091DE9B85F">
+          <File Id="ServiceManagementScript" Source="$(var.BIN_DIR)\manage-service.ps1" />
+        </Component>
+
+        <!-- Diagnostic and Verification Scripts -->
+        <Component Id="DiagnosticScripts" Guid="FF855CDE-1234-5678-9ABC-26091DE9B84F">
+          <File Id="VerifyInstallScript" Source="$(var.BIN_DIR)\verify-installation.ps1" />
+          <File Id="DiagnoseCimianWatcherScript" Source="$(var.BIN_DIR)\diagnose-cimianwatcher.ps1" />
+        </Component>
+
         <!-- Component to Modify PATH Environment Variable -->
         <Component Id="SetPathComponent" Guid="A5F2C571-89DF-4C71-967F-EC9D3EF4CDD0">
           <RegistryValue Root="HKLM" Key="Software\Cimian" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
@@ -143,8 +154,8 @@
                   Execute="deferred"
                   Impersonate="no"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\install-tasks.ps1' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 0 }&quot;"
-                  Return="ignore" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\install-tasks.ps1' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }&quot;"
+                  Return="check" />
 
     <!-- Uninstall scheduled tasks -->
     <CustomAction Id="UninstallScheduledTasks"
@@ -154,20 +165,20 @@
                   ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\uninstall-tasks.ps1' -ErrorAction Stop } catch { }&quot;"
                   Return="ignore" />
 
-    <!-- Install and start the CimianWatcher service -->
+    <!-- Install and start the CimianWatcher service using robust PowerShell script -->
     <CustomAction Id="InstallCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="ignore"
+                  Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; install" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'install' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }&quot;" />
 
     <CustomAction Id="StartCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="ignore"
+                  Return="check"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; start" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'start' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }&quot;" />
 
     <!-- Forcefully stop any existing CimianWatcher service and processes -->
     <CustomAction Id="StopExistingCimianWatcher"
@@ -206,14 +217,14 @@
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; stop" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'stop' -InstallPath '[INSTALLDIR]' -ErrorAction Stop } catch { }&quot;" />
 
     <CustomAction Id="RemoveCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; remove" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'remove' -InstallPath '[INSTALLDIR]' -ErrorAction Stop } catch { }&quot;" />
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
@@ -254,6 +265,8 @@
       <ComponentRef Id="Binary8" />
       <ComponentRef Id="Binary9" />
       <ComponentRef Id="ScheduledTaskScripts" />
+      <ComponentRef Id="ServiceManagementScript" />
+      <ComponentRef Id="DiagnosticScripts" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="Component_Config" />
     </Feature>
