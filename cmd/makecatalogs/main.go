@@ -48,6 +48,8 @@ type PkgsInfo struct {
 	Catalogs             []string            `yaml:"catalogs"`
 	Category             string              `yaml:"category,omitempty"`
 	Developer            string              `yaml:"developer,omitempty"`
+	Requires             []string            `yaml:"requires,omitempty"`
+	UpdateFor            []string            `yaml:"update_for,omitempty"`
 	Installs             []InstallItem       `yaml:"installs,omitempty"`
 	SupportedArch        []string            `yaml:"supported_architectures"`
 	UnattendedInstall    bool                `yaml:"unattended_install"`
