@@ -27,6 +27,8 @@ type Item struct {
 	BlockingApps         []string            `yaml:"blocking_apps"`
 	PreScript            utils.LiteralString `yaml:"preinstall_script"`
 	PostScript           utils.LiteralString `yaml:"postinstall_script"`
+	PreUninstallScript   utils.LiteralString `yaml:"preuninstall_script"`
+	PostUninstallScript  utils.LiteralString `yaml:"postuninstall_script"`
 	InstallCheckScript   utils.LiteralString `yaml:"installcheck_script"`
 	UninstallCheckScript utils.LiteralString `yaml:"uninstallcheck_script"`
 	SupportedArch        []string            `yaml:"supported_architectures"`
