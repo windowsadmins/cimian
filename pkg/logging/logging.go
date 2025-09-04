@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1060,6 +1061,32 @@ func WithPackage(name, version string) EventOption {
 	return func(e *LogEvent) {
 		e.Package = name
 		e.Version = version
+		// Also set enhanced fields for ReportMate integration
+		e.PackageName = name
+		e.PackageVersion = version
+		// Generate standardized package ID
+		e.PackageID = generatePackageID(name)
+	}
+}
+
+// WithPackageEnhanced sets enhanced package information for the event
+func WithPackageEnhanced(packageID, packageName, version, installerType string) EventOption {
+	return func(e *LogEvent) {
+		// Enhanced fields
+		e.PackageID = packageID
+		e.PackageName = packageName
+		e.PackageVersion = version
+		e.InstallerType = installerType
+		// Legacy fields for compatibility
+		e.Package = packageName
+		e.Version = version
+	}
+}
+
+// WithInstallerType sets the installer type for the event
+func WithInstallerType(installerType string) EventOption {
+	return func(e *LogEvent) {
+		e.InstallerType = installerType
 	}
 }
 
@@ -1128,6 +1155,20 @@ func (l *Logger) LogInstallComplete(packageName, version string, duration time.D
 		WithPackage(packageName, version),
 		WithDuration(duration),
 		WithLevel("INFO"))
+}
+
+// generatePackageID creates a standardized package ID for correlation
+func generatePackageID(packageName string) string {
+	if packageName == "" {
+		return ""
+	}
+	// Convert to lowercase and replace spaces/special chars with hyphens
+	id := strings.ToLower(packageName)
+	// Use regex to replace non-alphanumeric characters with hyphens
+	re := regexp.MustCompile(`[^a-z0-9]+`)
+	id = re.ReplaceAllString(id, "-")
+	id = strings.Trim(id, "-")
+	return id
 }
 
 // LogInstallFailed logs failed installation

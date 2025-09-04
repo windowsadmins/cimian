@@ -68,6 +68,18 @@ type SessionSummary struct {
 	PackagesPending      int     `json:"packages_pending"`
 	PackagesFailed       int     `json:"packages_failed"`
 	CacheSizeMB          float64 `json:"cache_size_mb,omitempty"`
+	
+	// ENHANCEMENT 4: Failed package details for ReportMate
+	FailedPackages       []FailedPackageInfo `json:"failed_packages,omitempty"`
+}
+
+// FailedPackageInfo provides details about failed packages for ReportMate
+type FailedPackageInfo struct {
+	PackageID    string `json:"package_id"`
+	PackageName  string `json:"package_name"`
+	ErrorType    string `json:"error_type"`
+	LastAttempt  string `json:"last_attempt"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 // EventRecord represents a row in the events table
@@ -77,8 +89,16 @@ type EventRecord struct {
 	Timestamp  string `json:"timestamp"`
 	Level      string `json:"level"`
 	EventType  string `json:"event_type"`
+	
+	// ENHANCEMENT 1: Enhanced package context for ReportMate
+	PackageID      string `json:"package_id,omitempty"`      // Package identifier for correlation
+	PackageName    string `json:"package_name,omitempty"`    // Human readable name
+	PackageVersion string `json:"package_version,omitempty"` // Version being processed
+	
+	// Legacy fields (maintained for compatibility)
 	Package    string `json:"package,omitempty"`
 	Version    string `json:"version,omitempty"`
+	
 	Action     string `json:"action"`
 	Status     string `json:"status"`
 	Message    string `json:"message"`
@@ -89,10 +109,26 @@ type EventRecord struct {
 	SourceFunc string `json:"source_function"`
 	SourceLine int    `json:"source_line"`
 
+	// ENHANCEMENT 3: Enhanced error information
+	ErrorDetails   *ErrorDetails `json:"error_details,omitempty"`
+	
+	// ENHANCEMENT 5: Installation method context
+	InstallerType  string `json:"installer_type,omitempty"`  // "chocolatey", "nupkg", "msi", "exe", "zip"
+	
 	// Enhanced fields for external reporting tools
 	Details string        `json:"details,omitempty"`
 	Context *EventContext `json:"context,omitempty"`
 	LogFile string        `json:"log_file,omitempty"`
+}
+
+// ErrorDetails provides structured error information for troubleshooting
+type ErrorDetails struct {
+	ErrorCode      int    `json:"error_code,omitempty"`
+	ErrorType      string `json:"error_type,omitempty"`
+	Command        string `json:"command,omitempty"`
+	Stderr         string `json:"stderr,omitempty"`
+	RetryCount     int    `json:"retry_count,omitempty"`
+	ResolutionHint string `json:"resolution_hint,omitempty"`
 }
 
 // EventContext represents context information for events
@@ -130,7 +166,9 @@ type ItemRecord struct {
 	FailureCount        int  `json:"failure_count"`
 	WarningCount        int  `json:"warning_count"`
 	TotalSessions       int  `json:"total_sessions"`
-	InstallLoopDetected bool `json:"install_loop_detected"`
+	// ENHANCEMENT 6: Enhanced install loop detection
+	InstallLoopDetected bool               `json:"install_loop_detected"`
+	LoopDetails         *InstallLoopDetail `json:"loop_details,omitempty"`
 
 	// Enhanced metadata for external reporting tools
 	InstallMethod string `json:"install_method,omitempty"` // "nupkg", "msi", "exe", "pwsh"
@@ -140,6 +178,14 @@ type ItemRecord struct {
 	LastError      string        `json:"last_error,omitempty"`
 	LastWarning    string        `json:"last_warning,omitempty"`
 	RecentAttempts []ItemAttempt `json:"recent_attempts,omitempty"` // Last 5 attempts for loop detection
+}
+
+// InstallLoopDetail provides enhanced information about install loops
+type InstallLoopDetail struct {
+	DetectionCriteria  string `json:"detection_criteria"`
+	LoopStartSession   string `json:"loop_start_session"`
+	SuspectedCause     string `json:"suspected_cause"`
+	Recommendation     string `json:"recommendation"`
 }
 
 // ItemAttempt represents a single install/update attempt for loop detection
@@ -211,6 +257,7 @@ func (exp *DataExporter) calculateCacheSize(cachePath string) float64 {
 }
 
 // determineInstallMethod attempts to determine the install method from cache files and package name
+// ENHANCEMENT 5: Track specific installation methods for better troubleshooting
 func (exp *DataExporter) determineInstallMethod(packageName string, sessionConfig *SessionConfig) string {
 	if sessionConfig == nil || sessionConfig.CachePath == "" {
 		return "unknown"
@@ -219,8 +266,18 @@ func (exp *DataExporter) determineInstallMethod(packageName string, sessionConfi
 	nameLower := strings.ToLower(packageName)
 
 	// Check cache directory for package files
-	possibleExtensions := []string{".nupkg", ".msi", ".exe", ".msix"}
-	for _, ext := range possibleExtensions {
+	installMethods := map[string]string{
+		".nupkg":  "nupkg",
+		".msi":    "msi", 
+		".exe":    "exe",
+		".msix":   "msix",
+		".appx":   "appx",
+		".zip":    "zip",
+		".7z":     "archive",
+		".cab":    "cab",
+	}
+
+	for ext, method := range installMethods {
 		// Try various naming patterns
 		patterns := []string{
 			fmt.Sprintf("%s*%s", nameLower, ext),
@@ -230,16 +287,7 @@ func (exp *DataExporter) determineInstallMethod(packageName string, sessionConfi
 		for _, pattern := range patterns {
 			matches, _ := filepath.Glob(filepath.Join(sessionConfig.CachePath, "**", pattern))
 			if len(matches) > 0 {
-				switch ext {
-				case ".nupkg":
-					return "nupkg"
-				case ".msi":
-					return "msi"
-				case ".exe":
-					return "exe"
-				case ".msix":
-					return "msix"
-				}
+				return method
 			}
 		}
 	}
@@ -252,8 +300,13 @@ func (exp *DataExporter) determineInstallMethod(packageName string, sessionConfi
 	for _, pattern := range psPatterns {
 		matches, _ := filepath.Glob(filepath.Join(sessionConfig.CachePath, "**", pattern))
 		if len(matches) > 0 {
-			return "pwsh"
+			return "powershell"
 		}
+	}
+
+	// Check for Chocolatey packages (common naming patterns)
+	if strings.Contains(nameLower, "chocolatey") || strings.Contains(nameLower, "choco") {
+		return "chocolatey"
 	}
 
 	return "unknown"
@@ -328,13 +381,20 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 			}
 
 			// Create enhanced summary for external reporting tools
-			record.Summary = &SessionSummary{
+			summary := &SessionSummary{
 				TotalPackagesManaged: len(record.PackagesHandled),
 				PackagesInstalled:    record.Successes,
 				PackagesPending:      record.TotalActions - record.Successes - record.Failures,
 				PackagesFailed:       record.Failures,
 				CacheSizeMB:          cacheSize,
 			}
+
+			// ENHANCEMENT 4: Add failed package details to sessions
+			if record.Failures > 0 {
+				summary.FailedPackages = exp.getFailedPackagesForSession(sessionDir)
+			}
+			
+			record.Summary = summary
 
 			// If start_time is missing or zero, try to get it from first event
 			if session.StartTime.IsZero() || record.StartTime == "0001-01-01T00:00:00Z" {
@@ -542,14 +602,18 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 
 					// Extract package name and version from properties and message
 					packageName := ""
+					packageID := ""
 					version := ""
 					action := ""
 					status := ""
 					errorMsg := ""
+					installerType := ""
 
 					if props, ok := logEvent["properties"].(map[string]interface{}); ok {
 						if item, ok := props["item"].(string); ok {
 							packageName = item
+							// Generate standardized package ID
+							packageID = exp.generatePackageID(item)
 						}
 						// Check multiple version field names used in Cimian logs
 						if ver, ok := props["version"].(string); ok {
@@ -574,6 +638,10 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 								errorMsg = errStr
 							}
 						}
+						// Extract installer type from installer path or method
+						if installerPath, ok := props["installer_path"].(string); ok {
+							installerType = exp.determineInstallerTypeFromPath(installerPath)
+						}
 					}
 
 					// Get message and extract additional version info if not already present
@@ -589,7 +657,11 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 
 						// Extract package name from message if not found in properties
 						if packageName == "" {
-							packageName = exp.extractPackageFromMessage(message)
+							extractedName := exp.extractPackageFromMessage(message)
+							if extractedName != "" {
+								packageName = extractedName
+								packageID = exp.generatePackageID(extractedName)
+							}
 						}
 
 						msgLower := strings.ToLower(message)
@@ -616,8 +688,11 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						}
 					}
 
-					// Generate event ID
-					eventID := fmt.Sprintf("%s-%v", sessionID, logEvent["time"])
+					// Generate enhanced event ID with package information
+					eventID := fmt.Sprintf("%s-%s-%v", sessionID, packageID, logEvent["time"])
+					if packageID == "" {
+						eventID = fmt.Sprintf("%s-%v", sessionID, logEvent["time"])
+					}
 
 					// Get source information
 					level := ""
@@ -636,8 +711,10 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 					}
 
 					// Enhanced error details for external reporting tools
+					var errorDetails *ErrorDetails
 					details := ""
 					if errorMsg != "" && level == "ERROR" {
+						errorDetails = exp.createErrorDetails(errorMsg, message, action)
 						details = fmt.Sprintf("Error Details: %s", errorMsg)
 						if strings.Contains(message, "timeout") {
 							details += ". This may be due to network connectivity issues."
@@ -684,8 +761,16 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						Timestamp:  timestamp,
 						Level:      level,
 						EventType:  eventType,
+						
+						// Enhanced package context for ReportMate
+						PackageID:      packageID,
+						PackageName:    packageName,
+						PackageVersion: version,
+						
+						// Legacy fields (maintained for compatibility)
 						Package:    packageName,
 						Version:    version,
+						
 						Action:     action,
 						Status:     exp.normalizeStatus(status, level, errorMsg), // Apply status normalization
 						Message:    message,
@@ -696,10 +781,12 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 						SourceFunc: sourceFunc,
 						SourceLine: 0,
 
-						// Enhanced fields for external reporting tools
-						Details: details,
-						Context: eventContext,
-						LogFile: logFilePath,
+						// Enhanced fields
+						ErrorDetails:  errorDetails,
+						InstallerType: installerType,
+						Details:       details,
+						Context:       eventContext,
+						LogFile:       logFilePath,
 					}
 
 					records = append(records, record)
@@ -882,9 +969,11 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 
 	// Detect install loops and finalize status
 	for _, stats := range itemStats {
-		stats.InstallLoopDetected = exp.detectInstallLoop(stats.RecentAttempts)
-		if stats.InstallLoopDetected {
+		loopDetected, loopDetails := exp.detectInstallLoopEnhanced(stats.RecentAttempts, stats.Name)
+		stats.InstallLoopDetected = loopDetected
+		if loopDetected {
 			stats.CurrentStatus = "Install Loop"
+			stats.LoopDetails = loopDetails
 		}
 	}
 
@@ -987,7 +1076,9 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			FailureCount:        stats.FailureCount,
 			WarningCount:        stats.WarningCount,
 			TotalSessions:       len(stats.Sessions),
+			// ENHANCEMENT 6: Enhanced install loop detection
 			InstallLoopDetected: stats.InstallLoopDetected,
+			LoopDetails:         stats.LoopDetails,
 
 			// Enhanced metadata for external reporting tools
 			InstallMethod: installMethod,
@@ -1119,6 +1210,7 @@ type comprehensiveItemStat struct {
 	LastError           string
 	LastWarning         string
 	InstallLoopDetected bool
+	LoopDetails         *InstallLoopDetail // Enhanced loop information
 }
 
 func (exp *DataExporter) getRecentSessions(limitDays int) ([]string, error) {
@@ -1332,6 +1424,7 @@ func (exp *DataExporter) inferItemType(packageName, sessionDir string, event Eve
 }
 
 // normalizeStatus converts various status formats to standard form with proper capitalization
+// ENHANCEMENT 2: Consistent status vocabulary for ReportMate
 func (exp *DataExporter) normalizeStatus(status, level, errorMsg string) string {
 	// Convert to lowercase for comparison
 	statusLower := strings.ToLower(status)
@@ -1349,8 +1442,20 @@ func (exp *DataExporter) normalizeStatus(status, level, errorMsg string) string 
 
 	// Check for success conditions
 	if statusLower == "completed" || statusLower == "success" || statusLower == "ok" ||
-		strings.Contains(statusLower, "success") || strings.Contains(statusLower, "complete") {
+		statusLower == "installed" || strings.Contains(statusLower, "success") || 
+		strings.Contains(statusLower, "complete") {
 		return "Success"
+	}
+
+	// Check for pending conditions
+	if strings.Contains(statusLower, "pending") || strings.Contains(statusLower, "waiting") ||
+		strings.Contains(statusLower, "blocked") || strings.Contains(statusLower, "queued") {
+		return "Pending"
+	}
+
+	// Check for skipped conditions
+	if strings.Contains(statusLower, "skip") || strings.Contains(statusLower, "bypass") {
+		return "Skipped"
 	}
 
 	// Default based on log level
@@ -1765,4 +1870,293 @@ func (exp *DataExporter) getUninstallRegistryVersion(packageName string) string 
 	}
 
 	return ""
+}
+
+// generatePackageID creates a standardized package ID for correlation
+func (exp *DataExporter) generatePackageID(packageName string) string {
+	if packageName == "" {
+		return ""
+	}
+	// Convert to lowercase and replace spaces/special chars with hyphens
+	id := strings.ToLower(packageName)
+	id = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(id, "-")
+	id = strings.Trim(id, "-")
+	return id
+}
+
+// determineInstallerTypeFromPath extracts installer type from file path
+func (exp *DataExporter) determineInstallerTypeFromPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	
+	path = strings.ToLower(path)
+	switch {
+	case strings.Contains(path, ".nupkg"):
+		return "nupkg"
+	case strings.Contains(path, ".msi"):
+		return "msi"
+	case strings.Contains(path, ".exe"):
+		return "exe"
+	case strings.Contains(path, ".msix"):
+		return "msix"
+	case strings.Contains(path, ".appx"):
+		return "appx"
+	case strings.Contains(path, ".zip"):
+		return "zip"
+	case strings.Contains(path, ".ps1"):
+		return "powershell"
+	case strings.Contains(path, "chocolatey") || strings.Contains(path, "choco"):
+		return "chocolatey"
+	default:
+		return "unknown"
+	}
+}
+
+// createErrorDetails creates structured error information for troubleshooting
+func (exp *DataExporter) createErrorDetails(errorMsg, message, action string) *ErrorDetails {
+	details := &ErrorDetails{
+		ErrorType: exp.categorizeError(errorMsg, message),
+	}
+	
+	// Extract error code from common patterns
+	if matches := regexp.MustCompile(`exit code[:\s]*(\d+)`).FindStringSubmatch(errorMsg); len(matches) > 1 {
+		if code, err := fmt.Sscanf(matches[1], "%d", &details.ErrorCode); err == nil && code == 1 {
+			// Successfully parsed error code
+		}
+	}
+	
+	// Extract command if present
+	if strings.Contains(message, "command") {
+		if matches := regexp.MustCompile(`command[:\s]+"?([^"]+)"?`).FindStringSubmatch(message); len(matches) > 1 {
+			details.Command = strings.TrimSpace(matches[1])
+		}
+	}
+	
+	// Add resolution hints based on error type
+	details.ResolutionHint = exp.getResolutionHint(details.ErrorType, errorMsg)
+	
+	return details
+}
+
+// categorizeError determines the error type from error message
+func (exp *DataExporter) categorizeError(errorMsg, message string) string {
+	lower := strings.ToLower(errorMsg + " " + message)
+	
+	switch {
+	case strings.Contains(lower, "access denied") || strings.Contains(lower, "permission"):
+		return "permission_denied"
+	case strings.Contains(lower, "exit code") || strings.Contains(lower, "exit status"):
+		return "installer_failure"
+	case strings.Contains(lower, "timeout"):
+		return "timeout"
+	case strings.Contains(lower, "network") || strings.Contains(lower, "download"):
+		return "network_failure"
+	case strings.Contains(lower, "dependency") || strings.Contains(lower, "missing"):
+		return "dependency_missing"
+	case strings.Contains(lower, "registry"):
+		return "registry_error"
+	case strings.Contains(lower, "file not found"):
+		return "file_not_found"
+	default:
+		return "unknown_error"
+	}
+}
+
+// getResolutionHint provides troubleshooting suggestions based on error type
+func (exp *DataExporter) getResolutionHint(errorType, errorMsg string) string {
+	switch errorType {
+	case "permission_denied":
+		return "Run as administrator or check file permissions"
+	case "installer_failure":
+		return "Check installer logs and verify package integrity"
+	case "timeout":
+		return "Check network connectivity and retry"
+	case "network_failure":
+		return "Verify internet connection and proxy settings"
+	case "dependency_missing":
+		return "Install required dependencies or check manifest"
+	case "registry_error":
+		return "Check registry permissions and integrity"
+	case "file_not_found":
+		return "Verify file paths and cache integrity"
+	default:
+		return "Check logs for more details"
+	}
+}
+
+// getFailedPackagesForSession extracts failed package information from session events
+func (exp *DataExporter) getFailedPackagesForSession(sessionDir string) []FailedPackageInfo {
+	var failedPackages []FailedPackageInfo
+	
+	// Get events for this session
+	events, err := exp.GenerateEventsTable(sessionDir, 0)
+	if err != nil {
+		return failedPackages
+	}
+	
+	// Track failed packages by ID to avoid duplicates
+	failedMap := make(map[string]*FailedPackageInfo)
+	
+	for _, event := range events {
+		if event.Status == "Failed" && event.PackageID != "" {
+			packageID := event.PackageID
+			if packageID == "" && event.PackageName != "" {
+				packageID = exp.generatePackageID(event.PackageName)
+			}
+			
+			if packageID != "" {
+				// Update or create failed package entry
+				if existing, exists := failedMap[packageID]; exists {
+					// Update with latest attempt time
+					if laterTime, err := time.Parse(time.RFC3339, event.Timestamp); err == nil {
+						if existingTime, err := time.Parse(time.RFC3339, existing.LastAttempt); err == nil {
+							if laterTime.After(existingTime) {
+								existing.LastAttempt = event.Timestamp
+								if event.Error != "" {
+									existing.ErrorMessage = event.Error
+								}
+							}
+						}
+					}
+				} else {
+					errorType := "unknown_error"
+					if event.ErrorDetails != nil {
+						errorType = event.ErrorDetails.ErrorType
+					}
+					
+					packageName := event.PackageName
+					if packageName == "" {
+						packageName = event.Package
+					}
+					
+					failedMap[packageID] = &FailedPackageInfo{
+						PackageID:    packageID,
+						PackageName:  packageName,
+						ErrorType:    errorType,
+						LastAttempt:  event.Timestamp,
+						ErrorMessage: event.Error,
+					}
+				}
+			}
+		}
+	}
+	
+	// Convert map to slice
+	for _, failedPkg := range failedMap {
+		failedPackages = append(failedPackages, *failedPkg)
+	}
+	
+	return failedPackages
+}
+
+// detectInstallLoopEnhanced analyzes recent attempts with enhanced loop detection
+func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packageName string) (bool, *InstallLoopDetail) {
+	if len(attempts) < 3 {
+		return false, nil // Need at least 3 attempts to detect a loop
+	}
+
+	// Count recent install attempts (last 5 attempts)
+	recentCount := len(attempts)
+	if recentCount > 5 {
+		attempts = attempts[recentCount-5:] // Look at last 5 attempts
+	}
+
+	installAttempts := 0
+	successCount := 0
+	var firstAttemptSession string
+
+	// Parse timestamps to check if attempts are recent (within last 7 days)
+	cutoffTime := time.Now().Add(-7 * 24 * time.Hour)
+
+	for i, attempt := range attempts {
+		if attemptTime, err := time.Parse(time.RFC3339, attempt.Timestamp); err == nil {
+			if attemptTime.After(cutoffTime) {
+				if attempt.Action == "install" || attempt.Action == "update" {
+					installAttempts++
+					if attempt.Status == "success" {
+						successCount++
+					}
+					if i == 0 {
+						firstAttemptSession = attempt.SessionID
+					}
+				}
+			}
+		}
+	}
+
+	// Detect loop: 3+ install attempts in recent history with less than 50% success rate
+	if installAttempts >= 3 {
+		successRate := float64(successCount) / float64(installAttempts)
+		if successRate < 0.5 {
+			// Create enhanced loop details
+			loopDetails := &InstallLoopDetail{
+				DetectionCriteria: "same_version_reinstalled",
+				LoopStartSession:  firstAttemptSession,
+				SuspectedCause:    exp.analyzeSuspectedCause(attempts, packageName),
+				Recommendation:    exp.getLoopRecommendation(attempts, packageName),
+			}
+			return true, loopDetails
+		}
+	}
+
+	return false, nil
+}
+
+// analyzeSuspectedCause determines the likely cause of install loops
+func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageName string) string {
+	// Check for consistent version reinstalls
+	versionCounts := make(map[string]int)
+	for _, attempt := range attempts {
+		if attempt.Version != "" {
+			versionCounts[attempt.Version]++
+		}
+	}
+	
+	for version, count := range versionCounts {
+		if count >= 2 {
+			return fmt.Sprintf("installer_exit_code_success_but_not_installed_%s", version)
+		}
+	}
+	
+	// Check for permission/access issues
+	hasFailures := false
+	for _, attempt := range attempts {
+		if attempt.Status == "failed" {
+			hasFailures = true
+			break
+		}
+	}
+	
+	if hasFailures {
+		return "installer_permission_or_dependency_issues"
+	}
+	
+	return "unknown_loop_cause"
+}
+
+// getLoopRecommendation provides specific recommendations for resolving install loops
+func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageName string) string {
+	// Analyze the pattern to provide specific recommendations
+	if strings.Contains(strings.ToLower(packageName), "msi") {
+		return "check_msi_installer_silent_flags_and_admin_rights"
+	}
+	
+	if strings.Contains(strings.ToLower(packageName), "exe") {
+		return "verify_exe_installer_exit_codes_and_silent_install_parameters"
+	}
+	
+	// Generic recommendations based on attempt patterns
+	failureCount := 0
+	for _, attempt := range attempts {
+		if attempt.Status == "failed" {
+			failureCount++
+		}
+	}
+	
+	if failureCount > 0 {
+		return "check_installer_logs_and_resolve_permission_issues"
+	}
+	
+	return "verify_installer_configuration_and_check_registry_state"
 }
