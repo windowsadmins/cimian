@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -866,11 +867,18 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 				// Log detailed error with proper event for reporting system
 				logging.Error("Installation failed", "item", item.Name, "error", err)
 				
-				// Create detailed event for ReportMate with full error context
+				// Determine installer type from file path
+				installerType := determineInstallerTypeFromPath(localFile)
+				
+				// Create detailed event for ReportMate with enhanced package context
 				logging.LogEventEntry("install", "install_package", logging.StatusError,
 					fmt.Sprintf("Installation failed: %v", err),
-					logging.WithContext("item", item.Name),
-					logging.WithContext("detailed_error", err.Error()),
+					logging.WithPackageEnhanced(
+						generatePackageID(item.Name), // Package ID
+						item.Name,                     // Package Name
+						item.Version,                  // Package Version  
+						installerType,                 // Installer Type
+					),
 					logging.WithContext("installer_path", localFile),
 					logging.WithError(err))
 				
@@ -1158,4 +1166,45 @@ func getSubPathFromURL(url string, cfg *config.Configuration) string {
 		subPath = filepath.Base(url)
 	}
 	return filepath.FromSlash(subPath)
+}
+
+// generatePackageID creates a standardized package ID for correlation
+func generatePackageID(packageName string) string {
+	if packageName == "" {
+		return ""
+	}
+	// Convert to lowercase and replace spaces/special chars with hyphens
+	id := strings.ToLower(packageName)
+	id = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(id, "-")
+	id = strings.Trim(id, "-")
+	return id
+}
+
+// determineInstallerTypeFromPath extracts installer type from file path for enhanced reporting
+func determineInstallerTypeFromPath(path string) string {
+	if path == "" {
+		return "unknown"
+	}
+	
+	path = strings.ToLower(path)
+	switch {
+	case strings.Contains(path, ".nupkg"):
+		return "nupkg"
+	case strings.Contains(path, ".msi"):
+		return "msi"
+	case strings.Contains(path, ".exe"):
+		return "exe"
+	case strings.Contains(path, ".msix"):
+		return "msix"
+	case strings.Contains(path, ".appx"):
+		return "appx"
+	case strings.Contains(path, ".zip"):
+		return "zip"
+	case strings.Contains(path, ".ps1"):
+		return "powershell"
+	case strings.Contains(path, "chocolatey") || strings.Contains(path, "choco"):
+		return "chocolatey"
+	default:
+		return "unknown"
+	}
 }
