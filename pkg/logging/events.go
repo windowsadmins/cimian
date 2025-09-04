@@ -59,8 +59,16 @@ type LogEvent struct {
 	Timestamp time.Time              `json:"timestamp"`
 	Level     string                 `json:"level"`
 	EventType string                 `json:"event_type"` // install, remove, update, status_check, error
+	
+	// Enhanced package context for ReportMate integration
+	PackageID      string `json:"package_id,omitempty"`      // Standardized package identifier  
+	PackageName    string `json:"package_name,omitempty"`    // Human readable package name
+	PackageVersion string `json:"package_version,omitempty"` // Version being processed
+	
+	// Legacy fields (maintained for compatibility)
 	Package   string                 `json:"package,omitempty"`
 	Version   string                 `json:"version,omitempty"`
+	
 	Action    string                 `json:"action"`
 	Status    string                 `json:"status"` // started, progress, completed, failed
 	Message   string                 `json:"message"`
@@ -69,6 +77,9 @@ type LogEvent struct {
 	Error     string                 `json:"error,omitempty"`
 	Context   map[string]interface{} `json:"context,omitempty"`
 	Source    SourceInfo             `json:"source"`
+	
+	// Enhanced installer context
+	InstallerType string `json:"installer_type,omitempty"` // "chocolatey", "nupkg", "msi", "exe", "zip"
 }
 
 // SourceInfo tracks where actions originated for debugging
