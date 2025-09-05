@@ -52,48 +52,61 @@ try {
         }
     }
     
-    # Stop any running managedsoftwareupdate.exe processes (needed for upgrades)
-    Write-Host "Checking for running managedsoftwareupdate.exe processes..."
-    $managedSoftwareProcesses = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
-    if ($managedSoftwareProcesses) {
-        Write-Host "Found $($managedSoftwareProcesses.Count) running managedsoftwareupdate.exe process(es)"
-        Write-Host "Terminating managedsoftwareupdate.exe processes for upgrade..."
-        try {
+    # Stop ALL Cimian processes before file operations (comprehensive approach)
+    Write-Host "Stopping ALL Cimian processes for upgrade..."
+    try {
+        # Get all Cimian processes using wildcard pattern (matches your manual command)
+        $cimianProcesses = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil" -ErrorAction SilentlyContinue
+        
+        if ($cimianProcesses) {
+            Write-Host "Found $($cimianProcesses.Count) Cimian process(es) to terminate:"
+            foreach ($proc in $cimianProcesses) {
+                Write-Host "  - $($proc.Name) (PID: $($proc.Id))"
+            }
+            
             # First attempt: graceful termination
-            $managedSoftwareProcesses | Stop-Process -Force
+            Write-Host "Attempting graceful termination of all Cimian processes..."
+            $cimianProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 5
             
             # Verify all processes are terminated
-            $remainingProcesses = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+            $remainingProcesses = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil" -ErrorAction SilentlyContinue
             if ($remainingProcesses) {
-                Write-Host "Some processes still running, attempting forceful termination..."
-                $remainingProcesses | Stop-Process -Force
+                Write-Host "Some Cimian processes still running, using taskkill for aggressive termination..."
+                
+                # Use taskkill for each known Cimian executable
+                $cimianExes = @("cimiwatcher.exe", "managedsoftwareupdate.exe", "cimitrigger.exe", "cimistatus.exe", 
+                               "cimiimport.exe", "cimipkg.exe", "makecatalogs.exe", "makepkginfo.exe", "manifestutil.exe")
+                
+                foreach ($exeName in $cimianExes) {
+                    try {
+                        & taskkill /F /IM $exeName /T 2>$null
+                    } catch {
+                        # Ignore errors for processes that aren't running
+                    }
+                }
+                
                 Start-Sleep -Seconds 3
                 
-                # Final check with taskkill
-                $finalCheck = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+                # Final verification
+                $finalCheck = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil" -ErrorAction SilentlyContinue
                 if ($finalCheck) {
-                    Write-Host "Using taskkill for stubborn processes..."
-                    & taskkill /F /IM "managedsoftwareupdate.exe" /T 2>$null
-                    Start-Sleep -Seconds 2
+                    Write-Warning "Some Cimian processes may still be running after aggressive termination:"
+                    foreach ($proc in $finalCheck) {
+                        Write-Warning "  - $($proc.Name) (PID: $($proc.Id))"
+                    }
+                } else {
+                    Write-Host "All Cimian processes successfully terminated"
                 }
+            } else {
+                Write-Host "All Cimian processes successfully terminated"
             }
-            
-            Write-Host "Successfully terminated managedsoftwareupdate.exe processes"
-        } catch {
-            Write-Warning "Failed to terminate some managedsoftwareupdate.exe processes: $_"
-            # Try taskkill as final resort
-            try {
-                Write-Host "Using taskkill as fallback method..."
-                & taskkill /F /IM "managedsoftwareupdate.exe" /T 2>$null
-                Start-Sleep -Seconds 2
-                Write-Host "Forcefully terminated remaining managedsoftwareupdate.exe processes"
-            } catch {
-                Write-Warning "Failed to forcefully terminate managedsoftwareupdate.exe processes: $_"
-            }
+        } else {
+            Write-Host "No Cimian processes found running"
         }
-    } else {
-        Write-Host "No running managedsoftwareupdate.exe processes found"
+    } catch {
+        Write-Warning "Error during comprehensive Cimian process termination: $_"
+        Write-Warning "Some file operations may fail due to locked files"
     }
     
     # Create native Program Files\Cimian directory (never x86)
@@ -105,74 +118,31 @@ try {
 
     # Copy EXEs from the package's tools folder (ignore shim-blockers)
     Write-Host "Copying executables to ARM64-safe Program Files..."
-    $exeFiles = Get-ChildItem -Path $toolsDir -Filter '*.exe' -File |
-                Where-Object { $_.Name -notlike '*.ignore' }
-    
-    if ($exeFiles.Count -eq 0) {
-        throw "No .exe files found in tools directory: $toolsDir"
-    }
-    
-    foreach ($exe in $exeFiles) {
-        $destPath = Join-Path $InstallDir $exe.Name
-        
-        # Check if the destination file is locked and try to handle it
-        if (Test-Path $destPath) {
-            Write-Host "Checking if $($exe.Name) is in use..."
-            $retryCount = 0
-            $maxRetries = 10  # Increased retries for stubborn processes
-            $copySucceeded = $false
-            
-            while ($retryCount -lt $maxRetries -and -not $copySucceeded) {
-                try {
-                    Copy-Item -Path $exe.FullName -Destination $destPath -Force -ErrorAction Stop
-                    Write-Host "Copied $($exe.Name)"
-                    $copySucceeded = $true
-                } catch {
-                    $retryCount++
-                    Write-Warning "Attempt $retryCount failed to copy $($exe.Name): $_"
-                    
-                    if ($exe.Name -eq "managedsoftwareupdate.exe") {
-                        # Special aggressive handling for managedsoftwareupdate.exe
-                        Write-Host "Attempting aggressive termination of managedsoftwareupdate.exe processes..."
-                        try {
-                            # Kill all instances using multiple methods
-                            Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Stop-Process -Force
-                            Start-Sleep -Seconds 1
-                            
-                            # Use taskkill for stubborn processes
-                            & taskkill /F /IM "managedsoftwareupdate.exe" /T 2>$null
-                            Start-Sleep -Seconds 2
-                            
-                            # Try to unlock the file by temporarily renaming it
-                            if (Test-Path $destPath) {
-                                $tempName = "$destPath.old.$retryCount"
-                                try {
-                                    Move-Item -Path $destPath -Destination $tempName -Force -ErrorAction SilentlyContinue
-                                    Write-Host "Renamed locked file to: $tempName"
-                                } catch {
-                                    Write-Warning "Could not rename locked file: $_"
-                                }
-                            }
-                        } catch {
-                            Write-Warning "Failed to terminate managedsoftwareupdate.exe: $_"
-                        }
-                    }
-                    
-                    if ($retryCount -lt $maxRetries) {
-                        $waitTime = [Math]::Min(2 * $retryCount, 10)  # Progressive backoff, max 10 seconds
-                        Write-Host "Waiting $waitTime seconds before retry $($retryCount + 1)/$maxRetries..."
-                        Start-Sleep -Seconds $waitTime
-                    } else {
-                        throw "Failed to copy $($exe.Name) after $maxRetries attempts: $_"
-                    }
-                }
-            }
-        } else {
-            # File doesn't exist, simple copy
-            Copy-Item -Path $exe.FullName -Destination $destPath -Force
-            Write-Host "Copied $($exe.Name)"
+    $expected = @(
+      'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
+      'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe'
+    )
+    $missing = @()
+    foreach ($name in $expected) {
+      $src = Get-ChildItem -Path $toolsDir -Recurse -Filter $name -File | Select-Object -First 1
+      if (-not $src) { $missing += $name; continue }
+      $dest = Join-Path $InstallDir $name
+      $ok = $false
+      for ($i=1; $i -le 5 -and -not $ok; $i++) {
+        try {
+          Copy-Item -LiteralPath $src.FullName -Destination $dest -Force -ErrorAction Stop
+          Write-Host "Copied $name"
+          $ok = $true
+        } catch {
+          try {
+            if (Test-Path $dest) { Move-Item -LiteralPath $dest -Destination "$dest.old.$i" -Force -ErrorAction SilentlyContinue }
+          } catch {}
+          Start-Sleep -Seconds ([Math]::Min($i*2,5))
+          if ($i -eq 5 -and -not $ok) { throw "Failed to copy $name" }
         }
+      }
     }
+    if ($missing.Count -gt 0) { throw "Missing from package payload: $($missing -join ', ')" }
 
     # Add to PATH
     Write-Host "Adding Cimian to system PATH..."
