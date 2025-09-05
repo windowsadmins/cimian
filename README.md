@@ -2,20 +2,24 @@
 
 <img src="cimian.png" alt="Cimian" width="300">
 
-Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows administrators to efficiently manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals at scale.
+Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and other cloud-based management platforms.
 
-Cimian simplifies the software lifecycle management process, from creating packages to deploying them securely via Microsoft Intune or other cloud providers, ensuring consistency and reliability across large-scale Windows deployments.
+Cimian is developed in C# using DotNetSdk v9, ensuring compatibility with the latest Windows versions and features. It leverages a YAML-based configuration system for easy management and customization, and includes a native WPF GUI application for real-time status monitoring.
+
+Cimian aims to allow Mac Admins that manage Windows with Munki to have a similar experience on Windows, while also providing Windows Admins with a powerful and flexible tool for software management or those looking to transition away from traditional imaging and towards modern management with Git and DevOps principles.
+
+Cimian is ideal for organizations of all sizes looking to streamline their Windows software deployment processes. It can be used in small environments with just a few machines, or scaled up to manage thousands of systems across multiple locations.
+
+> Note: The code base is still majority written in Go as the original implementation came from an nascent yet abandoned project called Gorilla. Cimian will be fully written in C# for all of Cimian's binaries to be a fully native Windows. The 'C' in Cimian stands for C# after all!
 
 ## Key Features
 
 - **Automated Package Management**: Streamline software packaging, metadata management, and distribution
 - **Flexible YAML Configuration**: Easily configure and manage settings through clear, YAML-based config files
-- **Multi-format Installer Support**: Supports MSI, MSIX, EXE, PowerShell scripts, and NuGet package formats
+- **Multi-format Installer Support**: Supports MSI, MSIX, EXE, PowerShell scripts, and NuGet .nupkg custom packages formats
 - **Bootstrap Mode**: for zero-touch deployment and system provisioning
 - **Conditional Items**: Advanced evaluation system for dynamic software deployment based on system facts (hostname, architecture, OS version, domain, machine type, etc.) with simplified string syntax
-- **Modern GUI**: Native WPF status application with Windows 11-inspired design
-- **Enterprise Integration**: Built for Microsoft Intune with .intunewin support and any other Deployment Management Services.
-- **Simplified Conditional Syntax**: New streamlined string format for conditional items (e.g., `"hostname DOES_NOT_CONTAIN Camera"`)
+- **Enterprise Integration**: Built for Microsoft Intune with .intunewin support and other Deployment Management Services.
 
 ## Architecture Overview
 
@@ -102,379 +106,190 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Integration with logging and status reporting systems
 - Built using Modern WPF UI framework for contemporary appearance
 
-## Conditional Items System
+## Repository Structure
 
-Cimian features a powerful conditional items system inspired by Munki's NSPredicate-style conditions, allowing dynamic software deployment based on system facts like hostname, architecture, domain membership, and more. The enhanced system now supports complex expressions with OR/AND operators in single condition strings and nested conditional items for hierarchical logic.
+A typical Cimian repository follows this structure:
 
-### Simple String Format
-
-Use natural language patterns: `"key operator value"`
-
-```yaml
-conditional_items:
-  # Basic hostname exclusion
-  - condition: "hostname DOES_NOT_CONTAIN Camera"
-    managed_installs:
-      - StandardSoftware
-      
-  # Architecture-specific deployment
-  - condition: "arch == x64"
-    managed_installs:
-      - ModernApplication
-      
-  # Multiple values using IN operator
-  - condition: "hostname IN LAB-01,LAB-02,LAB-03"
-    managed_installs:
-      - LabSoftware
+```
+CimianRepo/
+├── catalogs/           # Generated catalog files
+│   ├── All.yaml
+│   ├── Testing.yaml
+│   └── Production.yaml
+├── manifests/          # Client deployment manifests
+│   ├── site_default.yaml
+│   └── computer_groups/
+├── pkgs/              # Software package storage
+│   ├── Adobe/
+│   ├── Microsoft/
+│   └── ...
+└── pkgsinfo/          # Package metadata
+    ├── Adobe/
+    └── Microsoft/
 ```
 
-### Enhanced Complex Expression Support
+## Command Line Examples
 
-The enhanced conditional system now supports complex OR/AND expressions within a single condition string:
+`managedsoftwareupdate`:
 
-```yaml
-conditional_items:
-  # Complex OR expression in single condition
-  - condition: hostname CONTAINS "Design-" OR hostname CONTAINS "Studio-" OR hostname CONTAINS "Edit-"
-    managed_installs:
-      - CreativeApplications
-      - AdvancedTools
-      
-  # Complex AND expression
-  - condition: os_vers_major >= 11 AND arch == "x64"
-    managed_installs:
-      - ModernApplications
-      - x64OptimizedTools
-      
-  # Mixed AND/OR with special operators
-  - condition: NOT hostname CONTAINS "Kiosk" AND (domain == "CORP" OR domain == "EDU")
-    managed_installs:
-      - EnterpriseApplications
-      
-  # ANY operator for catalog checking
-  - condition: ANY catalogs != "Testing"
-    managed_installs:
-      - ProductionSoftware
+```pwsh
+sudo managedsoftwareupdate --help   
+Usage of C:\Program Files\Cimian\managedsoftwareupdate.exe:
+      --auto                         Perform automatic updates.
+      --cache-status                 Show cache status and statistics.
+      --check-selfupdate             Check if self-update is pending.
+      --checkonly                    Check for updates, but don't install them.
+      --clear-bootstrap-mode         Disable bootstrap mode.
+      --clear-selfupdate             Clear pending self-update flag.
+      --installonly                  Install pending updates without checking for new ones.
+      --item strings                 Install only the specified package name(s). Can be repeated or given as a comma-separated list.
+      --local-only-manifest string   Use specified local manifest file instead of server manifest.
+      --manifest string              Process only the specified manifest from server (e.g., 'Shared/Curriculum/RenderingFarm'). Automatically skips preflight.
+      --no-postflight                Skip postflight script execution.
+      --no-preflight                 Skip preflight script execution.
+      --perform-selfupdate           Perform pending self-update (internal use).
+      --postflight-only              Run only the postflight script and exit.
+      --preflight-only               Run only the preflight script and exit.
+      --restart-service              Restart CimianWatcher service and exit.
+      --selfupdate-status            Show self-update status and exit.
+      --set-bootstrap-mode           Enable bootstrap mode for next boot.
+      --show-config                  Display the current configuration and exit.
+      --show-status                  Show status window during operations (bootstrap mode).
+      --validate-cache               Validate cache integrity and remove corrupt files.
+  -v, --verbose count                Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)
+      --version                      Print the version and exit.
+pflag: help requested
 ```
 
-### Nested Conditional Items
+```pwsh
+# Import a new software package
+cimiimport.exe "C:\Installers\Firefox.exe" --arch x64
 
-Create hierarchical conditional logic with nested conditional items:
+# Create a NuGet package from project directory
+cimipkg.exe "C:\Projects\MyApp"
 
-```yaml
-conditional_items:
-  # Main condition with nested subconditions
-  - condition: enrolled_usage == "Shared"
-    conditional_items:
-      # Nested conditions within the main condition
-      - condition: enrolled_area != "Classroom" OR enrolled_area != "Podium"
-        managed_installs:
-          - CollaborativeTools
-          - GroupSoftware
-      
-      # Architecture-specific nested deployment
-      - condition: machine_type == "desktop"
-        conditional_items:
-          # Further nesting for granular control
-          - condition: os_vers_major >= 11 AND arch == "x64"
-            managed_installs:
-              - HighEndApplications
-              - PerformanceTools
-        
-        managed_installs:
-          - BasicDesktopTools
-    
-    # Items for all machines matching the main condition
-    managed_installs:
-      - SharedMachineConfiguration
-      - SecurityHardening
+# Generate catalogs from repository
+makecatalogs.exe
+
+# Add software to managed installations
+manifestutil.exe --add-pkg "Firefox" --manifest "site_default"
+
+# Check for and install updates
+managedsoftwareupdate.exe --auto
+
+# Run only preflight script for testing
+managedsoftwareupdate.exe --preflight-only
+
+# Run only postflight script for testing
+managedsoftwareupdate.exe --postflight-only
+
+# Trigger GUI update process
+cimitrigger.exe gui
+
+# Run diagnostic tests
+cimitrigger.exe debug
 ```
 
-### Multiple CONTAINS Examples
+## Installation and Deployment
 
-```yaml
-conditional_items:
-  # Install on machines that contain BOTH "LAB" AND "RENDER" in hostname
-  - conditions:
-      - "hostname CONTAINS LAB"
-      - "hostname CONTAINS RENDER"
-    condition_type: "AND"
-    managed_installs:
-      - RenderFarmSoftware
-      - LabManagementTools
-      
-  # Install on machines that contain ANY of these keywords in hostname
-  - conditions:
-      - "hostname CONTAINS DEV"
-      - "hostname CONTAINS TEST"
-      - "hostname CONTAINS STAGING"
-    condition_type: "OR"
-    managed_installs:
-      - DeveloperTools
-      - TestingUtilities
-      
-  # Complex: Must contain "WORKSTATION" but NOT contain "CAMERA" or "KIOSK"
-  - conditions:
-      - "hostname CONTAINS WORKSTATION"
-      - "hostname DOES_NOT_CONTAIN CAMERA"
-      - "hostname DOES_NOT_CONTAIN KIOSK"
-    condition_type: "AND"
-    managed_installs:
-      - WorkstationSuite
-      - OfficeTools
+### Distribution Formats
+
+Cimian is distributed in multiple formats to support different deployment scenarios:
+
+- **MSI Packages**: `Cimian-x64-{version}.msi` and `Cimian-arm64-{version}.msi` for traditional Windows deployment
+- **NuGet Packages**: `CimianTools-x64-{version}.nupkg` and `CimianTools-arm64-{version}.nupkg` for Chocolatey-based deployment  
+- **Intune Packages**: `.intunewin` files for Microsoft Intune deployment
+
+### Quick Start
+
+1. **Download and Install**: Deploy the appropriate MSI package for your architecture
+2. **Configure Repository**: Edit `C:\ProgramData\ManagedInstalls\Config.yaml` with your repository settings
+3. **Import Software**: Use `cimiimport.exe` to import software packages into your repository
+4. **Generate Catalogs**: Run `makecatalogs.exe` to create software catalogs
+5. **Deploy**: Use bootstrap mode or direct execution for software deployment
+
+## Bootstrap System
+
+Cimian includes a bootstrap system similar to Munki's, designed for zero-touch deployment scenarios where machines must complete all required software installations before users can log in.
+
+### How Bootstrap Works
+
+1. **Trigger Files**: 
+   - `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` - Bootstrap with GUI status window
+   - `C:\ProgramData\ManagedInstalls\.cimian.headless` - Bootstrap without GUI (silent)
+
+2. **CimianWatcher Service**: A Windows service monitors bootstrap trigger files every 10 seconds and automatically initiates software deployment
+
+3. **Dual Mode Operation**: 
+   - **GUI Mode**: Shows CimianStatus window for visual progress monitoring
+   - **Headless Mode**: Silent operation for automated scenarios
+
+4. **Automatic Process Management**: The service handles process elevation, error recovery, and cleanup automatically
+
+5. **Integration Points**: Works seamlessly with MDM platforms like Microsoft Intune for enterprise deployment
+
+### Bootstrap Commands
+
+| Action | Command | Description |
+|--------|---------|-------------|
+| Enter GUI Bootstrap | `managedsoftwareupdate.exe --set-bootstrap-mode` | Creates GUI bootstrap trigger |
+| Enter Headless Bootstrap | `cimitrigger.exe headless` | Initiates silent bootstrap |
+| Clear Bootstrap | `managedsoftwareupdate.exe --clear-bootstrap-mode` | Removes bootstrap flags |
+| Trigger GUI Update | `cimitrigger.exe gui` | Force GUI update process |
+| Diagnostic Mode | `cimitrigger.exe debug` | Run diagnostics |
+
+### Enterprise Use Cases
+
+- **Zero-touch deployment**: Ship Windows machines with only Cimian installed; bootstrap completes the configuration
+- **System rebuilds**: Ensure all required software is installed before first user login  
+- **Provisioning automation**: Integrate with deployment tools for fully automated system setup
+- **MDM Integration**: Deploy via Microsoft Intune with .intunewin packages
+- **Responsive Updates**: Near-real-time software deployment when triggered by management systems
+
+### PowerShell Integration
+
+```pwsh
+# Example: Automated package import workflow
+$packages = Get-ChildItem "C:\Installers" -Filter "*.exe"
+foreach ($package in $packages) {
+    & "C:\Program Files\Cimian\cimiimport.exe" $package.FullName --arch x64
+}
+
+# Generate catalogs after import
+& "C:\Program Files\Cimian\makecatalogs.exe"
 ```
 
-### Advanced Mixed AND/OR Logic
+## Development and Building
 
-For complex scenarios, you can create multiple conditional items that work together:
+### Build System
 
-```yaml
-conditional_items:
-  # Executive machines: Must be corporate domain AND (starts with EXEC OR starts with CEO)
-  - conditions:
-      - "domain == CORPORATE"
-      - "hostname BEGINSWITH EXEC"
-    condition_type: "AND"
-    managed_installs:
-      - ExecutiveSuite
-      
-  - conditions:
-      - "domain == CORPORATE" 
-      - "hostname BEGINSWITH CEO"
-    condition_type: "AND"
-    managed_installs:
-      - ExecutiveSuite
-      
-  # Creative labs: Must contain "ART" or "DESIGN" but also be x64 architecture
-  - conditions:
-      - "hostname CONTAINS ART"
-      - "arch == x64"
-    condition_type: "AND"
-    managed_installs:
-      - CreativeSuite
-      - AdobeTools
-      
-  - conditions:
-      - "hostname CONTAINS DESIGN"
-      - "arch == x64"
-    condition_type: "AND"
-    managed_installs:
-      - CreativeSuite
-      - AdobeTools
-      
-  # Engineering workstations: Multiple identification patterns
-  - conditions:
-      - "hostname CONTAINS ENG"
-      - "hostname CONTAINS WORKSTATION"
-      - "machine_model CONTAINS Precision"
-    condition_type: "AND"
-    managed_installs:
-      - CADSoftware
-      - EngineeringTools
+The project uses a comprehensive PowerShell build system (`build.ps1`) that:
+
+- Builds all binaries for x64 and ARM64 architectures
+- Handles code signing with enterprise certificates
+- Creates MSI and NuGet packages automatically
+- Supports development mode for rapid iteration
+- Integrates with CI/CD pipelines
+
+### Build Commands
+
+```pwsh
+# Full build with automatic signing
+.\build.ps1
+
+# Development mode (fast iteration)
+.\build.ps1 -Dev -Install
+
+# Build specific binary only
+.\build.ps1 -Binary cimistatus -Sign
+
+# Create Intune packages
+.\build.ps1 -IntuneWin
+
+# Package existing binaries
+.\build.ps1 -PackageOnly
 ```
 
-### Real-World Complex Examples
-
-```yaml
-conditional_items:
-  # Media production suites (must meet ALL criteria)
-  - conditions:
-      - "hostname CONTAINS MEDIA"
-      - "arch == x64"
-      - "machine_type == desktop"
-      - "hostname DOES_NOT_CONTAIN BACKUP"
-    condition_type: "AND"
-    managed_installs:
-      - AvidMediaComposer
-      - ProTools
-      - AfterEffects
-    managed_uninstalls:
-      - BasicVideoPlayer
-      
-  # Student lab machines (flexible identification)
-  - conditions:
-      - "hostname CONTAINS STUDENT"
-      - "hostname CONTAINS LAB"  
-      - "hostname CONTAINS CLASS"
-    condition_type: "OR"
-    managed_installs:
-      - EducationalSoftware
-      - StudentPortal
-    managed_profiles:
-      - StudentRestrictions
-      
-  # Exclude camera/kiosk/display systems entirely
-  - conditions:
-      - "hostname CONTAINS CAMERA"
-      - "hostname CONTAINS KIOSK"
-      - "hostname CONTAINS DISPLAY" 
-      - "hostname CONTAINS SIGNAGE"
-    condition_type: "OR"
-    managed_uninstalls:
-      - AllStandardSoftware
-      - OfficeApps
-      - UserTools
-```
-
-### Complex OR + AND Logic Patterns
-
-Since each conditional item can only use either AND or OR, you achieve complex logic by using multiple conditional items together. Here are common patterns:
-
-#### Pattern 1: (A OR B) AND C
-Install software if hostname contains "DEV" OR "TEST", but ONLY if it's also x64 architecture:
-
-```yaml
-conditional_items:
-  # Dev machines that are x64
-  - conditions:
-      - "hostname CONTAINS DEV"
-      - "arch == x64"
-    condition_type: "AND"
-    managed_installs:
-      - DeveloperTools
-      
-  # Test machines that are x64  
-  - conditions:
-      - "hostname CONTAINS TEST"
-      - "arch == x64"
-    condition_type: "AND"
-    managed_installs:
-      - DeveloperTools
-```
-
-#### Pattern 2: A AND (B OR C OR D)
-Install on corporate domain machines that have ANY creative designation:
-
-```yaml
-conditional_items:
-  # Corporate + Art designation
-  - conditions:
-      - "domain == CORPORATE"
-      - "hostname CONTAINS ART"
-    condition_type: "AND"
-    managed_installs:
-      - CreativeSuite
-      
-  # Corporate + Design designation
-  - conditions:
-      - "domain == CORPORATE"
-      - "hostname CONTAINS DESIGN"
-    condition_type: "AND"
-    managed_installs:
-      - CreativeSuite
-      
-  # Corporate + Media designation
-  - conditions:
-      - "domain == CORPORATE"
-      - "hostname CONTAINS MEDIA"
-    condition_type: "AND"
-    managed_installs:
-      - CreativeSuite
-```
-
-#### Pattern 3: (A AND B) OR (C AND D)
-Install premium software on either executive machines OR high-end workstations:
-
-```yaml
-conditional_items:
-  # Executive machines (Corporate domain + Executive hostname)
-  - conditions:
-      - "domain == CORPORATE"
-      - "hostname CONTAINS EXECUTIVE"
-    condition_type: "AND"
-    managed_installs:
-      - PremiumSoftwareSuite
-      
-  # High-end workstations (Precision model + x64 arch)
-  - conditions:
-      - "machine_model CONTAINS Precision"
-      - "arch == x64"
-    condition_type: "AND"
-    managed_installs:
-      - PremiumSoftwareSuite
-```
-
-#### Pattern 4: Complex Exclusions with Exceptions
-Install standard software everywhere EXCEPT certain machine types, but with exceptions:
-
-```yaml
-conditional_items:
-  # Standard installation (exclude problematic machine types)
-  - conditions:
-      - "hostname DOES_NOT_CONTAIN CAMERA"
-      - "hostname DOES_NOT_CONTAIN KIOSK"
-      - "hostname DOES_NOT_CONTAIN SIGNAGE"
-      - "hostname DOES_NOT_CONTAIN DISPLAY"
-    condition_type: "AND"
-    managed_installs:
-      - StandardSoftware
-      
-  # Exception: Special lab cameras that need some software
-  - conditions:
-      - "hostname CONTAINS CAMERA"
-      - "hostname CONTAINS LAB"
-      - "hostname DOES_NOT_CONTAIN PUBLIC"
-    condition_type: "AND"
-    managed_installs:
-      - LabCameraTools
-      - BasicUtilities
-```
-
-#### Pattern 5: Department-Based with Role Variations
-Different software for the same department based on role:
-
-```yaml
-conditional_items:
-  # Engineering department - all get base tools
-  - condition: "hostname CONTAINS ENG"
-    managed_installs:
-      - EngineeringBase
-      - CADViewer
-      
-  # Engineering workstations - additional power tools
-  - conditions:
-      - "hostname CONTAINS ENG"
-      - "hostname CONTAINS WORKSTATION"
-      - "arch == x64"
-    condition_type: "AND"
-    managed_installs:
-      - AdvancedCAD
-      - SimulationSoftware
-      
-  # Engineering managers - get management tools too
-  - conditions:
-      - "hostname CONTAINS ENG"
-      - "hostname CONTAINS MGR"
-    condition_type: "AND"
-    managed_installs:
-      - ProjectManagement
-      - BudgetingTools
-```
-
-### Supported Operators
-
-- **==** / **EQUALS**: Exact equality
-- **!=** / **NOT_EQUALS**: Not equal  
-- **CONTAINS**: String contains substring
-- **DOES_NOT_CONTAIN**: String does not contain substring
-- **BEGINSWITH**: String starts with value
-- **ENDSWITH**: String ends with value
-- **>** / **<** / **>=** / **<=**: Comparison operators
-- **IN**: Value is in a comma-separated list
-- **LIKE**: Wildcard pattern matching
-
-### Available System Facts
-
-- **hostname**: System hostname
-- **arch**: System architecture (x64, arm64, x86)
-- **os_version**: Windows OS version
-- **domain**: Windows domain name
-- **machine_type**: "laptop" or "desktop"
-- **machine_model**: Computer model
-- **joined_type**: "domain", "hybrid", "entra", or "workgroup"
-- **catalogs**: Available catalogs (array)
-- **username**: Current username
-- **date**: Current date and time
 
 ## Configuration
 
@@ -601,10 +416,10 @@ managed_apps:
   - "OneNote"
 ```
 
-#### Enterprise Workstation Manifest (`manifests/workstations.yaml`)
+#### Enterprise Manifest (`manifests/desktops.yaml`)
 
 ```yaml
-name: "Corporate Workstations"
+name: "Corporate Desktops"
 catalogs:
   - Production
   - Corporate
@@ -616,7 +431,7 @@ managed_installs:
 
 # Complex conditional logic
 conditional_items:
-  # Executive workstations
+  # Executive desktops
   - conditions:
       - "hostname BEGINSWITH EXEC"
       - "domain == CORPORATE"
@@ -865,188 +680,307 @@ unattended_install: true
 unattended_uninstall: true
 ```
 
-## Repository Structure
+## Conditional Items System
 
-A typical Cimian repository follows this structure:
+Cimian features a powerful conditional items system inspired by Munki's NSPredicate-style conditions, allowing dynamic software deployment based on system facts like hostname, architecture, domain membership, and more. The system supports complex expressions with OR/AND operators, nested conditional items for hierarchical logic, and both simple string format and structured conditions.
 
-```
-CimianRepo/
-├── catalogs/           # Generated catalog files
-│   ├── All.yaml
-│   ├── Testing.yaml
-│   └── Production.yaml
-├── manifests/          # Client deployment manifests
-│   ├── site_default.yaml
-│   └── computer_groups/
-├── pkgs/              # Software package storage
-│   ├── Adobe/
-│   ├── Microsoft/
-│   └── ...
-└── pkgsinfo/          # Package metadata
-    ├── Adobe/
-    └── Microsoft/
-```
+### Simple String Format
 
-## Command Line Examples
+Use natural language patterns with `condition:` for complex expressions:
 
-`managedsoftwareupdate`:
-
-```powershell
-sudo managedsoftwareupdate --help   
-Usage of C:\Program Files\Cimian\managedsoftwareupdate.exe:
-      --auto                         Perform automatic updates.
-      --cache-status                 Show cache status and statistics.
-      --check-selfupdate             Check if self-update is pending.
-      --checkonly                    Check for updates, but don't install them.
-      --clear-bootstrap-mode         Disable bootstrap mode.
-      --clear-selfupdate             Clear pending self-update flag.
-      --installonly                  Install pending updates without checking for new ones.
-      --item strings                 Install only the specified package name(s). Can be repeated or given as a comma-separated list.
-      --local-only-manifest string   Use specified local manifest file instead of server manifest.
-      --manifest string              Process only the specified manifest from server (e.g., 'Shared/Curriculum/RenderingFarm'). Automatically skips preflight.
-      --no-postflight                Skip postflight script execution.
-      --no-preflight                 Skip preflight script execution.
-      --perform-selfupdate           Perform pending self-update (internal use).
-      --postflight-only              Run only the postflight script and exit.
-      --preflight-only               Run only the preflight script and exit.
-      --restart-service              Restart CimianWatcher service and exit.
-      --selfupdate-status            Show self-update status and exit.
-      --set-bootstrap-mode           Enable bootstrap mode for next boot.
-      --show-config                  Display the current configuration and exit.
-      --show-status                  Show status window during operations (bootstrap mode).
-      --validate-cache               Validate cache integrity and remove corrupt files.
-  -v, --verbose count                Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)
-      --version                      Print the version and exit.
-pflag: help requested
+```yaml
+conditional_items:
+  # Basic hostname exclusion
+  - condition: hostname DOES_NOT_CONTAIN "Camera"
+    managed_installs:
+      - StandardSoftware
+      
+  # Architecture-specific deployment
+  - condition: arch == "x64"
+    managed_installs:
+      - ModernApplication
+      
+  # Multiple values using IN operator
+  - condition: hostname IN "LAB-01,LAB-02,LAB-03"
+    managed_installs:
+      - LabSoftware
 ```
 
-```powershell
-# Import a new software package
-cimiimport.exe "C:\Installers\Firefox.exe" --arch x64
+### Complex Expression Support
 
-# Create a NuGet package from project directory
-cimipkg.exe "C:\Projects\MyApp"
+The conditional system supports complex OR/AND expressions within a single condition string:
 
-# Generate catalogs from repository
-makecatalogs.exe
-
-# Add software to managed installations
-manifestutil.exe --add-pkg "Firefox" --manifest "site_default"
-
-# Check for and install updates
-managedsoftwareupdate.exe --auto
-
-# Run only preflight script for testing
-managedsoftwareupdate.exe --preflight-only
-
-# Run only postflight script for testing
-managedsoftwareupdate.exe --postflight-only
-
-# Trigger GUI update process
-cimitrigger.exe gui
-
-# Run diagnostic tests
-cimitrigger.exe debug
+```yaml
+conditional_items:
+  # Complex OR expression in single condition
+  - condition: hostname CONTAINS "Design-" OR hostname CONTAINS "Studio-" OR hostname CONTAINS "Edit-"
+    managed_installs:
+      - CreativeApplications
+      - AdvancedTools
+      
+  # Complex AND expression with OS version
+  - condition: os_vers_major >= 11 AND arch == "x64"
+    managed_installs:
+      - ModernApplications
+      - x64OptimizedTools
+      
+  # Mixed AND/OR with special operators
+  - condition: NOT hostname CONTAINS "Kiosk" AND (domain == "CORP" OR domain == "EDU")
+    managed_installs:
+      - EnterpriseApplications
+      
+  # Enrollment-based conditions (Enhanced)
+  - condition: enrolled_usage == "Shared" AND enrolled_area != "Classroom"
+    managed_installs:
+      - SharedWorkspaceTools
 ```
 
-## Installation and Deployment
+### Nested Conditional Items
 
-### Distribution Formats
+Create hierarchical conditional logic with nested conditional items:
 
-Cimian is distributed in multiple formats to support different deployment scenarios:
-
-- **MSI Packages**: `Cimian-x64-{version}.msi` and `Cimian-arm64-{version}.msi` for traditional Windows deployment
-- **NuGet Packages**: `CimianTools-x64-{version}.nupkg` and `CimianTools-arm64-{version}.nupkg` for Chocolatey-based deployment  
-- **Intune Packages**: `.intunewin` files for Microsoft Intune deployment
-
-### Quick Start
-
-1. **Download and Install**: Deploy the appropriate MSI package for your architecture
-2. **Configure Repository**: Edit `C:\ProgramData\ManagedInstalls\Config.yaml` with your repository settings
-3. **Import Software**: Use `cimiimport.exe` to import software packages into your repository
-4. **Generate Catalogs**: Run `makecatalogs.exe` to create software catalogs
-5. **Deploy**: Use bootstrap mode or direct execution for software deployment
-
-## Bootstrap System
-
-Cimian includes a bootstrap system similar to Munki's, designed for zero-touch deployment scenarios where machines must complete all required software installations before users can log in.
-
-### How Bootstrap Works
-
-1. **Trigger Files**: 
-   - `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` - Bootstrap with GUI status window
-   - `C:\ProgramData\ManagedInstalls\.cimian.headless` - Bootstrap without GUI (silent)
-
-2. **CimianWatcher Service**: A Windows service monitors bootstrap trigger files every 10 seconds and automatically initiates software deployment
-
-3. **Dual Mode Operation**: 
-   - **GUI Mode**: Shows CimianStatus window for visual progress monitoring
-   - **Headless Mode**: Silent operation for automated scenarios
-
-4. **Automatic Process Management**: The service handles process elevation, error recovery, and cleanup automatically
-
-5. **Integration Points**: Works seamlessly with MDM platforms like Microsoft Intune for enterprise deployment
-
-### Bootstrap Commands
-
-| Action | Command | Description |
-|--------|---------|-------------|
-| Enter GUI Bootstrap | `managedsoftwareupdate.exe --set-bootstrap-mode` | Creates GUI bootstrap trigger |
-| Enter Headless Bootstrap | `cimitrigger.exe headless` | Initiates silent bootstrap |
-| Clear Bootstrap | `managedsoftwareupdate.exe --clear-bootstrap-mode` | Removes bootstrap flags |
-| Trigger GUI Update | `cimitrigger.exe gui` | Force GUI update process |
-| Diagnostic Mode | `cimitrigger.exe debug` | Run diagnostics |
-
-### Enterprise Use Cases
-
-- **Zero-touch deployment**: Ship Windows machines with only Cimian installed; bootstrap completes the configuration
-- **System rebuilds**: Ensure all required software is installed before first user login  
-- **Provisioning automation**: Integrate with deployment tools for fully automated system setup
-- **MDM Integration**: Deploy via Microsoft Intune with .intunewin packages
-- **Responsive Updates**: Near-real-time software deployment when triggered by management systems
-
-### PowerShell Integration
-
-```powershell
-# Example: Automated package import workflow
-$packages = Get-ChildItem "C:\Installers" -Filter "*.exe"
-foreach ($package in $packages) {
-    & "C:\Program Files\Cimian\cimiimport.exe" $package.FullName --arch x64
-}
-
-# Generate catalogs after import
-& "C:\Program Files\Cimian\makecatalogs.exe"
+```yaml
+conditional_items:
+  # Main condition with nested subconditions
+  - condition: enrolled_usage == "Shared"
+    conditional_items:
+      # Nested conditions within the main condition
+      - condition: enrolled_area != "Classroom" OR enrolled_area != "Podium"
+        managed_installs:
+          - CollaborativeTools
+          - GroupSoftware
+      
+      # Architecture-specific nested deployment
+      - condition: machine_type == "desktop"
+        conditional_items:
+          # Further nesting for granular control
+          - condition: os_vers_major >= 11 AND arch == "x64"
+            managed_installs:
+              - HighEndApplications
+              - PerformanceTools
+        
+        managed_installs:
+          - BasicDesktopTools
+    
+    # Items for all machines matching the main condition
+    managed_installs:
+      - SharedMachineConfiguration
+      - SecurityHardening
 ```
 
-## Development and Building
+### Legacy Multiple Conditions Format
 
-### Build System
+For compatibility, the system still supports the legacy format with explicit `conditions` arrays:
 
-The project uses a comprehensive PowerShell build system (`build.ps1`) that:
+```yaml
+conditional_items:
+  # Legacy AND logic (prefer complex expressions)
+  - conditions:
+      - key: "domain"
+        operator: "=="
+        value: "CORPORATE"
+      - key: "arch" 
+        operator: "=="
+        value: "x64"
+    condition_type: "AND"  # Default is AND
+    managed_installs:
+      - CorporateX64App
+      
+  # Legacy OR logic (prefer complex expressions)  
+  - conditions:
+      - key: "hostname"
+        operator: "CONTAINS"
+        value: "DEV"
+      - key: "hostname"
+        operator: "CONTAINS" 
+        value: "TEST"
+    condition_type: "OR"
+    managed_installs:
+      - DeveloperTools
+```
 
-- Builds all binaries for x64 and ARM64 architectures
-- Handles code signing with enterprise certificates
-- Creates MSI and NuGet packages automatically
-- Supports development mode for rapid iteration
-- Integrates with CI/CD pipelines
+**Recommendation**: Use complex expressions instead:
+```yaml
+conditional_items:
+  # Preferred: Complex expression format
+  - condition: domain == "CORPORATE" AND arch == "x64"
+    managed_installs:
+      - CorporateX64App
+      
+  - condition: hostname CONTAINS "DEV" OR hostname CONTAINS "TEST"
+    managed_installs:
+      - DeveloperTools
+```
 
-### Build Commands
+### Supported Operators
 
-```powershell
-# Full build with automatic signing
-.\build.ps1
+- **==** / **EQUALS**: Exact equality
+- **!=** / **NOT_EQUALS**: Not equal  
+- **CONTAINS**: String contains substring
+- **DOES_NOT_CONTAIN**: String does not contain substring
+- **BEGINSWITH**: String starts with value
+- **ENDSWITH**: String ends with value
+- **>** / **<** / **>=** / **<=**: Comparison operators (version-aware)
+- **IN**: Value is in a comma-separated list
+- **LIKE**: Wildcard pattern matching
 
-# Development mode (fast iteration)
-.\build.ps1 -Dev -Install
+### Special Operators
 
-# Build specific binary only
-.\build.ps1 -Binary cimistatus -Sign
+- **NOT**: Negates the following condition (e.g., `NOT hostname CONTAINS "Kiosk"`)
+- **OR**: Logical OR operator for complex expressions
+- **AND**: Logical AND operator for complex expressions
 
-# Create Intune packages
-.\build.ps1 -IntuneWin
+> **Note**: The ANY operator for array operations is planned for future implementation.
 
-# Package existing binaries
-.\build.ps1 -PackageOnly
+### Available System Facts
+
+#### Core Facts
+- **hostname**: System hostname
+- **arch** / **architecture**: System architecture (x64, arm64, x86)
+- **os_version**: Windows OS version (full version string)
+- **os_vers_major**: Major OS version number (e.g., 10, 11)
+- **domain**: Windows domain name
+- **machine_type**: "laptop" or "desktop"
+- **machine_model**: Computer model
+- **joined_type**: "domain", "hybrid", "entra", or "workgroup"
+- **catalogs**: Available catalogs (array)
+- **username**: Current username
+- **date**: Current date and time
+
+#### Enhanced Facts
+- **enrolled_usage**: Device enrollment usage type (from registration or environment)
+- **enrolled_area**: Device enrollment area (from registration or environment) 
+- **os_build_number**: Windows build number
+- **battery_state**: Battery state for mobile devices
+
+### Practical Examples
+
+#### Complex Enterprise Deployment
+```yaml
+conditional_items:
+  # Corporate environment with nested departmental logic
+  - condition: domain == "CORPORATE"
+    conditional_items:
+      # Executive desktops with complex hostname patterns
+      - condition: hostname CONTAINS "EXEC-" OR hostname CONTAINS "C-SUITE-" OR hostname CONTAINS "BOARD-"
+        managed_installs:
+          - ExecutiveSuite
+          - PremiumOffice
+          - VIPSupport
+          
+      # Development environment with role-based deployment
+      - condition: hostname CONTAINS "DEV-" OR hostname CONTAINS "TEST-"
+        conditional_items:
+          # Senior developers get additional tools
+          - condition: hostname CONTAINS "SENIOR" OR hostname CONTAINS "LEAD"
+            managed_installs:
+              - AdvancedDebugger
+              - PerformanceProfiler
+        
+        managed_installs:
+          - VisualStudio
+          - GitForWindows
+          - DockerDesktop
+    
+    # Base corporate software for all domain machines
+    managed_installs:
+      - EnterpriseAntivirus
+      - CorporateVPN
+      - ComplianceTools
+
+  # Educational shared machines
+  - condition: enrolled_usage == "Shared" AND enrolled_area != "Classroom"
+    managed_installs:
+      - CollaborativeTools
+      - SharedWorkspaceApps
+      - SecurityHardening
+
+  # High-performance desktops (complex requirements)
+  - condition: os_vers_major >= 11 AND arch == "x64" AND NOT hostname CONTAINS "Legacy"
+    managed_installs:
+      - ModernApplications
+      - NextGenTools
+      - PerformanceOptimization
+```
+
+#### Architecture and OS Version Targeting
+```yaml
+conditional_items:
+  # Modern Windows 11 x64 systems only
+  - condition: os_vers_major >= 11 AND arch == "x64"
+    managed_installs:
+      - Windows11OptimizedApps
+      - ModernWebApps
+      
+  # ARM64 specific applications
+  - condition: arch == "arm64"
+    managed_installs:
+      - ARMNativeApps
+    managed_uninstalls:
+      - x64OnlyLegacyApps
+      
+  # Exclude older systems from resource-intensive software
+  - condition: NOT (os_vers_major < 11 OR arch == "x86")
+    managed_installs:
+      - ResourceIntensiveApps
+```
+
+### Best Practices
+
+#### 1. Use Complex Expressions Over Legacy Format
+**Preferred:**
+```yaml
+- condition: domain == "CORPORATE" AND arch == "x64"
+```
+
+**Instead of:**
+```yaml
+- conditions:
+    - key: "domain"
+      operator: "=="
+      value: "CORPORATE"
+    - key: "arch"
+      operator: "=="
+      value: "x64"
+  condition_type: "AND"
+```
+
+#### 2. Leverage Nested Conditionals for Organization
+Use nested conditional items to mirror your organizational structure and avoid redundant conditions.
+
+#### 3. Test Conditions Incrementally
+Start with simple conditions and build complexity:
+```yaml
+# Start simple
+- condition: hostname != ""
+  managed_installs: [TestPackage]
+
+# Add complexity gradually  
+- condition: hostname CONTAINS "LAB" OR hostname CONTAINS "DEV"
+  managed_installs: [TestPackage2]
+```
+
+#### 4. Performance Considerations
+- Place most restrictive conditions first
+- Use nested conditionals to reduce redundant fact evaluation
+- Order OR operations with most likely matches first
+
+### Debugging Conditional Items
+
+#### Check System Facts
+Monitor logs for "System facts gathered" entries to verify available facts.
+
+#### Validate Expression Parsing
+Test complex expressions with simple managed_installs items:
+```yaml
+conditional_items:
+  # Test parentheses parsing
+  - condition: (domain == "CORP" OR domain == "EDU") AND NOT hostname CONTAINS "Kiosk"
+    managed_installs: [ParenthesesTest]
+      
+  # Test OR/AND precedence
+  - condition: hostname CONTAINS "A" OR hostname CONTAINS "B" AND arch == "x64"
+    managed_installs: [PrecedenceTest]
 ```
 
 ## Monitoring and Logging
@@ -1093,7 +1027,7 @@ The CimianStatus GUI provides real-time monitoring with:
 
 ### Diagnostic Tools
 
-```powershell
+```pwsh
 # Service status check
 Get-Service CimianWatcher
 
