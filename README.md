@@ -10,7 +10,7 @@ Cimian aims to allow Mac Admins that manage Windows with Munki to have a similar
 
 Cimian is ideal for organizations of all sizes looking to streamline their Windows software deployment processes. It can be used in small environments with just a few machines, or scaled up to manage thousands of systems across multiple locations.
 
-> **Note**: The codebase is currently written primarily in Go, originating from a nascent yet abandoned project called Gorilla. Through over 1,200 commits between September 2024 and September 2025, it evolved into what I consider a v1.0 release. Going forward, Cimian will be fully rewritten in C# to create a truly native Windows solution, retiring all Go code in the process. **The 'C' in Cimian stands for C# after all!**
+> **Note**: The codebase is currently written primarily in Go, originating from a nascent yet abandoned project called Gorilla. Through over 1,200 commits between September 2024 and September 2025, it evolved into what I consider a v1.0 release that has parity with Munki for Windows for all core functionality. Going forward, Cimian will be fully rewritten in C# to create a truly native Windows solution, retiring all Go code in the process. **The 'C' in Cimian stands for C# after all!**
 
 ## Key Features
 
