@@ -1689,6 +1689,8 @@ foreach ($msiArch in $msiArchs) {
             $buildArgs = @(
                 "build"
                 $wixProjPath
+                "-p:Platform=$msiArch"
+                "-p:InstallerPlatform=$msiArch"
                 "-p:ProductVersion=$env:SEMANTIC_VERSION"
                 "-p:BinDir=../../release/msi_$msiArch"
                 "-p:OutputName=Cimian-$msiArch"
@@ -1703,16 +1705,20 @@ foreach ($msiArch in $msiArchs) {
                 throw "WiX v6 build failed for $msiArch with exit code $LASTEXITCODE"
             }
             
-            # Find the output MSI in the build output
-            $builtMsi = "build\msi\bin\x64\Release\Cimian-$msiArch.msi"
+            # Find the output MSI in the build output (architecture-specific path)
+            $builtMsi = "build\msi\bin\$msiArch\Release\Cimian-$msiArch.msi"
             if (Test-Path $builtMsi) {
                 Move-Item $builtMsi $msiOutput -Force
                 Write-Log "MSI package built with WiX v6 at $msiOutput." "SUCCESS"
             } else {
-                # Try alternate paths
+                # Try alternate paths with architecture awareness
                 $altPaths = @(
+                    "build\msi\bin\$msiArch\Release\Cimian-$msiArch.msi",
+                    "build\msi\bin\$msiArch\Debug\Cimian-$msiArch.msi",
+                    "build\msi\bin\x64\Release\Cimian-$msiArch.msi",  # fallback for x64
                     "build\msi\bin\Release\Cimian-$msiArch.msi",
                     "build\msi\bin\Debug\Cimian-$msiArch.msi",
+                    "build\bin\$msiArch\Release\Cimian-$msiArch.msi",
                     "build\bin\x64\Release\Cimian-$msiArch.msi",
                     "build\bin\Release\Cimian-$msiArch.msi",
                     "build\bin\Debug\Cimian-$msiArch.msi",
@@ -1797,7 +1803,7 @@ if (-not $MsiOnly) {
 foreach ($arch in $archs) {
     $pkgTempDir  = "release\nupkg_$arch"
     $nuspecPath  = "build\nupkg\nupkg.$arch.nuspec"
-    $nupkgOut    = "release\CimianTools-$arch-$env:SEMANTIC_VERSION.nupkg"
+    $nupkgOut    = "release\CimianTools-$arch-$env:RELEASE_VERSION.nupkg"
     
     # Verify the architecture-specific nuspec exists
     if (-not (Test-Path $nuspecPath)) {

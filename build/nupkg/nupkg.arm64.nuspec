@@ -6,14 +6,21 @@
     <authors>Windows Admins Open Source</authors>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>Cimian Tools for Windows Software Management</description>
-    <tags>admin</tags>
+    <tags>admin cimian arm64</tags>
   </metadata>
   <files>
-    <file src="..\..\release\arm64\**" target="tools" />
+    <file src="..\..\release\arm64\cimiwatcher.exe" target="tools" />
+    <file src="..\..\release\arm64\managedsoftwareupdate.exe" target="tools" />
+    <file src="..\..\release\arm64\cimitrigger.exe" target="tools" />
+    <file src="..\..\release\arm64\cimistatus.exe" target="tools" />
+    <file src="..\..\release\arm64\cimiimport.exe" target="tools" />
+    <file src="..\..\release\arm64\cimipkg.exe" target="tools" />
+    <file src="..\..\release\arm64\makecatalogs.exe" target="tools" />
+    <file src="..\..\release\arm64\makepkginfo.exe" target="tools" />
+    <file src="..\..\release\arm64\manifestutil.exe" target="tools" />
+    <file src="..\..\release\arm64\*.exe.ignore" target="tools" />
     <file src="scripts\chocolateyInstall.ps1" target="tools" />
     <file src="scripts\chocolateyUninstall.ps1" target="tools" />
     <file src="scripts\uninstall-scheduled-tasks.ps1" target="tools" />
-    <!-- Include .ignore files to prevent Chocolatey from creating automatic shims -->
-    <file src="scripts\*.exe.ignore" target="tools" />
   </files>
 </package>
