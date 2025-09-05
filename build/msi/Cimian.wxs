@@ -185,7 +185,7 @@
                   Execute="immediate"
                   Impersonate="no"
                   Return="ignore"
-                  Property="SystemFolder"
+                  Property="System64Folder"
                   ExeCommand="cmd.exe /c &quot;sc stop CimianWatcher 2>nul &amp;&amp; timeout /t 2 /nobreak >nul 2>&amp;1 &amp;&amp; taskkill /f /im cimiwatcher.exe 2>nul &amp;&amp; timeout /t 1 /nobreak >nul 2>&amp;1 || exit 0&quot;" />
 
     <!-- Immediate action to stop service very early in install sequence -->
@@ -193,7 +193,7 @@
                   Execute="immediate"
                   Impersonate="no"
                   Return="ignore"
-                  Property="SystemFolder"
+                  Property="System64Folder"
                   ExeCommand="cmd.exe /c &quot;net stop CimianWatcher /y 2>nul &amp;&amp; taskkill /f /im cimiwatcher.exe 2>nul &amp;&amp; taskkill /f /im cimiwatcher.exe /t 2>nul || exit 0&quot;" />
 
     <!-- Forcefully stop any existing managedsoftwareupdate.exe processes -->
@@ -201,7 +201,7 @@
                   Execute="immediate"
                   Impersonate="no"
                   Return="ignore"
-                  Property="SystemFolder"
+                  Property="System64Folder"
                   ExeCommand="cmd.exe /c &quot;taskkill /f /im managedsoftwareupdate.exe 2>nul &amp;&amp; timeout /t 2 /nobreak >nul 2>&amp;1 || exit 0&quot;" />
 
     <!-- Additional force stop for managedsoftwareupdate.exe processes -->
@@ -209,7 +209,7 @@
                   Execute="immediate"
                   Impersonate="no"
                   Return="ignore"
-                  Property="SystemFolder"
+                  Property="System64Folder"
                   ExeCommand="cmd.exe /c &quot;taskkill /f /im managedsoftwareupdate.exe /t 2>nul &amp;&amp; timeout /t 1 /nobreak >nul 2>&amp;1 || exit 0&quot;" />
 
     <CustomAction Id="StopCimianWatcherService"

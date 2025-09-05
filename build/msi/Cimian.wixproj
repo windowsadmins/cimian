@@ -6,13 +6,13 @@
     <OutputType>Package</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Platform>x64</Platform>
-    <InstallerPlatform>x64</InstallerPlatform>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <InstallerPlatform Condition="'$(InstallerPlatform)' == ''">$(Platform)</InstallerPlatform>
   </PropertyGroup>
 
   <PropertyGroup>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
-    <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\..\..\release\x64</BinDir>
+    <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\..\..\release\$(Platform)</BinDir>
   </PropertyGroup>
 
   <PropertyGroup>
