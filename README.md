@@ -1,6 +1,6 @@
 # Cimian
 
-<img src="cimian.png" alt="Cimian" width="280" align="left" style="margin-right: 20px; margin-bottom: 10px;">
+<img src="cimian.png" alt="Cimian" width="260" align="left" style="margin-right: 20px; margin-bottom: 10px;">
 
 Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and other cloud-based management platforms.
 
