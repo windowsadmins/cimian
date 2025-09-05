@@ -1069,8 +1069,9 @@ if ($PackageOnly -or $NupkgOnly -or $MsiOnly) {
     }
     
     # Set up version environment variables
-    $fullVersion     = Get-Date -Format "yyyy.MM.dd"
-    $semanticVersion = "{0}.{1}.{2}" -f $((Get-Date).Year - 2000), $((Get-Date).Month), $((Get-Date).Day)
+    $currentTime = Get-Date
+    $fullVersion     = $currentTime.ToString("yyyy.MM.dd.HHmm")
+    $semanticVersion = "{0}.{1}.{2}.{3}" -f $($currentTime.Year - 2000), $currentTime.Month, $currentTime.Day, $currentTime.ToString("HHmm")
     $env:RELEASE_VERSION   = $fullVersion
     $env:SEMANTIC_VERSION  = $semanticVersion
     Write-Log "RELEASE_VERSION set to $fullVersion" "INFO"
