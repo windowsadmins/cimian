@@ -1133,17 +1133,17 @@ func downloadItemFile(item catalog.Item, cfg *config.Configuration, verbosity in
 		fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
 	}
 
-	logging.Debug("Downloading file for item", "item", item.Name, "url", fullURL)
-
-	// Download the file with enhanced progress tracking
-	if err := download.DownloadFile(fullURL, "", cfg, verbosity, reporter); err != nil {
-		return "", fmt.Errorf("failed to download %s: %v", item.Name, err)
-	}
-
 	// Reconstruct the local file path (same logic as in download.InstallPendingUpdates)
 	subPath := getSubPathFromURL(fullURL, cfg)
 	localFilePath := filepath.Join(cfg.CachePath, subPath)
 	localFilePath = filepath.Clean(localFilePath)
+
+	logging.Debug("Downloading file for item", "item", item.Name, "url", fullURL)
+
+	// Download the file with enhanced progress tracking and hash validation
+	if err := download.DownloadFile(fullURL, "", cfg, verbosity, reporter, item.Installer.Hash); err != nil {
+		return "", fmt.Errorf("failed to download %s: %v", item.Name, err)
+	}
 
 	logging.Debug("Downloaded file", "item", item.Name, "path", localFilePath)
 	return localFilePath, nil

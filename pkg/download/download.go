@@ -43,7 +43,8 @@ const (
 // If the URL indicates a catalog or manifest, it goes in the corresponding folder.
 // Otherwise, it's treated as a package and goes to cfg.CachePath.
 // verbosity and reporter are optional parameters for enhanced progress display
-func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity int, reporter utils.Reporter) error {
+// expectedHash is an optional SHA256 hash for validation - if provided, existing files will be validated and re-downloaded if hash doesn't match
+func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity int, reporter utils.Reporter, expectedHash ...string) error {
 	if url == "" {
 		return fmt.Errorf("DownloadFile: URL cannot be empty")
 	}
@@ -56,6 +57,12 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 		cfg.CachePath = `C:\ProgramData\ManagedInstalls\Cache`
 	}
 	manifestsPath := `C:\ProgramData\ManagedInstalls\manifests` // if you want it configurable, move to cfg
+
+	// Extract expected hash if provided
+	var validationHash string
+	if len(expectedHash) > 0 && expectedHash[0] != "" {
+		validationHash = expectedHash[0]
+	}
 
 	// 1) Figure out if this is a manifest, a catalog, or a package.
 	lowerURL := strings.ToLower(url)
@@ -131,17 +138,37 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 		return fmt.Errorf("failed to create directory structure for %s: %v", dest, err)
 	}
 
-	// 7) Start the retry logic - but only for network/download errors, not logical errors
+	// 7) Check if file already exists and validate hash if expected hash is provided
+	if info, err := os.Stat(dest); err == nil && info.Size() > 0 {
+		if validationHash != "" {
+			// Validate existing file against expected hash
+			if Verify(dest, validationHash) {
+				logging.Debug("Existing file hash validation passed, skipping download", 
+					"file", dest, "size", info.Size(), "hash", validationHash)
+				return nil
+			} else {
+				logging.Warn("Existing file hash validation failed, removing and re-downloading", 
+					"file", dest, "expected_hash", validationHash)
+				
+				// Remove the corrupt file
+				if err := os.Remove(dest); err != nil {
+					logging.Warn("Failed to remove corrupt cached file", "file", dest, "error", err)
+				} else {
+					logging.Info("Removed corrupt cached file", "file", dest)
+				}
+			}
+		} else {
+			// No hash provided, use existing file
+			logging.Debug("File already exists with content, skipping download", "file", dest, "size", info.Size())
+			return nil
+		}
+	}
+
+	// 8) Start the retry logic - but only for network/download errors, not logical errors
 	configRetry := retry.RetryConfig{
 		MaxRetries:      3,
 		InitialInterval: time.Second,
 		Multiplier:      2.0,
-	}
-
-	// Check if file already exists and has content to avoid re-downloading
-	if info, err := os.Stat(dest); err == nil && info.Size() > 0 {
-		logging.Debug("File already exists with content, skipping download", "file", dest, "size", info.Size())
-		return nil
 	}
 
 	// Use a temporary file during download to prevent corruption
@@ -275,6 +302,17 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 			os.Remove(dest)
 			return fmt.Errorf("download resulted in empty file, removed to prevent cache corruption")
 		}
+		
+		// Validate downloaded file hash if expected hash is provided
+		if validationHash != "" {
+			if !Verify(dest, validationHash) {
+				// Remove the corrupt download
+				os.Remove(dest)
+				return fmt.Errorf("downloaded file hash validation failed: expected %s", validationHash)
+			}
+			logging.Info("Downloaded file hash validation passed", "file", dest, "hash", validationHash)
+		}
+		
 		logging.Debug("File saved successfully", "file", dest, "size", info.Size())
 	}
 

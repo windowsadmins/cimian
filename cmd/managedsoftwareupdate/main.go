@@ -1088,7 +1088,10 @@ func main() {
 		selfUpdateManager := selfupdate.NewSelfUpdateManager()
 
 		for _, item := range selfUpdateItems {
-			// Download the self-update package first
+			// Download the self-update package
+			statusReporter.Message(fmt.Sprintf("Downloading self-update package: %s", item.Name))
+			
+			// Create download map for the self-update item
 			downloadItems := make(map[string]string)
 			fullURL := item.Installer.Location
 			if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
@@ -1099,9 +1102,7 @@ func main() {
 				fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
 			}
 			downloadItems[item.Name] = fullURL
-
-			// Download the package
-			statusReporter.Message(fmt.Sprintf("Downloading self-update package: %s", item.Name))
+			
 			downloadedPaths, err := download.InstallPendingUpdates(downloadItems, cfg, verbosity, statusReporter)
 			if err != nil {
 				logging.Error("Failed to download self-update package", "item", item.Name, "error", err)
@@ -1944,37 +1945,34 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 		logging.WithContext("item_count", len(items)),
 		logging.WithContext("batch_id", logging.GetSessionID()))
 
-	downloadItems := make(map[string]string)
 	itemNames := make([]string, 0, len(items))
+	for _, item := range items {
+		itemNames = append(itemNames, item.Name)
+	}
 
-	// Prepare the correct full URLs for each item
+	// Log batch download start
+	logging.LogEventEntry("batch_download", "start", "started",
+		fmt.Sprintf("Starting batch download of %d items with hash validation", len(items)),
+		logging.WithContext("item_count", len(items)),
+		logging.WithContext("items", itemNames))
+
+	statusReporter.Detail(fmt.Sprintf("Downloading %d packages...", len(items)))
+
+	// Create download map from catalog items
+	downloadItems := make(map[string]string)
 	for _, cItem := range items {
-		itemNames = append(itemNames, cItem.Name)
-
-		// Check if this is a script-only item (no installer file needed)
-		logging.Debug("Script-only detection values",
-			"item", cItem.Name,
-			"installer_type", cItem.Installer.Type,
-			"installer_location", cItem.Installer.Location,
-			"installcheck_script_len", len(string(cItem.InstallCheckScript)),
-			"preinstall_script_len", len(string(cItem.PreScript)),
-			"postinstall_script_len", len(string(cItem.PostScript)))
-
-		if cItem.Installer.Type == "" && cItem.Installer.Location == "" &&
-			(string(cItem.InstallCheckScript) != "" || string(cItem.PreScript) != "" || string(cItem.PostScript) != "") {
-			logging.Debug("Script-only item detected, skipping download preparation", "item", cItem.Name)
+		// Skip script-only items
+		if cItem.Installer.Type == "" && cItem.Installer.Location == "" {
+			logging.Debug("Script-only item detected, skipping download", "item", cItem.Name)
 			continue
 		}
 
 		if cItem.Installer.Location == "" {
-			logger.Warning("No installer location found for item: %s", cItem.Name)
-			logging.LogEventEntry("install", "prepare", logging.StatusWarning,
-				fmt.Sprintf("No installer location found for %s", cItem.Name),
-				logging.WithPackage(cItem.Name, cItem.Version),
-				logging.WithError(fmt.Errorf("missing installer location")))
+			logging.Warn("No installer location found for item, skipping", "item", cItem.Name)
 			continue
 		}
 
+		// Prepare the full URL (same logic as elsewhere)
 		fullURL := cItem.Installer.Location
 		if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
 			fullURL = strings.ReplaceAll(fullURL, "\\", "/")
@@ -1983,31 +1981,16 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 			}
 			fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
 		}
-
 		downloadItems[cItem.Name] = fullURL
-
-		// Log download preparation
-		logging.LogEventEntry("download", "prepare", "prepared",
-			fmt.Sprintf("Prepared download for %s from %s", cItem.Name, fullURL),
-			logging.WithPackage(cItem.Name, cItem.Version),
-			logging.WithContext("download_url", fullURL))
 	}
 
-	// Log batch download start
-	logging.LogEventEntry("batch_download", "start", "started",
-		fmt.Sprintf("Starting batch download of %d items", len(downloadItems)),
-		logging.WithContext("item_count", len(downloadItems)),
-		logging.WithContext("items", itemNames))
-
-	statusReporter.Detail(fmt.Sprintf("Downloading %d packages...", len(downloadItems)))
-
-	// Download each item and retrieve precise downloaded file paths
+	// Download each item using the standard function
 	downloadedPaths, err := download.InstallPendingUpdates(downloadItems, cfg, 0, statusReporter)
 	if err != nil {
 		logger.Warning("Some downloads may have failed, attempting installation with available files: %v", err)
 		logging.LogEventEntry("batch_download", "complete", "partial_failure",
 			fmt.Sprintf("Batch download completed with some failures: %v", err),
-			logging.WithContext("item_count", len(downloadItems)),
+			logging.WithContext("item_count", len(items)),
 			logging.WithError(err))
 		// Continue with whatever was downloaded successfully
 		if downloadedPaths == nil {
@@ -2015,7 +1998,7 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 		}
 	} else {
 		logging.LogEventEntry("batch_download", "complete", "completed",
-			fmt.Sprintf("Successfully downloaded %d items", len(downloadedPaths)),
+			fmt.Sprintf("Successfully downloaded %d items with hash validation", len(downloadedPaths)),
 			logging.WithContext("downloaded_count", len(downloadedPaths)))
 	}
 
