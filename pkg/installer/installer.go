@@ -1056,6 +1056,7 @@ func processUninstallMSI(uninstallItem catalog.InstallItem, item catalog.Item) (
 	}
 
 	logging.Debug("Running MSI uninstall", "item", item.Name, "productCode", productCode, "args", args)
+	
 	return runCMD(commandMsi, args)
 }
 
@@ -1275,8 +1276,18 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 	logging.Info("Invoking MSI install with timeout",
 		"msi", localFile, "item", item.Name, "extraArgs", args, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
 
-	// Use timeout-aware command execution
-	output, err := runCMDWithTimeout(commandMsi, args, cfg.InstallerTimeoutMinutes)
+	// Cleanup any orphaned MSI processes before starting new installation using process management
+	if cleanupErr := PreInstallMSICleanupV2(cfg); cleanupErr != nil {
+		logging.Warn("MSI pre-install cleanup had issues", "error", cleanupErr)
+	}
+
+	// Wait for MSI service to be available (avoid the "another install in progress" error)
+	if waitErr := WaitForMSIAvailableV2(2, cfg); waitErr != nil {
+		logging.Warn("MSI service availability check failed", "error", waitErr)
+	}
+
+	// Use process-managed MSI execution to prevent orphaned processes
+	output, err := runMSIDirectlyV2(localFile, args[2:], cfg.InstallerTimeoutMinutes, cfg) // Skip /i and path which are handled in runMSIDirectlyV2
 
 	if err != nil {
 		// Check if it was a timeout error
