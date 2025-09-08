@@ -283,7 +283,7 @@
 ## Dependencies and Blockers
 
 ### External Dependencies
-- **.NET 8 Runtime**: Stable and available
+- **.NET 9 Runtime**: Stable and available
 - **Visual Studio 2022**: Latest version required for C# 12
 - **Windows SDK**: For Windows API integration
 - **Code Signing Certificate**: Existing certificate compatible

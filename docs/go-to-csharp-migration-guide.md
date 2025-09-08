@@ -8,13 +8,13 @@ This document outlines the comprehensive migration strategy for converting the C
 
 ### Core Objectives
 - **Zero Downtime**: Gradual migration with interoperability between Go and C# components
-- **Modern Architecture**: Leverage .NET 8+ features and best practices
+- **Modern Architecture**: Leverage .NET 9+ features and best practices
 - **Windows-First**: Optimize for Windows environments while maintaining cross-platform capability
 - **Performance**: Maintain or improve current performance characteristics
 - **Maintainability**: Improve code organization and developer experience
 
 ### Technical Standards
-- **.NET 8.0+**: Target latest LTS version for optimal performance and security
+- **.NET 9.0+**: Target latest version for optimal performance and security
 - **C# 12**: Use latest language features
 - **WPF/WinUI 3**: Modern Windows UI frameworks
 - **Dependency Injection**: Microsoft.Extensions.DependencyInjection
