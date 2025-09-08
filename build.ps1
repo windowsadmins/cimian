@@ -25,8 +25,35 @@ param(
     [switch]$MsiOnly       # Create MSI packages only using existing binaries (skip build and NUPKG)
 )
 
-# Enterprise certificate CN - update this to match your certificate
-$Global:EnterpriseCertCN = 'EmilyCarrU Intune Windows Enterprise Certificate'
+# Load environment variables from .env file if it exists
+function Import-DotEnv {
+    param([string]$Path = ".env")
+    
+    if (Test-Path $Path) {
+        Write-Host "Loading environment variables from $Path" -ForegroundColor Green
+        Get-Content $Path | ForEach-Object {
+            if ($_ -match '^\s*([^#][^=]*)\s*=\s*(.*)\s*$') {
+                $name = $matches[1].Trim()
+                $value = $matches[2].Trim()
+                # Remove surrounding quotes if present
+                if ($value -match '^"(.*)"$' -or $value -match "^'(.*)'$") {
+                    $value = $matches[1]
+                }
+                [Environment]::SetEnvironmentVariable($name, $value, [EnvironmentVariableTarget]::Process)
+                Write-Host "  $name = $value" -ForegroundColor Gray
+            }
+        }
+    } else {
+        Write-Host "No .env file found at $Path" -ForegroundColor Yellow
+    }
+}
+
+# Load .env file first
+Import-DotEnv
+
+# Enterprise certificate configuration - loaded from environment or .env file
+$Global:EnterpriseCertCN = $env:CIMIAN_CERT_CN ?? 'DefaultEnterprise'
+$Global:EnterpriseCertSubject = $env:CIMIAN_CERT_SUBJECT ?? 'DefaultEnterprise'
 $ErrorActionPreference = 'Stop'
 
 # C# CLI Tools mapping
@@ -67,14 +94,14 @@ function Get-SigningCertThumbprint {
     [OutputType([hashtable])]
     param()
     
-    $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+    $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like "*$Global:EnterpriseCertSubject*" } |
         Sort-Object NotAfter -Descending | Select-Object -First 1
     
     if ($cert) {
         return @{ Thumbprint = $cert.Thumbprint; Store = "CurrentUser" }
     }
     
-    $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like '*EmilyCarrU*' } |
+    $cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.HasPrivateKey -and $_.Subject -like "*$Global:EnterpriseCertSubject*" } |
         Sort-Object NotAfter -Descending | Select-Object -First 1
     
     if ($cert) {
