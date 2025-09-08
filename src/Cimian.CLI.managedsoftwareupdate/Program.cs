@@ -193,7 +193,7 @@ public class Program
         
         // Last resort: assembly version (may lose leading zeros)
         var version = assembly.GetName().Version;
-        return version?.ToString() ?? "1.0.0.0";
+        return version?.ToString() ?? "UNKNOWN";
     }
 }
 
