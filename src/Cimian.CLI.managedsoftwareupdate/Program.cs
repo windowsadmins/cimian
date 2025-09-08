@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Serilog;
+using System.Reflection;
 using Cimian.Core.Models;
 using Cimian.Engine.Predicates;
 
@@ -16,6 +17,13 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // Handle --version flag early without logging
+        if (args.Length == 1 && (args[0] == "--version" || args[0] == "-V"))
+        {
+            Console.WriteLine(GetVersion());
+            return 0;
+        }
+
         // Configure Serilog early for startup logging
         Log.Logger = new LoggerConfiguration()
             .WriteTo.Console()
@@ -161,7 +169,29 @@ public class Program
 
     private static string GetVersion()
     {
-        var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+        var assembly = Assembly.GetExecutingAssembly();
+        
+        // Try to get the informational version first (preserves exact format)
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(informationalVersion))
+        {
+            // Remove git hash if present (after +)
+            var plusIndex = informationalVersion.IndexOf('+');
+            if (plusIndex >= 0)
+            {
+                return informationalVersion.Substring(0, plusIndex);
+            }
+            return informationalVersion;
+        }
+        
+        // Fallback to file version (also preserves format)
+        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+        if (!string.IsNullOrEmpty(fileVersion))
+        {
+            return fileVersion;
+        }
+        
+        // Last resort: assembly version (may lose leading zeros)
         var version = assembly.GetName().Version;
         return version?.ToString() ?? "1.0.0.0";
     }
@@ -171,45 +201,44 @@ public class Program
 /// Command line options for managedsoftwareupdate
 /// Maintains compatibility with original Go implementation
 /// </summary>
-[Verb("", isDefault: true, HelpText = "Cimian Managed Software Update")]
 public class Options
 {
     [Option('a', "auto", Required = false, HelpText = "Run in automatic mode")]
-    public bool Auto { get; set; }
+    public bool Auto { get; set; } = false;
 
     [Option('b', "bootstrap", Required = false, HelpText = "Run in bootstrap mode")]
-    public bool Bootstrap { get; set; }
+    public bool Bootstrap { get; set; } = false;
 
     [Option('c', "checkonly", Required = false, HelpText = "Check for updates without installing")]
-    public bool CheckOnly { get; set; }
+    public bool CheckOnly { get; set; } = false;
 
     [Option('v', "verbose", Required = false, HelpText = "Enable verbose logging")]
-    public bool Verbose { get; set; }
+    public bool Verbose { get; set; } = false;
 
     [Option('q', "quiet", Required = false, HelpText = "Suppress output")]
-    public bool Quiet { get; set; }
+    public bool Quiet { get; set; } = false;
 
     [Option("config", Required = false, HelpText = "Path to configuration file")]
-    public string? ConfigPath { get; set; }
+    public string? ConfigPath { get; set; } = null;
 
     [Option("catalog", Required = false, HelpText = "Path to catalog file")]
-    public string? CatalogPath { get; set; }
+    public string? CatalogPath { get; set; } = null;
 
     [Option("manifest", Required = false, HelpText = "Path to manifest file")]
-    public string? ManifestPath { get; set; }
+    public string? ManifestPath { get; set; } = null;
 
     [Option("logpath", Required = false, HelpText = "Path for log files")]
-    public string? LogPath { get; set; }
+    public string? LogPath { get; set; } = null;
 
     [Option("timeout", Required = false, Default = 300, HelpText = "Timeout in seconds")]
-    public int Timeout { get; set; }
+    public int Timeout { get; set; } = 300;
 
     [Option("force", Required = false, HelpText = "Force installation even if already installed")]
-    public bool Force { get; set; }
+    public bool Force { get; set; } = false;
 
     [Option("gui", Required = false, HelpText = "Launch GUI interface")]
-    public bool Gui { get; set; }
+    public bool Gui { get; set; } = false;
 
     [Value(0, MetaName = "package", HelpText = "Specific package to install")]
-    public string? Package { get; set; }
+    public string? Package { get; set; } = null;
 }

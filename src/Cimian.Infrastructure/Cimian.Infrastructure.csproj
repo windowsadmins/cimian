@@ -17,7 +17,7 @@
     <PackageReference Include="Polly.Extensions.Http" Version="3.0.0" />
     <PackageReference Include="System.Management" Version="9.0.0" />
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
-    <PackageReference Include="AWSSDK.S3" Version="3.7.402.14" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.403" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.22.1" />
   </ItemGroup>
 
