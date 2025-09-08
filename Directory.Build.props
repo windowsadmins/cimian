@@ -21,9 +21,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     
     <!-- Version Information -->
-    <AssemblyVersion>2025.09.07.1819</AssemblyVersion>
-    <FileVersion>2025.09.07.1819</FileVersion>
-    <Version>2025.09.07.1819</Version>
+    <AssemblyVersion>2025.09.07.2133</AssemblyVersion>
+    <FileVersion>2025.09.07.2133</FileVersion>
+    <Version>2025.09.07.2133</Version>
     <Product>Cimian</Product>
     <Company>WindowsAdmins</Company>
     <Copyright>Copyright Â© 2025 WindowsAdmins</Copyright>
@@ -53,6 +53,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="9.0.0" />
   </ItemGroup>
 </Project>
+
+
 
 
 
