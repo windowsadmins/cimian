@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>cimitrigger</AssemblyName>
+    <RootNamespace>Cimian.CLI.Cimitrigger</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cimian.Core\Cimian.Core.csproj" />
+    <ProjectReference Include="..\Cimian.Engine\Cimian.Engine.csproj" />
+    <ProjectReference Include="..\Cimian.Infrastructure\Cimian.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
