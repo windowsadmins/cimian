@@ -827,13 +827,24 @@ if ($Binaries -or $Binary) {
             # Check if this is a C# project
             $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
             $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
+            $csharpRepoCleanProject = Join-Path $dir.FullName "RepoClean.csproj"  # Special case for repoclean
+            $csharpCimiRepoCleanProject = Join-Path $dir.FullName "CimiRepoClean.csproj"  # Alternative for repoclean
             $submoduleGoMod = Join-Path $dir.FullName "go.mod"
             $outputPath = "release\$arch\$binaryName.exe"
-            if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject)) {
+            if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject) -or (Test-Path $csharpRepoCleanProject) -or (Test-Path $csharpCimiRepoCleanProject)) {
                 # This is a C# project - build with dotnet
                 Write-Log "Detected C# project for $binaryName" "INFO"
                 # Determine which project file to use
-                $projectFile = if (Test-Path $csharpAltProject) { $csharpAltProject } else { $csharpProject }
+                $projectFile = $null
+                if (Test-Path $csharpAltProject) { 
+                    $projectFile = $csharpAltProject 
+                } elseif (Test-Path $csharpRepoCleanProject) { 
+                    $projectFile = $csharpRepoCleanProject 
+                } elseif (Test-Path $csharpCimiRepoCleanProject) { 
+                    $projectFile = $csharpCimiRepoCleanProject 
+                } else { 
+                    $projectFile = $csharpProject 
+                }
                 # Map architecture for .NET runtime identifiers
                 $dotnetRid = switch ($arch) {
                     "x64" { "win-x64" }
@@ -841,21 +852,31 @@ if ($Binaries -or $Binary) {
                 }
                 Push-Location $dir.FullName
                 try {
+                    # Detect target framework from project file
+                    $projectContent = Get-Content $projectFile -Raw
+                    $targetFrameworkMatch = [regex]::Match($projectContent, '<TargetFramework>(.*?)</TargetFramework>')
+                    $targetFramework = if ($targetFrameworkMatch.Success) { $targetFrameworkMatch.Groups[1].Value } else { "net8.0-windows" }
+                    Write-Log "Detected target framework: $targetFramework for $binaryName" "INFO"
+                    
                     # Publish the C# project for specific architecture (self-contained single file) using hardcoded system dotnet path
                     $dotnetPath = "C:\Program Files\dotnet\dotnet.exe"
                     if (-not (Test-Path $dotnetPath)) {
                         # Fallback to PATH-based dotnet if system path doesn't exist
                         $dotnetPath = "dotnet"
                     }
-                    & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\net8.0-windows\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
+                    & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
                     if ($LASTEXITCODE -ne 0) {
                         throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
                     }
-                    # Find the built executable (should now be named cimistatus.exe)
-                    $builtExePath = "bin\Release\net8.0-windows\$dotnetRid\cimistatus.exe"
+                    # Find the built executable - look for the binary name first, then fallback
+                    $builtExePath = "bin\Release\$targetFramework\$dotnetRid\$binaryName.exe"
                     if (-not (Test-Path $builtExePath)) {
-                        # Fallback: look for any .exe in the output directory
-                        $builtExePath = Get-ChildItem "bin\Release\net8.0-windows\$dotnetRid\*.exe" | Select-Object -First 1 -ExpandProperty FullName
+                        # Fallback: look for cimistatus.exe for the special case
+                        $builtExePath = "bin\Release\$targetFramework\$dotnetRid\cimistatus.exe"
+                    }
+                    if (-not (Test-Path $builtExePath)) {
+                        # Final fallback: look for any .exe in the output directory
+                        $builtExePath = Get-ChildItem "bin\Release\$targetFramework\$dotnetRid\*.exe" | Select-Object -First 1 -ExpandProperty FullName
                     }
                     $builtExe = Get-ChildItem $builtExePath | Select-Object -First 1
                     if (-not $builtExe) {
@@ -1398,13 +1419,24 @@ foreach ($arch in $archs) {
         # Check if this is a C# project
         $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
         $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
+        $csharpRepoCleanProject = Join-Path $dir.FullName "RepoClean.csproj"  # Special case for repoclean
+        $csharpCimiRepoCleanProject = Join-Path $dir.FullName "CimiRepoClean.csproj"  # Alternative for repoclean
         $submoduleGoMod = Join-Path $dir.FullName "go.mod"
         $outputPath = "release\$arch\$binaryName.exe"
-        if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject)) {
+        if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject) -or (Test-Path $csharpRepoCleanProject) -or (Test-Path $csharpCimiRepoCleanProject)) {
             # This is a C# project - build with dotnet
             Write-Log "Detected C# project for $binaryName" "INFO"
             # Determine which project file to use
-            $projectFile = if (Test-Path $csharpAltProject) { $csharpAltProject } else { $csharpProject }
+            $projectFile = $null
+            if (Test-Path $csharpAltProject) { 
+                $projectFile = $csharpAltProject 
+            } elseif (Test-Path $csharpRepoCleanProject) { 
+                $projectFile = $csharpRepoCleanProject 
+            } elseif (Test-Path $csharpCimiRepoCleanProject) { 
+                $projectFile = $csharpCimiRepoCleanProject 
+            } else { 
+                $projectFile = $csharpProject 
+            }
             # Map architecture for .NET runtime identifiers
             $dotnetRid = switch ($arch) {
                 "x64" { "win-x64" }
@@ -1412,28 +1444,36 @@ foreach ($arch in $archs) {
             }
             Push-Location $dir.FullName
             try {
-                # Build the C# project for specific architecture using hardcoded system dotnet path
+                # Detect target framework from project file
+                $projectContent = Get-Content $projectFile -Raw
+                $targetFrameworkMatch = [regex]::Match($projectContent, '<TargetFramework>(.*?)</TargetFramework>')
+                $targetFramework = if ($targetFrameworkMatch.Success) { $targetFrameworkMatch.Groups[1].Value } else { "net8.0-windows" }
+                Write-Log "Detected target framework: $targetFramework for $binaryName" "INFO"
+                
+                # Publish the C# project for specific architecture using hardcoded system dotnet path
                 $dotnetPath = "C:\Program Files\dotnet\dotnet.exe"
                 if (-not (Test-Path $dotnetPath)) {
                     # Fallback to PATH-based dotnet if system path doesn't exist
                     $dotnetPath = "dotnet"
                 }
-                & $dotnetPath build $projectFile --configuration Release --runtime $dotnetRid --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false --verbosity minimal
+                & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
                 if ($LASTEXITCODE -ne 0) {
-                    throw "Build failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
+                    throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
                 }
-                # Find the built executable (should now be named cimistatus.exe)
-                $builtExePath = "bin\Release\net8.0-windows\$dotnetRid\cimistatus.exe"
+                # Find the built executable - look for the binary name first, then fallback
+                $builtExePath = "bin\Release\$targetFramework\$dotnetRid\$binaryName.exe"
                 if (-not (Test-Path $builtExePath)) {
-                    # Fallback: look for any .exe in the output directory
-                    $builtExePath = "bin\Release\net8.0-windows*\$dotnetRid\*.exe"
-                    $builtExe = Get-ChildItem $builtExePath | Select-Object -First 1
-                } else {
-                    $builtExe = Get-Item $builtExePath
+                    # Fallback: look for cimistatus.exe for the special case
+                    $builtExePath = "bin\Release\$targetFramework\$dotnetRid\cimistatus.exe"
                 }
-                if (-not $builtExe) {
+                if (-not (Test-Path $builtExePath)) {
+                    # Final fallback: look for any .exe in the output directory
+                    $builtExePath = Get-ChildItem "bin\Release\$targetFramework\$dotnetRid\*.exe" | Select-Object -First 1 -ExpandProperty FullName
+                }
+                if (-not $builtExePath -or -not (Test-Path $builtExePath)) {
                     throw "Could not find built executable for $binaryName ($arch)"
                 }
+                $builtExe = Get-Item $builtExePath
                 # Copy to the expected output location
                 Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
                 Write-Log "$binaryName ($arch, C#) built successfully." "SUCCESS"
