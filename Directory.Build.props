@@ -20,13 +20,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     
-    <!-- Version Information -->
-    <AssemblyVersion>2025.09.07.2133</AssemblyVersion>
-    <FileVersion>2025.09.07.2133</FileVersion>
-    <Version>2025.09.07.2133</Version>
+    <!-- Version Information - Dynamic timestamp versioning -->
+    <AssemblyVersion>$([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmm"))</AssemblyVersion>
+    <FileVersion>$([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmm"))</FileVersion>
+    <Version>$([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmm"))</Version>
     <Product>Cimian</Product>
     <Company>WindowsAdmins</Company>
-    <Copyright>Copyright Â© 2025 WindowsAdmins</Copyright>
+    <Copyright>Copyright © 2025 WindowsAdmins</Copyright>
     <Description>Enterprise Software Deployment System</Description>
   </PropertyGroup>
 

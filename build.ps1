@@ -373,13 +373,6 @@ try {
     $semanticVersion = "{0}.{1:D2}.{2:D2}.{3}" -f $currentTime.Year, $currentTime.Month, $currentTime.Day, $currentTime.ToString("HHmm")
     Write-Log "Version set to $semanticVersion" "INFO"
     
-    # Update Directory.Build.props with current version
-    $directoryBuildProps = Get-Content "Directory.Build.props" -Raw
-    $directoryBuildProps = $directoryBuildProps -replace '<AssemblyVersion>.*</AssemblyVersion>', "<AssemblyVersion>$semanticVersion</AssemblyVersion>"
-    $directoryBuildProps = $directoryBuildProps -replace '<FileVersion>.*</FileVersion>', "<FileVersion>$semanticVersion</FileVersion>"
-    $directoryBuildProps = $directoryBuildProps -replace '<Version>.*</Version>', "<Version>$semanticVersion</Version>"
-    Set-Content "Directory.Build.props" -Value $directoryBuildProps -Encoding UTF8
-
     # Clean and prepare release directories
     Write-Log "Cleaning release directories..." "INFO"
     if (Test-Path "release") {
@@ -427,9 +420,6 @@ try {
                 --self-contained false `
                 --output $outputPath `
                 -p:PublishSingleFile=true `
-                -p:Version=$semanticVersion `
-                -p:AssemblyVersion=$semanticVersion `
-                -p:FileVersion=$semanticVersion `
                 -p:IncludeSourceRevisionInInformationalVersion=false
                 
             if ($LASTEXITCODE -ne 0) {
@@ -455,9 +445,6 @@ try {
                         --self-contained false `
                         --output $outputPath `
                         -p:PublishSingleFile=true `
-                        -p:Version=$semanticVersion `
-                        -p:AssemblyVersion=$semanticVersion `
-                        -p:FileVersion=$semanticVersion `
                         -p:IncludeSourceRevisionInInformationalVersion=false
                         
                     if ($LASTEXITCODE -ne 0) {
@@ -482,9 +469,6 @@ try {
                 --self-contained false `
                 --output $outputPath `
                 -p:PublishSingleFile=true `
-                -p:Version=$semanticVersion `
-                -p:AssemblyVersion=$semanticVersion `
-                -p:FileVersion=$semanticVersion `
                 -p:IncludeSourceRevisionInInformationalVersion=false
                 
             if ($LASTEXITCODE -ne 0) {
