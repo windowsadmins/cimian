@@ -165,6 +165,12 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		return false, nil
 	}
 
+	// Check uninstallcheck_script FIRST for uninstall operations (highest priority)
+	if installType == "uninstall" && string(catalogItem.UninstallCheckScript) != "" {
+		logging.Info("Checking status via uninstallcheck_script", "item", catalogItem.Name)
+		return checkUninstallCheckScript(catalogItem, cachePath, installType)
+	}
+
 	// Check installcheck_script FIRST (highest priority)
 	if string(catalogItem.InstallCheckScript) != "" {
 		logging.Info("Checking status via installcheck_script", "item", catalogItem.Name)
@@ -335,6 +341,27 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 			Status:      "warning",
 			Reason:      "On-demand items cannot be uninstalled",
 			Error:       nil,
+		}
+	}
+
+	// Handle special check types - installcheck_script has highest priority unless uninstallcheck_script is present for uninstall operations
+	if installType == "uninstall" && string(catalogItem.UninstallCheckScript) != "" {
+		needsAction, err := checkUninstallCheckScriptQuiet(catalogItem, cachePath, installType, quiet)
+		status := "installed"
+		reason := "UninstallCheckScript indicates installed"
+		if needsAction {
+			status = "pending"
+			reason = "UninstallCheckScript indicates action needed"
+		}
+		if err != nil {
+			status = "error"
+			reason = fmt.Sprintf("UninstallCheckScript failed: %v", err)
+		}
+		return CheckResult{
+			NeedsAction: needsAction,
+			Status:      status,
+			Reason:      reason,
+			Error:       err,
 		}
 	}
 
@@ -1737,6 +1764,64 @@ func checkScriptQuiet(catalogItem catalog.Item, cachePath string, installType st
 		// For install or update: exit code == 0 => "not installed => install needed"
 		return cmdSuccess, nil
 	}
+}
+
+// checkUninstallCheckScript runs an uninstallcheck_script to decide if an item needs uninstalling.
+// This is a Cimian enhancement to provide separate uninstall logic from installcheck_script.
+// Return codes: 0 = proceed with uninstall, non-zero = skip uninstall (already uninstalled or condition not met)
+func checkUninstallCheckScript(catalogItem catalog.Item, cachePath string, installType string) (bool, error) {
+	tmpScript := filepath.Join(cachePath, "tmpUninstallCheckScript.ps1")
+	if err := os.WriteFile(tmpScript, []byte(catalogItem.UninstallCheckScript), 0755); err != nil {
+		return false, fmt.Errorf("failed to write uninstallcheck script: %w", err)
+	}
+	defer os.Remove(tmpScript)
+
+	psExe := filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
+	psArgs := []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpScript}
+
+	cmd := execCommand(psExe, psArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	cmdSuccess := cmd.ProcessState != nil && cmd.ProcessState.Success()
+	outStr, errStr := stdout.String(), stderr.String()
+
+	logging.Debug("UninstallCheckScript output", "stdout", outStr, "stderr", errStr, "error", err)
+
+	// For uninstallcheck_script: exit code == 0 => "proceed with uninstall"
+	// This is the opposite logic from installcheck_script
+	return cmdSuccess, nil
+}
+
+// checkUninstallCheckScriptQuiet is like checkUninstallCheckScript but with optional quiet mode (no logging)
+func checkUninstallCheckScriptQuiet(catalogItem catalog.Item, cachePath string, installType string, quiet bool) (bool, error) {
+	tmpScript := filepath.Join(cachePath, "tmpUninstallCheckScript.ps1")
+	if err := os.WriteFile(tmpScript, []byte(catalogItem.UninstallCheckScript), 0755); err != nil {
+		return false, fmt.Errorf("failed to write uninstallcheck script: %w", err)
+	}
+	defer os.Remove(tmpScript)
+
+	psExe := filepath.Join(os.Getenv("WINDIR"), "system32", "WindowsPowershell", "v1.0", "powershell.exe")
+	psArgs := []string{"-NoProfile", "-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tmpScript}
+
+	cmd := execCommand(psExe, psArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	cmdSuccess := cmd.ProcessState != nil && cmd.ProcessState.Success()
+	outStr, errStr := stdout.String(), stderr.String()
+
+	if !quiet {
+		logging.Debug("UninstallCheckScript output", "stdout", outStr, "stderr", errStr, "error", err)
+	}
+
+	// For uninstallcheck_script: exit code == 0 => "proceed with uninstall"
+	// This is the opposite logic from installcheck_script
+	return cmdSuccess, nil
 }
 
 // getUninstallKeys enumerates registry for installed apps
