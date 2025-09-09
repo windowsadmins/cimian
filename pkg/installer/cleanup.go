@@ -94,29 +94,32 @@ func (pc *ProcessCleanup) WaitForMSIAvailable(maxWaitMinutes int) error {
 	logging.Debug("Waiting for MSI service to become available", "maxWaitMinutes", maxWaitMinutes)
 	
 	timeout := time.Now().Add(time.Duration(maxWaitMinutes) * time.Minute)
+	checkCount := 0
 	
 	for time.Now().Before(timeout) {
+		checkCount++
 		busy, err := pc.checkMSIMutex()
 		if err != nil {
-			logging.Debug("Error checking MSI mutex", "error", err)
+			logging.Debug("Error checking MSI mutex", "error", err, "checkCount", checkCount)
 		}
 		
 		if !busy {
-			logging.Debug("MSI service is available")
+			logging.Debug("MSI service is available", "checkCount", checkCount)
 			return nil
 		}
 		
-		logging.Debug("MSI service is busy, waiting...")
-		time.Sleep(10 * time.Second)
+		logging.Debug("MSI service is busy, waiting...", "checkCount", checkCount)
+		time.Sleep(5 * time.Second) // Reduced from 10 to 5 seconds for faster response
 	}
 	
-	return fmt.Errorf("MSI service did not become available within %d minutes", maxWaitMinutes)
+	return fmt.Errorf("MSI service did not become available within %d minutes after %d checks", maxWaitMinutes, checkCount)
 }
 
 // checkMSIMutex checks if the Windows Installer service mutex is locked
 func (pc *ProcessCleanup) checkMSIMutex() (bool, error) {
 	// Try to run a quick MSI operation to check if installer is busy
-	cmd := exec.Command(commandMsi, "/help")
+	// Use /? instead of /help for faster response
+	cmd := exec.Command(commandMsi, "/?")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	
 	done := make(chan error, 1)
@@ -126,13 +129,19 @@ func (pc *ProcessCleanup) checkMSIMutex() (bool, error) {
 
 	select {
 	case err := <-done:
-		return err != nil, err
-	case <-time.After(5 * time.Second):
-		// If it takes more than 5 seconds to show help, installer is probably locked
+		// If msiexec /? runs successfully, the service is available
+		// Any error (including exit codes) suggests the service might be busy
+		if err != nil {
+			logging.Debug("MSI service check returned error", "error", err)
+			return true, err
+		}
+		return false, nil
+	case <-time.After(3 * time.Second):
+		// If it takes more than 3 seconds to show help, installer is probably locked
 		if cmd.Process != nil {
 			cmd.Process.Kill()
 		}
-		return true, fmt.Errorf("MSI service appears to be locked")
+		return true, fmt.Errorf("MSI service appears to be locked - help command timed out")
 	}
 }
 
@@ -148,7 +157,8 @@ func (pc *ProcessCleanup) RunMSIWithCleanup(msiPath string, arguments []string, 
 
 	// Wait for MSI service to be available
 	if err := pc.WaitForMSIAvailable(2); err != nil {
-		logging.Warn("MSI service availability check failed", "error", err)
+		logging.Error("MSI service is not available - cannot proceed with installation", "error", err)
+		return "", fmt.Errorf("MSI service unavailable after 2 minutes - cannot proceed: %w", err)
 	}
 
 	// Create context with timeout
@@ -350,11 +360,98 @@ func PreInstallMSICleanupV2(cfg *config.Configuration) error {
 // WaitForMSIAvailableV2 waits for MSI service to become available
 func WaitForMSIAvailableV2(maxWaitMinutes int, cfg *config.Configuration) error {
 	cleanup := GetGlobalCleanup(cfg)
-	return cleanup.WaitForMSIAvailable(maxWaitMinutes)
+	
+	// First attempt - normal wait
+	err := cleanup.WaitForMSIAvailable(maxWaitMinutes)
+	if err == nil {
+		return nil // Success
+	}
+	
+	// If first attempt failed, try emergency cleanup and retry once
+	logging.Warn("MSI service still unavailable after initial wait, attempting emergency cleanup", "error", err)
+	
+	if emergencyErr := cleanup.EmergencyCleanup(); emergencyErr != nil {
+		logging.Warn("Emergency cleanup failed", "error", emergencyErr)
+	}
+	
+	// Short retry after emergency cleanup
+	logging.Debug("Retrying MSI availability check after emergency cleanup")
+	retryErr := cleanup.WaitForMSIAvailable(1) // Only wait 1 more minute
+	if retryErr != nil {
+		return fmt.Errorf("MSI service unavailable even after emergency cleanup - original error: %w, retry error: %v", err, retryErr)
+	}
+	
+	logging.Info("MSI service became available after emergency cleanup")
+	return nil
 }
 
 // runMSIDirectlyV2 runs MSI with cleanup and timeout handling
 func runMSIDirectlyV2(msiPath string, arguments []string, timeoutMinutes int, cfg *config.Configuration) (string, error) {
 	cleanup := GetGlobalCleanup(cfg)
 	return cleanup.RunMSIWithCleanup(msiPath, arguments, timeoutMinutes)
+}
+
+// runMSIUninstallWithCleanup runs MSI uninstall with cleanup and timeout handling
+func runMSIUninstallWithCleanup(args []string, cfg *config.Configuration) (string, error) {
+	cleanup := GetGlobalCleanup(cfg)
+	
+	// Pre-uninstall cleanup
+	if err := cleanup.CleanupOrphanedMSIProcesses(); err != nil {
+		logging.Warn("Pre-uninstall cleanup had issues", "error", err)
+	}
+
+	// Wait for MSI service to be available
+	if err := cleanup.WaitForMSIAvailable(2); err != nil {
+		logging.Error("MSI service is not available - cannot proceed with uninstall", "error", err)
+		return "", fmt.Errorf("MSI service unavailable after 2 minutes - cannot proceed with uninstall: %w", err)
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.InstallerTimeoutMinutes)*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, commandMsi, args...)
+	
+	// Set up process attributes for proper cleanup
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+	}
+
+	// Capture output
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	if err != nil {
+		// Check if it was a timeout
+		if ctx.Err() == context.DeadlineExceeded {
+			logging.Error("MSI uninstall timed out", "args", args, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			
+			// Try to forcefully terminate the process and any child processes
+			if cmd.Process != nil {
+				logging.Debug("Terminating timed-out MSI uninstall process", "pid", cmd.Process.Pid)
+				cleanup.terminateProcessTree(cmd.Process.Pid)
+			}
+			
+			return outputStr, fmt.Errorf("MSI uninstall timed out after %d minutes", cfg.InstallerTimeoutMinutes)
+		}
+
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode := exitErr.ExitCode()
+			logging.Error("MSI uninstall failed", "args", args, "exitCode", exitCode, "output", outputStr)
+			return outputStr, fmt.Errorf("MSI uninstall failed with exit code %d: %s", exitCode, outputStr)
+		}
+
+		logging.Error("Failed to run MSI uninstall", "args", args, "error", err, "output", outputStr)
+		return outputStr, err
+	}
+	
+	logging.Debug("MSI uninstall completed successfully", "args", args, "output", outputStr)
+	
+	// Post-uninstall cleanup
+	if err := cleanup.CleanupOrphanedMSIProcesses(); err != nil {
+		logging.Warn("Post-uninstall cleanup had issues", "error", err)
+	}
+
+	return outputStr, nil
 }
