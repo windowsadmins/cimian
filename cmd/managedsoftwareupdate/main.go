@@ -149,27 +149,13 @@ func restartCimianWatcherService() error {
 func main() {
 	enableANSIConsole()
 
-	// Check for single instance - prevent multiple concurrent executions
-	mutex, err := checkSingleInstance()
-	if err != nil {
-		// Check if this is the "another instance running" error
-		if strings.Contains(err.Error(), "Another instance of managedsoftwareupdate is running") {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-		os.Exit(1)
-	}
-	// Ensure mutex is released when the program exits
-	defer releaseSingleInstance(mutex)
-
-	// Define command-line flags.
+	// Define command-line flags early to check for mutex exclusion flags
 	showConfig := pflag.Bool("show-config", false, "Display the current configuration and exit.")
 	checkOnly := pflag.Bool("checkonly", false, "Check for updates, but don't install them.")
+	versionFlag := pflag.Bool("version", false, "Print the version and exit.")
 	installOnly := pflag.Bool("installonly", false, "Install pending updates without checking for new ones.")
 	auto := pflag.Bool("auto", false, "Perform automatic updates.")
 	showStatus := pflag.Bool("show-status", false, "Show status window during operations (bootstrap mode).")
-	versionFlag := pflag.Bool("version", false, "Print the version and exit.")
 
 	// Bootstrap mode flags - similar to Munki's --set-bootstrap-mode and --clear-bootstrap-mode
 	setBootstrapMode := pflag.Bool("set-bootstrap-mode", false, "Enable bootstrap mode for next boot.")
@@ -204,6 +190,28 @@ func main() {
 	var verbosity int
 	pflag.CountVarP(&verbosity, "verbose", "v", "Increase verbosity (e.g. -v, -vv, -vvv, -vvvv)")
 	pflag.Parse()
+
+	// Check if we should skip the mutex for certain flags
+	skipMutex := *showConfig || *versionFlag || *checkOnly
+
+	// Check for single instance - prevent multiple concurrent executions
+	// Skip mutex for read-only operations that don't modify system state
+	var mutex windows.Handle
+	if !skipMutex {
+		var err error
+		mutex, err = checkSingleInstance()
+		if err != nil {
+			// Check if this is the "another instance running" error
+			if strings.Contains(err.Error(), "Another instance of managedsoftwareupdate is running") {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			os.Exit(1)
+		}
+		// Ensure mutex is released when the program exits
+		defer releaseSingleInstance(mutex)
+	}
 
 	// Handle --version flag first, before any other initialization.
 	if *versionFlag {
