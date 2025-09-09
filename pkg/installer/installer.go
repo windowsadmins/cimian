@@ -1059,7 +1059,14 @@ func processUninstallMSI(uninstallItem catalog.InstallItem, item catalog.Item) (
 
 	logging.Debug("Running MSI uninstall", "item", item.Name, "productCode", productCode, "args", args)
 	
-	return runCMD(commandMsi, args)
+	// Use timeout-aware MSI execution with cleanup for uninstalls
+	// Create a default config for cleanup operations
+	cfg := &config.Configuration{
+		InstallerTimeoutMinutes: 10, // Default 10-minute timeout for uninstalls
+	}
+	
+	// Use the new cleanup-aware MSI execution for uninstalls
+	return runMSIUninstallWithCleanup(args, cfg)
 }
 
 // processUninstallEXE handles EXE-specific uninstall operations
@@ -1287,7 +1294,19 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 
 	// Wait for MSI service to be available (avoid the "another install in progress" error)
 	if waitErr := WaitForMSIAvailableV2(2, cfg); waitErr != nil {
-		logging.Warn("MSI service availability check failed", "error", waitErr)
+		logging.Error("MSI service is not available - cannot proceed with installation", "error", waitErr)
+		
+		// Log MSI service unavailable as specific event for ReportMate
+		serviceErr := fmt.Errorf("MSI service unavailable after 2 minutes - likely locked by another installer")
+		status := logging.StatusFromError("msi_service_unavailable", serviceErr)
+		logging.LogEventEntry("install", "msi_service_unavailable", status,
+			"MSI service unavailable after 2 minutes - cannot proceed with installation",
+			logging.WithContext("item", item.Name),
+			logging.WithContext("wait_minutes", "2"),
+			logging.WithContext("installer_path", localFile),
+			logging.WithContext("recommended_action", "wait_for_other_installations_to_complete"))
+		
+		return "", fmt.Errorf("MSI service unavailable after 2 minutes - cannot proceed with installation: %w", waitErr)
 	}
 
 	// Use process-managed MSI execution to prevent orphaned processes
@@ -1384,7 +1403,14 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 	logging.Debug("runMSIUninstaller => final command",
 		"exe", commandMsi, "args", strings.Join(args, " "))
 
-	return runCMD(commandMsi, args)
+	// Use timeout-aware MSI execution with cleanup for uninstalls
+	// Create a default config for cleanup operations
+	cfg := &config.Configuration{
+		InstallerTimeoutMinutes: 10, // Default 10-minute timeout for uninstalls
+	}
+	
+	// Use the new cleanup-aware MSI execution for uninstalls
+	return runMSIUninstallWithCleanup(args, cfg)
 }
 
 func runMSIXInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
