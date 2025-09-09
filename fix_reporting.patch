@@ -1,0 +1,29 @@
+# Critical fixes for reporting.go
+
+## Fix 1: Session Summary Data Not Being Populated
+The main issue is in the GenerateSessionsTable function around line 277-325. The problem is that sessions are being read correctly but the Summary data is not being properly populated with the actual manifest counts.
+
+## Fix 2: Events Table JSON Parsing
+The JSON parsing logic in GenerateEventsTable has bugs in the brace counting that causes incomplete event processing.
+
+## Fix 3: Items Table Missing Data
+The GenerateItemsTable is not properly aggregating data because the events aren't being parsed correctly due to Fix 2.
+
+## Required Changes:
+
+### 1. Fix Session Summary Calculation
+In GenerateSessionsTable, around line 300-320, the summary is using `len(record.PackagesHandled)` but this is only the packages that had actions performed, not the total managed packages.
+
+The fix is to read the actual manifest data and count all managed items, not just the ones with actions.
+
+### 2. Fix JSON Parsing in Events
+The current parsing logic breaks on pretty-printed JSON. Need to use a proper JSON decoder that can handle the actual format.
+
+### 3. Add Proper Manifest Reading
+The reporting should read the same manifest that the main program uses to get the true total package count.
+
+## Impact:
+- Sessions showing 0 packages when there are actually 77
+- Events missing most data
+- Items only showing 6 packages instead of 77
+- No proper status reporting for ReportMate
