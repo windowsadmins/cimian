@@ -381,10 +381,17 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 			}
 
 			// Create enhanced summary for external reporting tools
+			// CRITICAL FIX: Get total managed packages from manifest, not just packages with actions
+			totalManagedPackages := exp.getTotalManagedPackagesFromManifest(sessionConfig)
+			if totalManagedPackages == 0 {
+				// Fallback to packages handled if manifest reading fails
+				totalManagedPackages = len(record.PackagesHandled)
+			}
+			
 			summary := &SessionSummary{
-				TotalPackagesManaged: len(record.PackagesHandled),
+				TotalPackagesManaged: totalManagedPackages,
 				PackagesInstalled:    record.Successes,
-				PackagesPending:      record.TotalActions - record.Successes - record.Failures,
+				PackagesPending:      totalManagedPackages - record.Successes - record.Failures,
 				PackagesFailed:       record.Failures,
 				CacheSizeMB:          cacheSize,
 			}
@@ -420,10 +427,16 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				// Add configuration and summary data to old format records too
 				record.Config = sessionConfig
 				if record.Summary == nil {
+					// CRITICAL FIX: Same fix for old format sessions
+					totalManagedPackages := exp.getTotalManagedPackagesFromManifest(sessionConfig)
+					if totalManagedPackages == 0 {
+						totalManagedPackages = len(record.PackagesHandled)
+					}
+					
 					record.Summary = &SessionSummary{
-						TotalPackagesManaged: len(record.PackagesHandled),
+						TotalPackagesManaged: totalManagedPackages,
 						PackagesInstalled:    record.Successes,
-						PackagesPending:      record.TotalActions - record.Successes - record.Failures,
+						PackagesPending:      totalManagedPackages - record.Successes - record.Failures,
 						PackagesFailed:       record.Failures,
 						CacheSizeMB:          cacheSize,
 					}
@@ -534,266 +547,233 @@ func (exp *DataExporter) generateSessionFromEvents(sessionDir string) *SessionRe
 func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) ([]EventRecord, error) {
 	eventsPath := filepath.Join(exp.baseDir, sessionID, "events.jsonl")
 
-	content, err := os.ReadFile(eventsPath)
+	file, err := os.Open(eventsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read events file: %w", err)
 	}
+	defer file.Close()
 
 	var records []EventRecord
 	cutoffTime := time.Now().Add(-time.Duration(limitHours) * time.Hour)
 
-	// Split content into individual JSON objects by finding complete JSON blocks
-	var currentJSON strings.Builder
-	var braceCount int
-	var inString bool
-	var escapeNext bool
+	// CRITICAL FIX: Use JSON decoder to properly handle pretty-printed JSON
+	decoder := json.NewDecoder(file)
+	
+	for {
+		var logEvent map[string]interface{}
+		if err := decoder.Decode(&logEvent); err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			// Skip malformed JSON and continue
+			logging.Debug("Skipping malformed JSON in events", "error", err)
+			continue
+		}
+		
+		// Parse timestamp
+		timestamp := ""
+		eventTime := time.Time{}
+		if ts, ok := logEvent["timestamp"].(string); ok {
+			timestamp = ts
+			if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
+				eventTime = t
+			}
+		}
 
-	for _, char := range string(content) {
-		if escapeNext {
-			escapeNext = false
-			currentJSON.WriteRune(char)
+		// Apply time filter
+		if limitHours > 0 && !eventTime.IsZero() && eventTime.Before(cutoffTime) {
 			continue
 		}
 
-		switch char {
-		case '\\':
-			escapeNext = true
-			currentJSON.WriteRune(char)
-		case '"':
-			if !escapeNext {
-				inString = !inString
+		// Extract package name and version from properties and message
+		packageName := ""
+		packageID := ""
+		version := ""
+		action := ""
+		status := ""
+		errorMsg := ""
+		installerType := ""
+
+		if props, ok := logEvent["properties"].(map[string]interface{}); ok {
+			if item, ok := props["item"].(string); ok {
+				packageName = item
+				packageID = exp.generatePackageID(item)
 			}
-			currentJSON.WriteRune(char)
-		case '{':
-			if !inString {
-				braceCount++
+			// Check multiple version field names used in Cimian logs
+			if ver, ok := props["version"].(string); ok {
+				version = ver
+			} else if ver, ok := props["registryVersion"].(string); ok {
+				version = ver
+			} else if ver, ok := props["localVersion"].(string); ok {
+				version = ver
+			} else if ver, ok := props["repoVersion"].(string); ok {
+				version = ver
+			} else if ver, ok := props["targetVersion"].(string); ok {
+				version = ver
 			}
-			currentJSON.WriteRune(char)
-		case '}':
-			if !inString {
-				braceCount--
+			if act, ok := props["action"].(string); ok {
+				action = act
 			}
-			currentJSON.WriteRune(char)
-		default:
-			currentJSON.WriteRune(char)
-		}
-
-		// If braces are balanced and we're not in a string, we have a complete JSON object
-		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
-			jsonStr := strings.TrimSpace(currentJSON.String())
-			if jsonStr != "" {
-				var logEvent map[string]interface{}
-				if err := json.Unmarshal([]byte(jsonStr), &logEvent); err == nil {
-					// Parse timestamp
-					timestamp := ""
-					eventTime := time.Time{}
-					if ts, ok := logEvent["timestamp"].(string); ok {
-						timestamp = ts
-						if t, err := time.Parse(time.RFC3339, timestamp); err == nil {
-							eventTime = t
-						}
-					}
-
-					// Apply time filter
-					if limitHours > 0 && !eventTime.IsZero() && eventTime.Before(cutoffTime) {
-						currentJSON.Reset()
-						continue
-					}
-
-					// Extract package name and version from properties and message
-					packageName := ""
-					packageID := ""
-					version := ""
-					action := ""
-					status := ""
-					errorMsg := ""
-					installerType := ""
-
-					if props, ok := logEvent["properties"].(map[string]interface{}); ok {
-						if item, ok := props["item"].(string); ok {
-							packageName = item
-							// Generate standardized package ID
-							packageID = exp.generatePackageID(item)
-						}
-						// Check multiple version field names used in Cimian logs
-						if ver, ok := props["version"].(string); ok {
-							version = ver
-						} else if ver, ok := props["registryVersion"].(string); ok {
-							version = ver
-						} else if ver, ok := props["localVersion"].(string); ok {
-							version = ver
-						} else if ver, ok := props["repoVersion"].(string); ok {
-							version = ver
-						} else if ver, ok := props["targetVersion"].(string); ok {
-							version = ver
-						}
-						if act, ok := props["action"].(string); ok {
-							action = act
-						}
-						if stat, ok := props["status"].(string); ok {
-							status = stat
-						}
-						if errVal, ok := props["error"]; ok && errVal != nil {
-							if errStr, ok := errVal.(string); ok {
-								errorMsg = errStr
-							}
-						}
-						// Extract installer type from installer path or method
-						if installerPath, ok := props["installer_path"].(string); ok {
-							installerType = exp.determineInstallerTypeFromPath(installerPath)
-						}
-					}
-
-					// Get message and extract additional version info if not already present
-					message := ""
-					eventType := "general"
-					if msg, ok := logEvent["message"].(string); ok {
-						message = msg
-
-						// Extract version from message if not found in properties
-						if version == "" {
-							version = exp.extractVersionFromMessage(message)
-						}
-
-						// Extract package name from message if not found in properties
-						if packageName == "" {
-							extractedName := exp.extractPackageFromMessage(message)
-							if extractedName != "" {
-								packageName = extractedName
-								packageID = exp.generatePackageID(extractedName)
-							}
-						}
-
-						msgLower := strings.ToLower(message)
-						if strings.Contains(msgLower, "install") {
-							eventType = "install"
-							if action == "" {
-								action = "install_package"
-							}
-						} else if strings.Contains(msgLower, "update") || strings.Contains(msgLower, "upgrade") {
-							eventType = "update"
-							if action == "" {
-								action = "update_package"
-							}
-						} else if strings.Contains(msgLower, "remove") || strings.Contains(msgLower, "uninstall") {
-							eventType = "remove"
-							if action == "" {
-								action = "remove_package"
-							}
-						} else if strings.Contains(msgLower, "download") {
-							eventType = "download"
-							if action == "" {
-								action = "download_file"
-							}
-						}
-					}
-
-					// Generate enhanced event ID with package information
-					eventID := fmt.Sprintf("%s-%s-%v", sessionID, packageID, logEvent["time"])
-					if packageID == "" {
-						eventID = fmt.Sprintf("%s-%v", sessionID, logEvent["time"])
-					}
-
-					// Get source information
-					level := ""
-					if l, ok := logEvent["level"].(string); ok {
-						level = l
-					}
-
-					sourceFile := ""
-					if sf, ok := logEvent["component"].(string); ok {
-						sourceFile = sf
-					}
-
-					sourceFunc := ""
-					if sf, ok := logEvent["process"].(string); ok {
-						sourceFunc = sf
-					}
-
-					// Enhanced error details for external reporting tools
-					var errorDetails *ErrorDetails
-					details := ""
-					if errorMsg != "" && level == "ERROR" {
-						errorDetails = exp.createErrorDetails(errorMsg, message, action)
-						details = fmt.Sprintf("Error Details: %s", errorMsg)
-						if strings.Contains(message, "timeout") {
-							details += ". This may be due to network connectivity issues."
-						} else if strings.Contains(message, "exit code") {
-							details += ". Check installer logs for more information."
-						}
-					}
-
-					// Create event context for external reporting tool integration
-					eventContext := &EventContext{}
-					if props, ok := logEvent["properties"].(map[string]interface{}); ok {
-						if runType, ok := props["run_type"].(string); ok {
-							eventContext.RunType = runType
-						}
-						if user, ok := props["user"].(string); ok {
-							eventContext.User = user
-						}
-						if hostname, ok := props["hostname"].(string); ok {
-							eventContext.Hostname = hostname
-						}
-						if processID, ok := props["process_id"].(float64); ok {
-							eventContext.ProcessID = int(processID)
-						}
-					}
-
-					// Extract duration and progress if available
-					var duration int64
-					var progress int
-					if props, ok := logEvent["properties"].(map[string]interface{}); ok {
-						if dur, ok := props["duration_ms"].(float64); ok {
-							duration = int64(dur)
-						}
-						if prog, ok := props["progress"].(float64); ok {
-							progress = int(prog)
-						}
-					}
-
-					// Generate log file path for this session
-					logFilePath := filepath.Join(exp.baseDir, sessionID, "events.jsonl")
-
-					record := EventRecord{
-						EventID:    eventID,
-						SessionID:  sessionID,
-						Timestamp:  timestamp,
-						Level:      level,
-						EventType:  eventType,
-						
-						// Enhanced package context for ReportMate
-						PackageID:      packageID,
-						PackageName:    packageName,
-						PackageVersion: version,
-						
-						// Legacy fields (maintained for compatibility)
-						Package:    packageName,
-						Version:    version,
-						
-						Action:     action,
-						Status:     exp.normalizeStatus(status, level, errorMsg), // Apply status normalization
-						Message:    message,
-						Duration:   duration,
-						Progress:   progress,
-						Error:      errorMsg,
-						SourceFile: sourceFile,
-						SourceFunc: sourceFunc,
-						SourceLine: 0,
-
-						// Enhanced fields
-						ErrorDetails:  errorDetails,
-						InstallerType: installerType,
-						Details:       details,
-						Context:       eventContext,
-						LogFile:       logFilePath,
-					}
-
-					records = append(records, record)
+			if stat, ok := props["status"].(string); ok {
+				status = stat
+			}
+			if errVal, ok := props["error"]; ok && errVal != nil {
+				if errStr, ok := errVal.(string); ok {
+					errorMsg = errStr
 				}
 			}
-			currentJSON.Reset()
+			// Extract installer type from installer path or method
+			if installerPath, ok := props["installer_path"].(string); ok {
+				installerType = exp.determineInstallerTypeFromPath(installerPath)
+			}
 		}
+
+		// Get message and extract additional version info if not already present
+		message := ""
+		eventType := "general"
+		if msg, ok := logEvent["message"].(string); ok {
+			message = msg
+
+			// Extract version from message if not found in properties
+			if version == "" {
+				version = exp.extractVersionFromMessage(message)
+			}
+
+			// Extract package name from message if not found in properties
+			if packageName == "" {
+				extractedName := exp.extractPackageFromMessage(message)
+				if extractedName != "" {
+					packageName = extractedName
+					packageID = exp.generatePackageID(extractedName)
+				}
+			}
+
+			msgLower := strings.ToLower(message)
+			if strings.Contains(msgLower, "install") {
+				eventType = "install"
+				if action == "" {
+					action = "install_package"
+				}
+			} else if strings.Contains(msgLower, "update") || strings.Contains(msgLower, "upgrade") {
+				eventType = "update"
+				if action == "" {
+					action = "update_package"
+				}
+			} else if strings.Contains(msgLower, "remove") || strings.Contains(msgLower, "uninstall") {
+				eventType = "remove"
+				if action == "" {
+					action = "remove_package"
+				}
+			} else if strings.Contains(msgLower, "download") {
+				eventType = "download"
+				if action == "" {
+					action = "download_file"
+				}
+			}
+		}
+
+		// Generate enhanced event ID with package information
+		eventID := fmt.Sprintf("%s-%s-%v", sessionID, packageID, logEvent["time"])
+		if packageID == "" {
+			eventID = fmt.Sprintf("%s-%v", sessionID, logEvent["time"])
+		}
+
+		// Get source information
+		level := ""
+		if l, ok := logEvent["level"].(string); ok {
+			level = l
+		}
+
+		sourceFile := ""
+		if sf, ok := logEvent["component"].(string); ok {
+			sourceFile = sf
+		}
+
+		sourceFunc := ""
+		if sf, ok := logEvent["process"].(string); ok {
+			sourceFunc = sf
+		}
+
+		// Enhanced error details for external reporting tools
+		var errorDetails *ErrorDetails
+		details := ""
+		if errorMsg != "" && level == "ERROR" {
+			errorDetails = exp.createErrorDetails(errorMsg, message, action)
+			details = fmt.Sprintf("Error Details: %s", errorMsg)
+			if strings.Contains(message, "timeout") {
+				details += ". This may be due to network connectivity issues."
+			} else if strings.Contains(message, "exit code") {
+				details += ". Check installer logs for more information."
+			}
+		}
+
+		// Create event context for external reporting tool integration
+		eventContext := &EventContext{}
+		if props, ok := logEvent["properties"].(map[string]interface{}); ok {
+			if runType, ok := props["run_type"].(string); ok {
+				eventContext.RunType = runType
+			}
+			if user, ok := props["user"].(string); ok {
+				eventContext.User = user
+			}
+			if hostname, ok := props["hostname"].(string); ok {
+				eventContext.Hostname = hostname
+			}
+			if processID, ok := props["process_id"].(float64); ok {
+				eventContext.ProcessID = int(processID)
+			}
+		}
+
+		// Extract duration and progress if available
+		var duration int64
+		var progress int
+		if props, ok := logEvent["properties"].(map[string]interface{}); ok {
+			if dur, ok := props["duration_ms"].(float64); ok {
+				duration = int64(dur)
+			}
+			if prog, ok := props["progress"].(float64); ok {
+				progress = int(prog)
+			}
+		}
+
+		// Generate log file path for this session
+		logFilePath := filepath.Join(exp.baseDir, sessionID, "events.jsonl")
+
+		record := EventRecord{
+			EventID:    eventID,
+			SessionID:  sessionID,
+			Timestamp:  timestamp,
+			Level:      level,
+			EventType:  eventType,
+			
+			// Enhanced package context for ReportMate
+			PackageID:      packageID,
+			PackageName:    packageName,
+			PackageVersion: version,
+			
+			// Legacy fields (maintained for compatibility)
+			Package:    packageName,
+			Version:    version,
+			
+			Action:     action,
+			Status:     exp.normalizeStatus(status, level, errorMsg),
+			Message:    message,
+			Duration:   duration,
+			Progress:   progress,
+			Error:      errorMsg,
+			SourceFile: sourceFile,
+			SourceFunc: sourceFunc,
+			SourceLine: 0,
+
+			// Enhanced fields
+			ErrorDetails:  errorDetails,
+			InstallerType: installerType,
+			Details:       details,
+			Context:       eventContext,
+			LogFile:       logFilePath,
+		}
+
+		records = append(records, record)
 	}
 
 	return records, nil
@@ -2159,4 +2139,57 @@ func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageNa
 	}
 	
 	return "verify_installer_configuration_and_check_registry_state"
+}
+
+// getTotalManagedPackagesFromManifest gets the total number of managed packages from the current manifest
+// This fixes the critical bug where sessions show 0 managed packages when no actions were performed
+func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *SessionConfig) int {
+	if sessionConfig == nil || sessionConfig.Manifest == "" {
+		return 0
+	}
+	
+	// Try to load the current manifest using the same logic as the main program
+	manifestPath := ""
+	
+	// Look for manifest files in common locations
+	possiblePaths := []string{
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", sessionConfig.Manifest+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", sessionConfig.Manifest),
+		// Try with catalogs directory as well
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", sessionConfig.Manifest+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", sessionConfig.Manifest),
+	}
+	
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			manifestPath = path
+			break
+		}
+	}
+	
+	if manifestPath == "" {
+		logging.Debug("Could not find manifest file for package counting", "manifest", sessionConfig.Manifest)
+		return 0
+	}
+	
+	// Read and parse the manifest file
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		logging.Debug("Could not read manifest file", "path", manifestPath, "error", err)
+		return 0
+	}
+	
+	// Parse manifest YAML to count items
+	var manifest struct {
+		Items []map[string]interface{} `yaml:"items"`
+	}
+	
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		logging.Debug("Could not parse manifest YAML", "path", manifestPath, "error", err)
+		return 0
+	}
+	
+	totalPackages := len(manifest.Items)
+	logging.Debug("Read total packages from manifest", "count", totalPackages, "manifest", sessionConfig.Manifest)
+	return totalPackages
 }
