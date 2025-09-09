@@ -2,8 +2,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,6 +155,92 @@ func verifyPayload(repoPath string, items []PkgsInfo) ([]PkgsInfo, []string) {
 	return items, warnings
 }
 
+// calculateFileHash returns the SHA256 hash of a file
+func calculateFileHash(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// getFileSize returns the size of a file in kilobytes (matching makepkginfo behavior)
+func getFileSize(filePath string) (int64, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size() / 1024, nil // Convert bytes to KB
+}
+
+// verifyHashesAndSizes checks if installer/uninstaller hashes and sizes match actual files
+func verifyHashesAndSizes(repoPath string, items []PkgsInfo) []string {
+	var warnings []string
+	pkgsDir := filepath.Join(repoPath, "pkgs")
+
+	for _, item := range items {
+		// Check installer hash and size
+		if item.Installer != nil && item.Installer.Location != "" {
+			fullPath := filepath.Join(pkgsDir, item.Installer.Location)
+			if _, err := os.Stat(fullPath); err == nil {
+				// Verify hash if provided
+				if item.Installer.Hash != "" {
+					actualHash, err := calculateFileHash(fullPath)
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - error calculating hash for %s: %v", item.FilePath, item.Installer.Location, err))
+					} else if !strings.EqualFold(actualHash, item.Installer.Hash) {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - hash mismatch for %s (expected: %s, actual: %s)", item.FilePath, item.Installer.Location, item.Installer.Hash, actualHash))
+					}
+				}
+
+				// Verify size if provided
+				if item.Installer.Size > 0 {
+					actualSize, err := getFileSize(fullPath)
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - error getting size for %s: %v", item.FilePath, item.Installer.Location, err))
+					} else if actualSize != item.Installer.Size {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - size mismatch for %s (expected: %d KB, actual: %d KB)", item.FilePath, item.Installer.Location, item.Installer.Size, actualSize))
+					}
+				}
+			}
+		}
+
+		// Check uninstaller hash and size
+		if item.Uninstaller != nil && item.Uninstaller.Location != "" {
+			fullPath := filepath.Join(pkgsDir, item.Uninstaller.Location)
+			if _, err := os.Stat(fullPath); err == nil {
+				// Verify hash if provided
+				if item.Uninstaller.Hash != "" {
+					actualHash, err := calculateFileHash(fullPath)
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - error calculating hash for uninstaller %s: %v", item.FilePath, item.Uninstaller.Location, err))
+					} else if !strings.EqualFold(actualHash, item.Uninstaller.Hash) {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - uninstaller hash mismatch for %s (expected: %s, actual: %s)", item.FilePath, item.Uninstaller.Location, item.Uninstaller.Hash, actualHash))
+					}
+				}
+
+				// Verify size if provided
+				if item.Uninstaller.Size > 0 {
+					actualSize, err := getFileSize(fullPath)
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - error getting uninstaller size for %s: %v", item.FilePath, item.Uninstaller.Location, err))
+					} else if actualSize != item.Uninstaller.Size {
+						warnings = append(warnings, fmt.Sprintf("WARNING: %s - uninstaller size mismatch for %s (expected: %d KB, actual: %d KB)", item.FilePath, item.Uninstaller.Location, item.Uninstaller.Size, actualSize))
+					}
+				}
+			}
+		}
+	}
+
+	return warnings
+}
+
 // buildCatalogs organizes items into catalogs, always including “All”.
 func buildCatalogs(pkgs []PkgsInfo, silent bool) (map[string][]PkgsInfo, error) {
 	cats := make(map[string][]PkgsInfo)
@@ -228,6 +317,7 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 func main() {
 	repoFlag := flag.String("repo_path", "", "Path to the Cimian repo. If empty, uses config.")
 	skipFlag := flag.Bool("skip_payload_check", false, "Disable checking for .Installer/.Uninstaller files.")
+	hashCheckFlag := flag.Bool("hash_check", false, "Enable hash and size validation (slow - use when needed).")
 	silentFlag := flag.Bool("silent", false, "Minimize output.")
 	showVersionFlag := flag.Bool("version", false, "Print version and exit.")
 	flag.Parse()
@@ -274,6 +364,15 @@ func main() {
 	// If skip_payload_check == false => do the check and accumulate warnings
 	if !*skipFlag {
 		finalItems, warnings = verifyPayload(repo, finalItems)
+	}
+
+	// If hash_check == true => do hash and size validation (opt-in due to performance cost)
+	if *hashCheckFlag {
+		if !*silentFlag {
+			logger.Printf("Performing hash and size validation (this may take a while)...")
+		}
+		hashWarnings := verifyHashesAndSizes(repo, finalItems)
+		warnings = append(warnings, hashWarnings...)
 	}
 
 	// Build catalogs
