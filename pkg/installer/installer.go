@@ -937,7 +937,8 @@ func processUninstallItem(uninstallItem catalog.InstallItem, item catalog.Item, 
 
 // processUninstallFile removes a specific file
 func processUninstallFile(uninstallItem catalog.InstallItem, item catalog.Item) (string, error) {
-	path := uninstallItem.Path
+	// Normalize Windows path to handle backslash escaping consistently with other arrays
+	path := filepath.FromSlash(uninstallItem.Path)
 
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -957,7 +958,8 @@ func processUninstallFile(uninstallItem catalog.InstallItem, item catalog.Item) 
 
 // processUninstallDirectory removes a specific directory
 func processUninstallDirectory(uninstallItem catalog.InstallItem, item catalog.Item) (string, error) {
-	path := uninstallItem.Path
+	// Normalize Windows path to handle backslash escaping consistently with other arrays
+	path := filepath.FromSlash(uninstallItem.Path)
 
 	// Check if directory exists
 	if info, err := os.Stat(path); os.IsNotExist(err) {
@@ -1062,7 +1064,8 @@ func processUninstallMSI(uninstallItem catalog.InstallItem, item catalog.Item) (
 
 // processUninstallEXE handles EXE-specific uninstall operations
 func processUninstallEXE(uninstallItem catalog.InstallItem, item catalog.Item, cachePath string) (string, error) {
-	exePath := uninstallItem.Path
+	// Normalize Windows path to handle backslash escaping consistently with other arrays
+	exePath := filepath.FromSlash(uninstallItem.Path)
 
 	// Check if uninstaller exists
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
@@ -1137,7 +1140,8 @@ func processUninstallEXE(uninstallItem catalog.InstallItem, item catalog.Item, c
 
 // processUninstallPowerShell handles PowerShell script uninstall operations
 func processUninstallPowerShell(uninstallItem catalog.InstallItem, item catalog.Item, cachePath string) (string, error) {
-	scriptPath := uninstallItem.Path
+	// Normalize Windows path to handle backslash escaping consistently with other arrays
+	scriptPath := filepath.FromSlash(uninstallItem.Path)
 
 	// Check if script exists
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
