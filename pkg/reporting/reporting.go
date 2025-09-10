@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -556,19 +557,13 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 	var records []EventRecord
 	cutoffTime := time.Now().Add(-time.Duration(limitHours) * time.Hour)
 
-	// CRITICAL FIX: Use JSON decoder to properly handle pretty-printed JSON
-	decoder := json.NewDecoder(file)
+	// ENHANCED FIX: Use robust JSON parsing to handle both JSONL and pretty-printed JSON
+	events, err := exp.parseEventsWithRecovery(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse events: %w", err)
+	}
 	
-	for {
-		var logEvent map[string]interface{}
-		if err := decoder.Decode(&logEvent); err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			// Skip malformed JSON and continue
-			logging.Debug("Skipping malformed JSON in events", "error", err)
-			continue
-		}
+	for _, logEvent := range events {
 		
 		// Parse timestamp
 		timestamp := ""
@@ -1168,6 +1163,119 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 
 // Helper types and methods
 
+// parseEventsWithRecovery provides robust JSON parsing for events.jsonl files
+// It handles both line-by-line JSONL format and pretty-printed multi-line JSON objects
+func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]interface{}, error) {
+	var events []map[string]interface{}
+	
+	// First, try the line-by-line decoder (most common format)
+	file.Seek(0, 0) // Reset to beginning
+	decoder := json.NewDecoder(file)
+	lineNum := 0
+	
+	for {
+		var event map[string]interface{}
+		err := decoder.Decode(&event)
+		lineNum++
+		
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			
+			// Log the specific JSON parsing issue for debugging
+			logging.Debug("Skipping malformed JSON in events", 
+				"line", lineNum, 
+				"error", err, 
+				"description", "JSON decoder encountered invalid format")
+			continue
+		}
+		
+		events = append(events, event)
+	}
+	
+	// If we got events from the decoder, use them
+	if len(events) > 0 {
+		return events, nil
+	}
+	
+	// Fallback: Try manual parsing for pretty-printed JSON
+	logging.Debug("JSON decoder failed, trying manual parsing for pretty-printed JSON")
+	file.Seek(0, 0) // Reset to beginning
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file content: %w", err)
+	}
+	
+	return exp.parseMultilineJSON(string(content))
+}
+
+// parseMultilineJSON handles pretty-printed JSON objects separated by newlines or whitespace
+func (exp *DataExporter) parseMultilineJSON(content string) ([]map[string]interface{}, error) {
+	var events []map[string]interface{}
+	var currentJSON strings.Builder
+	var braceCount int
+	var inString bool
+	var escapeNext bool
+	
+	for _, char := range content {
+		if escapeNext {
+			escapeNext = false
+			currentJSON.WriteRune(char)
+			continue
+		}
+		
+		switch char {
+		case '\\':
+			escapeNext = true
+			currentJSON.WriteRune(char)
+		case '"':
+			if !escapeNext {
+				inString = !inString
+			}
+			currentJSON.WriteRune(char)
+		case '{':
+			if !inString {
+				braceCount++
+			}
+			currentJSON.WriteRune(char)
+		case '}':
+			if !inString {
+				braceCount--
+			}
+			currentJSON.WriteRune(char)
+		default:
+			currentJSON.WriteRune(char)
+		}
+		
+		// If braces are balanced and we have a complete JSON object
+		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
+			jsonStr := strings.TrimSpace(currentJSON.String())
+			if jsonStr != "" && jsonStr != "{}" {
+				var event map[string]interface{}
+				if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
+					events = append(events, event)
+				} else {
+					logging.Debug("Failed to parse JSON object", 
+						"error", err, 
+						"content_preview", jsonStr[:min(100, len(jsonStr))])
+				}
+			}
+			currentJSON.Reset()
+		}
+	}
+	
+	return events, nil
+}
+
+// min returns the smaller of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // comprehensiveItemStat tracks detailed statistics for an item across all sessions
 type comprehensiveItemStat struct {
 	Name                string
@@ -1498,62 +1606,23 @@ func (exp *DataExporter) detectInstallLoop(attempts []ItemAttempt) bool {
 func (exp *DataExporter) getSessionStartTimeFromEvents(sessionDir string) time.Time {
 	eventsPath := filepath.Join(exp.baseDir, sessionDir, "events.jsonl")
 
-	content, err := os.ReadFile(eventsPath)
+	file, err := os.Open(eventsPath)
 	if err != nil {
 		return time.Time{}
 	}
+	defer file.Close()
 
-	// Handle multi-line JSON format - get the first complete JSON object
-	var currentJSON strings.Builder
-	var braceCount int
-	var inString bool
-	var escapeNext bool
+	// Use robust JSON parsing to get the first event
+	events, err := exp.parseEventsWithRecovery(file)
+	if err != nil || len(events) == 0 {
+		return time.Time{}
+	}
 
-	for _, char := range string(content) {
-		if escapeNext {
-			escapeNext = false
-			currentJSON.WriteRune(char)
-			continue
-		}
-
-		switch char {
-		case '\\':
-			escapeNext = true
-			currentJSON.WriteRune(char)
-		case '"':
-			if !escapeNext {
-				inString = !inString
-			}
-			currentJSON.WriteRune(char)
-		case '{':
-			if !inString {
-				braceCount++
-			}
-			currentJSON.WriteRune(char)
-		case '}':
-			if !inString {
-				braceCount--
-			}
-			currentJSON.WriteRune(char)
-		default:
-			currentJSON.WriteRune(char)
-		}
-
-		// If braces are balanced and we have the first complete JSON object
-		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
-			jsonStr := strings.TrimSpace(currentJSON.String())
-			if jsonStr != "" {
-				var event map[string]interface{}
-				if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
-					if timestampStr, ok := event["timestamp"].(string); ok {
-						if timestamp, err := time.Parse(time.RFC3339, timestampStr); err == nil {
-							return timestamp
-						}
-					}
-				}
-			}
-			// Return after first event
-			break
+	// Get timestamp from first event
+	firstEvent := events[0]
+	if timestampStr, ok := firstEvent["timestamp"].(string); ok {
+		if timestamp, err := time.Parse(time.RFC3339, timestampStr); err == nil {
+			return timestamp
 		}
 	}
 
@@ -1564,117 +1633,80 @@ func (exp *DataExporter) getSessionStartTimeFromEvents(sessionDir string) time.T
 func (exp *DataExporter) fillMissingSessionData(record *SessionRecord, sessionDir string) {
 	eventsPath := filepath.Join(exp.baseDir, sessionDir, "events.jsonl")
 
-	content, err := os.ReadFile(eventsPath)
+	file, err := os.Open(eventsPath)
 	if err != nil {
 		return
 	}
+	defer file.Close()
 
-	// Handle multi-line JSON format (pretty-printed JSON objects)
-	var currentJSON strings.Builder
-	var braceCount int
-	var inString bool
-	var escapeNext bool
+	// Use robust JSON parsing to get events
+	events, err := exp.parseEventsWithRecovery(file)
+	if err != nil || len(events) == 0 {
+		return
+	}
 
-	for _, char := range string(content) {
-		if escapeNext {
-			escapeNext = false
-			currentJSON.WriteRune(char)
-			continue
-		}
-
-		switch char {
-		case '\\':
-			escapeNext = true
-			currentJSON.WriteRune(char)
-		case '"':
-			if !escapeNext {
-				inString = !inString
-			}
-			currentJSON.WriteRune(char)
-		case '{':
-			if !inString {
-				braceCount++
-			}
-			currentJSON.WriteRune(char)
-		case '}':
-			if !inString {
-				braceCount--
-			}
-			currentJSON.WriteRune(char)
-		default:
-			currentJSON.WriteRune(char)
-		}
-
-		// If braces are balanced and we have a complete JSON object
-		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
-			jsonStr := strings.TrimSpace(currentJSON.String())
-			if jsonStr != "" {
-				var event map[string]interface{}
-				if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
-					// Extract environment data from event properties
-					if props, ok := event["properties"].(map[string]interface{}); ok {
-						if record.Hostname == "" {
-							if hostname, ok := props["hostname"].(string); ok && hostname != "" {
-								record.Hostname = hostname
-							}
-						}
-						if record.User == "" {
-							if user, ok := props["user"].(string); ok && user != "" {
-								record.User = user
-							}
-						}
-						if record.LogVersion == "" {
-							if version, ok := props["log_version"].(string); ok && version != "" {
-								record.LogVersion = version
-							}
-						}
-						if record.ProcessID == 0 {
-							if processID, ok := props["process_id"].(float64); ok && processID > 0 {
-								record.ProcessID = int(processID)
-							}
-						}
-					}
-
-					// Also check direct event fields (correct field names)
-					if record.Hostname == "" {
-						if hostname, ok := event["hostname"].(string); ok && hostname != "" {
-							record.Hostname = hostname
-						}
-					}
-					if record.User == "" {
-						if user, ok := event["user"].(string); ok && user != "" {
-							record.User = user
-						}
-					}
-					if record.LogVersion == "" {
-						if version, ok := event["version"].(string); ok && version != "" {
-							record.LogVersion = version
-						}
-					}
-					if record.ProcessID == 0 {
-						if processID, ok := event["pid"].(float64); ok && processID > 0 {
-							record.ProcessID = int(processID)
-						}
-					}
-					if record.RunType == "" {
-						if runType, ok := event["run_type"].(string); ok && runType != "" {
-							record.RunType = runType
-						}
-					}
-
-					// Stop once we have all the data we need
-					if record.Hostname != "" && record.LogVersion != "" && record.ProcessID != 0 && record.RunType != "" {
-						// If user is still missing, try to get it from the environment
-						if record.User == "" {
-							if user := os.Getenv("USERNAME"); user != "" {
-								record.User = user
-							}
-						}
-						return
-					}
+	// Check events for missing environment data
+	for _, event := range events {
+		// Extract environment data from event properties
+		if props, ok := event["properties"].(map[string]interface{}); ok {
+			if record.Hostname == "" {
+				if hostname, ok := props["hostname"].(string); ok && hostname != "" {
+					record.Hostname = hostname
 				}
 			}
-			currentJSON.Reset()
+			if record.User == "" {
+				if user, ok := props["user"].(string); ok && user != "" {
+					record.User = user
+				}
+			}
+			if record.LogVersion == "" {
+				if version, ok := props["log_version"].(string); ok && version != "" {
+					record.LogVersion = version
+				}
+			}
+			if record.ProcessID == 0 {
+				if processID, ok := props["process_id"].(float64); ok && processID > 0 {
+					record.ProcessID = int(processID)
+				}
+			}
+		}
+
+		// Also check direct event fields (correct field names)
+		if record.Hostname == "" {
+			if hostname, ok := event["hostname"].(string); ok && hostname != "" {
+				record.Hostname = hostname
+			}
+		}
+		if record.User == "" {
+			if user, ok := event["user"].(string); ok && user != "" {
+				record.User = user
+			}
+		}
+		if record.LogVersion == "" {
+			if version, ok := event["version"].(string); ok && version != "" {
+				record.LogVersion = version
+			}
+		}
+		if record.ProcessID == 0 {
+			if processID, ok := event["pid"].(float64); ok && processID > 0 {
+				record.ProcessID = int(processID)
+			}
+		}
+		if record.RunType == "" {
+			if runType, ok := event["run_type"].(string); ok && runType != "" {
+				record.RunType = runType
+			}
+		}
+
+		// Stop once we have all the data we need
+		if record.Hostname != "" && record.LogVersion != "" && record.ProcessID != 0 && record.RunType != "" {
+			// If user is still missing, try to get it from the environment
+			if record.User == "" {
+				if user := os.Getenv("USERNAME"); user != "" {
+					record.User = user
+				}
+			}
+			return
 		}
 	}
 }
@@ -2143,32 +2175,60 @@ func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageNa
 
 // getTotalManagedPackagesFromManifest gets the total number of managed packages from the current manifest
 // This fixes the critical bug where sessions show 0 managed packages when no actions were performed
+// CRITICAL FIX: Handle hierarchical manifest paths (e.g., "Shared/Curriculum/Animation/C3234/CintiqLab16")
 func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *SessionConfig) int {
 	if sessionConfig == nil || sessionConfig.Manifest == "" {
 		return 0
 	}
 	
-	// Try to load the current manifest using the same logic as the main program
+	// Handle hierarchical paths (e.g., "Shared/Curriculum/Animation/C3234/CintiqLab16" or "Shared\Curriculum\Animation\C3234\CintiqLab16")
+	manifestName := sessionConfig.Manifest
+	
+	// Normalize path separators - handle both forward slashes and backslashes
+	// This ensures we work regardless of how the path was constructed (preflight vs manual config)
+	hierarchicalPath := strings.ReplaceAll(manifestName, "/", string(filepath.Separator))
+	hierarchicalPath = strings.ReplaceAll(hierarchicalPath, "\\", string(filepath.Separator))
+	
+	// Also create a version with forward slashes for potential Unix-style path matching
+	unixStylePath := strings.ReplaceAll(manifestName, "\\", "/")
+	
+	// Try to load the current manifest using hierarchical path resolution
 	manifestPath := ""
 	
-	// Look for manifest files in common locations
+	// Look for manifest files in common locations - prioritize hierarchical paths
 	possiblePaths := []string{
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", sessionConfig.Manifest+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", sessionConfig.Manifest),
-		// Try with catalogs directory as well
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", sessionConfig.Manifest+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", sessionConfig.Manifest),
+		// PRIORITY 1: Try normalized hierarchical path first (most common for complex deployments)
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath),
+		
+		// PRIORITY 2: Try direct name as-is (backward compatibility)
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", manifestName+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", manifestName),
+		
+		// PRIORITY 3: Try Unix-style path (additional fallback)
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", unixStylePath+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", unixStylePath),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", manifestName),
+		
+		// PRIORITY 4: Try with catalogs directory as well (all variations)
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", manifestName+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", manifestName),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath+".yaml"),
+		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath),
 	}
 	
 	for _, path := range possiblePaths {
 		if _, err := os.Stat(path); err == nil {
 			manifestPath = path
+			logging.Debug("Found manifest file for package counting", "manifest", sessionConfig.Manifest, "path", path)
 			break
 		}
 	}
 	
 	if manifestPath == "" {
-		logging.Debug("Could not find manifest file for package counting", "manifest", sessionConfig.Manifest)
+		logging.Debug("Could not find manifest file for package counting", "manifest", sessionConfig.Manifest, "attempted_paths", possiblePaths)
 		return 0
 	}
 	
