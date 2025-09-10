@@ -109,6 +109,31 @@ try {
         Write-Warning "Some file operations may fail due to locked files"
     }
     
+    # Clean up any existing backup folders from previous installations/upgrades
+    Write-Host "Cleaning up old backup folders..."
+    try {
+        if (Test-Path $InstallDir) {
+            $backupFolders = Get-ChildItem -Path $InstallDir -Directory | Where-Object { $_.Name -match "^backup-\d{8}-\d{6}$" }
+            if ($backupFolders) {
+                Write-Host "Found $($backupFolders.Count) backup folder(s) to remove:"
+                foreach ($backupFolder in $backupFolders) {
+                    Write-Host "  Removing: $($backupFolder.Name)"
+                    try {
+                        Remove-Item -Path $backupFolder.FullName -Recurse -Force -ErrorAction Stop
+                        Write-Host "    ✅ Successfully removed $($backupFolder.Name)"
+                    } catch {
+                        Write-Warning "    ❌ Failed to remove $($backupFolder.Name): $_"
+                    }
+                }
+            } else {
+                Write-Host "No backup folders found to clean up"
+            }
+        }
+    } catch {
+        Write-Warning "Error during backup folder cleanup: $_"
+        Write-Warning "Continuing with installation..."
+    }
+    
     # Create native Program Files\Cimian directory (never x86)
     Write-Host "Creating ARM64-safe installation directory: $InstallDir"
     if (-not (Test-Path $InstallDir)) {
