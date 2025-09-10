@@ -7,6 +7,31 @@ param(
 
 Write-Host "Installing Cimian scheduled tasks..."
 
+# Clean up any existing backup folders from previous installations/upgrades
+Write-Host "Cleaning up old backup folders..."
+try {
+    if (Test-Path $InstallPath) {
+        $backupFolders = Get-ChildItem -Path $InstallPath -Directory | Where-Object { $_.Name -match "^backup-\d{8}-\d{6}$" }
+        if ($backupFolders) {
+            Write-Host "Found $($backupFolders.Count) backup folder(s) to remove:"
+            foreach ($backupFolder in $backupFolders) {
+                Write-Host "  Removing: $($backupFolder.Name)"
+                try {
+                    Remove-Item -Path $backupFolder.FullName -Recurse -Force -ErrorAction Stop
+                    Write-Host "    ✅ Successfully removed $($backupFolder.Name)"
+                } catch {
+                    Write-Warning "    ❌ Failed to remove $($backupFolder.Name): $_"
+                }
+            }
+        } else {
+            Write-Host "No backup folders found to clean up"
+        }
+    }
+} catch {
+    Write-Warning "Error during backup folder cleanup: $_"
+    Write-Warning "Continuing with task installation..."
+}
+
 try {
     # First, remove any existing Cimian tasks to prevent duplicates
     Write-Host "Removing any existing Cimian tasks..."
