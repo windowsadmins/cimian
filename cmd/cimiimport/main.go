@@ -49,20 +49,26 @@ func parseVersion(versionStr string) string {
 	if len(parts) == 3 || len(parts) == 4 {
 		// Check if this looks like a date format by validating the first part as a year
 		if yearNum, err := strconv.Atoi(parts[0]); err == nil {
-			// Handle both full years (2000-2100) and Chocolatey-truncated years (00-99)
+			// Handle both full years (2000-2100) and Chocolatey-truncated years
 			isDateFormat := false
 			
-			// Full 4-digit years
+			// Full 4-digit years (definitive date format)
 			if yearNum >= 2000 && yearNum <= 2100 {
 				isDateFormat = true
 			}
-			// Chocolatey-truncated 2-digit years (handle common range 00-99)
-			if yearNum >= 0 && yearNum <= 99 {
+			// Chocolatey-truncated 2-digit years - be much more conservative
+			// Only consider as date if it's a reasonable truncated year (e.g., 20-99 for 2020-2099)
+			// AND the month/day parts are clearly date-like
+			if yearNum >= 20 && yearNum <= 99 {
 				// Additional validation: check if month and day parts look like date components
 				if len(parts) >= 3 {
 					if monthNum, err := strconv.Atoi(parts[1]); err == nil && monthNum >= 1 && monthNum <= 12 {
 						if dayNum, err := strconv.Atoi(parts[2]); err == nil && dayNum >= 1 && dayNum <= 31 {
-							isDateFormat = true
+							// Extra check: avoid common semantic version patterns
+							// If this looks like a semantic version (e.g., X.Y.Z where all are small numbers), skip
+							if !(yearNum <= 20 && monthNum <= 20 && dayNum <= 20) {
+								isDateFormat = true
+							}
 						}
 					}
 				}
