@@ -6,10 +6,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -201,11 +201,15 @@ type ItemAttempt struct {
 // DataExporter provides methods to export Cimian logs for external monitoring tool consumption
 type DataExporter struct {
 	baseDir string
+	manifestPackageCache map[string]int // Cache for manifest package counts to avoid repetitive parsing
 }
 
 // NewDataExporter creates a new data exporter
 func NewDataExporter(baseDir string) *DataExporter {
-	return &DataExporter{baseDir: baseDir}
+	return &DataExporter{
+		baseDir: baseDir,
+		manifestPackageCache: make(map[string]int),
+	}
 }
 
 // loadCimianConfiguration loads the current Cimian configuration for session enhancement
@@ -327,6 +331,13 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 		cacheSize = exp.calculateCacheSize(sessionConfig.CachePath)
 	}
 
+	// PERFORMANCE OPTIMIZATION: Calculate total managed packages once, not per session
+	// Since all sessions for this system use the same manifest, we only need to calculate this once
+	var totalManagedPackages int
+	if sessionConfig != nil {
+		totalManagedPackages = exp.getTotalManagedPackagesFromManifest(sessionConfig)
+	}
+
 	var records []SessionRecord
 	for _, sessionDir := range sessions {
 		sessionPath := filepath.Join(exp.baseDir, sessionDir, "session.json")
@@ -382,17 +393,17 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 			}
 
 			// Create enhanced summary for external reporting tools
-			// CRITICAL FIX: Get total managed packages from manifest, not just packages with actions
-			totalManagedPackages := exp.getTotalManagedPackagesFromManifest(sessionConfig)
-			if totalManagedPackages == 0 {
+			// Use pre-calculated total managed packages (calculated once outside the loop)
+			finalTotalManagedPackages := totalManagedPackages
+			if finalTotalManagedPackages == 0 {
 				// Fallback to packages handled if manifest reading fails
-				totalManagedPackages = len(record.PackagesHandled)
+				finalTotalManagedPackages = len(record.PackagesHandled)
 			}
 			
 			summary := &SessionSummary{
-				TotalPackagesManaged: totalManagedPackages,
+				TotalPackagesManaged: finalTotalManagedPackages,
 				PackagesInstalled:    record.Successes,
-				PackagesPending:      totalManagedPackages - record.Successes - record.Failures,
+				PackagesPending:      finalTotalManagedPackages - record.Successes - record.Failures,
 				PackagesFailed:       record.Failures,
 				CacheSizeMB:          cacheSize,
 			}
@@ -428,16 +439,16 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				// Add configuration and summary data to old format records too
 				record.Config = sessionConfig
 				if record.Summary == nil {
-					// CRITICAL FIX: Same fix for old format sessions
-					totalManagedPackages := exp.getTotalManagedPackagesFromManifest(sessionConfig)
-					if totalManagedPackages == 0 {
-						totalManagedPackages = len(record.PackagesHandled)
+					// Use pre-calculated total managed packages (calculated once outside the loop)
+					finalTotalManagedPackages := totalManagedPackages
+					if finalTotalManagedPackages == 0 {
+						finalTotalManagedPackages = len(record.PackagesHandled)
 					}
 					
 					record.Summary = &SessionSummary{
-						TotalPackagesManaged: totalManagedPackages,
+						TotalPackagesManaged: finalTotalManagedPackages,
 						PackagesInstalled:    record.Successes,
-						PackagesPending:      totalManagedPackages - record.Successes - record.Failures,
+						PackagesPending:      finalTotalManagedPackages - record.Successes - record.Failures,
 						PackagesFailed:       record.Failures,
 						CacheSizeMB:          cacheSize,
 					}
@@ -588,53 +599,86 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 		status := ""
 		errorMsg := ""
 		installerType := ""
+		eventType := ""
 
-		if props, ok := logEvent["properties"].(map[string]interface{}); ok {
-			if item, ok := props["item"].(string); ok {
+		// ENHANCED FIX: Handle both new event format (context.item) and legacy format (properties.item)
+		
+		// New event format: check context.item first
+		if context, ok := logEvent["context"].(map[string]interface{}); ok {
+			if item, ok := context["item"].(string); ok {
 				packageName = item
 				packageID = exp.generatePackageID(item)
 			}
-			// Check multiple version field names used in Cimian logs
-			if ver, ok := props["version"].(string); ok {
-				version = ver
-			} else if ver, ok := props["registryVersion"].(string); ok {
-				version = ver
-			} else if ver, ok := props["localVersion"].(string); ok {
-				version = ver
-			} else if ver, ok := props["repoVersion"].(string); ok {
-				version = ver
-			} else if ver, ok := props["targetVersion"].(string); ok {
+			if ver, ok := context["version"].(string); ok {
 				version = ver
 			}
-			if act, ok := props["action"].(string); ok {
-				action = act
-			}
-			if stat, ok := props["status"].(string); ok {
-				status = stat
-			}
-			if errVal, ok := props["error"]; ok && errVal != nil {
-				if errStr, ok := errVal.(string); ok {
-					errorMsg = errStr
+		}
+		
+		// Event-level fields in new format
+		if eventTypeVal, ok := logEvent["event_type"].(string); ok {
+			eventType = eventTypeVal
+		}
+		if actionVal, ok := logEvent["action"].(string); ok {
+			action = actionVal
+		}
+		if statusVal, ok := logEvent["status"].(string); ok {
+			status = statusVal
+		}
+		
+		// Legacy format: check properties (fallback)
+		if packageName == "" {
+			if props, ok := logEvent["properties"].(map[string]interface{}); ok {
+				if item, ok := props["item"].(string); ok {
+					packageName = item
+					packageID = exp.generatePackageID(item)
 				}
-			}
-			// Extract installer type from installer path or method
-			if installerPath, ok := props["installer_path"].(string); ok {
-				installerType = exp.determineInstallerTypeFromPath(installerPath)
+				// Check multiple version field names used in Cimian logs
+				if version == "" {
+					if ver, ok := props["version"].(string); ok {
+						version = ver
+					} else if ver, ok := props["registryVersion"].(string); ok {
+						version = ver
+					} else if ver, ok := props["localVersion"].(string); ok {
+						version = ver
+					} else if ver, ok := props["repoVersion"].(string); ok {
+						version = ver
+					} else if ver, ok := props["targetVersion"].(string); ok {
+						version = ver
+					}
+				}
+				if action == "" {
+					if act, ok := props["action"].(string); ok {
+						action = act
+					}
+				}
+				if status == "" {
+					if stat, ok := props["status"].(string); ok {
+						status = stat
+					}
+				}
+				if errVal, ok := props["error"]; ok && errVal != nil {
+					if errStr, ok := errVal.(string); ok {
+						errorMsg = errStr
+					}
+				}
+				// Extract installer type from installer path or method
+				if installerPath, ok := props["installer_path"].(string); ok {
+					installerType = exp.determineInstallerTypeFromPath(installerPath)
+				}
 			}
 		}
 
 		// Get message and extract additional version info if not already present
 		message := ""
-		eventType := "general"
 		if msg, ok := logEvent["message"].(string); ok {
 			message = msg
 
-			// Extract version from message if not found in properties
+			// Extract version from message if not found in properties/context
 			if version == "" {
 				version = exp.extractVersionFromMessage(message)
 			}
 
-			// Extract package name from message if not found in properties
+			// Extract package name from message if not found in properties/context
 			if packageName == "" {
 				extractedName := exp.extractPackageFromMessage(message)
 				if extractedName != "" {
@@ -643,26 +687,30 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 				}
 			}
 
-			msgLower := strings.ToLower(message)
-			if strings.Contains(msgLower, "install") {
-				eventType = "install"
-				if action == "" {
-					action = "install_package"
-				}
-			} else if strings.Contains(msgLower, "update") || strings.Contains(msgLower, "upgrade") {
-				eventType = "update"
-				if action == "" {
-					action = "update_package"
-				}
-			} else if strings.Contains(msgLower, "remove") || strings.Contains(msgLower, "uninstall") {
-				eventType = "remove"
-				if action == "" {
-					action = "remove_package"
-				}
-			} else if strings.Contains(msgLower, "download") {
-				eventType = "download"
-				if action == "" {
-					action = "download_file"
+			// Only infer event type from message if not already set from new format
+			if eventType == "" {
+				eventType = "general"
+				msgLower := strings.ToLower(message)
+				if strings.Contains(msgLower, "install") {
+					eventType = "install"
+					if action == "" {
+						action = "install_package"
+					}
+				} else if strings.Contains(msgLower, "update") || strings.Contains(msgLower, "upgrade") {
+					eventType = "update"
+					if action == "" {
+						action = "update_package"
+					}
+				} else if strings.Contains(msgLower, "remove") || strings.Contains(msgLower, "uninstall") {
+					eventType = "remove"
+					if action == "" {
+						action = "remove_package"
+					}
+				} else if strings.Contains(msgLower, "download") {
+					eventType = "download"
+					if action == "" {
+						action = "download_file"
+					}
 				}
 			}
 		}
@@ -774,15 +822,255 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 	return records, nil
 }
 
+// ManifestFile represents a parsed manifest YAML file
+type ManifestFile struct {
+	ManagedInstalls   []interface{} `yaml:"managed_installs"`
+	ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
+	ManagedUpdates    []interface{} `yaml:"managed_updates"`
+	OptionalInstalls  []interface{} `yaml:"optional_installs"`
+}
+
+// parseManifestFile parses a YAML manifest file
+func (exp *DataExporter) parseManifestFile(filepath string) (*ManifestFile, error) {
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, err
+	}
+	
+	var manifest ManifestFile
+	err = yaml.Unmarshal(data, &manifest)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &manifest, nil
+}
+
+// getSystemArchitecture returns the current system architecture
+func (exp *DataExporter) getSystemArchitecture() string {
+	// This mimics the logic from pkg/status but simplified for reporting
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x64"
+	case "arm64":
+		return "arm64"
+	case "386":
+		return "x86"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+// checkArchitectureCompatibility checks if a package supports the current system architecture
+func (exp *DataExporter) checkArchitectureCompatibility(packageName, systemArch string) (bool, []string) {
+	// Load catalog to get supported architectures
+	catalogsPath := `C:\ProgramData\ManagedInstalls\catalogs`
+	
+	var foundSupportedArchs []string
+	compatible := false
+	
+	// Try to find the package in catalogs
+	filepath.Walk(catalogsPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || compatible {
+			return nil
+		}
+		
+		if !strings.HasSuffix(strings.ToLower(path), ".yaml") {
+			return nil
+		}
+		
+		// Parse catalog file
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		
+		var catalog struct {
+			Items []struct {
+				Name                   string   `yaml:"name"`
+				SupportedArchitectures []string `yaml:"supported_architectures"`
+			} `yaml:"items"`
+		}
+		
+		if err := yaml.Unmarshal(data, &catalog); err != nil {
+			return nil
+		}
+		
+		// Look for the package in the items array
+		for _, item := range catalog.Items {
+			if strings.EqualFold(item.Name, packageName) {
+				foundSupportedArchs = item.SupportedArchitectures
+				for _, arch := range item.SupportedArchitectures {
+					if arch == systemArch {
+						compatible = true
+						return nil
+					}
+				}
+				return nil // Found package but not compatible
+			}
+		}
+		return nil
+	})
+	
+	return compatible, foundSupportedArchs
+}
+
+// getRegistryVersion checks the registry for installed version of a package
+func (exp *DataExporter) getRegistryVersion(packageName string) string {
+	// Try to get version from HKLM\Software\ManagedInstalls\<packageName>\Version
+	regPath := `Software\ManagedInstalls\` + packageName
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		return "" // Package not installed via Cimian
+	}
+	defer key.Close()
+	
+	version, _, err := key.GetStringValue("Version")
+	if err != nil {
+		return ""
+	}
+	
+	return version
+}
+
+// populateFromCurrentManifests loads current manifest state to ensure all managed packages are represented
+func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comprehensiveItemStat) error {
+	// Load catalog data to get version information
+	catalogVersions := exp.loadCatalogVersions()
+	catalogDisplayNames := exp.loadCatalogDisplayNames()
+	
+	// Get system architecture for compatibility checking
+	systemArch := exp.getSystemArchitecture()
+	
+	// Get the root manifest path - this should contain the current managed items
+	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
+	
+	// Try to find the main manifest file(s)
+	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Continue on errors
+		}
+		
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+		
+		// Only process YAML files
+		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
+			return nil
+		}
+		
+		// Parse the manifest file
+		manifest, err := exp.parseManifestFile(path)
+		if err != nil {
+			return nil // Continue on parse errors
+		}
+		
+		// Extract items from all managed install categories
+		allItems := []interface{}{}
+		allItems = append(allItems, manifest.ManagedInstalls...)
+		allItems = append(allItems, manifest.ManagedUninstalls...)
+		allItems = append(allItems, manifest.ManagedUpdates...)
+		allItems = append(allItems, manifest.OptionalInstalls...)
+		
+		// Process each item
+		for _, item := range allItems {
+			var packageName string
+			
+			// Handle different item formats (string or object)
+			switch v := item.(type) {
+			case string:
+				packageName = v
+			case map[string]interface{}:
+				if name, ok := v["name"].(string); ok {
+					packageName = name
+				}
+			}
+			
+			if packageName == "" {
+				continue
+			}
+			
+			// Initialize item stats if not exists
+			if _, exists := itemStats[packageName]; !exists {
+				itemStats[packageName] = &comprehensiveItemStat{
+					Name:           packageName,
+					Sessions:       make(map[string]bool),
+					RecentAttempts: []ItemAttempt{},
+				}
+			}
+			
+			stats := itemStats[packageName]
+			
+			// Set version information from catalog
+			if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
+				stats.LatestVersion = catalogVersion
+			}
+			
+			// Set display name from catalog
+			if displayName, hasDisplayName := catalogDisplayNames[strings.ToLower(packageName)]; hasDisplayName && displayName != "" {
+				stats.DisplayName = displayName
+			} else {
+				stats.DisplayName = packageName // Fallback to package name
+			}
+			
+			// Check architecture compatibility first
+			compatible, supportedArchs := exp.checkArchitectureCompatibility(packageName, systemArch)
+			
+			// Check installed status from registry
+			registryVersion := exp.getRegistryVersion(packageName)
+			if registryVersion != "" {
+				stats.InstalledVersion = registryVersion
+				
+			if !compatible && len(supportedArchs) > 0 {
+				// Package is installed but not compatible with current architecture
+				stats.CurrentStatus = "Warning"
+				stats.WarningCount = 1
+				archList := strings.Join(supportedArchs, ", ")
+				stats.LastWarning = fmt.Sprintf("Architecture mismatch: package supports %s, system is %s", archList, systemArch)
+			} else {
+				stats.CurrentStatus = "Installed"
+			}
+		} else {
+			if !compatible && len(supportedArchs) > 0 {
+				// Package is not installed and not compatible
+				stats.CurrentStatus = "Not Available"
+				stats.WarningCount = 1
+				archList := strings.Join(supportedArchs, ", ")
+				stats.LastWarning = fmt.Sprintf("Architecture mismatch: package supports %s, system is %s", archList, systemArch)
+			} else {
+				stats.CurrentStatus = "Pending"
+			}
+		}			// Set item type based on which array it came from
+			if stats.ItemType == "" {
+				stats.ItemType = "managed_installs" // Default
+			}
+		}
+		
+		return nil
+	})
+	
+	return err
+}
+
 // GenerateItemsTable creates a comprehensive view of all items ever managed by Cimian
 func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error) {
+	itemStats := make(map[string]*comprehensiveItemStat)
+
+	// CRITICAL FIX: First populate from current manifest state
+	// This ensures we always have data even without historical events
+	err := exp.populateFromCurrentManifests(itemStats)
+	if err != nil {
+		// Log but don't fail - continue with event-based data
+		fmt.Printf("Warning: Could not load current manifest data: %v\n", err)
+	}
+
 	// Get ALL sessions (not just recent ones) to build comprehensive history
 	allSessions, err := exp.getAllSessions()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all sessions: %w", err)
 	}
-
-	itemStats := make(map[string]*comprehensiveItemStat)
 
 	// Load catalog data to get authoritative version information
 	catalogVersions := exp.loadCatalogVersions()
@@ -949,6 +1237,50 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 		if loopDetected {
 			stats.CurrentStatus = "Install Loop"
 			stats.LoopDetails = loopDetails
+			// Generate warning for install loop detection
+			stats.LastWarning = fmt.Sprintf("Install loop detected: %s - %s", loopDetails.SuspectedCause, loopDetails.Recommendation)
+			stats.WarningCount++
+		}
+	}
+
+	// CRITICAL FIX: Add items from current manifest state (even if no events exist)
+	// This ensures ReportMate gets data for all currently managed packages
+	currentManifestItems := exp.getCurrentManagedItems()
+	for _, item := range currentManifestItems {
+		packageName := item.Name
+		
+		// If we don't have this item from events, create it
+		if _, exists := itemStats[packageName]; !exists {
+			itemStats[packageName] = &comprehensiveItemStat{
+				Name:           packageName,
+				Sessions:       make(map[string]bool),
+				RecentAttempts: []ItemAttempt{},
+				CurrentStatus:  "Installed", // Assume installed since it's in manifest
+				ItemType:       item.Type,
+				LastSeenTime:   time.Now(), // Mark as current
+			}
+		}
+		
+		// Update with current manifest data
+		stats := itemStats[packageName]
+		
+		// Set version information from catalog and registry
+		if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
+			stats.LatestVersion = catalogVersion
+		}
+		
+		// Get installed version from registry
+		if registryVersion := exp.getInstalledVersionFromRegistry(packageName); registryVersion != "" {
+			stats.InstalledVersion = registryVersion
+			// If current status is unknown, set to installed since we found registry data
+			if stats.CurrentStatus == "" {
+				stats.CurrentStatus = "Installed"
+			}
+		}
+		
+		// Ensure item type is set
+		if stats.ItemType == "" {
+			stats.ItemType = item.Type
 		}
 	}
 
@@ -1163,122 +1495,34 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 
 // Helper types and methods
 
-// parseEventsWithRecovery provides robust JSON parsing for events.jsonl files
-// It handles both line-by-line JSONL format and pretty-printed multi-line JSON objects
+// parseEventsWithRecovery provides simple JSON parsing for events.jsonl files
 func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]interface{}, error) {
 	var events []map[string]interface{}
 	
-	// First, try the line-by-line decoder (most common format)
+	// Read file content
 	file.Seek(0, 0) // Reset to beginning
-	decoder := json.NewDecoder(file)
-	lineNum := 0
+	scanner := bufio.NewScanner(file)
 	
-	for {
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		
 		var event map[string]interface{}
-		err := decoder.Decode(&event)
-		lineNum++
-		
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			
-			// Log the specific JSON parsing issue for debugging
-			logging.Debug("Skipping malformed JSON in events", 
-				"line", lineNum, 
-				"error", err, 
-				"description", "JSON decoder encountered invalid format")
-			continue
+		if err := json.Unmarshal([]byte(line), &event); err == nil {
+			events = append(events, event)
 		}
-		
-		events = append(events, event)
+		// Silently skip malformed JSON lines without logging
 	}
 	
-	// If we got events from the decoder, use them
-	if len(events) > 0 {
-		return events, nil
-	}
-	
-	// Fallback: Try manual parsing for pretty-printed JSON
-	logging.Debug("JSON decoder failed, trying manual parsing for pretty-printed JSON")
-	file.Seek(0, 0) // Reset to beginning
-	content, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file content: %w", err)
-	}
-	
-	return exp.parseMultilineJSON(string(content))
-}
-
-// parseMultilineJSON handles pretty-printed JSON objects separated by newlines or whitespace
-func (exp *DataExporter) parseMultilineJSON(content string) ([]map[string]interface{}, error) {
-	var events []map[string]interface{}
-	var currentJSON strings.Builder
-	var braceCount int
-	var inString bool
-	var escapeNext bool
-	
-	for _, char := range content {
-		if escapeNext {
-			escapeNext = false
-			currentJSON.WriteRune(char)
-			continue
-		}
-		
-		switch char {
-		case '\\':
-			escapeNext = true
-			currentJSON.WriteRune(char)
-		case '"':
-			if !escapeNext {
-				inString = !inString
-			}
-			currentJSON.WriteRune(char)
-		case '{':
-			if !inString {
-				braceCount++
-			}
-			currentJSON.WriteRune(char)
-		case '}':
-			if !inString {
-				braceCount--
-			}
-			currentJSON.WriteRune(char)
-		default:
-			currentJSON.WriteRune(char)
-		}
-		
-		// If braces are balanced and we have a complete JSON object
-		if braceCount == 0 && currentJSON.Len() > 0 && !inString {
-			jsonStr := strings.TrimSpace(currentJSON.String())
-			if jsonStr != "" && jsonStr != "{}" {
-				var event map[string]interface{}
-				if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
-					events = append(events, event)
-				} else {
-					logging.Debug("Failed to parse JSON object", 
-						"error", err, 
-						"content_preview", jsonStr[:min(100, len(jsonStr))])
-				}
-			}
-			currentJSON.Reset()
-		}
-	}
-	
-	return events, nil
-}
-
-// min returns the smaller of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return events, scanner.Err()
 }
 
 // comprehensiveItemStat tracks detailed statistics for an item across all sessions
 type comprehensiveItemStat struct {
 	Name                string
+	DisplayName         string // Added for user-friendly display
 	ItemType            string
 	CurrentStatus       string
 	LatestVersion       string
@@ -2097,19 +2341,66 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 		}
 	}
 
-	// Detect loop: 3+ install attempts in recent history with less than 50% success rate
+	// Detect loop: Multiple scenarios
+	var detectionCriteria string
+	isLoop := false
+	
+	// Scenario 1: 3+ install attempts with less than 50% success rate
 	if installAttempts >= 3 {
 		successRate := float64(successCount) / float64(installAttempts)
 		if successRate < 0.5 {
-			// Create enhanced loop details
-			loopDetails := &InstallLoopDetail{
-				DetectionCriteria: "same_version_reinstalled",
-				LoopStartSession:  firstAttemptSession,
-				SuspectedCause:    exp.analyzeSuspectedCause(attempts, packageName),
-				Recommendation:    exp.getLoopRecommendation(attempts, packageName),
-			}
-			return true, loopDetails
+			detectionCriteria = fmt.Sprintf("repeated_failures_%d_attempts_%.0f%%_success", installAttempts, successRate*100)
+			isLoop = true
 		}
+	}
+	
+	// Scenario 2: Same version reinstalled multiple times
+	if !isLoop {
+		versionCounts := make(map[string]int)
+		for _, attempt := range attempts {
+			if attempt.Version != "" && (attempt.Action == "install" || attempt.Action == "update") {
+				versionCounts[attempt.Version]++
+			}
+		}
+		
+		for version, count := range versionCounts {
+			if count >= 3 {
+				detectionCriteria = fmt.Sprintf("same_version_reinstalled_%s_%d_times", version, count)
+				isLoop = true
+				break
+			}
+		}
+	}
+	
+	// Scenario 3: Rapid consecutive attempts (within short time window)
+	if !isLoop && len(attempts) >= 3 {
+		recentAttempts := attempts[len(attempts)-3:]
+		var timestamps []time.Time
+		for _, attempt := range recentAttempts {
+			if t, err := time.Parse(time.RFC3339, attempt.Timestamp); err == nil {
+				timestamps = append(timestamps, t)
+			}
+		}
+		
+		if len(timestamps) >= 3 {
+			// Check if all 3 attempts happened within 1 hour
+			timeSpan := timestamps[len(timestamps)-1].Sub(timestamps[0])
+			if timeSpan < time.Hour {
+				detectionCriteria = fmt.Sprintf("rapid_consecutive_attempts_%d_in_%v", len(recentAttempts), timeSpan.Round(time.Minute))
+				isLoop = true
+			}
+		}
+	}
+	
+	if isLoop {
+		// Create enhanced loop details
+		loopDetails := &InstallLoopDetail{
+			DetectionCriteria: detectionCriteria,
+			LoopStartSession:  firstAttemptSession,
+			SuspectedCause:    exp.analyzeSuspectedCause(attempts, packageName),
+			Recommendation:    exp.getLoopRecommendation(attempts, packageName),
+		}
+		return true, loopDetails
 	}
 
 	return false, nil
@@ -2117,60 +2408,141 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 
 // analyzeSuspectedCause determines the likely cause of install loops
 func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageName string) string {
-	// Check for consistent version reinstalls
+	// Pattern 1: Check for consistent version reinstalls (installer reports success but app not detected)
 	versionCounts := make(map[string]int)
+	successfulReinstalls := 0
 	for _, attempt := range attempts {
-		if attempt.Version != "" {
+		if attempt.Version != "" && attempt.Action == "install" {
 			versionCounts[attempt.Version]++
+			if attempt.Status == "success" {
+				successfulReinstalls++
+			}
 		}
 	}
 	
 	for version, count := range versionCounts {
-		if count >= 2 {
-			return fmt.Sprintf("installer_exit_code_success_but_not_installed_%s", version)
+		if count >= 2 && successfulReinstalls >= 2 {
+			return fmt.Sprintf("installer_reports_success_but_app_not_detected_v%s", version)
 		}
 	}
 	
-	// Check for permission/access issues
-	hasFailures := false
+	// Pattern 2: Repeated failures - permission/dependency issues
+	failureCount := 0
+	successCount := 0
 	for _, attempt := range attempts {
 		if attempt.Status == "failed" {
-			hasFailures = true
-			break
+			failureCount++
+		} else if attempt.Status == "success" {
+			successCount++
 		}
 	}
 	
-	if hasFailures {
-		return "installer_permission_or_dependency_issues"
+	if failureCount >= 2 && successCount == 0 {
+		// Check for common failure patterns
+		if strings.Contains(strings.ToLower(packageName), "adobe") {
+			return "adobe_licensing_or_creative_cloud_conflict"
+		}
+		if strings.Contains(strings.ToLower(packageName), "office") || strings.Contains(strings.ToLower(packageName), "microsoft") {
+			return "microsoft_installer_service_or_office_conflict"
+		}
+		if strings.Contains(strings.ToLower(packageName), "java") {
+			return "java_version_conflict_or_registry_corruption"
+		}
+		return "installer_permission_dependency_or_conflict_issues"
 	}
 	
-	return "unknown_loop_cause"
+	// Pattern 3: Rapid reinstallation attempts
+	if len(attempts) >= 3 {
+		recentAttempts := attempts[len(attempts)-3:]
+		var timestamps []time.Time
+		for _, attempt := range recentAttempts {
+			if t, err := time.Parse(time.RFC3339, attempt.Timestamp); err == nil {
+				timestamps = append(timestamps, t)
+			}
+		}
+		
+		if len(timestamps) >= 3 {
+			timeSpan := timestamps[len(timestamps)-1].Sub(timestamps[0])
+			if timeSpan < time.Hour {
+				return "system_instability_or_automated_retry_loop"
+			}
+		}
+	}
+	
+	// Pattern 4: Mixed success/failure pattern
+	if failureCount > 0 && successCount > 0 {
+		return "intermittent_system_conditions_or_timing_issues"
+	}
+	
+	return "unknown_loop_cause_requires_manual_investigation"
 }
 
 // getLoopRecommendation provides specific recommendations for resolving install loops
 func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageName string) string {
-	// Analyze the pattern to provide specific recommendations
-	if strings.Contains(strings.ToLower(packageName), "msi") {
-		return "check_msi_installer_silent_flags_and_admin_rights"
+	// Get the suspected cause to provide targeted recommendations
+	suspectedCause := exp.analyzeSuspectedCause(attempts, packageName)
+	
+	// Cause-specific recommendations
+	switch {
+	case strings.Contains(suspectedCause, "installer_reports_success_but_app_not_detected"):
+		return "Verify installer exit codes and app detection logic in pkginfo; check if silent install parameters are correct"
+		
+	case strings.Contains(suspectedCause, "adobe_licensing_or_creative_cloud"):
+		return "Clear Adobe licensing cache, restart Creative Cloud services, or temporarily disable real-time AV scanning"
+		
+	case strings.Contains(suspectedCause, "microsoft_installer_service"):
+		return "Restart Windows Installer service, clear MSI cache, or run system in safe mode for troubleshooting"
+		
+	case strings.Contains(suspectedCause, "java_version_conflict"):
+		return "Clean Java registry entries, remove conflicting Java versions, or use Java offline installer"
+		
+	case strings.Contains(suspectedCause, "system_instability_or_automated_retry"):
+		return "Increase installation delays, check system resources, or implement exponential backoff retry logic"
+		
+	case strings.Contains(suspectedCause, "intermittent_system_conditions"):
+		return "Schedule installations during maintenance windows or implement pre-flight system health checks"
+		
+	case strings.Contains(suspectedCause, "installer_permission_dependency"):
+		return "Run as SYSTEM account, verify installer dependencies, or check antivirus exclusions"
 	}
 	
-	if strings.Contains(strings.ToLower(packageName), "exe") {
-		return "verify_exe_installer_exit_codes_and_silent_install_parameters"
+	// Package-type specific recommendations
+	packageLower := strings.ToLower(packageName)
+	switch {
+	case strings.Contains(packageLower, "msi"):
+		return "Verify MSI installer silent flags (/quiet /norestart), check admin rights and MSI log files"
+		
+	case strings.Contains(packageLower, "exe"):
+		return "Validate EXE installer exit codes, silent parameters, and ensure proper privilege elevation"
+		
+	case strings.Contains(packageLower, "nupkg") || strings.Contains(packageLower, "chocolatey"):
+		return "Check Chocolatey package dependencies, verify package source accessibility, clear Chocolatey cache"
+		
+	case strings.Contains(packageLower, "powershell") || strings.Contains(packageLower, "ps1"):
+		return "Verify PowerShell execution policy, check script signing requirements, validate module dependencies"
 	}
 	
-	// Generic recommendations based on attempt patterns
+	// Pattern-based recommendations
 	failureCount := 0
+	successCount := 0
 	for _, attempt := range attempts {
 		if attempt.Status == "failed" {
 			failureCount++
+		} else if attempt.Status == "success" {
+			successCount++
 		}
 	}
 	
-	if failureCount > 0 {
-		return "check_installer_logs_and_resolve_permission_issues"
+	if failureCount > successCount {
+		return "Primary issue: Consistent failures - Check installer logs, system requirements, and resolve permission/dependency issues"
 	}
 	
-	return "verify_installer_configuration_and_check_registry_state"
+	if successCount > 0 && failureCount > 0 {
+		return "Intermittent issue detected - Monitor system resources during installation and implement retry logic with delays"
+	}
+	
+	// Default comprehensive recommendation
+	return "Review installer logs, verify system requirements, check for conflicts with AV/security software, and consider manual installation test"
 }
 
 // getTotalManagedPackagesFromManifest gets the total number of managed packages from the current manifest
@@ -2179,6 +2551,12 @@ func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageNa
 func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *SessionConfig) int {
 	if sessionConfig == nil || sessionConfig.Manifest == "" {
 		return 0
+	}
+	
+	// Check cache first to avoid repeated parsing of the same manifest
+	if cachedCount, exists := exp.manifestPackageCache[sessionConfig.Manifest]; exists {
+		// Cache hit - return silently (no logging needed for reporting)
+		return cachedCount
 	}
 	
 	// Handle hierarchical paths (e.g., "Shared/Curriculum/Animation/C3234/CintiqLab16" or "Shared\Curriculum\Animation\C3234\CintiqLab16")
@@ -2198,31 +2576,31 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 	// Look for manifest files in common locations - prioritize hierarchical paths
 	possiblePaths := []string{
 		// PRIORITY 1: Try normalized hierarchical path first (most common for complex deployments)
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath),
 		
 		// PRIORITY 2: Try direct name as-is (backward compatibility)
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", manifestName+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", manifestName),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
 		
 		// PRIORITY 3: Try Unix-style path (additional fallback)
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", unixStylePath+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", unixStylePath),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "manifests", manifestName),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
 		
 		// PRIORITY 4: Try with catalogs directory as well (all variations)
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", manifestName+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", manifestName),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath+".yaml"),
-		filepath.Join("C:", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", manifestName+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", manifestName),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath),
 	}
 	
 	for _, path := range possiblePaths {
 		if _, err := os.Stat(path); err == nil {
 			manifestPath = path
-			logging.Debug("Found manifest file for package counting", "manifest", sessionConfig.Manifest, "path", path)
+			// Found the manifest file - no need for verbose logging during reporting
 			break
 		}
 	}
@@ -2239,9 +2617,14 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 		return 0
 	}
 	
-	// Parse manifest YAML to count items
+	// Parse manifest YAML to count packages from all relevant arrays
 	var manifest struct {
-		Items []map[string]interface{} `yaml:"items"`
+		ManagedInstalls   []interface{} `yaml:"managed_installs"`
+		ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
+		ManagedUpdates    []interface{} `yaml:"managed_updates"`
+		OptionalInstalls  []interface{} `yaml:"optional_installs"`
+		IncludedManifests []interface{} `yaml:"included_manifests"`
+		Items             []interface{} `yaml:"items"` // Legacy support
 	}
 	
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
@@ -2249,7 +2632,170 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 		return 0
 	}
 	
-	totalPackages := len(manifest.Items)
-	logging.Debug("Read total packages from manifest", "count", totalPackages, "manifest", sessionConfig.Manifest)
+	// Count packages from all relevant manifest arrays (direct packages in this manifest)
+	directPackages := len(manifest.ManagedInstalls) + 
+	                len(manifest.ManagedUninstalls) + 
+	                len(manifest.ManagedUpdates) + 
+	                len(manifest.OptionalInstalls) +
+	                len(manifest.Items) // Legacy support for old format
+	
+	totalPackages := directPackages
+	
+	// RECURSIVE FIX: Process included_manifests to get total package count from hierarchy
+	if len(manifest.IncludedManifests) > 0 {
+		// Process included manifests silently - no verbose logging during reporting
+		for _, includedManifest := range manifest.IncludedManifests {
+			if includedManifestName, ok := includedManifest.(string); ok {
+				// Create a temporary session config for the included manifest
+				tempConfig := &SessionConfig{
+					Manifest: includedManifestName,
+				}
+				
+				// Recursively get package count from included manifest
+				// Note: This will use the cache if we've already processed this manifest
+				includedPackages := exp.getTotalManagedPackagesFromManifest(tempConfig)
+				totalPackages += includedPackages
+			}
+		}
+	}
+	
+	// Cache the result to avoid repeated parsing
+	exp.manifestPackageCache[sessionConfig.Manifest] = totalPackages
+	
+	// Single clean summary line for reporting
+	if sessionConfig.Manifest == exp.getRootManifest() {
+		logging.Debug("Added managed packages from manifest hierarchy for reporting", "total_packages", totalPackages, "root_manifest", sessionConfig.Manifest)
+	}
+	
 	return totalPackages
+}
+
+// getRootManifest returns the root manifest name for this system (used for clean logging)
+func (exp *DataExporter) getRootManifest() string {
+	// Try to get the root manifest from the current config
+	if config := exp.loadCimianConfiguration(); config != nil && config.Manifest != "" {
+		return config.Manifest
+	}
+	return "" // Unknown root manifest
+}
+
+// ManagedItem represents a managed package item
+type ManagedItem struct {
+	Name string
+	Type string // "managed_installs", "managed_updates", etc.
+}
+
+// getCurrentManagedItems retrieves all currently managed items from manifest files
+func (exp *DataExporter) getCurrentManagedItems() []ManagedItem {
+	var items []ManagedItem
+	
+	// Get the main manifest path from configuration
+	config := exp.loadCimianConfiguration()
+	if config.ClientIdentifier == "" {
+		return items // No client identifier, can't determine manifest
+	}
+	
+	// Try to get items from hierarchical manifest path
+	manifestItems := exp.getItemsFromManifest(config.ClientIdentifier)
+	return manifestItems
+}
+
+// getItemsFromManifest recursively extracts all managed items from a manifest and its includes
+func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem {
+	var items []ManagedItem
+	
+	// Skip cache entries and prevent infinite loops
+	if exp.manifestPackageCache == nil {
+		exp.manifestPackageCache = make(map[string]int)
+	}
+	if _, processed := exp.manifestPackageCache[manifestName]; processed {
+		return items
+	}
+	exp.manifestPackageCache[manifestName] = 1 // Mark as processing
+	
+	// Construct potential manifest file paths (reuse existing logic)
+	hierarchicalPath := strings.ReplaceAll(manifestName, "/", "\\")
+	unixStylePath := strings.ReplaceAll(manifestName, "\\", "/")
+	
+	candidatePaths := []string{
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath+".yaml"),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath),
+		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
+	}
+	
+	var manifestPath string
+	for _, path := range candidatePaths {
+		if _, err := os.Stat(path); err == nil {
+			manifestPath = path
+			break
+		}
+	}
+	
+	if manifestPath == "" {
+		return items
+	}
+	
+	// Read and parse manifest
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return items
+	}
+	
+	var manifest struct {
+		ManagedInstalls   []interface{} `yaml:"managed_installs"`
+		ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
+		ManagedUpdates    []interface{} `yaml:"managed_updates"`
+		OptionalInstalls  []interface{} `yaml:"optional_installs"`
+		IncludedManifests []interface{} `yaml:"included_manifests"`
+		Items             []interface{} `yaml:"items"`
+	}
+	
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return items
+	}
+	
+	// Extract items from each category
+	for _, item := range manifest.ManagedInstalls {
+		if itemName, ok := item.(string); ok {
+			items = append(items, ManagedItem{Name: itemName, Type: "managed_installs"})
+		}
+	}
+	
+	for _, item := range manifest.ManagedUninstalls {
+		if itemName, ok := item.(string); ok {
+			items = append(items, ManagedItem{Name: itemName, Type: "managed_uninstalls"})
+		}
+	}
+	
+	for _, item := range manifest.ManagedUpdates {
+		if itemName, ok := item.(string); ok {
+			items = append(items, ManagedItem{Name: itemName, Type: "managed_updates"})
+		}
+	}
+	
+	for _, item := range manifest.OptionalInstalls {
+		if itemName, ok := item.(string); ok {
+			items = append(items, ManagedItem{Name: itemName, Type: "optional_installs"})
+		}
+	}
+	
+	for _, item := range manifest.Items {
+		if itemName, ok := item.(string); ok {
+			items = append(items, ManagedItem{Name: itemName, Type: "items"})
+		}
+	}
+	
+	// Process included manifests recursively
+	for _, includedManifest := range manifest.IncludedManifests {
+		if manifestName, ok := includedManifest.(string); ok {
+			includedItems := exp.getItemsFromManifest(manifestName)
+			items = append(items, includedItems...)
+		}
+	}
+	
+	return items
 }
