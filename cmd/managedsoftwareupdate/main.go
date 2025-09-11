@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -146,6 +147,136 @@ func restartCimianWatcherService() error {
 	return nil
 }
 
+// handleCheckOnlyConflict provides intelligent handling when --checkonly conflicts with another instance
+// Returns "retry" if the user wants to continue, "exit" if they want to quit
+func handleCheckOnlyConflict() string {
+	fmt.Fprintf(os.Stderr, "\nAnother managedsoftwareupdate process is currently running.\n\n")
+	
+	// Try to determine what the running process is doing
+	runningProcessInfo := getRunningProcessInfo()
+	if runningProcessInfo != "" {
+		fmt.Fprintf(os.Stderr, "Current process status: %s\n\n", runningProcessInfo)
+	}
+	
+	fmt.Fprintf(os.Stderr, "Options:\n")
+	fmt.Fprintf(os.Stderr, "  [K] Kill the existing process and continue with --checkonly\n")
+	fmt.Fprintf(os.Stderr, "  [W] Wait for the existing process to complete\n")
+	fmt.Fprintf(os.Stderr, "  [Q] Quit (default)\n")
+	fmt.Fprintf(os.Stderr, "\nChoice [k/w/q]: ")
+	
+	var choice string
+	fmt.Scanln(&choice)
+	choice = strings.ToLower(strings.TrimSpace(choice))
+	
+	switch choice {
+	case "k", "kill":
+		fmt.Fprintf(os.Stderr, "\nAttempting to terminate existing process...\n")
+		if err := killExistingProcess(); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Failed to kill existing process: %v\n", err)
+			fmt.Fprintf(os.Stderr, "The existing process may be in a critical state. Exiting.\n")
+			return "exit"
+		}
+		fmt.Fprintf(os.Stderr, "Existing process terminated. Continuing with --checkonly...\n\n")
+		// Give the system a moment to release the mutex
+		time.Sleep(500 * time.Millisecond)
+		return "retry"
+	case "w", "wait":
+		fmt.Fprintf(os.Stderr, "\nWaiting for existing process to complete...\n")
+		waitForProcessCompletion()
+		fmt.Fprintf(os.Stderr, "Process completed. Continuing with --checkonly...\n\n")
+		return "retry"
+	case "q", "quit", "":
+		fmt.Fprintf(os.Stderr, "\nExiting. The existing process will continue running.\n")
+		return "exit"
+	default:
+		fmt.Fprintf(os.Stderr, "\nInvalid choice. Exiting.\n")
+		return "exit"
+	}
+}
+
+// getRunningProcessInfo attempts to determine what the running process is doing
+func getRunningProcessInfo() string {
+	// Try to find the running managedsoftwareupdate process
+	cmd := exec.Command("powershell", "-Command", 
+		`Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | ForEach-Object { $proc = Get-WmiObject Win32_Process -Filter "ProcessId = $($_.Id)"; @{Id=$_.Id; StartTime=$_.StartTime; CommandLine=$proc.CommandLine} } | ConvertTo-Json`)
+	
+	output, err := cmd.Output()
+	if err != nil {
+		return "Unable to determine process status"
+	}
+	
+	// Parse the JSON output to extract command line arguments
+	var processes []map[string]interface{}
+	if err := json.Unmarshal(output, &processes); err != nil {
+		// Try single object format
+		var process map[string]interface{}
+		if err := json.Unmarshal(output, &process); err == nil {
+			processes = []map[string]interface{}{process}
+		} else {
+			return "Unable to parse process information"
+		}
+	}
+	
+	if len(processes) == 0 {
+		return "Process no longer running"
+	}
+	
+	process := processes[0]
+	cmdLine, _ := process["CommandLine"].(string)
+	
+	// Analyze command line to determine operation type
+	if strings.Contains(cmdLine, "--checkonly") {
+		return "Running check-only operation (safe to terminate)"
+	} else if strings.Contains(cmdLine, "--show-config") || strings.Contains(cmdLine, "--version") {
+		return "Running information display (safe to terminate)"
+	} else if strings.Contains(cmdLine, "--auto") {
+		return "WARNING: Running automatic installation (RISKY to terminate)"
+	} else if strings.Contains(cmdLine, "--installonly") {
+		return "WARNING: Running install-only operation (RISKY to terminate)"
+	} else if cmdLine != "" && !strings.Contains(cmdLine, "--checkonly") && !strings.Contains(cmdLine, "--show-config") && !strings.Contains(cmdLine, "--version") {
+		return "WARNING: Running software management operation (POTENTIALLY RISKY to terminate)"
+	} else {
+		return "Running unknown operation"
+	}
+}
+
+// killExistingProcess attempts to terminate the existing managedsoftwareupdate process
+func killExistingProcess() error {
+	// Get current process ID to avoid killing ourselves
+	currentPID := os.Getpid()
+	
+	cmd := exec.Command("powershell", "-Command", 
+		fmt.Sprintf(`Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne %d } | Stop-Process -Force`, currentPID))
+	
+	return cmd.Run()
+}
+
+// waitForProcessCompletion waits for the existing process to complete
+func waitForProcessCompletion() {
+	// Get current process ID to avoid waiting for ourselves
+	currentPID := os.Getpid()
+	
+	fmt.Fprintf(os.Stderr, "Monitoring process completion")
+	for {
+		cmd := exec.Command("powershell", "-Command", 
+			fmt.Sprintf(`Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne %d } | Measure-Object | Select-Object -ExpandProperty Count`, currentPID))
+		
+		output, err := cmd.Output()
+		if err != nil {
+			break
+		}
+		
+		count := strings.TrimSpace(string(output))
+		if count == "0" || count == "" {
+			break
+		}
+		
+		fmt.Fprintf(os.Stderr, ".")
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+}
+
 func main() {
 	enableANSIConsole()
 
@@ -192,22 +323,43 @@ func main() {
 	pflag.Parse()
 
 	// Check if we should skip the mutex for certain flags
-	skipMutex := *showConfig || *versionFlag || *checkOnly
+	// Note: --checkonly removed from exclusion due to resource conflicts
+	skipMutex := *showConfig || *versionFlag
 
 	// Check for single instance - prevent multiple concurrent executions
-	// Skip mutex for read-only operations that don't modify system state
+	// Skip mutex only for truly non-interfering operations
 	var mutex windows.Handle
 	if !skipMutex {
 		var err error
-		mutex, err = checkSingleInstance()
-		if err != nil {
-			// Check if this is the "another instance running" error
-			if strings.Contains(err.Error(), "Another instance of managedsoftwareupdate is running") {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
+		
+		// Try to acquire mutex, with special handling for --checkonly conflicts
+		for {
+			mutex, err = checkSingleInstance()
+			if err != nil {
+				// Check if this is the "another instance running" error
+				if strings.Contains(err.Error(), "Another instance of managedsoftwareupdate is running") {
+					// For --checkonly, offer intelligent handling
+					if *checkOnly {
+						action := handleCheckOnlyConflict()
+						if action == "retry" {
+							// Try again after handling the conflict
+							continue
+						} else {
+							// User chose to exit
+							os.Exit(0)
+						}
+					} else {
+						fmt.Fprintf(os.Stderr, "%v\n", err)
+						os.Exit(1)
+					}
+				} else {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				// Successfully acquired mutex
+				break
 			}
-			os.Exit(1)
 		}
 		// Ensure mutex is released when the program exits
 		defer releaseSingleInstance(mutex)
