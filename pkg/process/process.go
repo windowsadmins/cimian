@@ -416,14 +416,16 @@ func dirEmpty(path string) bool {
 	return err == io.EOF
 }
 
-// fileOld returns true if the file is older than
-// the limit defined in the variable `days`
-func fileOld(info os.FileInfo) bool {
+// fileOld returns true if the file is older than the configured retention period
+func fileOld(info os.FileInfo, cfg *config.Configuration) bool {
 	// Age of the file
 	fileAge := time.Since(info.ModTime())
 
-	// Our limit
-	days := 5
+	// Use configured retention days, default to 1 day if not set
+	days := cfg.CacheRetentionDays
+	if days == 0 {
+		days = 1 // Much more aggressive default - 1 day instead of 5
+	}
 
 	// Convert from days
 	hours := days * 24
@@ -436,56 +438,267 @@ func fileOld(info os.FileInfo) bool {
 // This abstraction allows us to override when testing
 var osRemove = os.Remove
 
-// CleanUp checks the age of items in the cache and removes if older than 5 days
-func CleanUp(cachePath string, cfg *config.Configuration) {
-	// Clean up old files
-	err := filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			logging.Error("Processing Error", "error", err)
-			logging.Warn("Failed to access path", "path", path, "error", err)
-			return err
-		}
-		// If not a directory and older than our limit, delete
-		if !info.IsDir() && fileOld(info) {
-			logging.Info("Cleaning old cached file", "file", info.Name())
-			err := osRemove(path)
-			if err != nil {
-				logging.Error("Failed to remove file", "file", path, "error", err)
-			}
+// CacheStatistics holds information about cache directory
+type CacheStatistics struct {
+	TotalSize     int64
+	TotalFiles    int
+	OldestFileAge time.Duration
+}
+
+// getCacheStatistics analyzes the cache directory and returns statistics
+func getCacheStatistics(cachePath string) CacheStatistics {
+	stats := CacheStatistics{}
+	oldestTime := time.Now()
+
+	filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
 			return nil
 		}
+
+		stats.TotalSize += info.Size()
+		stats.TotalFiles++
+
+		if info.ModTime().Before(oldestTime) {
+			oldestTime = info.ModTime()
+		}
+
 		return nil
 	})
-	if err != nil {
-		logging.Error("Processing Error", "error", err)
-		logging.Warn("Error walking path", "path", cachePath, "error", err)
-		return
+
+	stats.OldestFileAge = time.Since(oldestTime)
+	return stats
+}
+
+// getCurrentlyInstalledItems returns a map of currently installed software items
+// This helps preserve cache files for software that's still installed
+func getCurrentlyInstalledItems() map[string]bool {
+	installed := make(map[string]bool)
+	
+	// Try to read the ManagedInstallReport.plist equivalent or use Windows registry
+	// For now, we'll use a simple heuristic based on common installation tracking
+	
+	// Check Windows Programs and Features
+	if installedFromRegistry := getInstalledFromRegistry(); len(installedFromRegistry) > 0 {
+		for _, item := range installedFromRegistry {
+			installed[strings.ToLower(item)] = true
+		}
 	}
 
-	// Clean up empty directories
-	err = filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
+	// TODO: Add logic to read Cimian's own installation tracking
+	// This would be more accurate than registry-based detection
+
+	return installed
+}
+
+// getInstalledFromRegistry gets a list of installed software from Windows Registry
+func getInstalledFromRegistry() []string {
+	var installed []string
+	
+	// This is a simplified version - in production you might want to read from
+	// HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
+	// and HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
+	
+	return installed
+}
+
+// shouldPreserveFile determines if a cache file should be preserved based on installed items
+func shouldPreserveFile(fileName string, installedItems map[string]bool) bool {
+	// Extract potential software names from filename
+	// Common patterns: "SoftwareName-1.2.3.exe", "SoftwareName_x64.msi", etc.
+	
+	fileName = strings.ToLower(fileName)
+	
+	// Remove common file extensions and version patterns
+	baseName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	
+	// Split on common separators and check each part
+	parts := strings.FieldsFunc(baseName, func(c rune) bool {
+		return c == '-' || c == '_' || c == '.' || c == ' '
+	})
+	
+	for _, part := range parts {
+		if len(part) > 3 && installedItems[part] { // Only check parts longer than 3 chars
+			return true
+		}
+	}
+	
+	return false
+}
+
+// performSizeBasedCleanup removes files to meet size constraints
+func performSizeBasedCleanup(cachePath string, cfg *config.Configuration, maxSizeBytes int64, 
+	installedItems map[string]bool, removedFiles *int, removedSize *int64) {
+	
+	logging.Info("Performing size-based cache cleanup", "targetSizeGB", cfg.CacheMaxSizeGB)
+	
+	// Collect all files with their info for sorting
+	type fileInfo struct {
+		path     string
+		info     os.FileInfo
+		preserve bool
+	}
+	
+	var files []fileInfo
+	
+	filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		
+		preserve := cfg.GetCachePreserveInstalledItems() && shouldPreserveFile(info.Name(), installedItems)
+		files = append(files, fileInfo{
+			path:     path,
+			info:     info,
+			preserve: preserve,
+		})
+		
+		return nil
+	})
+	
+	// Sort by modification time (oldest first) but put preserved files last
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].preserve != files[j].preserve {
+			return !files[i].preserve // Non-preserved files come first
+		}
+		return files[i].info.ModTime().Before(files[j].info.ModTime())
+	})
+	
+	// Remove files until we're under the size limit
+	currentSize := getCacheStatistics(cachePath).TotalSize
+	
+	for _, file := range files {
+		if currentSize <= maxSizeBytes {
+			break
+		}
+		
+		if file.preserve {
+			logging.Debug("Skipping preserved file during size-based cleanup", "file", file.info.Name())
+			continue
+		}
+		
+		if err := osRemove(file.path); err != nil {
+			logging.Error("Failed to remove file during size-based cleanup", "file", file.path, "error", err)
+		} else {
+			*removedFiles++
+			*removedSize += file.info.Size()
+			currentSize -= file.info.Size()
+			logging.Debug("Removed file for size constraint", "file", file.info.Name(), 
+				"sizeMB", fmt.Sprintf("%.2f", float64(file.info.Size())/(1024*1024)))
+		}
+	}
+}
+
+// cleanupEmptyDirectories removes empty directories from the cache
+func cleanupEmptyDirectories(cachePath string) {
+	filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			logging.Error("Processing Error", "error", err)
-			logging.Warn("Failed to access path", "path", path, "error", err)
-			return err
+			return nil
 		}
 
 		// If a dir and empty, delete
-		if info.IsDir() && dirEmpty(path) {
-			logging.Info("Cleaning empty directory", "directory", info.Name())
-			err := osRemove(path)
-			if err != nil {
-				logging.Error("Failed to remove directory", "directory", path, "error", err)
+		if info.IsDir() && path != cachePath && dirEmpty(path) {
+			logging.Debug("Cleaning empty directory", "directory", info.Name())
+			if err := osRemove(path); err != nil {
+				logging.Error("Failed to remove empty directory", "directory", path, "error", err)
 			}
-			return nil
 		}
 		return nil
 	})
-	if err != nil {
-		logging.Error("Processing Error", "error", err)
-		logging.Warn("Error walking path", "path", cachePath, "error", err)
-		return
+}
+
+// CleanUp performs intelligent cache cleanup based on configuration settings
+// This now supports size-based and age-based cleanup with preservation of currently installed items
+func CleanUp(cachePath string, cfg *config.Configuration) {
+	logging.Info("Starting cache cleanup", "path", cachePath, "retentionDays", cfg.CacheRetentionDays, "maxSizeGB", cfg.CacheMaxSizeGB)
+	
+	// First, get current cache statistics
+	cacheStats := getCacheStatistics(cachePath)
+	logging.Info("Current cache statistics", 
+		"totalSizeGB", fmt.Sprintf("%.2f", float64(cacheStats.TotalSize)/(1024*1024*1024)),
+		"totalFiles", cacheStats.TotalFiles,
+		"oldestFileAge", cacheStats.OldestFileAge.String())
+
+	// Check if we need aggressive cleanup based on cache size
+	maxSizeBytes := int64(cfg.CacheMaxSizeGB) * 1024 * 1024 * 1024
+	needsSizeBasedCleanup := cacheStats.TotalSize > maxSizeBytes
+
+	if needsSizeBasedCleanup {
+		logging.Warn("Cache size exceeds maximum, performing aggressive cleanup", 
+			"currentSizeGB", fmt.Sprintf("%.2f", float64(cacheStats.TotalSize)/(1024*1024*1024)),
+			"maxSizeGB", cfg.CacheMaxSizeGB)
 	}
+
+	// Get list of currently installed software to preserve their cache if configured
+	installedItems := make(map[string]bool)
+	if cfg.GetCachePreserveInstalledItems() {
+		installedItems = getCurrentlyInstalledItems()
+		logging.Info("Cache preservation enabled", "installedItemsCount", len(installedItems))
+	}
+
+	var removedFiles int
+	var removedSize int64
+	var preservedFiles int
+
+	// Age-based cleanup - remove old files first
+	err := filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			logging.Warn("Failed to access path during cleanup", "path", path, "error", err)
+			return nil // Continue walking
+		}
+		
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+
+		// Check if this file should be preserved based on installed items
+		fileName := info.Name()
+		if cfg.GetCachePreserveInstalledItems() && shouldPreserveFile(fileName, installedItems) {
+			preservedFiles++
+			logging.Debug("Preserving cache file for installed item", "file", fileName)
+			return nil
+		}
+
+		// Check if file is old enough to be removed
+		if fileOld(info, cfg) {
+			logging.Debug("Removing old cached file", "file", fileName, "age", time.Since(info.ModTime()).String())
+			if err := osRemove(path); err != nil {
+				logging.Error("Failed to remove old file", "file", path, "error", err)
+			} else {
+				removedFiles++
+				removedSize += info.Size()
+			}
+		}
+		return nil
+	})
+	
+	if err != nil {
+		logging.Error("Error during age-based cleanup", "error", err)
+	}
+
+	// Size-based cleanup - if cache is still too large, remove more files
+	if needsSizeBasedCleanup {
+		// Get updated cache size after age-based cleanup
+		updatedStats := getCacheStatistics(cachePath)
+		if updatedStats.TotalSize > maxSizeBytes {
+			performSizeBasedCleanup(cachePath, cfg, maxSizeBytes, installedItems, &removedFiles, &removedSize)
+		}
+	}
+
+	// Clean up empty directories
+	cleanupEmptyDirectories(cachePath)
+
+	// Log cleanup results
+	logging.Info("Cache cleanup completed", 
+		"removedFiles", removedFiles,
+		"removedSizeMB", fmt.Sprintf("%.2f", float64(removedSize)/(1024*1024)),
+		"preservedFiles", preservedFiles)
+
+	// Log final cache statistics
+	finalStats := getCacheStatistics(cachePath)
+	logging.Info("Final cache statistics", 
+		"totalSizeGB", fmt.Sprintf("%.2f", float64(finalStats.TotalSize)/(1024*1024*1024)),
+		"totalFiles", finalStats.TotalFiles)
 }
 
 // ProcessInstallWithDependencies processes an install item with full dependency handling

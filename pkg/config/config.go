@@ -55,8 +55,30 @@ type Configuration struct {
 	// Forces execution policy bypass for all PowerShell script executions to prevent OS execution policy restrictions
 	ForceExecutionPolicyBypass bool `yaml:"ForceExecutionPolicyBypass"` // Force -ExecutionPolicy Bypass on all PowerShell executions (default: true)
 
+	// Cache management settings
+	CacheMaxSizeGB              int  `yaml:"CacheMaxSizeGB"`              // Maximum cache size in GB (default: 10GB)
+	CacheRetentionDays          int  `yaml:"CacheRetentionDays"`          // Number of days to retain cached files (default: 1 day)
+	CacheCleanupOnStartup       *bool `yaml:"CacheCleanupOnStartup"`       // Perform cache cleanup on startup (default: true)
+	CachePreserveInstalledItems *bool `yaml:"CachePreserveInstalledItems"` // Keep cache for currently installed items (default: true)
+
 	// Internal flag to skip self-service manifest processing (not exposed in YAML)
 	SkipSelfService bool `yaml:"-"`
+}
+
+// GetCacheCleanupOnStartup returns the cache cleanup on startup setting, with true as default
+func (c *Configuration) GetCacheCleanupOnStartup() bool {
+	if c.CacheCleanupOnStartup == nil {
+		return true // Default to enabled
+	}
+	return *c.CacheCleanupOnStartup
+}
+
+// GetCachePreserveInstalledItems returns the cache preserve installed items setting, with true as default
+func (c *Configuration) GetCachePreserveInstalledItems() bool {
+	if c.CachePreserveInstalledItems == nil {
+		return true // Default to enabled
+	}
+	return *c.CachePreserveInstalledItems
 }
 
 // LoadConfig loads the configuration from a YAML file.
@@ -101,6 +123,23 @@ func LoadConfig() (*Configuration, error) {
 	// Set default timeout if not configured (0 means not set)
 	if config.InstallerTimeoutMinutes == 0 {
 		config.InstallerTimeoutMinutes = 10 // Default to 10 minutes as requested
+	}
+
+	// Set cache management defaults if not configured
+	if config.CacheMaxSizeGB == 0 {
+		config.CacheMaxSizeGB = 10 // 10GB default maximum cache size
+	}
+	if config.CacheRetentionDays == 0 {
+		config.CacheRetentionDays = 1 // 1 day default retention (much more aggressive than before)
+	}
+	// Set boolean defaults - use pointers to distinguish between unset and explicitly false
+	if config.CacheCleanupOnStartup == nil {
+		defaultTrue := true
+		config.CacheCleanupOnStartup = &defaultTrue
+	}
+	if config.CachePreserveInstalledItems == nil {
+		defaultTrue := true
+		config.CachePreserveInstalledItems = &defaultTrue
 	}
 
 	// Create required directories

@@ -302,6 +302,7 @@ func main() {
 	// Cache management flags
 	validateCache := pflag.Bool("validate-cache", false, "Validate cache integrity and remove corrupt files.")
 	cacheStatus := pflag.Bool("cache-status", false, "Show cache status and statistics.")
+	cleanCache := pflag.Bool("clean-cache", false, "Perform comprehensive cache cleanup and exit.")
 
 	// Munki-compatible flags for preflight bypass and manifest override
 	noPreflight := pflag.Bool("no-preflight", false, "Skip preflight script execution.")
@@ -540,35 +541,74 @@ func main() {
 		os.Exit(0)
 	}
 
+	if *cleanCache {
+		fmt.Println("Performing comprehensive cache cleanup...")
+		
+		// Load minimal config for cache cleanup
+		cfg := &config.Configuration{}
+		if cfgLoaded, err := config.LoadConfig(); err == nil {
+			cfg = cfgLoaded
+		} else {
+			// Use defaults if config can't be loaded
+			cfg.CachePath = `C:\ProgramData\ManagedInstalls\Cache`
+			cfg.CacheRetentionDays = 1
+			cfg.CacheMaxSizeGB = 10
+			defaultTrue := true
+			cfg.CachePreserveInstalledItems = &defaultTrue
+		}
+		
+		// Show before statistics
+		beforeStats := getCacheStatsForDisplay(cfg.CachePath)
+		fmt.Printf("Before cleanup - Size: %.2f GB, Files: %d\n", 
+			float64(beforeStats.TotalSize)/(1024*1024*1024), beforeStats.TotalFiles)
+		
+		process.CleanUp(cfg.CachePath, cfg)
+		
+		// Show after statistics  
+		afterStats := getCacheStatsForDisplay(cfg.CachePath)
+		fmt.Printf("After cleanup - Size: %.2f GB, Files: %d\n", 
+			float64(afterStats.TotalSize)/(1024*1024*1024), afterStats.TotalFiles)
+		
+		savedGB := float64(beforeStats.TotalSize-afterStats.TotalSize) / (1024*1024*1024)
+		fmt.Printf("Freed %.2f GB of cache space\n", savedGB)
+		fmt.Println("Cache cleanup completed successfully")
+		return
+	}
+
 	if *cacheStatus {
 		fmt.Println("Cimian Cache Status")
-		fmt.Println("═══════════════════════")
+		fmt.Println("==================")
+		
+		// Load minimal config for cache path  
+		cfg := &config.Configuration{}
+		if cfgLoaded, err := config.LoadConfig(); err == nil {
+			cfg = cfgLoaded
+		} else {
+			cfg.CachePath = `C:\ProgramData\ManagedInstalls\Cache`
+		}
 
 		fmt.Printf("Cache Path: %s\n", cfg.CachePath)
-
-		// Count files and calculate sizes
-		var totalFiles, corruptFiles, totalSize int64
-		filepath.Walk(cfg.CachePath, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return nil
-			}
-			totalFiles++
-			totalSize += info.Size()
-			if info.Size() == 0 {
-				corruptFiles++
-			}
-			return nil
-		})
-
-		fmt.Printf("Total Files: %d\n", totalFiles)
-		fmt.Printf("Total Size: %.2f MB\n", float64(totalSize)/(1024*1024))
-		if corruptFiles > 0 {
-			fmt.Printf("[WARNING] Corrupt Files: %d (0-byte files detected)\n", corruptFiles)
-			fmt.Println("[INFO] Run with --validate-cache to clean up corrupt files")
-		} else {
-			fmt.Println("No corruption detected")
+		
+		stats := getCacheStatsForDisplay(cfg.CachePath)
+		fmt.Printf("Total Size: %.2f GB\n", float64(stats.TotalSize)/(1024*1024*1024))
+		fmt.Printf("Total Files: %d\n", stats.TotalFiles)
+		fmt.Printf("Oldest File: %s ago\n", stats.OldestFileAge.String())
+		
+		// Show configuration
+		fmt.Printf("\nCache Configuration:\n")
+		fmt.Printf("  Max Size: %d GB\n", cfg.CacheMaxSizeGB)
+		fmt.Printf("  Retention: %d days\n", cfg.CacheRetentionDays)
+		fmt.Printf("  Cleanup on Startup: %t\n", cfg.GetCacheCleanupOnStartup())
+		fmt.Printf("  Preserve Installed Items: %t\n", cfg.GetCachePreserveInstalledItems())
+		
+		// Show recommendations
+		maxSizeBytes := int64(cfg.CacheMaxSizeGB) * 1024 * 1024 * 1024
+		if stats.TotalSize > maxSizeBytes {
+			fmt.Printf("\n[WARNING] Cache exceeds maximum size limit\n")
+			fmt.Printf("Consider running: managedsoftwareupdate.exe --clean-cache\n")
 		}
-		os.Exit(0)
+		
+		return
 	}
 
 	if *performSelfUpdate {
@@ -804,6 +844,12 @@ func main() {
 	if err := download.ValidateAndCleanCache(cfg.CachePath); err != nil {
 		logging.Warn("Cache validation encountered errors", "error", err)
 		// Don't exit - continue with potentially degraded cache
+	}
+
+	// Perform cache cleanup on startup if configured (default: enabled)
+	if cfg.GetCacheCleanupOnStartup() {
+		statusReporter.Message("Performing cache cleanup...")
+		process.CleanUp(cfg.CachePath, cfg)
 	}
 
 	// Retrieve manifests.
@@ -1474,6 +1520,11 @@ func main() {
 	statusReporter.Detail("Cleaning up temporary files...")
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
 	currentLogDir := logging.GetCurrentLogDir()
+	
+	// Perform comprehensive cache cleanup
+	process.CleanUp(cfg.CachePath, cfg)
+	
+	// Also perform the selective cleanup based on installation logs (legacy behavior)
 	clearCacheFolderSelective(cacheFolder, currentLogDir)
 	
 	// Clear chocolatey cache as well to prevent accumulation
@@ -2959,6 +3010,40 @@ func getIdleSeconds() int {
 func isUserActive() bool {
 	idleSeconds := getIdleSeconds()
 	return idleSeconds < 300
+}
+
+// getCacheStatsForDisplay gets cache statistics for display purposes
+// This is a simplified version of the one in process package for main.go use
+func getCacheStatsForDisplay(cachePath string) struct {
+	TotalSize     int64
+	TotalFiles    int
+	OldestFileAge time.Duration
+} {
+	stats := struct {
+		TotalSize     int64
+		TotalFiles    int
+		OldestFileAge time.Duration
+	}{}
+	
+	oldestTime := time.Now()
+
+	filepath.Walk(cachePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		stats.TotalSize += info.Size()
+		stats.TotalFiles++
+
+		if info.ModTime().Before(oldestTime) {
+			oldestTime = info.ModTime()
+		}
+
+		return nil
+	})
+
+	stats.OldestFileAge = time.Since(oldestTime)
+	return stats
 }
 
 // clearCacheFolderSelective reads log files from logsPath (e.g. "C:\ProgramData\ManagedInstalls\logs")
