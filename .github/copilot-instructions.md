@@ -6,6 +6,10 @@ Cimian is a Windows software deployment solution inspired by Munki. It's written
 ## Quick Start
 **CRITICAL**: We cannot run unsigned binaries in this system. Always use the `-Sign` parameter when building:
 
+**NEVER USE `-Dev` FLAG**: The `-Dev` flag should never be used as it skips signing and can cause issues.
+
+**NEVER CREATE RANDOM TEST BINARIES**: Do not create standalone test files or random binaries. Fix the actual code in the codebase, rebuild the project binaries, test, rinse and repeat until the issue is fixed. Work with the actual project structure and components.
+
 ```pwsh
 # Build and sign a specific binary
 .\build.ps1 -Sign -Binary managedsoftwareupdate
@@ -92,7 +96,6 @@ The `build.ps1` script is the central build system with many options:
 
 # DEPLOYMENT
 -Install               # Install MSI after building
--Dev                   # Development mode (faster iteration)
 
 # UTILITIES
 -SignMSI               # Sign existing MSI files only
@@ -102,8 +105,8 @@ The `build.ps1` script is the central build system with many options:
 
 #### 1. Quick Development Iteration
 ```pwsh
-# Fast development cycle - stops services, skips signing
-.\build.ps1 -Dev -Binary managedsoftwareupdate
+# For development testing - always sign binaries
+.\build.ps1 -Sign -Binary managedsoftwareupdate
 
 # Test the built binary safely
 sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly
@@ -154,8 +157,8 @@ sudo .\release\arm64\managedsoftwareupdate.exe --no-preflight -vvv
 
 ### Development Mode Testing
 ```pwsh
-# Development mode automatically stops services for clean testing
-.\build.ps1 -Dev -Binary managedsoftwareupdate
+# Always sign binaries for testing
+.\build.ps1 -Sign -Binary managedsoftwareupdate
 sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly
 ```
 
@@ -251,7 +254,7 @@ Cimian includes a zero-touch deployment system:
 
 ### Common Build Issues
 1. **Unsigned binary errors**: Always use `-Sign` parameter
-2. **File locking**: Use `-Dev` mode to stop services first
+2. **File locking**: Restart PowerShell session or stop conflicting services
 3. **Certificate issues**: Check enterprise certificate in personal store
 4. **Go module issues**: Run `go mod tidy` and `go mod download`
 
