@@ -886,6 +886,40 @@ func checkPathQuiet(catalogItem catalog.Item, quiet bool) (bool, error) {
 // For "uninstall": returns true if any tracked file exists (uninstallation needed)
 func checkInstalls(item catalog.Item, installType string) (bool, error) {
 	if len(item.Installs) == 0 {
+		// For MSI installer types without installs array, check product_code directly
+		if strings.ToLower(item.Installer.Type) == "msi" && item.Installer.ProductCode != "" {
+			logging.Debug("No installs array - checking MSI installer product_code directly",
+				"item", item.Name, "productCode", item.Installer.ProductCode)
+			
+			installed, versionMatch := checkMsiProductCode(item.Installer.ProductCode, item.Version)
+			
+			if installType == "uninstall" {
+				if installed {
+					logging.Info("MSI product present via installer.product_code, uninstall required",
+						"item", item.Name, "productCode", item.Installer.ProductCode)
+					return true, nil
+				} else {
+					logging.Info("MSI product not found via installer.product_code, item may already be uninstalled",
+						"item", item.Name, "productCode", item.Installer.ProductCode)
+					return false, nil
+				}
+			} else {
+				// install/update logic
+				if !installed {
+					logging.Info("MSI product not installed via installer.product_code, installation needed",
+						"item", item.Name, "productCode", item.Installer.ProductCode)
+					return true, nil
+				} else if !versionMatch {
+					logging.Info("MSI version outdated via installer.product_code, update needed",
+						"item", item.Name, "productCode", item.Installer.ProductCode)
+					return true, nil
+				} else {
+					logging.Info("MSI verification passed via installer.product_code",
+						"item", item.Name, "productCode", item.Installer.ProductCode)
+					return false, nil
+				}
+			}
+		}
 		return false, nil
 	}
 
