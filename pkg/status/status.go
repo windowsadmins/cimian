@@ -227,11 +227,22 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 
 	switch installType {
 	case "install", "update":
-		// For installs/updates, always check actual file presence first
+		// For installs/updates, check actual file presence if installs array exists
 		// Registry version is logged but doesn't affect the decision
-		logging.Info("Installation verification checks indicate reinstallation needed",
-			"item", catalogItem.Name,
-		)
+		if len(catalogItem.Installs) > 0 {
+			logging.Info("Checking installs array for file verification",
+				"item", catalogItem.Name, "installsCount", len(catalogItem.Installs))
+		} else {
+			// Different messages based on installer type
+			if catalogItem.Installer.Type == "nopkg" {
+				logging.Debug("No installs array defined - script-only nopkg item",
+					"item", catalogItem.Name, "installerType", catalogItem.Installer.Type)
+			} else {
+				logging.Debug("No installs array defined - relying on registry/product code verification",
+					"item", catalogItem.Name, "installerType", catalogItem.Installer.Type)
+			}
+		}
+		
 		needed, err := checkInstalls(catalogItem, installType)
 		if err != nil {
 			logging.Warn("Error in file/install checks, assuming update needed",
@@ -239,13 +250,23 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			return true, err
 		}
 		if needed {
-			logging.Info("Installation verification checks indicate reinstallation needed",
-				"item", catalogItem.Name,
-			)
+			logging.Info("File verification failed - reinstallation required",
+				"item", catalogItem.Name)
 			return true, nil
 		}
 
-		logging.Debug("All explicit checks passed, no update needed", "item", catalogItem.Name)
+		if len(catalogItem.Installs) > 0 {
+			logging.Debug("File verification passed - no update needed", "item", catalogItem.Name)
+		} else {
+			// Different success messages based on installer type
+			if catalogItem.Installer.Type == "nopkg" {
+				// For nopkg items without installs array, they should not run
+				// because there's no way to determine execution state
+				logging.Debug("Script-only nopkg item without verification method - no execution needed", "item", catalogItem.Name)
+			} else {
+				logging.Debug("No file tracking needed - registry/product code verification sufficient", "item", catalogItem.Name)
+			}
+		}
 		return false, nil
 
 	case "uninstall":
@@ -504,12 +525,22 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 
 	switch installType {
 	case "install", "update":
-		// For installs/updates, always check actual file presence first
+		// For installs/updates, check actual file presence if installs array exists
 		// Registry version is logged but doesn't affect the decision
 		if !quiet {
-			logging.Info("Installation verification checks indicate reinstallation needed",
-				"item", catalogItem.Name,
-			)
+			if len(catalogItem.Installs) > 0 {
+				logging.Info("Checking installs array for file verification",
+					"item", catalogItem.Name, "installsCount", len(catalogItem.Installs))
+			} else {
+				// Different messages based on installer type
+				if catalogItem.Installer.Type == "nopkg" {
+					logging.Debug("No installs array defined - script-only nopkg item",
+						"item", catalogItem.Name, "installerType", catalogItem.Installer.Type)
+				} else {
+					logging.Debug("No installs array defined - relying on registry/product code verification",
+						"item", catalogItem.Name, "installerType", catalogItem.Installer.Type)
+				}
+			}
 		}
 		needed, err := checkInstallsQuiet(catalogItem, installType, quiet)
 		if err != nil {
@@ -526,9 +557,8 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 		}
 		if needed {
 			if !quiet {
-				logging.Info("Installation verification checks indicate reinstallation needed",
-					"item", catalogItem.Name,
-				)
+				logging.Info("File verification failed - reinstallation required",
+					"item", catalogItem.Name)
 			}
 			return CheckResult{
 				NeedsAction: true,
@@ -539,7 +569,18 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 		}
 
 		if !quiet {
-			logging.Debug("All explicit checks passed, no update needed", "item", catalogItem.Name)
+			if len(catalogItem.Installs) > 0 {
+				logging.Debug("File verification passed - no update needed", "item", catalogItem.Name)
+			} else {
+				// Different success messages based on installer type
+				if catalogItem.Installer.Type == "nopkg" {
+					// For nopkg items without installs array, they should not run
+					// because there's no way to determine execution state
+					logging.Debug("Script-only nopkg item without verification method - no execution needed", "item", catalogItem.Name)
+				} else {
+					logging.Debug("No file tracking needed - registry/product code verification sufficient", "item", catalogItem.Name)
+				}
+			}
 		}
 		return CheckResult{
 			NeedsAction: false,
