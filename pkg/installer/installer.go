@@ -119,8 +119,15 @@ func removeInstalledVersionFromRegistry(item catalog.Item) {
 func verifyInstallationBeforeRegistry(item catalog.Item, cfg *config.Configuration) bool {
 	logging.Debug("Starting direct installation verification", "item", item.Name, "installsCount", len(item.Installs))
 	
-	// If no installs array is defined, we can't verify - log as warning and assume success for backward compatibility
+	// If no installs array is defined, we don't verify
 	if len(item.Installs) == 0 {
+		// For nopkg (script-only) items, this is expected behavior - no warning needed
+		if item.Installer.Type == "nopkg" {
+			logging.Debug("No installs array for nopkg item - this is expected for script-only packages", "item", item.Name)
+			return true // Success for nopkg items without installs array
+		}
+		
+		// For other installer types, warn about missing verification data
 		logging.Warn("No installs array defined for verification - cannot verify installation success", 
 			"item", item.Name, "recommendation", "Add installs array to catalog for proper verification")
 		
