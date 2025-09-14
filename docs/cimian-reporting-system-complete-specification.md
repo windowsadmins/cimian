@@ -1,12 +1,15 @@
 # Cimian Reporting System - Complete Technical Specification
 
-**Document Version**: 1.0  
-**Last Updated**: September 11, 2025  
-**Target Audience**: ReportMate Integration, System Administrators, Developers
+**Document Version**: 1.1  
+**Last Updated**: September 13, 2025  
+**Target Audience**: ReportMate Integration, System Administrators, Developers  
+**Critical Update**: Data inconsistency bug resolved - installation failures now accurately reported
 
 ## Overview
 
 The Cimian reporting system generates comprehensive telemetry data across three core JSON files, providing complete visibility into managed software deployment, package status, and system events. This document serves as the definitive technical specification for integrating with and interpreting Cimian's reporting outputs.
+
+**CRITICAL UPDATE (September 13, 2025):** A major data inconsistency bug has been resolved where installation failures were incorrectly reported as successful operations. All session status indicators, event logs, and success/failure counts now accurately reflect actual installation results, eliminating false positive monitoring alerts.
 
 ---
 
@@ -20,8 +23,8 @@ The Cimian reporting system generates comprehensive telemetry data across three 
   - `items.json` - Package-level status and metrics
 
 ### File Update Frequency
-- **Real-time**: `events.jsonl` (appended during operations)
-- **Per-session**: `sessions.json` and `items.json` (updated at session completion)
+- **Real-time**: `events.jsonl` (appended during operations) - ✅ **FIXED:** Events now properly written in JSONL format
+- **Per-session**: `sessions.json` and `items.json` (updated at session completion) - ✅ **FIXED:** Generated after session finalization
 - **Retention**: Files are rotated/archived based on system configuration
 
 ---
@@ -82,8 +85,8 @@ Tracks high-level session information, system state, and aggregate statistics fo
 #### Package Statistics
 - **total_managed_packages**: Total packages in manifest (critical for deployment completeness)
 - **packages_processed**: Packages that had actions attempted
-- **successful_installs/updates**: Successful operations count
-- **failed_operations**: Failed installation/update attempts
+- **successful_installs/updates**: Successful operations count - ✅ **FIXED:** Accurate counts based on actual results
+- **failed_operations**: Failed installation/update attempts - ✅ **FIXED:** Properly incremented for MSI 1603 and other failures
 - **install_loops_detected**: Number of packages in install loops
 
 #### System Health Metrics
@@ -93,9 +96,9 @@ Tracks high-level session information, system state, and aggregate statistics fo
 - **manifest_validation_status**: `success`, `warning`, `error`
 
 #### Execution Context
-- **execution_mode**: `install`, `checkonly`, `cleanup`, `selfupdate`
+- **execution_mode**: `install`, `checkonly`, `cleanup`, `selfupdate`, `installonly`
 - **preflight_skipped**: Whether preflight checks were bypassed
-- **exit_code**: System exit code (0 = success, non-zero = error)
+- **exit_code**: System exit code (0 = success, non-zero = error) - ✅ **FIXED:** Accurately reflects installation results
 - **exit_reason**: Human-readable exit explanation
 
 ---
@@ -110,6 +113,8 @@ JSON Lines format - each line is a complete JSON object representing a single ev
 
 ### Event Types and Examples
 
+**Data Integrity Note:** All events now properly populate the `level` field with accurate values (`ERROR`, `WARN`, `INFO`, `DEBUG`) and are written in consistent JSONL format for reliable parsing.
+
 #### System Events
 ```json
 {"timestamp": "2025-09-11T14:30:22.123Z", "event_type": "system_startup", "session_id": "session_20250911_143022", "hostname": "ANIM-STD-LAB-12", "message": "Cimian managed software update starting", "details": {"version": "2024.3.1", "execution_mode": "checkonly", "manifest": "Shared/Curriculum/Animation/C3234/CintiqLab16"}}
@@ -121,12 +126,17 @@ JSON Lines format - each line is a complete JSON object representing a single ev
 
 #### Package Installation Events
 ```json
-{"timestamp": "2025-09-11T14:32:15.234Z", "event_type": "install_start", "session_id": "session_20250911_143022", "package_name": "Blender", "message": "Starting installation of Blender", "details": {"version": "4.2.1", "installer_type": "msi", "size_mb": 285.7}}
+{"timestamp": "2025-09-13T19:37:15.234Z", "event_type": "install_start", "session_id": "session_20250913_193719", "package_name": "Chrome", "level": "INFO", "status": "started", "message": "Starting installation of Chrome", "details": {"version": "139.0.7258.139", "installer_type": "msi", "size_mb": 95.2}}
 
-{"timestamp": "2025-09-11T14:35:42.567Z", "event_type": "install_success", "session_id": "session_20250911_143022", "package_name": "Blender", "message": "Blender installed successfully", "details": {"version": "4.2.1", "duration_seconds": 207, "exit_code": 0}}
+{"timestamp": "2025-09-13T19:37:42.567Z", "event_type": "install_failure", "session_id": "session_20250913_193719", "package_name": "Chrome", "level": "ERROR", "status": "error", "message": "Installation of Chrome failed: MSI installation failed with exit code 1603", "details": {"version": "139.0.7258.139", "duration_seconds": 27, "exit_code": 1603}}
 
-{"timestamp": "2025-09-11T14:37:18.890Z", "event_type": "install_failure", "session_id": "session_20250911_143022", "package_name": "CUDA", "error": "Installation failed: NVIDIA GPU required but not detected", "details": {"version": "12.2", "exit_code": 1603, "installer_log": "C:\\Windows\\Temp\\CUDA_install.log"}}
+{"timestamp": "2025-09-13T19:37:15.234Z", "event_type": "install_success", "session_id": "session_20250911_143022", "package_name": "Blender", "level": "INFO", "status": "success", "message": "Blender installed successfully", "details": {"version": "4.2.1", "duration_seconds": 207, "exit_code": 0}}
 ```
+
+**Fixed Data Integrity Issues:**
+- Events now have proper `level` values (`ERROR` for failures, `INFO` for successes)
+- Installation failure events are reliably written and parsed
+- MSI 1603 errors and other installer failures properly populate error details
 
 #### Warning Events
 ```json
@@ -155,6 +165,8 @@ JSON Lines format - each line is a complete JSON object representing a single ev
 - **timestamp**: ISO 8601 with milliseconds and timezone
 - **event_type**: Standardized event classification
 - **session_id**: Links to session metadata  
+- **level**: Log level (`ERROR`, `WARN`, `INFO`, `DEBUG`) - ✅ **FIXED:** Properly populated based on event status
+- **status**: Event status (`error`, `success`, `warning`, etc.) - ✅ **FIXED:** Consistently populated 
 - **message**: Human-readable event description
 
 #### Package-Specific Fields
@@ -330,9 +342,10 @@ WHERE s.session_id = 'session_20250911_143022'
 
 #### Critical Alerts
 - **install_loops_detected > 0**: Immediate investigation required
-- **failed_operations > 10%**: Deployment health issue  
+- **failed_operations > 10%**: Deployment health issue - ✅ **FIXED:** Now accurately detects actual failure rates
 - **architecture_mismatches**: Hardware compatibility planning
-- **exit_code != 0**: Session-level failures
+- **exit_code != 0**: Session-level failures - ✅ **FIXED:** Correctly set based on installation results
+- **session status = "failed"**: Installation failures detected - ✅ **NEW:** Reliable failure detection
 
 #### Trending Analysis  
 - **Package success rates** over time from items.json metrics
@@ -348,13 +361,26 @@ WHERE s.session_id = 'session_20250911_143022'
 
 ### ReportMate Query Examples
 
-#### Get All Failed Installations Today
+#### Get All Failed Sessions Today
 ```javascript
-// Parse items.json
-const items = JSON.parse(itemsJsonData);
-const failedToday = items.filter(item => 
-  item.current_status.includes("Failed") && 
-  new Date(item.last_attempt_time).toDateString() === new Date().toDateString()
+// Parse sessions.json - ✅ FIXED: Failed sessions now properly marked as "failed"
+const sessions = JSON.parse(sessionsJsonData);
+const failedToday = sessions.filter(session => 
+  (session.status === "failed" || session.status === "partial_failure") && 
+  new Date(session.start_time).toDateString() === new Date().toDateString()
+);
+```
+
+#### Monitor Installation Failures in Real-Time
+```javascript  
+// Parse events.jsonl - ✅ FIXED: Error events now have proper level and status fields
+const events = eventsJsonlData.split('\n')
+  .filter(line => line.trim())
+  .map(line => JSON.parse(line));
+  
+const installFailures = events.filter(event =>
+  event.level === "ERROR" && 
+  event.event_type === "install_failure"
 );
 ```
 
@@ -370,10 +396,19 @@ const needsAttention = items.filter(item =>
 
 #### Session Success Rate Analysis
 ```javascript
-// Calculate session-level success metrics
+// Calculate session-level success metrics - ✅ FIXED: Now based on accurate counts
 const sessionData = JSON.parse(sessionsJsonData);
-const successRate = (sessionData.successful_installs + sessionData.successful_updates) / 
-                   sessionData.packages_processed * 100;
+const sessionsWithActions = sessionData.filter(s => s.packages_processed > 0);
+const successRate = sessionsWithActions.reduce((acc, session) => {
+  const sessionSuccessRate = (session.successful_installs + session.successful_updates) / 
+                            session.packages_processed * 100;
+  return acc + sessionSuccessRate;
+}, 0) / sessionsWithActions.length;
+
+// Identify problematic sessions
+const problemSessions = sessionsWithActions.filter(s => 
+  s.status === "failed" || s.failed_operations > s.successful_installs + s.successful_updates
+);
 ```
 
 ---
@@ -387,9 +422,11 @@ const successRate = (sessionData.successful_installs + sessionData.successful_up
 
 ### Automated Alert Triggers
 1. **Install loop detected**: `install_loop_detected: true` in items.json
-2. **High failure rate**: `failed_operations / packages_processed > 0.2` in sessions.json  
+2. **High failure rate**: `failed_operations / packages_processed > 0.2` in sessions.json - ✅ **FIXED:** Now reliable  
 3. **Architecture mismatches**: `current_status: "Not Available"` with architecture warning
 4. **System resource alerts**: `disk_space_available_gb < 10` in sessions.json
+5. **Installation failures**: `status: "failed"` in sessions.json - ✅ **NEW:** Reliable failure detection
+6. **MSI error detection**: `level: "ERROR"` with `exit_code: 1603` in events.jsonl - ✅ **NEW:** Specific MSI failure alerts
 
 ### Performance Considerations  
 - **File sizes**: events.jsonl can grow large; implement log rotation monitoring
@@ -400,6 +437,20 @@ const successRate = (sessionData.successful_installs + sessionData.successful_up
 ---
 
 ## Troubleshooting and Diagnostics
+
+### Fixed Data Integrity Issues (September 13, 2025)
+
+#### Session Status Accuracy ✅ RESOLVED
+- **Previous Issue**: Installation failures showed as `"completed"` sessions with `"failures": 0`
+- **Root Cause**: Reports generated before session finalization; install-only mode assumed success
+- **Resolution**: Reports now generated after session completion; accurate success/failure tracking
+- **Verification**: Chrome MSI 1603 failures now show `"status": "failed"` with correct failure counts
+
+#### Event Stream Reliability ✅ RESOLVED  
+- **Previous Issue**: Error events missing from `events.json` due to parsing failures
+- **Root Cause**: Events written in pretty-printed JSON format, parsed as JSONL; empty `level` fields
+- **Resolution**: Events written in consistent JSONL format with proper level mapping
+- **Verification**: MSI 1603 errors now appear as `{"level":"ERROR","status":"error","message":"..."}`
 
 ### Common Issues and Resolution
 
@@ -424,12 +475,15 @@ const successRate = (sessionData.successful_installs + sessionData.successful_up
 - session_id uniqueness across time periods
 - start_time <= end_time consistency  
 - Package counts (total_managed_packages >= packages_processed)
-- Metric summation (successful + failed = packages_processed)
+- Metric summation validation - ✅ **FIXED:** (successful + failed ≈ packages_processed)
+- Status consistency - ✅ **FIXED:** (`status = "failed"` when failures > 0)
 
 #### Event Stream Completeness
 - Every install_start has corresponding success/failure event
 - Session boundaries (system_startup and session_complete events)
 - Timestamp ordering within session_id groups
+- Level field population - ✅ **FIXED:** (all events have valid `level` values)
+- JSONL format consistency - ✅ **FIXED:** (single-line JSON format)
 
 #### Package Status Consistency  
 - current_status aligns with last_attempt_status
@@ -442,10 +496,19 @@ const successRate = (sessionData.successful_installs + sessionData.successful_up
 
 This specification provides ReportMate with comprehensive understanding of Cimian's reporting outputs. The three-file system delivers complete operational visibility:
 
-- **sessions.json**: High-level session metadata and aggregate metrics
-- **events.jsonl**: Granular real-time operational events  
+- **sessions.json**: High-level session metadata and aggregate metrics - ✅ **FIXED:** Accurate failure reporting
+- **events.jsonl**: Granular real-time operational events - ✅ **FIXED:** Reliable error event capture  
 - **items.json**: Detailed per-package status and historical metrics
 
-The enhanced install loop detection, architecture compatibility analysis, and comprehensive error/warning system provide the operational intelligence needed for effective managed software deployment monitoring and troubleshooting.
+**Critical Data Integrity Improvements (September 13, 2025):**
+The major bug causing installation failures to be reported as successes has been completely resolved. MSI 1603 errors, installer failures, and other deployment issues now trigger proper failure reporting across all data structures, enabling reliable monitoring and alerting.
+
+The enhanced install loop detection, architecture compatibility analysis, and comprehensive error/warning system, combined with the **fixed data integrity**, provide the operational intelligence needed for effective managed software deployment monitoring and troubleshooting.
+
+**ReportMate Integration Impact:**
+- Installation failures now reliably trigger alerts instead of showing false positive successes
+- Error events appear consistently in event streams with proper severity levels
+- Session status and metrics accurately reflect deployment health
+- Exit codes and failure counts enable automated remediation workflows
 
 For technical support or integration questions, refer to the Cimian development team or system documentation.

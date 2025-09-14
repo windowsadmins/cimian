@@ -1,13 +1,16 @@
 # Cimian ReportMate Status Specification
 
-**Document Version:** 1.0  
-**Date:** September 4, 2025  
+**Document Version:** 1.1  
+**Date:** September 13, 2025  
 **Author:** Cimian Development Team  
-**Purpose:** Status vocabulary specification for ReportMate dashboard integration
+**Purpose:** Status vocabulary specification for ReportMate dashboard integration  
+**Updates:** Fixed data inconsistency bug - reports now accurately reflect installation failures
 
 ## Overview
 
 This document defines the complete status vocabulary and data structures that Cimian writes to the `/reports` directory for consumption by ReportMate dashboards. All status values have been standardized and enhanced as of the latest reporting system update.
+
+**CRITICAL UPDATE (September 13, 2025):** A major data inconsistency bug has been resolved. Previous versions of Cimian incorrectly reported installation failures (such as MSI 1603 errors) as successful operations. This has been completely fixed - all failure types now accurately appear in session status, event logs, and success/failure counts.
 
 ## Report File Structure
 
@@ -73,23 +76,30 @@ The `current_status` field represents the definitive package state:
 Session-level status tracking includes multiple dimensions:
 
 #### Session Status Field
-| Status | Description |
-|--------|-------------|
-| `"completed"` | Session finished normally |
-| `"failed"` | Session encountered critical errors |
-| `"terminated"` | Session stopped unexpectedly |
+| Status | Description | Data Integrity Notes |
+|--------|-------------|---------------------|
+| `"completed"` | Session finished normally | All operations succeeded or no operations attempted |
+| `"failed"` | Session encountered critical errors | ✅ **FIXED:** Now accurately reflects installation failures (MSI 1603, etc.) |
+| `"partial_failure"` | Session had both successes and failures | ✅ **FIXED:** Properly reported when some items succeed, others fail |
+| `"terminated"` | Session stopped unexpectedly | Unexpected termination or system interruption |
 
 #### Session Summary Counters
 ```json
 {
-  "successes": 12,           // Successful package operations
-  "failures": 2,             // Failed package operations  
+  "successes": 12,           // ✅ FIXED: Accurate successful package operations count
+  "failures": 2,             // ✅ FIXED: Accurate failed package operations count 
   "total_actions": 14,       // Total package operations attempted
   "packages_installed": 10,   // Packages currently installed
   "packages_pending": 3,     // Packages awaiting installation
   "packages_failed": 2       // Packages in failed state
 }
 ```
+
+**Data Integrity Improvements (September 13, 2025):**
+- `successes` and `failures` counts now accurately reflect actual installation results
+- MSI 1603 errors and other installation failures properly increment `failures` count
+- Session `status` field correctly shows `"failed"` when installations fail
+- Install-only mode and regular mode both use consistent failure tracking logic
 
 ## Enhanced Data Structures
 
@@ -100,7 +110,7 @@ Session-level status tracking includes multiple dimensions:
   "event_id": "session-id-package-id-timestamp",
   "session_id": "2025-09-04-143052",
   "timestamp": "2025-09-04T14:30:58Z",
-  "level": "INFO|WARN|ERROR|DEBUG",
+  "level": "INFO|WARN|ERROR|DEBUG", // ✅ FIXED: Properly populated with correct log levels
   "event_type": "install|update|remove|download|config",
   
   // Enhanced package context (NEW)
@@ -108,7 +118,7 @@ Session-level status tracking includes multiple dimensions:
   "package_name": "Firefox",
   "package_version": "119.0.1",
   
-  // Status information
+  // Status information - ✅ FIXED: Status and level fields now consistently populated
   "action": "install_package",
   "status": "Success|Failed|Warning|Pending|Skipped|Unknown",
   "message": "Human readable description",
@@ -316,6 +326,19 @@ WHERE install_loop_detected = true;
 
 ## Implementation Notes
 
+### Data Integrity Improvements (September 13, 2025)
+
+**Critical Bug Fix Applied:**
+- **Session Status:** Previously, installation failures were incorrectly reported as `"completed"` sessions. Now properly reports `"failed"` or `"partial_failure"` based on actual results.
+- **Event Levels:** Previously, event `level` fields were empty, causing parsing failures. Now properly populated with `"ERROR"`, `"WARN"`, `"INFO"`, etc.
+- **JSONL Format:** Events are now written in proper single-line JSON format for consistent parsing.
+- **Success/Failure Counts:** Previously hardcoded assumptions of success. Now based on actual installation results.
+
+**ReportMate Impact:**
+- Installation failures (MSI 1603, etc.) now properly trigger failure alerts
+- Error events appear reliably in `events.json` with correct levels
+- Dashboard metrics reflect actual deployment health instead of false positives
+
 ### Backward Compatibility
 
 Cimian maintains legacy field names for compatibility:
@@ -346,4 +369,4 @@ For questions about this specification or ReportMate integration:
 
 ---
 
-**Note:** This specification reflects the enhanced reporting system implemented in Cimian v25.9.3+ with standardized status vocabulary and enhanced package context for improved ReportMate dashboard integration.
+**Note:** This specification reflects the enhanced reporting system implemented in Cimian v25.9.13+ with standardized status vocabulary, enhanced package context, and **critical data integrity fixes** that ensure installation failures are accurately reported instead of showing false positive successes. The September 13, 2025 update resolves the major bug where MSI 1603 errors and other installation failures were incorrectly reported as successful operations.
