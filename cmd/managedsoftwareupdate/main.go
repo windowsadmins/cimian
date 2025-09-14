@@ -1,6 +1,6 @@
 // cmd/managedsoftwareupdate/main.go
 //
-// Cimian Managed Software Update - Enterprise Software Management
+// Cimian Managed Software Update
 //
 // Key Features:
 // - Automatic timeout protection for installers (prevents hanging on GUI dialogs)
@@ -729,27 +729,212 @@ func main() {
 			logging.WithContext("run_type", "installonly"),
 			logging.WithContext("verbosity", verbosity))
 
-		// In install-only mode, we work with cached items and pending installations
-		// TODO: Implement logic to detect and install pending updates from cache
-		// For now, we'll exit with a message that this is a placeholder
-		statusReporter.Message("Install-only mode: No pending installations found in cache")
-		logging.Info("Install-only mode completed - no cached items found to install")
+		// In install-only mode, we work with cached manifests and catalogs
+		// without downloading new ones from the server
+		statusReporter.Message("Loading cached manifests and catalogs...")
+		
+		// Try to load cached manifests if they exist
+		cachedManifestsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "manifests")
+		
+		var manifestItems []manifest.Item
+		var localCatalogMap map[string]catalog.Item
+		
+		// Check if cached manifests exist
+		if manifestFiles, err := os.ReadDir(cachedManifestsDir); err == nil && len(manifestFiles) > 0 {
+			logging.Info("Found cached manifests, processing for install-only mode")
+			statusReporter.Detail("Processing cached manifests...")
+			
+			// Load cached manifests by constructing a temporary config
+			// that points to the cached manifest directory
+			tempCfg := *cfg
+			
+			// Try to find a suitable cached manifest to load
+			for _, file := range manifestFiles {
+				if filepath.Ext(file.Name()) == ".yaml" {
+					// Use the first yaml file found as the client identifier
+					tempCfg.ClientIdentifier = strings.TrimSuffix(file.Name(), ".yaml")
+					break
+				}
+			}
+			
+			if tempCfg.ClientIdentifier != "" {
+				// Load the cached manifest using the offline method
+				cachedItems, err := loadCachedManifests(&tempCfg)
+				if err != nil {
+					logging.Warn("Failed to load cached manifests, continuing with empty list", "error", err)
+					manifestItems = []manifest.Item{}
+				} else {
+					manifestItems = cachedItems
+					logging.Info("Loaded items from cached manifests", "count", len(manifestItems))
+				}
+			} else {
+				logging.Warn("No suitable cached manifest found")
+				manifestItems = []manifest.Item{}
+			}
+		} else {
+			logging.Info("No cached manifests found")
+			manifestItems = []manifest.Item{}
+		}
+		
+		// Load cached catalogs if they exist
+		statusReporter.Detail("Loading cached catalogs...")
+		if localCatalogMap, err = loadLocalCatalogItems(cfg); err != nil {
+			logging.Warn("Failed to load cached catalogs, continuing with empty catalog", "error", err)
+			localCatalogMap = make(map[string]catalog.Item)
+		} else {
+			logging.Info("Loaded items from cached catalogs", "count", len(localCatalogMap))
+		}
+		
+		// If we have no cached data, exit gracefully
+		if len(manifestItems) == 0 && len(localCatalogMap) == 0 {
+			statusReporter.Message("No cached manifests or catalogs found - nothing to install")
+			logging.Info("Install-only mode completed - no cached data found")
+			
+			// End session with success status
+			summary := logging.SessionSummary{
+				TotalActions:    0,
+				Installs:        0,
+				Updates:         0,
+				Removals:        0,
+				Successes:       0,
+				Failures:        0,
+				PackagesHandled: []string{},
+			}
+			if err := logging.EndSession("completed", summary); err != nil {
+				logging.Warn("Failed to end structured logging session", "error", err)
+			}
+			os.Exit(0)
+		}
+		
+		// Process cached items to find what needs to be installed
+		statusReporter.Detail("Analyzing cached data for pending installations...")
+		
+		var itemsToInstall []catalog.Item
+		
+		// Convert cached manifests to the proper format for checking updates
+		if len(manifestItems) > 0 {
+			// Deduplicate and process manifest items
+			dedupedManifestItems := status.DeduplicateManifestItems(manifestItems)
+			
+			// Check each manifest item to see if it needs an update
+			for _, manifestItem := range dedupedManifestItems {
+				// Skip non-installable items (profiles, apps, etc.)
+				if manifestItem.Action != "install" && manifestItem.Action != "update" && manifestItem.Action != "" {
+					logging.Debug("Skipping non-installable item", "item", manifestItem.Name, "action", manifestItem.Action)
+					continue
+				}
+				
+				// Check if this item needs an update using the same logic as regular updates
+				if installer.LocalNeedsUpdate(manifestItem, localCatalogMap, cfg) {
+					key := strings.ToLower(manifestItem.Name)
+					if catItem, found := localCatalogMap[key]; found {
+						logging.Info("Found item needing update in install-only mode", "item", manifestItem.Name, "version", catItem.Version)
+						itemsToInstall = append(itemsToInstall, catItem)
+						
+						// Set item source for reporting
+						process.SetItemSource(manifestItem.Name, manifestItem.SourceManifest, "managed_updates")
+					} else {
+						logging.Warn("Item needs update but not found in cached catalogs", "item", manifestItem.Name)
+					}
+				}
+			}
+		}
+		
+		// Also check for script-only items that might be pending
+		for _, catItem := range localCatalogMap {
+			// Check if this is a script-only (nopkg) item that should be processed
+			if (catItem.Installer.Type == "nopkg" || catItem.Installer.Type == "") && 
+			   (catItem.Check.Script != "" || string(catItem.PreScript) != "" || string(catItem.PostScript) != "") {
+				// For script-only items, we might need additional logic to determine if they need to run
+				// For now, we'll skip them unless they're in the manifest items
+			}
+		}
+		
+		if len(itemsToInstall) == 0 {
+			statusReporter.Message("No pending installations found in cached data")
+			logging.Info("Install-only mode completed - no pending installations found")
+		}
+		logging.Info("Found items to install from cached data", "count", len(itemsToInstall))
 
-		// End session with success status
+		// Install the pending items and get results  
+		var result *InstallationResult
+		var sessionStatus string
+		
+		if len(itemsToInstall) > 0 {
+			statusReporter.Message(fmt.Sprintf("Installing %d pending items...", len(itemsToInstall)))
+			
+			var err error
+			result, err = downloadAndInstallPerItem(itemsToInstall, cfg, statusReporter)
+			if err != nil {
+				statusReporter.Error(fmt.Errorf("failed to install pending updates: %v", err))
+				logging.Error("Failed to install pending updates (install-only)", "error", err)
+				
+				// End session with failure status
+				summary := logging.SessionSummary{
+					TotalActions:    len(itemsToInstall),
+					Installs:        len(itemsToInstall),
+					Updates:         0,
+					Removals:        0,
+					Successes:       0,
+					Failures:        len(itemsToInstall),
+					PackagesHandled: extractPackageNamesFromDownloadItems(itemsToInstall),
+				}
+				if err := logging.EndSession("failed", summary); err != nil {
+					logging.Warn("Failed to end structured logging session", "error", err)
+				}
+				
+				os.Exit(1)
+			}
+			
+			// Check installation results to determine session status
+			if result.FailCount > 0 && result.SuccessCount > 0 {
+				sessionStatus = "partial_failure"
+				statusReporter.Message(fmt.Sprintf("Installation partially completed: %d succeeded, %d failed", 
+					result.SuccessCount, result.FailCount))
+			} else if result.FailCount > 0 {
+				sessionStatus = "failed"
+				statusReporter.Error(fmt.Errorf("all installations failed"))
+			} else {
+				sessionStatus = "completed"
+				statusReporter.Message("Installation completed successfully!")
+			}
+			
+			logging.Success("Install-only mode completed", 
+				"successes", result.SuccessCount,
+				"failures", result.FailCount,
+				"total", result.TotalCount)
+		} else {
+			// No items to install
+			result = &InstallationResult{
+				SuccessCount: 0,
+				FailCount:    0,
+				TotalCount:   0,
+				Errors:       nil,
+			}
+			sessionStatus = "completed"
+			statusReporter.Message("No items to install")
+		}
+
+		// End session with actual results (not hardcoded assumptions)
 		summary := logging.SessionSummary{
-			TotalActions:    0,
-			Installs:        0,
+			TotalActions:    len(itemsToInstall),
+			Installs:        len(itemsToInstall),
 			Updates:         0,
 			Removals:        0,
-			Successes:       0,
-			Failures:        0,
-			PackagesHandled: []string{},
+			Successes:       result.SuccessCount,
+			Failures:        result.FailCount,
+			PackagesHandled: extractPackageNamesFromDownloadItems(itemsToInstall),
 		}
-		if err := logging.EndSession("completed", summary); err != nil {
-			logging.Warn("Failed to end structured logging session: %v", err)
+		if err := logging.EndSession(sessionStatus, summary); err != nil {
+			logging.Warn("Failed to end structured logging session", "error", err)
 		}
 
-		os.Exit(0)
+		// Exit with appropriate code based on results
+		if result.FailCount > 0 {
+			os.Exit(1) // Some or all installations failed
+		} else {
+			os.Exit(0) // All installations succeeded
+		}
 	}
 
 	catalogsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "catalogs")
@@ -1533,15 +1718,6 @@ func main() {
 		}
 	}
 
-	// Generate reports for external monitoring tools
-	statusReporter.Detail("Generating system reports...")
-	exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
-	if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 7 to 3 days for optimal ReportMate performance
-		logger.Warning("Failed to generate reports: %v", err)
-	} else {
-		logger.Info("Reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
-	}
-
 	statusReporter.Detail("Cleaning up temporary files...")
 	cacheFolder := `C:\ProgramData\ManagedInstalls\Cache`
 	currentLogDir := logging.GetCurrentLogDir()
@@ -1557,6 +1733,17 @@ func main() {
 	
 	// Also clear Windows installer cache for MSI files
 	clearWindowsInstallerCache()
+
+	// Final cleanup: Kill any remaining msiexec processes after all operations
+	if cfg != nil {
+		statusReporter.Detail("Performing final MSI process cleanup...")
+		cleanup := installer.GetGlobalCleanup(cfg)
+		if err := cleanup.CleanupAllMSIProcesses(); err != nil {
+			logger.Warning("Final MSI process cleanup had issues: %v", err)
+		} else {
+			logger.Info("Final MSI process cleanup completed successfully")
+		}
+	}
 
 	// Clear bootstrap mode if we completed successfully
 	if isBootstrap {
@@ -1603,6 +1790,16 @@ func main() {
 
 	if err := logging.EndSession(sessionStatus, summary); err != nil {
 		logger.Warning("Failed to end structured logging session: %v", err)
+	}
+
+	// CRITICAL FIX: Generate reports AFTER session is finalized
+	// This ensures session status, failure counts, and end times are properly captured
+	statusReporter.Detail("Generating system reports...")
+	exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
+	if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 7 to 3 days for optimal ReportMate performance
+		logger.Warning("Failed to generate reports: %v", err)
+	} else {
+		logger.Info("Reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
 	}
 
 	os.Exit(0)
@@ -2174,7 +2371,15 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 
 // downloadAndInstallPerItem handles downloading & installing each catalog item individually,
 // ensuring exact file paths match installer expectations.
-func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, statusReporter utils.Reporter) error {
+// InstallationResult contains the results of a batch installation operation
+type InstallationResult struct {
+	SuccessCount int
+	FailCount    int
+	TotalCount   int
+	Errors       []error
+}
+
+func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, statusReporter utils.Reporter) (*InstallationResult, error) {
 	// Log the start of batch installation
 	logging.LogEventEntry("batch_install", "start", "started",
 		fmt.Sprintf("Starting batch installation of %d items", len(items)),
@@ -2321,7 +2526,15 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 		}
 	}
 
-	return nil
+	// Return installation results
+	result := &InstallationResult{
+		SuccessCount: successCount,
+		FailCount:    failCount,
+		TotalCount:   len(items),
+		Errors:       installErrors,
+	}
+
+	return result, nil
 }
 
 // downloadAndInstallWithAdvancedLogic handles downloading & installing with advanced dependency logic
@@ -3794,4 +4007,208 @@ func getCurrentUser() string {
 		username = "unknown"
 	}
 	return username
+}
+
+// loadCachedManifests loads manifests from the cached manifests directory
+// without making any network requests, recursively processing included_manifests
+func loadCachedManifests(cfg *config.Configuration) ([]manifest.Item, error) {
+	manifestsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "manifests")
+	
+	// Check if manifests directory exists
+	if _, err := os.Stat(manifestsDir); os.IsNotExist(err) {
+		return []manifest.Item{}, nil // No cached manifests
+	}
+	
+	var allItems []manifest.Item
+	visitedManifests := make(map[string]bool)
+	var manifestsToProcess []string
+	
+	// Start with the primary manifest (client identifier)
+	primaryManifest := cfg.ClientIdentifier + ".yaml"
+	primaryManifestPath := filepath.Join(manifestsDir, primaryManifest)
+	
+	// If the client identifier contains path separators, try to construct the full path
+	if strings.Contains(cfg.ClientIdentifier, "/") {
+		// Convert forward slashes to backslashes for Windows paths
+		windowsPath := strings.ReplaceAll(cfg.ClientIdentifier, "/", "\\")
+		primaryManifest = windowsPath + ".yaml"
+		primaryManifestPath = filepath.Join(manifestsDir, primaryManifest)
+	}
+	
+	if _, err := os.Stat(primaryManifestPath); os.IsNotExist(err) {
+		// Try to find any cached manifest to start with
+		files, err := os.ReadDir(manifestsDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read manifests directory: %v", err)
+		}
+		
+		for _, file := range files {
+			if !file.IsDir() && strings.HasSuffix(file.Name(), ".yaml") {
+				primaryManifest = file.Name()
+				break
+			}
+		}
+		
+		if primaryManifest == "" {
+			return []manifest.Item{}, nil // No YAML manifests found
+		}
+	}
+	
+	// Start processing queue with the primary manifest
+	manifestsToProcess = append(manifestsToProcess, primaryManifest)
+	
+	// Process manifests recursively, following included_manifests
+	for len(manifestsToProcess) > 0 {
+		// Get next manifest to process
+		currentManifest := manifestsToProcess[0]
+		manifestsToProcess = manifestsToProcess[1:]
+		
+		// Skip if already processed
+		if visitedManifests[currentManifest] {
+			continue
+		}
+		visitedManifests[currentManifest] = true
+		
+		// Load and parse the manifest
+		var manifestPath string
+		if strings.Contains(currentManifest, "\\") {
+			// This is a relative path like "Assigned\Staff\IT.yaml" 
+			// Construct the full path relative to the manifests directory
+			manifestPath = filepath.Join(manifestsDir, currentManifest)
+		} else {
+			// Simple manifest name in the root manifests directory
+			manifestPath = filepath.Join(manifestsDir, currentManifest)
+		}
+		
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			logging.Warn("Failed to read cached manifest", "file", currentManifest, "path", manifestPath, "error", err)
+			continue
+		}
+		
+		var manifestFile manifest.ManifestFile
+		if err := yaml.Unmarshal(data, &manifestFile); err != nil {
+			logging.Warn("Failed to parse cached manifest", "file", currentManifest, "error", err)
+			continue
+		}
+		
+		// Use filename as name if not specified
+		manifestName := manifestFile.Name
+		if manifestName == "" {
+			manifestName = strings.TrimSuffix(currentManifest, ".yaml")
+		}
+		
+		logging.Debug("Processing cached manifest", "file", currentManifest, "name", manifestName)
+		
+		// Convert manifest arrays to individual items
+		
+		// Process ManagedInstalls
+		for _, pkgName := range manifestFile.ManagedInstalls {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, manifest.Item{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "install",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedUpdates
+		for _, pkgName := range manifestFile.ManagedUpdates {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, manifest.Item{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "update",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedUninstalls
+		for _, pkgName := range manifestFile.ManagedUninstalls {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, manifest.Item{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "uninstall",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process OptionalInstalls
+		for _, pkgName := range manifestFile.OptionalInstalls {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, manifest.Item{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "optional",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedProfiles
+		for _, pkgName := range manifestFile.ManagedProfiles {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, manifest.Item{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "profile",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedApps
+		for _, pkgName := range manifestFile.ManagedApps {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, manifest.Item{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "app",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Add included manifests to the processing queue
+		for _, includedManifest := range manifestFile.IncludedManifests {
+			// Handle relative paths with backslashes (Windows-style paths)
+			if strings.Contains(includedManifest, "\\") {
+				// This is a relative path like "Assigned\Staff\IT.yaml"
+				// Ensure .yaml extension
+				if !strings.HasSuffix(includedManifest, ".yaml") {
+					includedManifest = includedManifest + ".yaml"
+				}
+			} else {
+				// Simple manifest name, ensure .yaml extension
+				if !strings.HasSuffix(includedManifest, ".yaml") {
+					includedManifest = includedManifest + ".yaml"
+				}
+			}
+			
+			// Add to queue if not already visited
+			if !visitedManifests[includedManifest] {
+				manifestsToProcess = append(manifestsToProcess, includedManifest)
+			}
+		}
+	}
+	
+	logging.Info("Loaded items from cached manifests", "count", len(allItems))
+	return allItems, nil
 }
