@@ -177,16 +177,34 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 		}
 	}
 
-	// Return the first architecture-compatible item
+	// Return the highest version architecture-compatible item
 	if len(compatibleItems) > 0 {
+		// Find the item with the highest version among compatible items
 		selectedItem := compatibleItems[0]
-		logging.Debug("Selected architecture-compatible item", "item", itemName, "arch", sysArch, "supported_arch", selectedItem.SupportedArch, "installer_location", selectedItem.Installer.Location)
+		for i, candidate := range compatibleItems {
+			if i == 0 {
+				continue // Skip first item as it's already assigned
+			}
+			if status.IsOlderVersion(selectedItem.Version, candidate.Version) {
+				logging.Debug("Found newer compatible version", "item", itemName, "old_version", selectedItem.Version, "new_version", candidate.Version, "old_installer", selectedItem.Installer.Location, "new_installer", candidate.Installer.Location)
+				selectedItem = candidate
+			}
+		}
+		logging.Debug("Selected architecture-compatible item", "item", itemName, "arch", sysArch, "supported_arch", selectedItem.SupportedArch, "version", selectedItem.Version, "installer_location", selectedItem.Installer.Location)
 		return selectedItem, nil
 	}
 
-	// If no architecture-compatible items, return the first item with a warning
+	// If no architecture-compatible items, return the highest version item with a warning
 	selectedItem := candidateItems[0]
-	logging.Warn("No architecture-compatible version found, using first available", "item", itemName, "system_arch", sysArch, "selected_arch", selectedItem.SupportedArch)
+	for i, candidate := range candidateItems {
+		if i == 0 {
+			continue // Skip first item as it's already assigned
+		}
+		if status.IsOlderVersion(selectedItem.Version, candidate.Version) {
+			selectedItem = candidate
+		}
+	}
+	logging.Warn("No architecture-compatible version found, using highest version available", "item", itemName, "system_arch", sysArch, "selected_arch", selectedItem.SupportedArch, "version", selectedItem.Version, "installer_location", selectedItem.Installer.Location)
 	return selectedItem, nil
 }
 
@@ -929,22 +947,55 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	// Track processed items to avoid infinite loops
 	processedInstalls := make(map[string]bool)
 	var failedItems []string
+	var msiFailedItems []string // Track MSI-specific failures for service recovery
 	var successCount int
 
 	// Process each item recursively with full dependency logic
-	for _, itemName := range itemNames {
-		if err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
-			processedInstalls, cachePath, checkOnly, cfg, verbosity, reporter); err != nil {
+	for i, itemName := range itemNames {
+		err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
+			processedInstalls, cachePath, checkOnly, cfg, verbosity, reporter)
+		
+		if err != nil {
 			// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
 			failedItems = append(failedItems, itemName)
+			
+			// Check if this is an MSI service-related failure
+			if isMSIServiceFailure(err) {
+				msiFailedItems = append(msiFailedItems, itemName)
+				logging.Warn("MSI service failure detected for item", "item", itemName, "error", err)
+				
+				// If there are more items to process, attempt MSI service recovery
+				if i < len(itemNames)-1 {
+					logging.Info("Attempting MSI service recovery before next item", 
+						"failedItem", itemName, 
+						"remainingItems", len(itemNames)-i-1,
+						"nextItem", itemNames[i+1])
+					
+					if recoveryErr := recoverMSIServiceBetweenItems(cfg); recoveryErr != nil {
+						logging.Warn("MSI service recovery failed", "error", recoveryErr)
+					} else {
+						logging.Info("MSI service recovery completed successfully")
+					}
+				}
+			}
 		} else {
 			successCount++
 		}
 	}
 
-	// Log summary of results
+	// Log comprehensive summary of results
 	if len(failedItems) > 0 {
-		logging.Warn("Some items failed to install:", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
+		if len(msiFailedItems) > 0 {
+			logging.Warn("Installation summary with MSI service issues",
+				"failed", failedItems,
+				"msiServiceFailures", msiFailedItems,
+				"succeeded", successCount, 
+				"total", len(itemNames),
+				"recommendedAction", "check_system_for_pending_reboots_or_locked_installers")
+		} else {
+			logging.Warn("Installation summary", "failed", failedItems, "succeeded", successCount, "total", len(itemNames))
+		}
+		
 		// Return error if ANY items failed to ensure proper session status tracking
 		return fmt.Errorf("failed: %v succeeded: %d total: %d", failedItems, successCount, len(itemNames))
 	} else {
@@ -1420,4 +1471,105 @@ func determineInstallerTypeFromPath(path string) string {
 	default:
 		return "unknown"
 	}
+}
+
+// isMSIServiceFailure checks if an error is related to MSI service availability issues
+func isMSIServiceFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errorMsg := strings.ToLower(err.Error())
+	
+	// Check for various MSI service-related error patterns
+	msiServicePatterns := []string{
+		"msi service unavailable",
+		"msi service did not become available",
+		"msi service appears to be locked",
+		"another install in progress",
+		"another installation in progress",
+		"msiexec.*exit code.*1618", // MSI error code for "another install in progress"
+		"windows installer service",
+		"installer service unavailable",
+		"msi service not available",
+	}
+	
+	for _, pattern := range msiServicePatterns {
+		if strings.Contains(errorMsg, pattern) {
+			return true
+		}
+	}
+	
+	// Check for MSI exit code 1618 specifically
+	if strings.Contains(errorMsg, "1618") && strings.Contains(errorMsg, "msi") {
+		return true
+	}
+	
+	return false
+}
+
+// recoverMSIServiceBetweenItems attempts to recover the MSI service between failed installations
+func recoverMSIServiceBetweenItems(cfg *config.Configuration) error {
+	logging.Info("Starting MSI service recovery between items")
+	
+	// Import the installer cleanup functionality
+	cleanup := installer.GetGlobalCleanup(cfg)
+	
+	// Step 1: Check current MSI service status
+	status, err := cleanup.CheckMSIServiceStatus()
+	if err != nil {
+		logging.Debug("Could not check MSI service status during recovery", "error", err)
+	} else {
+		logging.Info("Pre-recovery MSI service status",
+			"isRunning", status.IsRunning,
+			"isResponsive", status.IsResponsive,
+			"processCount", status.ProcessCount,
+			"serviceState", status.ServiceState)
+	}
+	
+	// Step 2: Perform advanced cleanup
+	logging.Info("Performing advanced MSI cleanup for service recovery")
+	if err := cleanup.PerformAdvancedMSICleanup(); err != nil {
+		logging.Warn("Advanced MSI cleanup during recovery had issues", "error", err)
+	}
+	
+	// Step 3: If service restart is enabled, try restarting the service
+	if cleanup.GetRetryConfig().ServiceRestartEnabled {
+		logging.Info("Attempting Windows Installer service restart for recovery")
+		if err := cleanup.RestartWindowsInstallerService(); err != nil {
+			logging.Warn("Windows Installer service restart during recovery failed", "error", err)
+		} else {
+			logging.Info("Windows Installer service restarted successfully during recovery")
+		}
+	}
+	
+	// Step 4: Wait for service to become available with a reasonable timeout
+	logging.Info("Waiting for MSI service to become available after recovery")
+	waitErr := cleanup.WaitForMSIAvailable(3) // 3-minute timeout for recovery
+	if waitErr != nil {
+		logging.Error("MSI service recovery failed - service still unavailable", "error", waitErr)
+		return fmt.Errorf("MSI service recovery failed: %w", waitErr)
+	}
+	
+	// Step 5: Final status check
+	finalStatus, err := cleanup.CheckMSIServiceStatus()
+	if err != nil {
+		logging.Debug("Could not check final MSI service status after recovery", "error", err)
+	} else {
+		logging.Info("Post-recovery MSI service status",
+			"isRunning", finalStatus.IsRunning,
+			"isResponsive", finalStatus.IsResponsive,
+			"processCount", finalStatus.ProcessCount,
+			"serviceState", finalStatus.ServiceState)
+		
+		if finalStatus.IsRunning && finalStatus.IsResponsive {
+			logging.Info("MSI service recovery completed successfully")
+			return nil
+		} else {
+			return fmt.Errorf("MSI service recovery incomplete - service not fully responsive")
+		}
+	}
+	
+	logging.Info("MSI service recovery completed")
+	return nil
 }
