@@ -10,6 +10,12 @@ Cimian is a Windows software deployment solution inspired by Munki. It's written
 
 **NEVER CREATE RANDOM TEST BINARIES**: Do not create standalone test files or random binaries. Fix the actual code in the codebase, rebuild the project binaries, test, rinse and repeat until the issue is fixed. Work with the actual project structure and components.
 
+**NO MANUAL FIXES**: The word "manual" does not exist in enterprise vocabulary. Every edge case must have an automated solution that works across thousands of machines. At 10,000+ computer scale, solutions must be:
+- **Fully Automated**: No manual interventions at scale
+- **Self-Healing**: Systems must detect and correct inconsistencies automatically  
+- **Multi-Source Aware**: Must handle packages installed by Cimian, Chocolatey, MSI, winget, or other package managers
+- **Version Tracking Unified**: Single source of truth for installed versions regardless of installation method
+
 ```pwsh
 # Build and sign a specific binary
 .\build.ps1 -Sign -Binary managedsoftwareupdate
@@ -141,6 +147,16 @@ sudo .\release\arm64\managedsoftwareupdate.exe -v --checkonly
 
 #### IMPORTANT: Use `sudo` for inline administrative operations
 **NEVER use `Start-Process powershell -Verb RunAs`** - Always use `sudo` for administrative commands that need to run inline. This includes registry operations, service management, file system operations requiring elevation, etc. The `sudo` command provides seamless elevation without spawning separate processes.
+
+## System Design Philosophy
+
+**ENTERPRISE SCALE MINDSET**: Cimian is designed for 10,000+ computers. Solutions must be:
+- **Fully Automated**: No manual interventions at scale
+- **Self-Healing**: Systems must detect and correct inconsistencies automatically  
+- **Multi-Source Aware**: Must handle packages installed by Cimian, Chocolatey, MSI, or other package managers
+- **Version Tracking Unified**: Single source of truth for installed versions regardless of installation method
+
+**NO MANUAL FIXES**: The word "manual" does not exist in enterprise vocabulary. Every edge case must have an automated solution that works across thousands of machines.
 
 ## Testing and Debugging
 
