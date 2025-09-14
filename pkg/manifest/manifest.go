@@ -648,7 +648,6 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 			deduplicateCheck[actionKey] = true
 
 			// Profiles are handled by external Graph API pipeline, not by managedsoftwareupdate.exe
-			logging.Debug("Skipping managed profile (handled by MDM API)", "profile", profileName, "manifest", mf.Name)
 		}
 		for _, appName := range mf.ManagedApps {
 			if appName == "" {

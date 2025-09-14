@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/status"
 	"golang.org/x/sys/windows/registry"
 	"gopkg.in/yaml.v3"
 )
@@ -915,22 +917,22 @@ func (exp *DataExporter) checkArchitectureCompatibility(packageName, systemArch 
 	return compatible, foundSupportedArchs
 }
 
-// getRegistryVersion checks the registry for installed version of a package
+// getRegistryVersion checks for installed version using comprehensive detection
 func (exp *DataExporter) getRegistryVersion(packageName string) string {
-	// Try to get version from HKLM\Software\ManagedInstalls\<packageName>\Version
+	// First try the basic Cimian-managed registry check
 	regPath := `Software\ManagedInstalls\` + packageName
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.QUERY_VALUE)
-	if err != nil {
-		return "" // Package not installed via Cimian
-	}
-	defer key.Close()
-	
-	version, _, err := key.GetStringValue("Version")
-	if err != nil {
-		return ""
+	if err == nil {
+		defer key.Close()
+		if version, _, err := key.GetStringValue("Version"); err == nil && version != "" {
+			return version
+		}
 	}
 	
-	return version
+	// If basic registry check fails, this might be a package installed through other means
+	// or the registry tracking is incomplete. For reporting purposes, we should return
+	// empty string and let the calling code handle it properly.
+	return ""
 }
 
 // populateFromCurrentManifests loads current manifest state to ensure all managed packages are represented
@@ -1404,10 +1406,81 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			record.LastAttemptTime = stats.LastAttemptTime.Format(time.RFC3339)
 		}
 
+		// CRITICAL FIX: Correct status for packages successfully installed but not tracked in registry
+		// This addresses the core issue where packages like FortiClient-VPN show "Pending" despite successful installation
+		if record.CurrentStatus == "Pending Install" || record.CurrentStatus == "Not Installed" || record.CurrentStatus == "Pending" {
+			// Use direct Windows registry check for installed software
+			if installedVersion := exp.getInstalledVersionFromWindowsRegistry(stats.Name); installedVersion != "" {
+				record.CurrentStatus = "Installed"
+				record.InstalledVersion = installedVersion
+			}
+		}
+
 		records = append(records, record)
 	}
 
 	return records, nil
+}
+
+// Helper function to check Windows registry for installed software version
+func (exp *DataExporter) getInstalledVersionFromWindowsRegistry(itemName string) string {
+	// Map package names to their Windows display names
+	displayNameMap := map[string][]string{
+		"FortiClient-VPN": {"FortiClient VPN"},
+		"Chrome":          {"Google Chrome"},
+		"Git":             {"Git"},
+		"PowerShell":      {"PowerShell"},
+		"AzureCLI":        {"Microsoft Azure CLI"},
+		// Add more mappings as needed
+	}
+	
+	// Get possible display names for this item
+	var displayNames []string
+	if mappedNames, ok := displayNameMap[itemName]; ok {
+		displayNames = mappedNames
+	} else {
+		// Default: use the item name itself and common variations
+		displayNames = []string{itemName}
+	}
+	
+	// Check Windows uninstall registry
+	uninstallKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`, registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return ""
+	}
+	defer uninstallKey.Close()
+	
+	subKeys, err := uninstallKey.ReadSubKeyNames(-1)
+	if err != nil {
+		return ""
+	}
+	
+	for _, subKey := range subKeys {
+		subKeyPath := `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\` + subKey
+		key, err := registry.OpenKey(registry.LOCAL_MACHINE, subKeyPath, registry.QUERY_VALUE)
+		if err != nil {
+			continue
+		}
+		
+		displayName, _, err := key.GetStringValue("DisplayName")
+		if err != nil {
+			key.Close()
+			continue
+		}
+		
+		// Check if this matches any of our expected display names
+		for _, expectedName := range displayNames {
+			if strings.Contains(displayName, expectedName) || strings.Contains(expectedName, displayName) {
+				if version, _, err := key.GetStringValue("DisplayVersion"); err == nil {
+					key.Close()
+					return version
+				}
+			}
+		}
+		key.Close()
+	}
+	
+	return ""
 }
 
 // ExportDataJSON exports all tables to a JSON file for external tool consumption
@@ -1495,13 +1568,24 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 
 // Helper types and methods
 
-// parseEventsWithRecovery provides simple JSON parsing for events.jsonl files
+// parseEventsWithRecovery provides robust JSON parsing for events.jsonl files
+// Handles both single-line JSONL format and legacy pretty-printed JSON format
 func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]interface{}, error) {
 	var events []map[string]interface{}
 	
-	// Read file content
+	// Read entire file content
 	file.Seek(0, 0) // Reset to beginning
-	scanner := bufio.NewScanner(file)
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read events file: %w", err)
+	}
+	
+	contentStr := string(content)
+	
+	// Try parsing as JSONL first (preferred format)
+	scanner := bufio.NewScanner(strings.NewReader(contentStr))
+	jsonlSuccess := true
+	var jsonlEvents []map[string]interface{}
 	
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -1510,13 +1594,48 @@ func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]in
 		}
 		
 		var event map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &event); err == nil {
-			events = append(events, event)
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			jsonlSuccess = false
+			break
 		}
-		// Silently skip malformed JSON lines without logging
+		jsonlEvents = append(jsonlEvents, event)
 	}
 	
-	return events, scanner.Err()
+	if jsonlSuccess && len(jsonlEvents) > 0 {
+		return jsonlEvents, nil
+	}
+	
+	// Fallback: Try parsing as array of pretty-printed JSON objects
+	// This handles legacy format with indented JSON separated by newlines
+	
+	// Split content by lines that start with "}" (end of pretty-printed JSON objects)
+	var jsonStrings []string
+	lines := strings.Split(contentStr, "\n")
+	var currentJson strings.Builder
+	
+	for _, line := range lines {
+		currentJson.WriteString(line + "\n")
+		
+		if strings.TrimSpace(line) == "}" {
+			// This might be the end of a JSON object
+			jsonStr := strings.TrimSpace(currentJson.String())
+			if strings.HasPrefix(jsonStr, "{") && strings.HasSuffix(jsonStr, "}") {
+				jsonStrings = append(jsonStrings, jsonStr)
+				currentJson.Reset()
+			}
+		}
+	}
+	
+	// Try to parse each extracted JSON string
+	for _, jsonStr := range jsonStrings {
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &event); err == nil {
+			events = append(events, event)
+		}
+		// Silently skip malformed JSON objects
+	}
+	
+	return events, nil
 }
 
 // comprehensiveItemStat tracks detailed statistics for an item across all sessions
@@ -2053,19 +2172,25 @@ func (exp *DataExporter) loadCatalogDisplayNames() map[string]string {
 	return displayNames
 }
 
-// getInstalledVersionFromRegistry attempts to get the installed version of a package from Windows registry
+// getInstalledVersionFromRegistry attempts to get the installed version of a package from multiple sources
 func (exp *DataExporter) getInstalledVersionFromRegistry(packageName string) string {
-	// Try Cimian's managed registry first (most reliable)
-	if cimianVersion := exp.getCimianManagedVersion(packageName); cimianVersion != "" {
-		return cimianVersion
+	// Use the comprehensive multi-source detection system
+	version, source, err := status.GetAuthoritativeInstalledVersion(packageName)
+	if err != nil {
+		logging.Debug("Multi-source version detection failed", 
+			"package", packageName, 
+			"error", err)
+		return ""
 	}
-
-	// Try Windows uninstall registry
-	if uninstallVersion := exp.getUninstallRegistryVersion(packageName); uninstallVersion != "" {
-		return uninstallVersion
+	
+	if version != "" {
+		logging.Debug("Multi-source version detection succeeded", 
+			"package", packageName, 
+			"version", version, 
+			"source", source)
 	}
-
-	return ""
+	
+	return version
 }
 
 // getCimianManagedVersion gets version from Cimian's managed registry
