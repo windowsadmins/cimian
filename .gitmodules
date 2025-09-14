@@ -1,3 +1,6 @@
 [submodule "cmd/cimipkg"]
 	path = cmd/cimipkg
 	url = https://github.com/windowsadmins/cimian-pkg
+[submodule "wiki"]
+	path = wiki
+	url = https://github.com/windowsadmins/cimian.wiki.git
