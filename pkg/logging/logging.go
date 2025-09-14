@@ -985,6 +985,22 @@ func (l *Logger) StartSession(runType string, metadata map[string]interface{}) e
 }
 
 // LogEvent writes a structured event to the current session
+// mapStatusToLevel converts status strings to standard log levels
+func mapStatusToLevel(status string) string {
+	switch strings.ToLower(status) {
+	case "error", "failed", "failure":
+		return "ERROR"
+	case "warning", "warn":
+		return "WARN"
+	case "info", "information", "success", "completed", "installed":
+		return "INFO"
+	case "debug":
+		return "DEBUG"
+	default:
+		return "INFO" // Default to INFO level
+	}
+}
+
 func (l *Logger) LogEvent(eventType, action, status, message string, opts ...EventOption) error {
 	if l.structuredLogger == nil || l.currentSessionID == "" {
 		return nil // Gracefully handle when structured logging is not available
@@ -1008,6 +1024,7 @@ func (l *Logger) LogEvent(eventType, action, status, message string, opts ...Eve
 		Message:   message,
 		Source:    sourceInfo,
 		Context:   make(map[string]interface{}),
+		Level:     mapStatusToLevel(status),
 	}
 
 	// Apply options

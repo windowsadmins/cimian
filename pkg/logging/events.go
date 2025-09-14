@@ -177,8 +177,8 @@ func (sl *StructuredLogger) LogEvent(event LogEvent) error {
 		event.EventID = fmt.Sprintf("%s-%d", sl.currentSession, time.Now().UnixNano())
 	}
 
-	// Write event as JSON line
-	eventJSON, err := json.MarshalIndent(event, "", "  ")
+	// Write event as JSON line (JSONL format - single line per event for parsing compatibility)
+	eventJSON, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
