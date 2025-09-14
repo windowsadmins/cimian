@@ -1299,23 +1299,6 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 		logging.Warn("MSI pre-install cleanup had issues", "error", cleanupErr)
 	}
 
-	// Wait for MSI service to be available (avoid the "another install in progress" error)
-	if waitErr := WaitForMSIAvailableV2(2, cfg); waitErr != nil {
-		logging.Error("MSI service is not available - cannot proceed with installation", "error", waitErr)
-		
-		// Log MSI service unavailable as specific event for ReportMate
-		serviceErr := fmt.Errorf("MSI service unavailable after 2 minutes - likely locked by another installer")
-		status := logging.StatusFromError("msi_service_unavailable", serviceErr)
-		logging.LogEventEntry("install", "msi_service_unavailable", status,
-			"MSI service unavailable after 2 minutes - cannot proceed with installation",
-			logging.WithContext("item", item.Name),
-			logging.WithContext("wait_minutes", "2"),
-			logging.WithContext("installer_path", localFile),
-			logging.WithContext("recommended_action", "wait_for_other_installations_to_complete"))
-		
-		return "", fmt.Errorf("MSI service unavailable after 2 minutes - cannot proceed with installation: %w", waitErr)
-	}
-
 	// Use process-managed MSI execution to prevent orphaned processes
 	output, err := runMSIDirectlyV2(localFile, args[2:], cfg.InstallerTimeoutMinutes, cfg) // Skip /i and path which are handled in runMSIDirectlyV2
 
