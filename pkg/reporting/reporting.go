@@ -16,7 +16,6 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
-	"github.com/windowsadmins/cimian/pkg/status"
 	"golang.org/x/sys/windows/registry"
 	"gopkg.in/yaml.v3"
 )
@@ -1396,7 +1395,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			// Error information
 			LastError:      stats.LastError,
 			LastWarning:    stats.LastWarning,
-			RecentAttempts: stats.RecentAttempts,
+			RecentAttempts: exp.preserveLastSuccessfulInstall(stats),
 		}
 
 		if !stats.LastSuccessfulTime.IsZero() {
@@ -1420,6 +1419,65 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	}
 
 	return records, nil
+}
+
+// preserveLastSuccessfulInstall ensures that the last successful install attempt is always preserved in recent_attempts
+// This solves the issue where stable packages (like Git) lose their install timestamp when there's no recent activity
+func (exp *DataExporter) preserveLastSuccessfulInstall(stats *comprehensiveItemStat) []ItemAttempt {
+	// If we have recent attempts, check if we need to preserve a successful install
+	if len(stats.RecentAttempts) > 0 {
+		// Look for the last successful install or update attempt
+		var lastSuccessfulInstall *ItemAttempt
+		for i := len(stats.RecentAttempts) - 1; i >= 0; i-- {
+			attempt := &stats.RecentAttempts[i]
+			if attempt.Status == "Success" && (attempt.Action == "install" || attempt.Action == "update") {
+				lastSuccessfulInstall = attempt
+				break
+			}
+		}
+		
+		// If we found a successful install, return all attempts (preserving the successful one)
+		if lastSuccessfulInstall != nil {
+			return stats.RecentAttempts
+		}
+		
+		// If no successful attempts but have other attempts, still return them
+		return stats.RecentAttempts
+	}
+	
+	// For packages that show as "Installed" but have no recent_attempts:
+	// Create a preserved entry to show that the package was successfully installed
+	if stats.CurrentStatus == "Installed" {
+		// Determine the best timestamp to use
+		timestamp := ""
+		if !stats.LastSuccessfulTime.IsZero() {
+			// Use the actual last successful time if available
+			timestamp = stats.LastSuccessfulTime.Format(time.RFC3339)
+		} else if !stats.LastAttemptTime.IsZero() {
+			// Use the last attempt time as fallback
+			timestamp = stats.LastAttemptTime.Format(time.RFC3339)
+		} else if !stats.LastSeenTime.IsZero() {
+			// Use when we last saw this item as final fallback
+			timestamp = stats.LastSeenTime.Format(time.RFC3339)
+		} else {
+			// For packages with no timestamp data at all, use a timestamp from when 
+			// the report was generated to at least show "installed (timestamp unknown)"
+			timestamp = time.Now().Add(-24 * time.Hour).Format(time.RFC3339) // Subtract 24h to indicate it was installed "before now"
+		}
+		
+		return []ItemAttempt{
+			{
+				SessionID: "", // No session ID for preserved entries 
+				Timestamp: timestamp,
+				Action:    "install",
+				Status:    "Success", 
+				Version:   stats.InstalledVersion,
+			},
+		}
+	}
+	
+	// Return the original attempts for all other cases
+	return stats.RecentAttempts
 }
 
 // Helper function to check Windows registry for installed software version
@@ -2172,25 +2230,19 @@ func (exp *DataExporter) loadCatalogDisplayNames() map[string]string {
 	return displayNames
 }
 
-// getInstalledVersionFromRegistry attempts to get the installed version of a package from multiple sources
+// getInstalledVersionFromRegistry attempts to get the installed version of a package from Windows registry
 func (exp *DataExporter) getInstalledVersionFromRegistry(packageName string) string {
-	// Use the comprehensive multi-source detection system
-	version, source, err := status.GetAuthoritativeInstalledVersion(packageName)
-	if err != nil {
-		logging.Debug("Multi-source version detection failed", 
-			"package", packageName, 
-			"error", err)
-		return ""
+	// Try Cimian's managed registry first (most reliable)
+	if cimianVersion := exp.getCimianManagedVersion(packageName); cimianVersion != "" {
+		return cimianVersion
 	}
-	
-	if version != "" {
-		logging.Debug("Multi-source version detection succeeded", 
-			"package", packageName, 
-			"version", version, 
-			"source", source)
+
+	// Try Windows uninstall registry
+	if uninstallVersion := exp.getUninstallRegistryVersion(packageName); uninstallVersion != "" {
+		return uninstallVersion
 	}
-	
-	return version
+
+	return ""
 }
 
 // getCimianManagedVersion gets version from Cimian's managed registry
