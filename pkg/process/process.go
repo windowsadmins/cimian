@@ -18,6 +18,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/installer"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/reporting"
 	"github.com/windowsadmins/cimian/pkg/status"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	"gopkg.in/yaml.v3"
@@ -950,12 +951,19 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 	var msiFailedItems []string // Track MSI-specific failures for service recovery
 	var successCount int
 
+	// PROGRESSIVE REPORTING: Initialize reporter for per-item updates
+	baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
+	exporter := reporting.NewDataExporter(baseDir)
+
 	// Process each item recursively with full dependency logic
 	for i, itemName := range itemNames {
 		err := processInstallWithAdvancedLogic(itemName, catalogsMap, installedItems,
 			processedInstalls, cachePath, checkOnly, cfg, verbosity, reporter)
 		
+		// PROGRESSIVE REPORTING: Update items.json after each item is processed
+		var itemStatus string
 		if err != nil {
+			itemStatus = "failed"
 			// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
 			failedItems = append(failedItems, itemName)
 			
@@ -979,7 +987,18 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 				}
 			}
 		} else {
+			itemStatus = "completed"
 			successCount++
+		}
+
+		// PROGRESSIVE REPORTING: Export updated items.json after each item
+		if !checkOnly { // Only during actual installations
+			if exportErr := exporter.ExportItemProgressUpdate(3, itemName, itemStatus); exportErr != nil {
+				logging.Debug("Failed to export progressive item update", "item", itemName, "error", exportErr)
+				// Don't fail the installation if reporting fails
+			} else {
+				logging.Debug("Progressive item report updated", "item", itemName, "status", itemStatus, "progress", fmt.Sprintf("%d/%d", i+1, len(itemNames)))
+			}
 		}
 	}
 

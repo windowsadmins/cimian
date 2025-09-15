@@ -729,6 +729,15 @@ func main() {
 			logging.WithContext("run_type", "installonly"),
 			logging.WithContext("verbosity", verbosity))
 
+		// PROGRESSIVE REPORTING: Initialize reports directory for install-only mode
+		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
+		exporter := reporting.NewDataExporter(baseDir)
+		if err := exporter.EnsureReportsDirectoryExists(); err != nil {
+			logging.Warn("Failed to initialize reports directory: %v", err)
+		} else {
+			logging.Debug("Reports directory initialized for install-only progressive reporting")
+		}
+
 		// In install-only mode, we work with cached manifests and catalogs
 		// without downloading new ones from the server
 		statusReporter.Message("Loading cached manifests and catalogs...")
@@ -1098,6 +1107,16 @@ func main() {
 		logging.WithContext("run_type", runType),
 		logging.WithContext("verbosity", verbosity),
 		logging.WithContext("bootstrap_mode", isBootstrap))
+
+	// PROGRESSIVE REPORTING: Initialize reports directory immediately after session start
+	// This ensures ReportMate can track sessions even if they don't complete normally
+	baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
+	exporter := reporting.NewDataExporter(baseDir)
+	if err := exporter.EnsureReportsDirectoryExists(); err != nil {
+		logging.Warn("Failed to initialize reports directory: %v", err)
+	} else {
+		logging.Debug("Reports directory initialized for progressive reporting")
+	}
 	// Initialize status reporter if requested
 	var statusReporter utils.Reporter
 	if *showStatus {
@@ -1447,15 +1466,30 @@ func main() {
 			logging.Warn("Failed to end structured logging session: %v", err)
 		}
 
-		// Generate reports for external monitoring tools
-		logging.Info("Generating reports for external monitoring tools...")
+		// PROGRESSIVE REPORTING: Generate reports immediately after checkonly phase
+		// This ensures we have visibility into the current state even if installation hangs
+		logging.Info("Generating post-checkonly reports for external monitoring tools...")
 		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
 		exporter := reporting.NewDataExporter(baseDir)
-		if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 48 to 3 days for ReportMate efficiency
-			logging.Warn("Failed to export reports: %v", err)
+		
+		// Create reports directory early and generate progressive reports
+		if err := exporter.ExportProgressiveReports(3, "post-checkonly"); err != nil {
+			logging.Warn("Failed to export post-checkonly reports: %v", err)
+		} else {
+			logging.Info("Post-checkonly reports generated successfully")
 		}
 
 		os.Exit(0)
+	}
+
+	// PROGRESSIVE REPORTING: Generate pre-execution reports to capture the planned state
+	// This shows what we're about to install/update before we start, providing visibility
+	// even if the execution hangs or fails partway through
+	logging.Info("Generating pre-execution reports...")
+	if err := exporter.ExportProgressiveReports(3, "pre-execution"); err != nil {
+		logging.Warn("Failed to export pre-execution reports: %v", err)
+	} else {
+		logging.Debug("Pre-execution reports generated successfully")
 	}
 
 	// Proceed with installations without user confirmation
@@ -1474,6 +1508,13 @@ func main() {
 		} else {
 			logging.Info("Proceeding with installation without confirmation")
 		}
+	}
+
+	// PROGRESSIVE REPORTING: Generate execution-start reports 
+	// This marks the transition from planning to execution phase
+	logging.Debug("Generating execution-start reports...")
+	if err := exporter.ExportProgressiveReports(3, "execution-start"); err != nil {
+		logging.Warn("Failed to export execution-start reports: %v", err)
 	}
 
 	// Combine install and update items and perform installations.
@@ -1794,12 +1835,21 @@ func main() {
 
 	// CRITICAL FIX: Generate reports AFTER session is finalized
 	// This ensures session status, failure counts, and end times are properly captured
-	statusReporter.Detail("Generating system reports...")
-	exporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
-	if err := exporter.ExportToReportsDirectory(3); err != nil { // Reduced from 7 to 3 days for optimal ReportMate performance
-		logger.Warning("Failed to generate reports: %v", err)
+	statusReporter.Detail("Generating final system reports...")
+	finalExporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
+	
+	// Generate comprehensive final reports
+	if err := finalExporter.ExportToReportsDirectory(3); err != nil {
+		logger.Warning("Failed to generate final reports: %v", err)
 	} else {
-		logger.Info("Reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
+		logger.Info("Final reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
+	}
+	
+	// Also generate a final progressive report to mark completion
+	if err := finalExporter.ExportProgressiveReports(3, "session-complete"); err != nil {
+		logger.Warning("Failed to export session-complete reports: %v", err)
+	} else {
+		logger.Debug("Session completion marker reports generated")
 	}
 
 	os.Exit(0)

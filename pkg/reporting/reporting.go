@@ -1624,6 +1624,96 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 	return nil
 }
 
+// EnsureReportsDirectoryExists creates the reports directory if it doesn't exist
+// This should be called early in the process to ensure progressive reports can be written
+func (exp *DataExporter) EnsureReportsDirectoryExists() error {
+	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create reports directory: %w", err)
+	}
+	return nil
+}
+
+// ExportProgressiveReports exports current state reports during active runs
+// This provides visibility into incomplete runs and allows ReportMate to track progress
+func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) error {
+	// Ensure reports directory exists
+	if err := exp.EnsureReportsDirectoryExists(); err != nil {
+		return err
+	}
+	
+	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
+
+	// Always generate current state of sessions - this includes incomplete sessions
+	sessions, err := exp.GenerateSessionsTable(limitDays)
+	if err != nil {
+		return fmt.Errorf("failed to generate sessions table: %w", err)
+	}
+
+	// Generate current items state 
+	packages, err := exp.GenerateItemsTable(limitDays)
+	if err != nil {
+		return fmt.Errorf("failed to generate items table: %w", err)
+	}
+
+	// Generate events up to current point
+	var allEvents []EventRecord
+	recentSessions, err := exp.getRecentSessions(3)
+	if err == nil {
+		for _, sessionDir := range recentSessions {
+			events, err := exp.GenerateEventsTable(sessionDir, 48)
+			if err == nil {
+				allEvents = append(allEvents, events...)
+			}
+		}
+	}
+
+	// Write progressive reports - these are the ONLY files ReportMate reads
+	if err := exp.writeJSONFile(filepath.Join(reportsDir, "sessions.json"), sessions); err != nil {
+		return fmt.Errorf("failed to export progressive sessions: %w", err)
+	}
+	
+	if err := exp.writeJSONFile(filepath.Join(reportsDir, "events.json"), allEvents); err != nil {
+		return fmt.Errorf("failed to export progressive events: %w", err)
+	}
+	
+	if err := exp.writeJSONFile(filepath.Join(reportsDir, "items.json"), packages); err != nil {
+		return fmt.Errorf("failed to export progressive items: %w", err)
+	}
+
+	return nil
+}
+
+// ExportItemProgressUpdate exports updated items.json after each item installation
+// This gives ReportMate real-time visibility into installation progress
+func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string) error {
+	// Ensure reports directory exists
+	if err := exp.EnsureReportsDirectoryExists(); err != nil {
+		return err
+	}
+	
+	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
+
+	// Regenerate items table with latest status
+	packages, err := exp.GenerateItemsTable(limitDays)
+	if err != nil {
+		return fmt.Errorf("failed to generate items table: %w", err)
+	}
+
+	// Update the items.json file
+	if err := exp.writeJSONFile(filepath.Join(reportsDir, "items.json"), packages); err != nil {
+		return fmt.Errorf("failed to export updated items: %w", err)
+	}
+
+	return nil
+}
+
+// logWarning is a helper for non-critical warnings during progressive reporting
+func (exp *DataExporter) logWarning(format string, args ...interface{}) {
+	// Use fmt.Printf for now, could be enhanced to use the main logging system
+	fmt.Printf("REPORTING WARNING: "+format+"\n", args...)
+}
+
 // Helper types and methods
 
 // parseEventsWithRecovery provides robust JSON parsing for events.jsonl files
