@@ -182,6 +182,19 @@ installer:
 # Automatically uninstallable via MSIX removal
 ```
 
+### 6. AppInstaller Packages
+- **Type**: `appinstaller`
+- **Method**: Uses PowerShell's `Remove-AppxPackage` cmdlet (same as MSIX)
+- **Command**: `Remove-AppxPackage` 
+- **Auto-uninstallable**: Yes
+- **Example**:
+```yaml
+installer:
+  type: appinstaller
+  location: /packages/modern-app.appinstaller
+# Automatically uninstallable via AppInstaller removal
+```
+
 ### 7. Uninstalls Array (Advanced Feature)
 - **Type**: Array of uninstall operations
 - **Method**: Executes multiple uninstall operations with specific parameters

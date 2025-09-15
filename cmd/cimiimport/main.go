@@ -31,6 +31,7 @@ import (
 var (
 	identifierFlag string
 	configAuto     bool
+	noInteractive  bool
 	logger         *logging.Logger
 )
 
@@ -301,15 +302,17 @@ func (s NoQuoteEmptyString) MarshalYAML() (interface{}, error) {
 //  3. key=value flags => stored in otherFlags["key"] = "value"
 //  4. single flags => stored in otherFlags["flag"] = "true" (boolean style)
 //  5. a special boolean configRequested if user typed --config
+//  6. a special boolean noInteractive if user typed --nointeractive
 //
-// Returns (packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested).
-func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool, bool, bool) {
+// Returns (packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested, noInteractive).
+func parseCustomArgs(args []string) (string, []string, map[string]string, bool, bool, bool, bool, bool) {
 	var packagePath string
 	filePaths := []string{}
 	otherFlags := make(map[string]string)
 	configRequested := false
 	helpRequested := false
 	versionRequested := false
+	noInteractive := false
 	configAuto = false
 
 	skipNext := false
@@ -340,6 +343,11 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 		// Check --config
 		if arg == "--config" {
 			configRequested = true
+			continue
+		}
+		// Check --nointeractive
+		if arg == "--nointeractive" {
+			noInteractive = true
 			continue
 		}
 
@@ -382,7 +390,7 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 		}
 	}
 
-	return packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested
+	return packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested, noInteractive
 }
 
 func main() {
@@ -397,7 +405,10 @@ func main() {
 	//   - -i or --installs-array => user filePaths
 	//   - everything else => otherFlags
 	//   - and check if user typed --config / --help / --config-auto
-	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested := parseCustomArgs(os.Args)
+	packagePath, filePaths, otherFlags, configRequested, helpRequested, configAuto, versionRequested, noInteractiveFlag := parseCustomArgs(os.Args)
+
+	// Set global noInteractive flag
+	noInteractive = noInteractiveFlag
 
 	// If user typed --version
 	if versionRequested {
@@ -444,8 +455,12 @@ func main() {
 		return
 	}
 
-	// If packagePath was empty, prompt user:
+	// If packagePath was empty, prompt user (unless nointeractive):
 	if packagePath == "" {
+		if noInteractive {
+			logger.Error("No installer path provided and --nointeractive flag is set; exiting.")
+			os.Exit(1)
+		}
 		packagePath = getInstallerPathInteractive()
 		if packagePath == "" {
 			logger.Error("No installer path provided; exiting.")
@@ -800,8 +815,20 @@ func convertExtractItems(ei []extract.InstallItem) []InstallItem {
 
 func promptInstallerItemPath(defaultPath string) (string, error) {
 	if defaultPath == "" {
-		defaultPath = "\\mgmt"
+		defaultPath = "\\"
 	}
+	
+	// If nointeractive flag is set, just return the default
+	if noInteractive {
+		path := defaultPath
+		// Ensure path starts with backslash
+		if !strings.HasPrefix(path, "\\") {
+			path = "\\" + path
+		}
+		path = strings.TrimRight(path, "\\")
+		return path, nil
+	}
+	
 	fmt.Printf("Location in repo [%s]: ", defaultPath)
 	var path string
 	fmt.Scanln(&path)
@@ -854,7 +881,16 @@ func cimianImport(
 		logger.Printf("This item has the same Name as an existing item in the repo:")
 		logger.Printf("    Name: %s\n    Version: %s\n    Description: %s",
 			existingPkg.Name, existingPkg.Version, existingPkg.Description)
-		ans := getInput("Use existing item as a template? [Y/n]: ", "Y")
+		
+		var ans string
+		if noInteractive {
+			// Auto-answer Y in non-interactive mode
+			ans = "Y"
+			logger.Printf("Use existing item as a template? [Y/n]: Y (auto-selected in non-interactive mode)")
+		} else {
+			ans = getInput("Use existing item as a template? [Y/n]: ", "Y")
+		}
+		
 		if strings.EqualFold(ans, "y") || ans == "" {
 			extractedVersion := metadata.Version
 
@@ -919,6 +955,18 @@ func cimianImport(
 	installCheckScriptContent := loadScriptContentOrTemplate(scripts.InstallCheck, existingPkg, "installcheck")
 	uninstallCheckScriptContent := loadScriptContentOrTemplate(scripts.UninstallCheck, existingPkg, "uninstallcheck")
 
+	// For .appinstaller files, generate the postinstall script if none provided
+	if metadata.InstallerType == "nopkg" && strings.ToLower(filepath.Ext(packagePath)) == ".appinstaller" {
+		if postinstallScriptContent == "" {
+			logger.Printf("Generating AppInstaller postinstall script...")
+			generatedScript, err := generateAppInstallerScript(packagePath)
+			if err != nil {
+				return false, fmt.Errorf("failed to generate AppInstaller script: %v", err)
+			}
+			postinstallScriptContent = generatedScript
+		}
+	}
+
 	// Step 6: handle uninstaller if any
 	uninstaller, err := processUninstaller(uninstallerPath,
 		filepath.Join(conf.RepoPath, "pkgs"), "apps")
@@ -927,15 +975,32 @@ func cimianImport(
 	}
 
 	// Step 7: file hash + size
-	fileHash, err := utils.FileSHA256(packagePath)
-	if err != nil {
-		return false, fmt.Errorf("failed to calculate file hash: %v", err)
+	var fileHash string
+	var fileSizeKB int64
+	
+	if metadata.InstallerType == "nopkg" {
+		// For nopkg, we can still calculate hash/size of the original appinstaller file for reference
+		fileHash, err = utils.FileSHA256(packagePath)
+		if err != nil {
+			return false, fmt.Errorf("failed to calculate file hash: %v", err)
+		}
+		stat, err := os.Stat(packagePath)
+		if err != nil {
+			return false, fmt.Errorf("failed to stat installer: %v", err)
+		}
+		fileSizeKB = stat.Size() / 1024
+	} else {
+		// Normal file processing
+		fileHash, err = utils.FileSHA256(packagePath)
+		if err != nil {
+			return false, fmt.Errorf("failed to calculate file hash: %v", err)
+		}
+		stat, err := os.Stat(packagePath)
+		if err != nil {
+			return false, fmt.Errorf("failed to stat installer: %v", err)
+		}
+		fileSizeKB = stat.Size() / 1024
 	}
-	stat, err := os.Stat(packagePath)
-	if err != nil {
-		return false, fmt.Errorf("failed to stat installer: %v", err)
-	}
-	fileSizeKB := stat.Size() / 1024
 
 	// Step 8: build PkgsInfo
 	displayName := metadata.ID                 // Keep spaces in display name
@@ -1028,28 +1093,41 @@ func cimianImport(
 	fmt.Printf("     Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
 	fmt.Printf("     Installer Type: %s\n\n", pkgsInfo.Installer.Type)
 
-	confirm := getInput("Import this item? (y/n): ", "n")
-	if !strings.EqualFold(confirm, "y") {
-		logger.Printf("Import canceled.")
-		return false, nil
+	if !noInteractive {
+		confirm := getInput("Import this item? (y/n): ", "n")
+		if !strings.EqualFold(confirm, "y") {
+			logger.Printf("Import canceled.")
+			return false, nil
+		}
+	} else {
+		// In nointeractive mode, automatically proceed with import
+		logger.Printf("Auto-importing in non-interactive mode...")
 	}
 
-	// Step 12: copy installer to pkgs subdir
-	logger.Debug("Copying installer to repo...")
+	// Step 12: copy installer to pkgs subdir (skip for nopkg)
 	repoSubPath = strings.TrimPrefix(repoSubPath, "\\") // Remove leading backslash for joining
-	installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
-	if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
-		return false, fmt.Errorf("failed to create installer directory: %v", err)
-	}
-	installerFilename := sanitizedName + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
-	installerDest := filepath.Join(installerFolderPath, installerFilename)
+	
+	if metadata.InstallerType == "nopkg" {
+		// For nopkg, no installer file to copy - leave location empty
+		logger.Debug("Skipping installer copy for nopkg type")
+		pkgsInfo.Installer.Location = ""
+	} else {
+		// Normal installer processing
+		logger.Debug("Copying installer to repo...")
+		installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
+		if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
+			return false, fmt.Errorf("failed to create installer directory: %v", err)
+		}
+		installerFilename := sanitizedName + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
+		installerDest := filepath.Join(installerFolderPath, installerFilename)
 
-	if _, err := copyFile(packagePath, installerDest); err != nil {
-		return false, fmt.Errorf("failed to copy installer: %v", err)
+		if _, err := copyFile(packagePath, installerDest); err != nil {
+			return false, fmt.Errorf("failed to copy installer: %v", err)
+		}
+		// Use utils.NormalizeWindowsPath instead of local normalizeInstallerLocation
+		subpathAndFile := filepath.Join(repoSubPath, installerFilename)
+		pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(subpathAndFile)
 	}
-	// Use utils.NormalizeWindowsPath instead of local normalizeInstallerLocation
-	subpathAndFile := filepath.Join(repoSubPath, installerFilename)
-	pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(subpathAndFile)
 
 	// Step 13: write pkginfo to pkgsinfo subdir
 	logger.Debug("Writing pkginfo file...")
@@ -1117,6 +1195,22 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.InstallerType = "msi"
 		metadata.ProductCode = prodCode
 		metadata.UpgradeCode = upgCode
+
+	case ".appinstaller":
+		name, ver, dev, desc, packageFamilyName, uri := extract.AppInstallerMetadata(packagePath)
+		metadata.Title = name
+		metadata.ID = name
+		metadata.Version = parseVersion(ver) // Normalize version to YYYY.MM.DD format
+		metadata.Developer = dev
+		metadata.Description = desc
+		metadata.InstallerType = "nopkg"
+		// Store additional AppInstaller-specific metadata
+		if packageFamilyName != "" {
+			metadata.ProductCode = packageFamilyName // Reuse ProductCode field for package family name
+		}
+		if uri != "" {
+			metadata.UpgradeCode = uri // Reuse UpgradeCode field for update URI
+		}
 
 	case ".msix":
 		// For now, use a simple fallback since MSIX metadata extraction might require a separate tool/API.
@@ -1198,6 +1292,44 @@ func readLineWithDefault(r *bufio.Reader, prompt, defaultVal string) string {
 }
 
 func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configuration) Metadata {
+	// If nointeractive flag is set, use all defaults
+	if noInteractive {
+		// Pre-define fallback strings
+		if m.ID == "" {
+			m.ID = parsePackageName(filepath.Base(packagePath))
+		}
+		if m.Version == "" {
+			m.Version = "1.0.0"
+		}
+		m.Version = parseVersion(m.Version) // Normalize version
+		
+		// Set default catalogs if not already set
+		if len(m.Catalogs) == 0 {
+			if conf.DefaultCatalog != "" {
+				m.Catalogs = []string{conf.DefaultCatalog}
+			} else {
+				m.Catalogs = []string{"Development"}
+			}
+		}
+		
+		// Ensure architecture is set
+		if len(m.SupportedArch) == 0 {
+			if conf.DefaultArch != "" {
+				parts := strings.Split(conf.DefaultArch, ",")
+				for i := range parts {
+					parts[i] = strings.ToLower(strings.TrimSpace(parts[i]))
+				}
+				m.SupportedArch = parts
+				m.Architecture = parts[0]
+			} else {
+				m.SupportedArch = []string{"x64"}
+				m.Architecture = "x64"
+			}
+		}
+		
+		return m
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 
 	// Pre-define fallback strings
@@ -1606,7 +1738,15 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 			valNode.Value = strings.ReplaceAll(valNode.Value, "\r\n", "\n")
 			valNode.Value = strings.ReplaceAll(valNode.Value, "\r", "\n")
 			valNode.Value = strings.TrimRight(valNode.Value, "\n")
-			valNode.Style = yaml.LiteralStyle
+			
+			// Force literal style more aggressively - check if it contains newlines
+			if strings.Contains(valNode.Value, "\n") {
+				valNode.Style = yaml.LiteralStyle
+				// Add a tag to ensure the style is preserved
+				valNode.Tag = "!!str"
+			} else {
+				valNode.Style = 0 // plain style for single-line scripts
+			}
 			continue
 		}
 
@@ -1635,7 +1775,54 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	// 1) Convert to string
 	yamlStr := finalBuf.String()
 
-	// 2) Forcefully remove quotes for empty description/developer/category
+	// 2) Forcefully convert quoted multi-line strings to block scalars for script fields
+	// Look for patterns like: postinstall_script: "line1\nline2\nline3"
+	// and convert them to: postinstall_script: |
+	//   line1
+	//   line2
+	//   line3
+	
+	scriptFieldsRegex := regexp.MustCompile(`(\s*(?:preinstall_script|postinstall_script|preuninstall_script|postuninstall_script|installcheck_script|uninstallcheck_script):\s*)"((?:[^"\\]|\\.)*)"`)
+	yamlStr = scriptFieldsRegex.ReplaceAllStringFunc(yamlStr, func(match string) string {
+		// Extract the field name and the quoted content
+		parts := scriptFieldsRegex.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match // fallback to original
+		}
+		
+		fieldPrefix := parts[1] // e.g., "  postinstall_script: "
+		quotedContent := parts[2] // the content between quotes
+		
+		// Unescape the content
+		unescaped := strings.ReplaceAll(quotedContent, "\\n", "\n")
+		unescaped = strings.ReplaceAll(unescaped, "\\r", "\r")
+		unescaped = strings.ReplaceAll(unescaped, "\\t", "\t")
+		unescaped = strings.ReplaceAll(unescaped, "\\\"", "\"")
+		unescaped = strings.ReplaceAll(unescaped, "\\\\", "\\")
+		
+		// If it's multi-line, convert to block scalar
+		if strings.Contains(unescaped, "\n") {
+			lines := strings.Split(unescaped, "\n")
+			result := strings.TrimSuffix(fieldPrefix, " ") + " |\n"
+			
+			// Determine indentation from the field prefix
+			fieldIndent := strings.Repeat(" ", len(fieldPrefix)-len(strings.TrimLeft(fieldPrefix, " ")))
+			contentIndent := fieldIndent + "  "
+			
+			for _, line := range lines {
+				if strings.TrimSpace(line) == "" {
+					result += "\n"
+				} else {
+					result += contentIndent + line + "\n"
+				}
+			}
+			return strings.TrimSuffix(result, "\n")
+		}
+		
+		return match // not multi-line, keep as-is
+	})
+
+	// 3) Forcefully remove quotes for empty description/developer/category
 	//    "description: \"\"" => "description:"
 	replacer := strings.NewReplacer(
 		`description: ""`, `description:`,
@@ -1739,6 +1926,7 @@ Options:
   --preuninstall-script=<path>  ...
   --postuninstall-script=<path> ...
   --config                      Run interactive configuration setup and exit
+  --nointeractive               Run with no prompts, using all defaults
   -h, --help                    Show this usage and exit
 
 If you specify both an installer path and one or more -i/--installs-array 
@@ -1763,4 +1951,138 @@ func sanitizeName(name string) string {
 		return '-'
 	}, name)
 	return name
+}
+
+// generateAppInstallerScript creates a PowerShell postinstall script for .appinstaller files
+func generateAppInstallerScript(appInstallerPath string) (string, error) {
+	// Read the appinstaller file contents once
+	appInstallerData, err := os.ReadFile(appInstallerPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read appinstaller file: %w", err)
+	}
+
+	// Parse the AppInstaller XML to get dependencies using existing extract function
+	dependencies, err := extract.GetAppInstallerDependencies(appInstallerPath)
+	if err != nil {
+		// Fall back to simpler installation method
+		dependencies = nil
+	}
+
+	// Extract basic metadata
+	name, _, _, _, _, uri := extract.AppInstallerMetadata(appInstallerPath)
+	sanitizedName := sanitizeName(name)
+	
+	// Build the comprehensive script
+	var scriptLines []string
+	scriptLines = append(scriptLines, "# PowerShell script to install AppInstaller package")
+	scriptLines = append(scriptLines, "# Generated by cimiimport for: "+name)
+	scriptLines = append(scriptLines, "")
+	scriptLines = append(scriptLines, "try {")
+	scriptLines = append(scriptLines, "    Write-Host \"Installing "+name+" via AppInstaller...\" -ForegroundColor Green")
+	scriptLines = append(scriptLines, "    ")
+	
+	// Method 1: Try direct AppInstaller file installation first (recommended)
+	if uri != "" {
+		scriptLines = append(scriptLines, "    # Method 1: Direct AppInstaller installation (recommended)")
+		scriptLines = append(scriptLines, "    Write-Host \"Attempting direct installation from: "+uri+"\" -ForegroundColor Yellow")
+		scriptLines = append(scriptLines, "    try {")
+		scriptLines = append(scriptLines, "        Add-AppxPackage -AppInstallerFile \""+uri+"\" -ErrorAction Stop")
+		scriptLines = append(scriptLines, "        Write-Host \"Successfully installed "+name+" via direct AppInstaller method\" -ForegroundColor Green")
+		scriptLines = append(scriptLines, "        exit 0")
+		scriptLines = append(scriptLines, "    } catch {")
+		scriptLines = append(scriptLines, "        Write-Host \"Direct AppInstaller installation failed: $($_.Exception.Message)\" -ForegroundColor Yellow")
+		scriptLines = append(scriptLines, "        Write-Host \"Falling back to manual component installation...\" -ForegroundColor Yellow")
+		scriptLines = append(scriptLines, "    }")
+		scriptLines = append(scriptLines, "    ")
+	}
+
+	// Method 2: Install components individually (if we have dependencies)
+	if len(dependencies) > 0 {
+		scriptLines = append(scriptLines, "    # Method 2: Install individual components")
+		scriptLines = append(scriptLines, "    $currentArchitecture = $env:PROCESSOR_ARCHITECTURE")
+		scriptLines = append(scriptLines, "    if ($currentArchitecture -eq 'AMD64') { $currentArchitecture = 'x64' }")
+		scriptLines = append(scriptLines, "    if ($currentArchitecture -eq 'ARM64') { $currentArchitecture = 'arm64' }")
+		scriptLines = append(scriptLines, "    Write-Host \"Current system architecture: $currentArchitecture\" -ForegroundColor Cyan")
+		scriptLines = append(scriptLines, "    ")
+
+		// Install dependencies first
+		scriptLines = append(scriptLines, "    # Install dependencies first")
+		scriptLines = append(scriptLines, "    Write-Host \"Installing "+fmt.Sprintf("%d", len(dependencies))+" dependencies...\" -ForegroundColor Cyan")
+		
+		for i, dep := range dependencies {
+			scriptLines = append(scriptLines, "    ")
+			scriptLines = append(scriptLines, "    # Dependency "+(fmt.Sprintf("%d", i+1))+": "+dep.Name)
+			
+			// Check if this dependency is architecture-specific
+			if dep.ProcessorArchitecture != "" {
+				scriptLines = append(scriptLines, "    if ($currentArchitecture -eq '"+dep.ProcessorArchitecture+"') {")
+				scriptLines = append(scriptLines, "        Write-Host \"Installing "+dep.Name+" ("+dep.ProcessorArchitecture+")...\" -ForegroundColor Yellow")
+				scriptLines = append(scriptLines, "        try {")
+				scriptLines = append(scriptLines, "            Add-AppxPackage -Uri \""+dep.URI+"\" -ErrorAction Stop")
+				scriptLines = append(scriptLines, "            Write-Host \"✓ Successfully installed "+dep.Name+"\" -ForegroundColor Green")
+				scriptLines = append(scriptLines, "        } catch {")
+				scriptLines = append(scriptLines, "            Write-Host \"Warning: Failed to install dependency "+dep.Name+": $($_.Exception.Message)\" -ForegroundColor Yellow")
+				scriptLines = append(scriptLines, "            # Continue with other dependencies")
+				scriptLines = append(scriptLines, "        }")
+				scriptLines = append(scriptLines, "    } else {")
+				scriptLines = append(scriptLines, "        Write-Host \"Skipping "+dep.Name+" ("+dep.ProcessorArchitecture+") - not needed for $currentArchitecture\" -ForegroundColor Gray")
+				scriptLines = append(scriptLines, "    }")
+			} else {
+				// Architecture-neutral dependency
+				scriptLines = append(scriptLines, "    Write-Host \"Installing "+dep.Name+" (universal)...\" -ForegroundColor Yellow")
+				scriptLines = append(scriptLines, "    try {")
+				scriptLines = append(scriptLines, "        Add-AppxPackage -Uri \""+dep.URI+"\" -ErrorAction Stop")
+				scriptLines = append(scriptLines, "        Write-Host \"✓ Successfully installed "+dep.Name+"\" -ForegroundColor Green")
+				scriptLines = append(scriptLines, "    } catch {")
+				scriptLines = append(scriptLines, "        Write-Host \"Warning: Failed to install dependency "+dep.Name+": $($_.Exception.Message)\" -ForegroundColor Yellow")
+				scriptLines = append(scriptLines, "        # Continue with main package installation")
+				scriptLines = append(scriptLines, "    }")
+			}
+		}
+		
+		scriptLines = append(scriptLines, "    ")
+		scriptLines = append(scriptLines, "    Write-Host \"Dependency installation phase completed\" -ForegroundColor Cyan")
+		scriptLines = append(scriptLines, "    ")
+		
+		// Try to install the main bundle/package by URL as well (since we know we can parse the XML)
+		// We'll need to get the main bundle/package URL - for now use fallback method
+		scriptLines = append(scriptLines, "    # Install main application package")
+		scriptLines = append(scriptLines, "    # Note: Using fallback local AppInstaller method for main package")
+	}
+	// Fallback method: Use local AppInstaller file for cases where we don't have dependencies 
+	// or when the direct method fails
+	if len(dependencies) == 0 || uri == "" {
+		scriptLines = append(scriptLines, "    # Fallback: Use local AppInstaller file")
+	} else {
+		scriptLines = append(scriptLines, "    # Fallback method for main package installation")
+	}
+	scriptLines = append(scriptLines, "    $appInstallerPath = \"$env:TEMP\\"+sanitizedName+".appinstaller\"")
+	scriptLines = append(scriptLines, "    ")
+	scriptLines = append(scriptLines, "    # Write the AppInstaller content to temp location")
+	scriptLines = append(scriptLines, "    @\"")
+	scriptLines = append(scriptLines, string(appInstallerData))
+	scriptLines = append(scriptLines, "\"@ | Out-File -FilePath $appInstallerPath -Encoding UTF8")
+	scriptLines = append(scriptLines, "    ")
+	scriptLines = append(scriptLines, "    Write-Host \"Installing from local AppInstaller file: $appInstallerPath\" -ForegroundColor Yellow")
+	scriptLines = append(scriptLines, "    Add-AppxPackage -AppInstallerFile $appInstallerPath -ErrorAction Stop")
+	scriptLines = append(scriptLines, "    ")
+	scriptLines = append(scriptLines, "    # Clean up temp file")
+	scriptLines = append(scriptLines, "    Remove-Item -Path $appInstallerPath -Force -ErrorAction SilentlyContinue")
+	
+	scriptLines = append(scriptLines, "    ")
+	scriptLines = append(scriptLines, "    Write-Host \"Successfully installed "+name+"\" -ForegroundColor Green")
+	scriptLines = append(scriptLines, "    ")
+	scriptLines = append(scriptLines, "} catch {")
+	scriptLines = append(scriptLines, "    Write-Host \"Failed to install "+name+": $($_.Exception.Message)\" -ForegroundColor Red")
+	scriptLines = append(scriptLines, "    throw")
+	scriptLines = append(scriptLines, "}")
+
+	// Join with actual newlines and clean up any potential issues
+	script := strings.Join(scriptLines, "\n")
+	
+	// Ensure consistent line endings (Unix-style)
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	script = strings.ReplaceAll(script, "\r", "\n")
+	
+	return script, nil
 }

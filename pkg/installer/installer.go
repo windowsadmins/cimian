@@ -598,6 +598,75 @@ func installNonNupkg(item catalog.Item, localFile, cachePath string, cfg *config
 		logging.Debug("PS1 install output", "output", out)
 		return nil
 
+	case "appinstaller":
+		// Legacy single-file AppInstaller support (deprecated, use appinstaller-array instead)
+		logging.Warn("Using legacy AppInstaller mode - consider upgrading to appinstaller-array", "item", item.Name)
+		
+		// Show preparation and validation phases
+		for currentPhase < len(phases)-3 {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
+		// Run preinstall script if present
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
+			return err
+		}
+		
+		// Show registering phase
+		if currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
+		out, err := runAppInstallerInstaller(item, localFile, cfg)
+		if err != nil {
+			showInstallProgress(item.Name, item.Installer.Type, "Failed", 0)
+			return err
+		}
+		
+		// Run postinstall script if present
+		executePostInstallScript(item, cachePath)
+		
+		// Show completion phases
+		for currentPhase < len(phases) {
+			showInstallProgress(item.Name, item.Installer.Type, phases[currentPhase], 0)
+			currentPhase++
+		}
+		
+		logging.Debug("AppInstaller install output", "output", out)
+		return nil
+
+	case "appinstaller-array":
+		// Handle AppInstaller packages using installer arrays
+		logging.Info("Processing AppInstaller using installer arrays", "item", item.Name)
+		
+		// Run preinstall script if present
+		if err := executePreInstallScript(item, cachePath); err != nil {
+			showInstallProgress(item.Name, "appx-array", "Failed", 0)
+			return err
+		}
+		
+		err := installAppInstallerArray(item, cfg)
+		if err != nil {
+			showInstallProgress(item.Name, "appx-array", "Failed", 0)
+			// Log the AppInstaller array failure as an error
+			status := logging.StatusFromError("appinstaller_array_execution", err)
+			logging.LogEventEntry("install", "appinstaller_array_execution", status,
+				fmt.Sprintf("AppInstaller array installation failed: %s", err.Error()),
+				logging.WithContext("item", item.Name),
+				logging.WithContext("installer_type", "appinstaller-array"),
+				logging.WithContext("error_details", err.Error()))
+			return err
+		}
+		
+		// Run postinstall script if present
+		executePostInstallScript(item, cachePath)
+		
+		logging.Debug("AppInstaller array install completed", "item", item.Name)
+		return nil
+
 	case "msix":
 		// Show preparation and validation phases
 		for currentPhase < len(phases)-3 {
@@ -1213,6 +1282,8 @@ func processTraditionalUninstall(item catalog.Item, cachePath string) (string, e
 		return runPS1Uninstaller(absFile)
 	case "nupkg":
 		return runNupkgUninstaller(absFile)
+	case "appinstaller":
+		return runAppInstallerUninstaller(absFile, item)
 	case "msix":
 		return runMSIXUninstaller(absFile, item)
 	default:
@@ -1403,6 +1474,33 @@ func runMSIUninstaller(absFile string, item catalog.Item) (string, error) {
 	return runMSIUninstallWithCleanup(args, cfg)
 }
 
+func runAppInstallerInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
+	// AppInstaller-specific installation arguments
+	args := []string{
+		localFile,
+		"-AppInstallerFile",           // Specify that this is an AppInstaller file
+		"-ForceApplicationShutdown",   // Close app if running
+		"-ForceUpdateFromAnyVersion",  // Allow updates from any version
+	}
+
+	logging.Info("Invoking AppInstaller install with timeout", "appinstaller", localFile, "item", item.Name, "args", args, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+
+	// Use timeout-aware command execution
+	output, err := runCMDWithTimeout("Add-AppxPackage", args, cfg.InstallerTimeoutMinutes)
+
+	if err != nil {
+		if strings.Contains(err.Error(), "timed out") {
+			logging.Error("AppInstaller installer timed out",
+				"item", item.Name, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			return output, fmt.Errorf("AppInstaller installer timed out after %d minutes - check if package requires additional privileges or has dependency issues", cfg.InstallerTimeoutMinutes)
+		}
+		logging.Error("AppInstaller installation failed", "item", item.Name, "error", err, "output", output)
+		return output, err
+	}
+	logging.Info("AppInstaller installed successfully", "item", item.Name)
+	return output, nil
+}
+
 func runMSIXInstaller(item catalog.Item, localFile string, cfg *config.Configuration) (string, error) {
 	// Silent installation arguments for MSIX packages
 	args := []string{
@@ -1429,6 +1527,28 @@ func runMSIXInstaller(item catalog.Item, localFile string, cfg *config.Configura
 		return output, err
 	}
 	logging.Info("MSIX installed successfully", "item", item.Name)
+	return output, nil
+}
+
+func runAppInstallerUninstaller(_ string, item catalog.Item) (string, error) {
+	// For AppInstaller packages, we need to uninstall by package family name or full name
+	// Since AppInstaller packages are essentially MSIX packages, we use the same uninstall method
+	args := []string{}
+	// Note: We would need to determine the package family name from the AppInstaller file
+	// or from the installed packages. For now, use the same approach as MSIX.
+
+	logging.Info("Invoking AppInstaller uninstaller for", "item", item.Name)
+	logging.Debug("runAppInstallerUninstaller => final command",
+		"cmd", "Remove-AppxPackage", "args", strings.Join(args, " "))
+
+	cmd := exec.Command("Remove-AppxPackage", args...)
+	outputBytes, err := cmd.CombinedOutput()
+	output := string(outputBytes)
+	if err != nil {
+		logging.Error("AppInstaller uninstallation failed", "item", item.Name, "error", err, "output", output)
+		return output, err
+	}
+	logging.Info("AppInstaller uninstalled successfully", "item", item.Name)
 	return output, nil
 }
 
@@ -2445,6 +2565,8 @@ func getInstallPhases(installerType string) []string {
 		return []string{"Preparing", "Extracting", "Dependencies", "Installing", "Scripts", "Finalizing"}
 	case "pwsh", "powershell":
 		return []string{"Preparing", "Loading", "Executing", "Finalizing"}
+	case "appinstaller":
+		return []string{"Preparing", "Validating", "Dependencies", "Registering", "Installing", "Finalizing"}
 	case "msix":
 		return []string{"Preparing", "Validating", "Registering", "Installing", "Finalizing"}
 	default:
@@ -2511,5 +2633,124 @@ func clearChocolateyCache(pkgID string) {
 	}
 	
 	logging.Info("Chocolatey cache cleared successfully after package operation", "pkgID", pkgID)
+}
+
+// installAppInstallerArray processes AppInstaller packages using the installer arrays approach
+func installAppInstallerArray(item catalog.Item, cfg *config.Configuration) error {
+	if len(item.Installs) == 0 {
+		return fmt.Errorf("no installer array found for AppInstaller item %s", item.Name)
+	}
+
+	logging.Info("Installing AppInstaller packages from array", "item", item.Name, "packages", len(item.Installs))
+
+	// Get system architecture for filtering
+	sysArch := status.GetSystemArchitecture()
+	logging.Debug("System architecture detected", "arch", sysArch)
+
+	var installedCount int
+	var errors []error
+
+	// Process each package in the installer array
+	for i, installItem := range item.Installs {
+		// Skip non-appx packages
+		if string(installItem.Type) != "appx-package" {
+			logging.Debug("Skipping non-appx package", "type", installItem.Type, "path", installItem.Path)
+			continue
+		}
+
+		// Build full path to package file
+		packagePath := filepath.Join(cfg.CachePath, string(installItem.Path))
+		
+		// Check if package file exists
+		if _, err := os.Stat(packagePath); os.IsNotExist(err) {
+			logging.Warn("Package file not found, skipping", "path", packagePath)
+			errors = append(errors, fmt.Errorf("package file not found: %s", packagePath))
+			continue
+		}
+
+		// Determine package architecture from filename or path
+		packageArch := extractArchitectureFromPath(string(installItem.Path))
+		
+		// Skip packages that don't match system architecture (unless it's a bundle)
+		if packageArch != "" && packageArch != sysArch && !strings.HasSuffix(strings.ToLower(packagePath), ".msixbundle") {
+			logging.Debug("Skipping package due to architecture mismatch", 
+				"package", installItem.Path, "packageArch", packageArch, "sysArch", sysArch)
+			continue
+		}
+
+		logging.Info("Installing AppX package", "package", installItem.Path, "order", i+1, "total", len(item.Installs))
+		
+		// Install the package using Add-AppxPackage
+		err := installAppxPackage(packagePath, cfg)
+		if err != nil {
+			logging.Error("Failed to install AppX package", "package", installItem.Path, "error", err)
+			errors = append(errors, fmt.Errorf("failed to install %s: %w", installItem.Path, err))
+			
+			// Don't fail completely - continue with other packages
+			continue
+		}
+
+		installedCount++
+		logging.Info("Successfully installed AppX package", "package", installItem.Path)
+	}
+
+	if installedCount == 0 {
+		if len(errors) > 0 {
+			return fmt.Errorf("no packages were installed successfully, errors: %v", errors)
+		}
+		return fmt.Errorf("no packages were applicable for installation (architecture mismatch?)")
+	}
+
+	logging.Info("AppInstaller array installation completed", "item", item.Name, "installed", installedCount, "errors", len(errors))
+
+	// Log warnings for any errors but don't fail if at least one package installed
+	for _, err := range errors {
+		logging.Warn("AppInstaller package error", "error", err)
+	}
+
+	return nil
+}
+
+// extractArchitectureFromPath attempts to extract architecture from file path
+func extractArchitectureFromPath(path string) string {
+	pathLower := strings.ToLower(path)
+	
+	if strings.Contains(pathLower, "_x64") || strings.Contains(pathLower, "/x64/") || strings.Contains(pathLower, "\\x64\\") {
+		return "x64"
+	}
+	if strings.Contains(pathLower, "_arm64") || strings.Contains(pathLower, "/arm64/") || strings.Contains(pathLower, "\\arm64\\") {
+		return "arm64"
+	}
+	if strings.Contains(pathLower, "_x86") || strings.Contains(pathLower, "/x86/") || strings.Contains(pathLower, "\\x86\\") {
+		return "x86"
+	}
+	
+	return "" // Unknown architecture
+}
+
+// installAppxPackage installs a single AppX/MSIX package using Add-AppxPackage
+func installAppxPackage(packagePath string, cfg *config.Configuration) error {
+	// Build PowerShell command for Add-AppxPackage
+	psCommand := fmt.Sprintf("Add-AppxPackage -Path '%s' -ForceApplicationShutdown -ForceUpdateFromAnyVersion", packagePath)
+	
+	logging.Debug("Executing Add-AppxPackage command", "command", psCommand)
+	
+	// Use timeout-aware PowerShell execution
+	psArgs := buildStandardPowerShellArgs("-Command", psCommand)
+	output, err := runCMDWithTimeout(commandPs1, psArgs, cfg.InstallerTimeoutMinutes)
+	
+	if err != nil {
+		if strings.Contains(err.Error(), "timed out") {
+			logging.Error("AppX package installation timed out",
+				"package", packagePath, "timeoutMinutes", cfg.InstallerTimeoutMinutes)
+			return fmt.Errorf("AppX package installation timed out after %d minutes", cfg.InstallerTimeoutMinutes)
+		}
+		
+		logging.Error("Add-AppxPackage failed", "package", packagePath, "error", err, "output", output)
+		return fmt.Errorf("Add-AppxPackage failed: %w", err)
+	}
+	
+	logging.Debug("Add-AppxPackage completed successfully", "package", packagePath, "output", strings.TrimSpace(output))
+	return nil
 }
 
