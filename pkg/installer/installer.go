@@ -905,6 +905,7 @@ func renameNupkgFile(downloadedFile, cacheDir, pkgID, pkgVer string) error {
 }
 
 func isNupkgInstalled(pkgID string) (bool, error) {
+	// First, try Chocolatey's built-in detection
 	cmdArgs := []string{
 		"list",
 		"--local-only",
@@ -914,15 +915,37 @@ func isNupkgInstalled(pkgID string) (bool, error) {
 	}
 	out, err := runCMD(chocolateyBin, cmdArgs)
 	if err != nil {
-		return false, err
-	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), strings.ToLower(pkgID)+"|") {
-			return true, nil
+		logging.Debug("Chocolatey list command failed, falling back to Cimian registry", "pkgID", pkgID, "error", err)
+	} else {
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), strings.ToLower(pkgID)+"|") {
+				logging.Debug("Package found via Chocolatey registry", "pkgID", pkgID)
+				return true, nil
+			}
 		}
 	}
-	return false, nil
+
+	// Fallback: Check Cimian's own registry for nupkg packages
+	// This ensures we can track nupkg installations even if Chocolatey's lib directory is cleaned
+	regPath := `Software\ManagedInstalls\` + pkgID
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		// Neither Chocolatey nor Cimian registry shows this package as installed
+		logging.Debug("Package not found in Chocolatey or Cimian registry", "pkgID", pkgID)
+		return false, nil
+	}
+	defer k.Close()
+
+	// Check if we have a version recorded (indicates successful installation)
+	version, _, err := k.GetStringValue("Version")
+	if err != nil || version == "" {
+		logging.Debug("Package found in Cimian registry but no version recorded", "pkgID", pkgID)
+		return false, nil
+	}
+
+	logging.Info("Package found via Cimian registry fallback", "pkgID", pkgID, "version", version)
+	return true, nil
 }
 
 // uninstallItem decides how to uninstall MSI/EXE/PS1/nupkg/msix.
