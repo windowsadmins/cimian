@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -36,8 +37,8 @@ var (
 )
 
 // parseVersion handles version normalization for date-based versions while preserving other formats.
-// Date formats like YYYY.MM.DD or YYYY.MM.DD.HHmm are normalized to full format (YYYY.MM.DD).
-// Handles Chocolatey truncation where 2025.09.01 becomes 25.9.1 and restores to full date format.
+// ONLY converts versions that match current year patterns (e.g., 25.M.D or 25.M.D.HM for 2025).
+// This prevents aggressive conversion of semantic versions that happen to look date-like.
 // All other version formats are passed through unchanged.
 func parseVersion(versionStr string) string {
 	if versionStr == "" {
@@ -50,32 +51,27 @@ func parseVersion(versionStr string) string {
 	if len(parts) == 3 || len(parts) == 4 {
 		// Check if this looks like a date format by validating the first part as a year
 		if yearNum, err := strconv.Atoi(parts[0]); err == nil {
-			// Handle both full years (2000-2100) and Chocolatey-truncated years
-			isDateFormat := false
+			// Get current year to determine if we should do date conversion
+			currentYear := time.Now().Year()
+			currentYearShort := currentYear - 2000 // Convert 2025 -> 25
 			
-			// Full 4-digit years (definitive date format)
-			if yearNum >= 2000 && yearNum <= 2100 {
-				isDateFormat = true
-			}
-			// Chocolatey-truncated 2-digit years - be much more conservative
-			// Only consider as date if it's a reasonable truncated year (e.g., 20-99 for 2020-2099)
-			// AND the month/day parts are clearly date-like
-			if yearNum >= 20 && yearNum <= 99 {
-				// Additional validation: check if month and day parts look like date components
-				if len(parts) >= 3 {
-					if monthNum, err := strconv.Atoi(parts[1]); err == nil && monthNum >= 1 && monthNum <= 12 {
-						if dayNum, err := strconv.Atoi(parts[2]); err == nil && dayNum >= 1 && dayNum <= 31 {
-							// Extra check: avoid common semantic version patterns
-							// If this looks like a semantic version (e.g., X.Y.Z where all are small numbers), skip
-							if !(yearNum <= 20 && monthNum <= 20 && dayNum <= 20) {
-								isDateFormat = true
-							}
-						}
+			isCurrentYearDateFormat := false
+			
+			// Only convert if it matches current year patterns:
+			// 1. Full current year (e.g., 2025.M.D)
+			// 2. Current year short form (e.g., 25.M.D)
+			if yearNum == currentYear {
+				isCurrentYearDateFormat = true
+			} else if yearNum == currentYearShort && len(parts) >= 3 {
+				// Additional validation for 2-digit year: check if month and day parts are date-like
+				if monthNum, err := strconv.Atoi(parts[1]); err == nil && monthNum >= 1 && monthNum <= 12 {
+					if dayNum, err := strconv.Atoi(parts[2]); err == nil && dayNum >= 1 && dayNum <= 31 {
+						isCurrentYearDateFormat = true
 					}
 				}
 			}
 			
-			if isDateFormat {
+			if isCurrentYearDateFormat {
 				// Validate all parts are numeric for date format
 				var numericParts []int
 				allNumeric := true
@@ -93,13 +89,9 @@ func parseVersion(versionStr string) string {
 					month := numericParts[1]
 					day := numericParts[2]
 
-					// Convert 2-digit year to 4-digit year (handle Chocolatey truncation)
+					// Convert 2-digit year to 4-digit year (handle current year only)
 					if year < 100 {
-						if year <= 50 {
-							year = 2000 + year
-						} else {
-							year = 1900 + year
-						}
+						year = currentYear // Always use current year for 2-digit years
 					}
 
 					// Ensure month and day are zero-padded for date-based versions
