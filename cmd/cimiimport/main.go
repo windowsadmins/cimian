@@ -137,7 +137,8 @@ type PkgsInfo struct {
 	UpdateFor            []string           `yaml:"update_for,omitempty"`
 	MinOSVersion         string             `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
 	MaxOSVersion         string             `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
-	Installer            *Installer         `yaml:"installer"`
+	InstallerType        string             `yaml:"installer_type,omitempty"`
+	Installer            *Installer         `yaml:"installer,omitempty"`
 	Uninstaller          *Installer         `yaml:"uninstaller,omitempty"`
 	PreinstallScript     string             `yaml:"preinstall_script,omitempty"`
 	PostinstallScript    string             `yaml:"postinstall_script,omitempty"`
@@ -965,6 +966,15 @@ func cimianImport(
 			}
 			postinstallScriptContent = generatedScript
 		}
+		
+		if installCheckScriptContent == "" {
+			logger.Printf("Generating AppInstaller installcheck script...")
+			generatedInstallCheck, err := generateAppInstallerInstallCheckScript(packagePath)
+			if err != nil {
+				return false, fmt.Errorf("failed to generate AppInstaller installcheck script: %v", err)
+			}
+			installCheckScriptContent = generatedInstallCheck
+		}
 	}
 
 	// Step 6: handle uninstaller if any
@@ -1020,14 +1030,6 @@ func cimianImport(
 		MinOSVersion:  minOSVersion,
 		MaxOSVersion:  maxOSVersion,
 
-		Installer: &Installer{
-			Hash:        fileHash,
-			Type:        metadata.InstallerType,
-			Size:        fileSizeKB,
-			ProductCode: strings.TrimSpace(metadata.ProductCode),
-			UpgradeCode: strings.TrimSpace(metadata.UpgradeCode),
-		},
-		Uninstaller:         uninstaller,
 		UnattendedInstall:   metadata.UnattendedInstall,
 		UnattendedUninstall: metadata.UnattendedUninstall,
 		Requires:            metadata.Requires,
@@ -1040,6 +1042,25 @@ func cimianImport(
 		InstallCheckScript:   installCheckScriptContent,
 		UninstallCheckScript: uninstallCheckScriptContent,
 	}
+
+	// Set installer information based on type
+	if metadata.InstallerType == "nopkg" {
+		// For nopkg, use installer_type field instead of installer object
+		pkgsInfo.InstallerType = "nopkg"
+		pkgsInfo.Installer = nil
+	} else {
+		// For other types, use installer object
+		pkgsInfo.Installer = &Installer{
+			Hash:        fileHash,
+			Type:        metadata.InstallerType,
+			Size:        fileSizeKB,
+			ProductCode: strings.TrimSpace(metadata.ProductCode),
+			UpgradeCode: strings.TrimSpace(metadata.UpgradeCode),
+		}
+	}
+
+	// Set uninstaller (for all types)
+	pkgsInfo.Uninstaller = uninstaller
 
 	// ─── decide architecture tag ────────────────────────────────────────────────
 	archTag := ""
@@ -1091,7 +1112,15 @@ func cimianImport(
 	fmt.Printf("     Developer: %s\n", pkgsInfo.Developer)
 	fmt.Printf("     Architectures: %s\n", strings.Join(pkgsInfo.SupportedArch, ", "))
 	fmt.Printf("     Catalogs: %s\n", strings.Join(pkgsInfo.Catalogs, ", "))
-	fmt.Printf("     Installer Type: %s\n\n", pkgsInfo.Installer.Type)
+	
+	// Display installer type based on structure
+	if pkgsInfo.InstallerType != "" {
+		fmt.Printf("     Installer Type: %s\n\n", pkgsInfo.InstallerType)
+	} else if pkgsInfo.Installer != nil {
+		fmt.Printf("     Installer Type: %s\n\n", pkgsInfo.Installer.Type)
+	} else {
+		fmt.Printf("     Installer Type: unknown\n\n")
+	}
 
 	if !noInteractive {
 		confirm := getInput("Import this item? (y/n): ", "n")
@@ -1108,25 +1137,28 @@ func cimianImport(
 	repoSubPath = strings.TrimPrefix(repoSubPath, "\\") // Remove leading backslash for joining
 	
 	if metadata.InstallerType == "nopkg" {
-		// For nopkg, no installer file to copy - leave location empty
+		// For nopkg, no installer file to copy - installer is nil
 		logger.Debug("Skipping installer copy for nopkg type")
-		pkgsInfo.Installer.Location = ""
+		// No need to set installer location since installer is nil
 	} else {
 		// Normal installer processing
 		logger.Debug("Copying installer to repo...")
 		installerFolderPath := filepath.Join(conf.RepoPath, "pkgs", repoSubPath)
 		if err := os.MkdirAll(installerFolderPath, 0755); err != nil {
-			return false, fmt.Errorf("failed to create installer directory: %v", err)
+			return false, fmt.Errorf("failed to create installer folder: %v", err)
 		}
-		installerFilename := sanitizedName + archTag + pkgsInfo.Version + filepath.Ext(packagePath)
-		installerDest := filepath.Join(installerFolderPath, installerFilename)
 
-		if _, err := copyFile(packagePath, installerDest); err != nil {
+		// Copy the installer file to the repo
+		installerFilename := fmt.Sprintf("%s%s%s", pkgsInfo.Name, archTag, filepath.Ext(packagePath))
+		installerPath := filepath.Join(installerFolderPath, installerFilename)
+		
+		if _, err := copyFile(packagePath, installerPath); err != nil {
 			return false, fmt.Errorf("failed to copy installer: %v", err)
 		}
-		// Use utils.NormalizeWindowsPath instead of local normalizeInstallerLocation
-		subpathAndFile := filepath.Join(repoSubPath, installerFilename)
-		pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(subpathAndFile)
+
+		// Set the installer location relative to repo root
+		pkgsInfo.Installer.Location = filepath.Join("pkgs", repoSubPath, installerFilename)
+		pkgsInfo.Installer.Location = strings.ReplaceAll(pkgsInfo.Installer.Location, "\\", "/") // Use forward slashes
 	}
 
 	// Step 13: write pkginfo to pkgsinfo subdir
@@ -2076,6 +2108,49 @@ func generateAppInstallerScript(appInstallerPath string) (string, error) {
 	scriptLines = append(scriptLines, "    Write-Host \"Failed to install "+name+": $($_.Exception.Message)\" -ForegroundColor Red")
 	scriptLines = append(scriptLines, "    throw")
 	scriptLines = append(scriptLines, "}")
+
+	// Join with actual newlines and clean up any potential issues
+	script := strings.Join(scriptLines, "\n")
+	
+	// Ensure consistent line endings (Unix-style)
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	script = strings.ReplaceAll(script, "\r", "\n")
+	
+	return script, nil
+}
+
+// generateAppInstallerInstallCheckScript creates a PowerShell installcheck script for .appinstaller files
+func generateAppInstallerInstallCheckScript(appInstallerPath string) (string, error) {
+	// Parse the AppInstaller XML to get the main application info
+	name, _, _, _, _, _ := extract.AppInstallerMetadata(appInstallerPath)
+	if name == "" {
+		name = "AppInstaller Package"
+	}
+
+	// Generate a PowerShell script to check if the main application is installed
+	scriptLines := []string{
+		"# InstallCheck script for " + name,
+		"# This script checks if the AppInstaller package is already installed",
+		"",
+		"try {",
+		"    # Get all installed MSIX packages",
+		"    $installedPackages = Get-AppxPackage -AllUsers | Where-Object { $_.Name -like '*" + name + "*' }",
+		"    ",
+		"    if ($installedPackages) {",
+		"        Write-Host \"" + name + " is already installed\" -ForegroundColor Green",
+		"        foreach ($pkg in $installedPackages) {",
+		"            Write-Host \"  - $($pkg.Name) v$($pkg.Version)\" -ForegroundColor Gray",
+		"        }",
+		"        exit 0  # Package is installed",
+		"    } else {",
+		"        Write-Host \"" + name + " is not installed\" -ForegroundColor Yellow",
+		"        exit 1  # Package needs to be installed",
+		"    }",
+		"} catch {",
+		"    Write-Host \"Error checking installation status: $($_.Exception.Message)\" -ForegroundColor Red",
+		"    exit 1  # Assume not installed on error",
+		"}",
+	}
 
 	// Join with actual newlines and clean up any potential issues
 	script := strings.Join(scriptLines, "\n")
