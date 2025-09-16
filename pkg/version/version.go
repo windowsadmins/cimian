@@ -59,11 +59,34 @@ func PrintFull() {
 	fmt.Printf("  go version: \t%s\n", v.GoVersion)
 }
 
-// Normalize trims trailing ".0" segments from version strings.
+// Normalize trims trailing ".0" segments from version strings and removes leading zeros from all segments.
 func Normalize(version string) string {
+	original := version
 	parts := strings.Split(version, ".")
+	
+	// Remove leading zeros from all segments
+	for i, part := range parts {
+		if part != "0" && len(part) > 1 {
+			// Remove leading zeros but keep at least one digit
+			newPart := strings.TrimLeft(part, "0")
+			if newPart == "" {
+				newPart = "0"
+			}
+			parts[i] = newPart
+		}
+	}
+	
+	// Remove trailing ".0" segments
 	for len(parts) > 1 && parts[len(parts)-1] == "0" {
 		parts = parts[:len(parts)-1]
 	}
-	return strings.Join(parts, ".")
+	
+	result := strings.Join(parts, ".")
+	
+	// Debug logging for version normalization (comment out for production)
+	if original != result {
+		fmt.Printf("[DEBUG] Version normalized: %s -> %s\n", original, result)
+	}
+	
+	return result
 }
