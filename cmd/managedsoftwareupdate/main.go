@@ -3795,6 +3795,16 @@ func buildManifestHierarchy(manifestCounts map[string]int) *ManifestNode {
 		buildTree(node)
 	}
 	
+	// Add SelfServeManifest as a top-level entry if it has items
+	if count, exists := manifestCounts["SelfServeManifest"]; exists && count > 0 {
+		selfServeNode := &ManifestNode{
+			Name:      "SelfServeManifest",
+			Children:  make(map[string]*ManifestNode),
+			ItemCount: count,
+		}
+		root.Children["SelfServeManifest"] = selfServeNode
+	}
+	
 	return root
 }
 
@@ -3861,6 +3871,9 @@ func displayManifestTreeWithPackages(manifestItems []manifest.Item, toInstall, t
 			sourceManifest = "Unknown"
 		}
 		
+		// DEBUG: Log all source manifests being processed
+		logging.Debug("Processing item for hierarchy", "package", item.Name, "sourceManifest", sourceManifest, "action", item.Action)
+		
 		// Only include items with action "install" for the main display
 		if item.Action == "install" {
 			manifestPackages[sourceManifest] = append(manifestPackages[sourceManifest], item)
@@ -3868,6 +3881,12 @@ func displayManifestTreeWithPackages(manifestItems []manifest.Item, toInstall, t
 		
 		// Count all items for the hierarchy numbers
 		manifestCounts[sourceManifest]++
+	}
+
+	// DEBUG: Log all manifest counts before building hierarchy
+	logging.Debug("Manifest counts for hierarchy building:")
+	for manifest, count := range manifestCounts {
+		logging.Debug("  Manifest: %s, Count: %d", manifest, count)
 	}
 
 	logger.Info("----------------------------------------------------------------------")

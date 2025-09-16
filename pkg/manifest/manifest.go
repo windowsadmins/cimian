@@ -699,10 +699,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 						if !found {
 							logging.Warn("No catalog entry for self-service package", "package", pkgName)
 							finalItems = append(finalItems, Item{
-								Name:     pkgName,
-								Version:  "",
-								Catalogs: cfg.Catalogs, // Use global catalogs
-								Action:   "install",
+								Name:           pkgName,
+								Version:        "",
+								Catalogs:       cfg.Catalogs, // Use global catalogs
+								Action:         "install",
+								SourceManifest: "SelfServeManifest",
 							})
 						} else {
 							finalItems = append(finalItems, Item{
@@ -713,6 +714,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 								SupportedArch:     catEntry.SupportedArch,
 								OnDemand:          catEntry.OnDemand,
 								Action:            "install",
+								SourceManifest:    "SelfServeManifest",
 							})
 						}
 					}
@@ -733,10 +735,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 						if !found {
 							logging.Warn("No catalog entry for self-service uninstall", "package", pkgName)
 							finalItems = append(finalItems, Item{
-								Name:     pkgName,
-								Version:  "",
-								Catalogs: cfg.Catalogs,
-								Action:   "uninstall",
+								Name:           pkgName,
+								Version:        "",
+								Catalogs:       cfg.Catalogs,
+								Action:         "uninstall",
+								SourceManifest: "SelfServeManifest",
 							})
 						} else {
 							finalItems = append(finalItems, Item{
@@ -747,6 +750,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 								SupportedArch:     catEntry.SupportedArch,
 								OnDemand:          catEntry.OnDemand,
 								Action:            "uninstall",
+								SourceManifest:    "SelfServeManifest",
 							})
 						}
 					}
