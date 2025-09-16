@@ -1,81 +1,109 @@
+````instructions
 # Cimian Development Guide
 
 ## Overview
-Cimian is a Windows software deployment solution inspired by Munki. It's written primarily in Go with one C# component (CimianStatus UI). This guide covers what you need to know about developing, building, testing, and contributing to Cimian.
+Cimian is a Windows software deployment solution inspired by Munki, currently in transition from Go to C#. The codebase contains both Go (legacy/current) and C# (future) implementations. This guide covers essential knowledge for AI agents working on this enterprise-scale software management system.
 
-## Quick Start
-**CRITICAL**: We cannot run unsigned binaries in this system. Always use the `-Sign` parameter when building:
+## CRITICAL Development Rules
 
-**NEVER USE `-Dev` FLAG**: The `-Dev` flag should never be used as it skips signing and can cause issues.
+**ALWAYS SIGN BINARIES**: Use the `-Sign` parameter when building. Unsigned binaries cannot run in this system.
 
-**NEVER CREATE RANDOM TEST BINARIES**: Do not create standalone test files or random binaries. Fix the actual code in the codebase, rebuild the project binaries, test, rinse and repeat until the issue is fixed. Work with the actual project structure and components.
+**NO RANDOM TEST FILES**: Never create standalone test files or binaries. Always work within the actual project structure, rebuild project binaries, and test iteratively until issues are resolved.
 
-**NO MANUAL FIXES**: The word "manual" does not exist in enterprise vocabulary. Every edge case must have an automated solution that works across thousands of machines. At 10,000+ computer scale, solutions must be:
+**ENTERPRISE SCALE MINDSET**: This system manages 10,000+ computers. Solutions must be:
 - **Fully Automated**: No manual interventions at scale
-- **Self-Healing**: Systems must detect and correct inconsistencies automatically  
-- **Multi-Source Aware**: Must handle packages installed by Cimian, Chocolatey, MSI, winget, or other package managers
+- **Self-Healing**: Automatically detect and correct inconsistencies  
+- **Multi-Source Aware**: Handle packages from Cimian, Chocolatey, MSI, winget, and other package managers
 - **Version Tracking Unified**: Single source of truth for installed versions regardless of installation method
 
 ```pwsh
-# Build and sign a specific binary
-.\build.ps1 -Sign -Binary managedsoftwareupdate
-.\build.ps1 -Sign -Binary cimiimport
-
-# Build and sign all binaries
-.\build.ps1 -Sign -Binaries
-
-# Full build with signing (includes MSI/NuGet packages)
-.\build.ps1 -Sign
+# Essential build commands
+.\build.ps1 -Sign -Binary managedsoftwareupdate  # Build core client
+.\build.ps1 -Sign -Binary cimistatus             # Build C# GUI
+.\build.ps1 -Sign -Binaries                      # Build all binaries
+.\build.ps1 -Sign                                # Full build with packages
 ```
 
-## Project Structure
+## Architecture & Critical Systems
 
-### Core Components
-- **Go-based tools** (cmd/):
-  - `managedsoftwareupdate` - Main client for software management
-  - `cimiimport` - Imports software packages and generates metadata
-  - `cimipkg` - Creates deployable NuGet packages
-  - `cimiwatcher` - Windows service for monitoring and automation
-  - `cimitrigger` - Trigger utility
-  - `makecatalogs` - Generates software catalogs
-  - `makepkginfo` - Creates package metadata
-  - `manifestutil` - Manages deployment manifests
+### Go-to-C# Migration in Progress
+The codebase is actively migrating from Go to C#. Key patterns:
+- **Go Legacy**: `cmd/*/main.go` - Original implementations
+- **C# Future**: `src/Cimian.CLI.*/Program.cs` - New implementations  
+- **Hybrid State**: Both may exist for the same component during transition
 
-- **C# component**:
-  - `cimistatus` - WPF GUI application for status display (.NET 8)
-
-### Supporting Libraries (pkg/)
-- `auth/` - Authentication and credentials
-- `catalog/` - Catalog management and processing
-- `config/` - Configuration management
-- `download/` - Download utilities
-- `installer/` - Installation handling
-- `logging/` - Centralized logging system
-- `manifest/` - Manifest processing
-- `pkginfo/` - Package information handling
-- `reporting/` - Status reporting
-- And many more...
-
-## Development Environment Setup
-
-### Prerequisites
-- **Go 1.23+** - Primary development language
-- **.NET 8 SDK** - For CimianStatus C# component
-- **WiX Toolset** - For MSI package creation
-- **PowerShell** - Build system and scripts
-- **Git** - Version control
-- **Code signing certificate** - Enterprise certificate for binary signing
-
-### Tool Installation
-The build script automatically installs required tools via Chocolatey:
-```pwsh
-# Tools installed automatically:
-# - go
-# - dotnet
-# - nuget.commandline
-# - wixtoolset (v3) or wix (v6 via .NET tool)
-# - intunewinapputil (if -IntuneWin flag used)
+### Bootstrap System (CORE ENTERPRISE FEATURE)
+**File-Based Trigger System**: CimianWatcher service monitors trigger files every 10 seconds
 ```
+C:\ProgramData\ManagedInstalls\.cimian.bootstrap  # GUI mode
+C:\ProgramData\ManagedInstalls\.cimian.headless   # Silent mode
+```
+
+**Service Architecture**: `cimiwatcher.exe` native Windows service enables zero-touch deployment
+- Near real-time response (10-15 seconds maximum)
+- Automatic process elevation and recovery
+- Enterprise MDM integration (Intune, SCCM)
+
+### Data Reporting System (3400+ lines)
+**Location**: `pkg/reporting/reporting.go` - Complex external monitoring integration
+- **Sessions Table**: Installation session tracking with metadata
+- **Events Table**: Granular event logging with error details  
+- **Items Table**: Comprehensive package state management
+- **Progressive Reporting**: Real-time status for monitoring tools
+
+### Configuration Hierarchy
+**Primary**: `C:\ProgramData\ManagedInstalls\Config.yaml`
+**Fallback**: Registry-based CSP OMA-URI settings for enterprise policy
+**Multi-Architecture**: Separate configs for x64/arm64
+
+Key Config Patterns:
+```go
+// pkg/config/config.go - Central configuration management
+const ConfigPath = `C:\ProgramData\ManagedInstalls\Config.yaml`
+const CSPRegistryPath = `SOFTWARE\Cimian\Config`
+```
+
+### Conditional Items System (Advanced Deployment Logic)
+**Complex Expression Engine**: Dynamic software deployment based on system facts
+```yaml
+# Advanced conditional deployment patterns
+conditional_items:
+  # Complex expressions with OR/AND
+  - condition: hostname CONTAINS "Design-" OR hostname CONTAINS "Studio-" OR hostname CONTAINS "Edit-"
+    managed_installs:
+      - CreativeApplications
+  
+  # Nested conditionals for hierarchical logic
+  - condition: enrolled_usage == "Shared"
+    conditional_items:
+      - condition: enrolled_area != "Classroom" OR enrolled_area != "Podium"
+        managed_installs:
+          - CollaborativeTools
+```
+
+**Available System Facts**: hostname, arch, os_version, domain, machine_type, joined_type, enrolled_usage, enrolled_area
+
+## Project Structure & Key Locations
+
+### Core Executables (All architectures: x64/arm64)
+- **`managedsoftwareupdate.exe`** - Primary client (Go → C# migration)
+- **`cimistatus.exe`** - WPF GUI (.NET 8, MVVM pattern)
+- **`cimiwatcher.exe`** - Bootstrap monitoring service  
+- **`cimiimport.exe`** - Package import and metadata generation
+- **`cimipkg.exe`** - NuGet package creation
+- **`cimitrigger.exe`** - Bootstrap trigger utility
+
+### Critical Go Packages (pkg/)
+- **`installer/`** - Multi-format installer engine (MSI, EXE, PS1, MSIX)
+- **`reporting/`** - 3400+ line external monitoring integration
+- **`config/`** - YAML + Registry configuration hierarchy
+- **`logging/`** - Structured session-based logging system
+- **`manifest/`** - Hierarchical deployment manifest processing
+
+### C# Migration Progress
+- **`src/Cimian.CLI.managedsoftwareupdate/`** - New C# implementation
+- **`cmd/cimistatus/`** - WPF application with dependency injection
+- **Modern Patterns**: Serilog, CommandLineParser, hosted services
 
 ## Build System
 
@@ -298,3 +326,4 @@ Cimian includes a zero-touch deployment system:
 - Architecture-specific nuspec files in `build/nupkg/`
 
 This development guide should get you started with Cimian development. Remember: **always sign your binaries** and use safe testing practices!
+````
