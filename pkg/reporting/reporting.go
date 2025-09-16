@@ -946,9 +946,15 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 	// Get the root manifest path - this should contain the current managed items
 	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
 	
+	logging.Debug("Starting populateFromCurrentManifests", "manifestsDir", manifestsDir)
+	
+	packagesFound := 0
+	manifestsProcessed := 0
+	
 	// Try to find the main manifest file(s)
 	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			logging.Debug("Skipping path due to walk error", "path", path, "error", err)
 			return nil // Continue on errors
 		}
 		
@@ -962,9 +968,13 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 			return nil
 		}
 		
+		logging.Debug("Processing manifest file", "file", path)
+		manifestsProcessed++
+		
 		// Parse the manifest file
-		manifest, err := exp.parseManifestFile(path)
-		if err != nil {
+		manifest, parseErr := exp.parseManifestFile(path)
+		if parseErr != nil {
+			logging.Debug("Failed to parse manifest file", "file", path, "error", parseErr)
 			return nil // Continue on parse errors
 		}
 		
@@ -1000,6 +1010,8 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 					Sessions:       make(map[string]bool),
 					RecentAttempts: []ItemAttempt{},
 				}
+				packagesFound++
+				logging.Debug("Added package from manifest", "package", packageName, "file", filepath.Base(path))
 			}
 			
 			stats := itemStats[packageName]
@@ -1052,6 +1064,74 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 		return nil
 	})
 	
+	// check for SelfServeManifest.yaml which contains self-service items
+	selfServeManifestPath := filepath.Join(filepath.Dir(manifestsDir), "SelfServeManifest.yaml")
+	if _, err := os.Stat(selfServeManifestPath); err == nil {
+		logging.Debug("Processing SelfServeManifest.yaml", "path", selfServeManifestPath)
+		
+		selfServeManifest, parseErr := exp.parseManifestFile(selfServeManifestPath)
+		if parseErr == nil {
+			manifestsProcessed++
+			
+			// Process self-serve managed installs
+			for _, item := range selfServeManifest.ManagedInstalls {
+				if itemName, ok := item.(string); ok && itemName != "" {
+					if _, exists := itemStats[itemName]; !exists {
+						logging.Debug("Found self-serve package", "package", itemName)
+						
+						// Get version and display information
+						latestVersion := catalogVersions[itemName]
+						if latestVersion == "" {
+							latestVersion = "Unknown"
+						}
+						
+						displayName := catalogDisplayNames[itemName]
+						if displayName == "" {
+							displayName = itemName
+						}
+						
+						installedVersion := exp.getInstalledVersionFromRegistry(itemName)
+						
+						// Check architecture compatibility for self-serve packages too
+						compatible, supportedArchs := exp.checkArchitectureCompatibility(itemName, systemArch)
+						status := "Installed"
+						if !compatible {
+							status = "Warning"
+							logging.Debug("Self-serve package architecture incompatible", "package", itemName, "system", systemArch, "supported", supportedArchs)
+						}
+						
+						itemStats[itemName] = &comprehensiveItemStat{
+							Name:               itemName,
+							DisplayName:        displayName,
+							ItemType:           "self_serve_installs",
+							CurrentStatus:      status,
+							LatestVersion:      latestVersion,
+							InstalledVersion:   installedVersion,
+							LastSeenTime:       time.Now(),
+							Sessions:           make(map[string]bool),
+							RecentAttempts:     []ItemAttempt{},
+						}
+						packagesFound++
+						logging.Info("Added self-serve package to reporting", "package", itemName)
+					}
+				}
+			}
+		} else {
+			logging.Debug("Failed to parse SelfServeManifest.yaml", "error", parseErr)
+		}
+	} else {
+		logging.Debug("SelfServeManifest.yaml not found", "path", selfServeManifestPath)
+	}
+	
+	logging.Info("populateFromCurrentManifests completed", 
+		"manifestsProcessed", manifestsProcessed, 
+		"packagesFound", packagesFound,
+		"walkError", err)
+	
+	if packagesFound == 0 {
+		return fmt.Errorf("no managed packages found in manifests directory %s (processed %d manifest files)", manifestsDir, manifestsProcessed)
+	}
+	
 	return err
 }
 
@@ -1065,7 +1145,34 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	if err != nil {
 		// Log but don't fail - continue with event-based data
 		fmt.Printf("Warning: Could not load current manifest data: %v\n", err)
+		
+		// COMPREHENSIVE MANIFEST DISCOVERY: If primary method fails, use comprehensive scanning
+		// to ensure we get COMPLETE package data for items.json - this is REQUIRED, not optional
+		logging.Warn("Primary manifest discovery failed, using comprehensive manifest scanning: %v", err)
+		
+		// Use comprehensive manifest discovery to ensure 100% completeness
+		if comprehensiveItems := exp.discoverAllManagedPackages(); len(comprehensiveItems) > 0 {
+			for _, item := range comprehensiveItems {
+				if _, exists := itemStats[item.Name]; !exists {
+					itemStats[item.Name] = &comprehensiveItemStat{
+						Name:           item.Name,
+						Sessions:       make(map[string]bool),
+						RecentAttempts: []ItemAttempt{},
+						CurrentStatus:  "Pending", // Conservative status since we don't know install state
+						ItemType:       item.Type,
+						LastSeenTime:   time.Now(),
+					}
+					logging.Debug("Added comprehensive package to items collection", "package", item.Name, "type", item.Type)
+				}
+			}
+			logging.Info("Comprehensive manifest discovery added %d packages to items collection", len(comprehensiveItems))
+		} else {
+			logging.Error("CRITICAL: Both primary and comprehensive manifest discovery failed - items.json will be incomplete")
+		}
 	}
+
+	// SOURCE OF TRUTH: Only manifests in \ProgramData\ManagedInstalls\manifests\*
+	// No registry scanning, no catalog scanning - just pure manifest hierarchy
 
 	// Get ALL sessions (not just recent ones) to build comprehensive history
 	allSessions, err := exp.getAllSessions()
@@ -3065,4 +3172,246 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 	}
 	
 	return items
+}
+
+// discoverAllManagedPackages provides comprehensive manifest discovery
+// to ensure items.json contains 100% of managed packages with no discrepancy
+func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
+	var allItems []ManagedItem
+	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
+	
+	logging.Debug("Starting comprehensive manifest discovery in directory", "dir", manifestsDir)
+	
+	// Recursively scan ALL manifest files in the manifests directory
+	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			logging.Debug("Skipping path due to error", "path", path, "error", err)
+			return nil // Continue scanning other files
+		}
+		
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+		
+		// Only process YAML/YML files
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") && 
+		   !strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
+			return nil
+		}
+		
+		logging.Debug("Processing manifest file", "file", path)
+		
+		// Read and parse manifest file
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			logging.Debug("Failed to read manifest file", "file", path, "error", readErr)
+			return nil // Continue with other files
+		}
+		
+		var manifest struct {
+			ManagedInstalls   []interface{} `yaml:"managed_installs"`
+			ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
+			ManagedUpdates    []interface{} `yaml:"managed_updates"`
+			OptionalInstalls  []interface{} `yaml:"optional_installs"`
+			Items             []interface{} `yaml:"items"` // Legacy support
+		}
+		
+		if parseErr := yaml.Unmarshal(data, &manifest); parseErr != nil {
+			logging.Debug("Failed to parse manifest YAML", "file", path, "error", parseErr)
+			return nil // Continue with other files
+		}
+		
+		// Extract packages from all arrays
+		packageCount := 0
+		
+		// Process managed_installs
+		for _, item := range manifest.ManagedInstalls {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				allItems = append(allItems, ManagedItem{Name: packageName, Type: "managed_installs"})
+				packageCount++
+			}
+		}
+		
+		// Process managed_uninstalls
+		for _, item := range manifest.ManagedUninstalls {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				allItems = append(allItems, ManagedItem{Name: packageName, Type: "managed_uninstalls"})
+				packageCount++
+			}
+		}
+		
+		// Process managed_updates
+		for _, item := range manifest.ManagedUpdates {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				allItems = append(allItems, ManagedItem{Name: packageName, Type: "managed_updates"})
+				packageCount++
+			}
+		}
+		
+		// Process optional_installs
+		for _, item := range manifest.OptionalInstalls {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				allItems = append(allItems, ManagedItem{Name: packageName, Type: "optional_installs"})
+				packageCount++
+			}
+		}
+		
+		// Process legacy items array
+		for _, item := range manifest.Items {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				allItems = append(allItems, ManagedItem{Name: packageName, Type: "items"})
+				packageCount++
+			}
+		}
+		
+		if packageCount > 0 {
+			logging.Debug("Extracted packages from manifest", "file", filepath.Base(path), "count", packageCount)
+		}
+		
+		return nil // Continue processing other files
+	})
+	
+	if err != nil {
+		logging.Warn("Error during comprehensive manifest discovery walk", "error", err)
+	}
+	
+	// Remove duplicates (same package might appear in multiple manifests)
+	uniqueItems := exp.deduplicateManagedItems(allItems)
+	
+	logging.Info("Comprehensive manifest-only discovery completed", 
+		"manifest_packages", len(uniqueItems), 
+		"total_managed_packages", len(uniqueItems))
+	
+	return uniqueItems
+}
+
+// scanManifestFiles scans all manifest files for managed packages
+func (exp *DataExporter) scanManifestFiles() []ManagedItem {
+	var items []ManagedItem
+	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
+	
+	// Recursively scan ALL manifest files in the manifests directory
+	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			logging.Debug("Skipping path due to error", "path", path, "error", err)
+			return nil // Continue scanning other files
+		}
+		
+		// Skip directories
+		if info.IsDir() {
+			return nil
+		}
+		
+		// Only process YAML/YML files
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") && 
+		   !strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
+			return nil
+		}
+		
+		logging.Debug("Processing manifest file", "file", path)
+		
+		// Read and parse manifest file
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			logging.Debug("Failed to read manifest file", "file", path, "error", readErr)
+			return nil // Continue with other files
+		}
+		
+		var manifest struct {
+			ManagedInstalls   []interface{} `yaml:"managed_installs"`
+			ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
+			ManagedUpdates    []interface{} `yaml:"managed_updates"`
+			OptionalInstalls  []interface{} `yaml:"optional_installs"`
+			Items             []interface{} `yaml:"items"` // Legacy support
+		}
+		
+		if parseErr := yaml.Unmarshal(data, &manifest); parseErr != nil {
+			logging.Debug("Failed to parse manifest YAML", "file", path, "error", parseErr)
+			return nil // Continue with other files
+		}
+		
+		// Extract packages from all arrays
+		packageCount := 0
+		
+		// Process managed_installs
+		for _, item := range manifest.ManagedInstalls {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				items = append(items, ManagedItem{Name: packageName, Type: "managed_installs"})
+				packageCount++
+			}
+		}
+		
+		// Process managed_uninstalls
+		for _, item := range manifest.ManagedUninstalls {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				items = append(items, ManagedItem{Name: packageName, Type: "managed_uninstalls"})
+				packageCount++
+			}
+		}
+		
+		// Process managed_updates
+		for _, item := range manifest.ManagedUpdates {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				items = append(items, ManagedItem{Name: packageName, Type: "managed_updates"})
+				packageCount++
+			}
+		}
+		
+		// Process optional_installs
+		for _, item := range manifest.OptionalInstalls {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				items = append(items, ManagedItem{Name: packageName, Type: "optional_installs"})
+				packageCount++
+			}
+		}
+		
+		// Process legacy items array
+		for _, item := range manifest.Items {
+			if packageName := exp.extractPackageName(item); packageName != "" {
+				items = append(items, ManagedItem{Name: packageName, Type: "items"})
+				packageCount++
+			}
+		}
+		
+		if packageCount > 0 {
+			logging.Debug("Extracted packages from manifest", "file", filepath.Base(path), "count", packageCount)
+		}
+		
+		return nil // Continue processing other files
+	})
+	
+	if err != nil {
+		logging.Warn("Error during manifest file scanning", "error", err)
+	}
+	
+	return items
+}
+
+// extractPackageName safely extracts package name from manifest item (string or object)
+func (exp *DataExporter) extractPackageName(item interface{}) string {
+	switch v := item.(type) {
+	case string:
+		return v
+	case map[string]interface{}:
+		if name, ok := v["name"].(string); ok {
+			return name
+		}
+	}
+	return ""
+}
+
+// deduplicateManagedItems removes duplicate packages, keeping the first occurrence
+func (exp *DataExporter) deduplicateManagedItems(items []ManagedItem) []ManagedItem {
+	seen := make(map[string]bool)
+	var unique []ManagedItem
+	
+	for _, item := range items {
+		if !seen[item.Name] {
+			seen[item.Name] = true
+			unique = append(unique, item)
+		}
+	}
+	
+	return unique
 }
