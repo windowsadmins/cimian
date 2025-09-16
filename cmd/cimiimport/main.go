@@ -1141,7 +1141,7 @@ func cimianImport(
 		}
 
 		// Copy the installer file to the repo
-		installerFilename := fmt.Sprintf("%s%s%s", pkgsInfo.Name, archTag, filepath.Ext(packagePath))
+		installerFilename := fmt.Sprintf("%s-%s%s%s", pkgsInfo.Name, pkgsInfo.Version, archTag, filepath.Ext(packagePath))
 		installerPath := filepath.Join(installerFolderPath, installerFilename)
 		
 		if _, err := copyFile(packagePath, installerPath); err != nil {
