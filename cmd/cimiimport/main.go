@@ -1057,11 +1057,11 @@ func cimianImport(
 	// ─── decide architecture tag ────────────────────────────────────────────────
 	archTag := ""
 	if len(pkgsInfo.SupportedArch) == 1 {
-		// Include arch tag when there's exactly one architecture
+		// Include arch tag for pkginfo filename when there's exactly one architecture
 		primaryArch := strings.ToLower(pkgsInfo.SupportedArch[0])
 		archTag = "-" + primaryArch + "-"
 	} else {
-		// For multiple architectures, just use a separator dash
+		// For multiple architectures, use separator for pkginfo filename
 		archTag = "-"
 	}
 
@@ -1141,7 +1141,15 @@ func cimianImport(
 		}
 
 		// Copy the installer file to the repo
-		installerFilename := fmt.Sprintf("%s-%s%s%s", pkgsInfo.Name, pkgsInfo.Version, archTag, filepath.Ext(packagePath))
+		var installerFilename string
+		if len(pkgsInfo.SupportedArch) == 1 {
+			// Single architecture: Name-arch-version.ext
+			primaryArch := strings.ToLower(pkgsInfo.SupportedArch[0])
+			installerFilename = fmt.Sprintf("%s-%s-%s%s", pkgsInfo.Name, primaryArch, pkgsInfo.Version, filepath.Ext(packagePath))
+		} else {
+			// Multiple architectures: Name-version.ext
+			installerFilename = fmt.Sprintf("%s-%s%s", pkgsInfo.Name, pkgsInfo.Version, filepath.Ext(packagePath))
+		}
 		installerPath := filepath.Join(installerFolderPath, installerFilename)
 		
 		if _, err := copyFile(packagePath, installerPath); err != nil {
