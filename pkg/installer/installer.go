@@ -1343,6 +1343,7 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 	// Smart installer-aware flag processing for MSI
 	for _, flag := range item.Installer.Flags {
 		flag = strings.TrimSpace(flag)
+		logging.Debug("MSI flag processing", "original_flag", flag)
 
 		// Split flag on first equals sign
 		var key, val string
@@ -1352,9 +1353,11 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 		} else {
 			key = flag
 		}
+		logging.Debug("MSI flag parsed", "key", key, "val", val)
 
 		// If user already specified dashes, preserve them exactly
 		if strings.HasPrefix(key, "--") || strings.HasPrefix(key, "-") {
+			logging.Debug("MSI flag has explicit prefix, preserving", "key", key)
 			if val != "" {
 				if strings.ContainsAny(val, " ") {
 					val = fmt.Sprintf("\"%s\"", val)
@@ -1369,6 +1372,7 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 		// For MSI, most flags work with single dash (msiexec standard)
 		// but some custom properties work better with no prefix at all for PROPERTY=VALUE
 		flagPrefix := detectMSIFlagStyle(key, val)
+		logging.Debug("MSI flag style detected", "key", key, "flagPrefix", fmt.Sprintf("'%s'", flagPrefix), "isEnvStyle", isEnvironmentStyleFlag(key))
 
 		if val != "" {
 			if strings.ContainsAny(val, " ") {
@@ -1376,12 +1380,18 @@ func runMSIInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 			}
 			if flagPrefix == "" {
 				// MSI property format: PROPERTY=VALUE (no prefix)
-				args = append(args, fmt.Sprintf("%s=%s", key, val))
+				finalArg := fmt.Sprintf("%s=%s", key, val)
+				logging.Debug("MSI property format applied", "finalArg", finalArg)
+				args = append(args, finalArg)
 			} else {
-				args = append(args, fmt.Sprintf("%s%s=%s", flagPrefix, key, val))
+				finalArg := fmt.Sprintf("%s%s=%s", flagPrefix, key, val)
+				logging.Debug("MSI flag format applied", "finalArg", finalArg)
+				args = append(args, finalArg)
 			}
 		} else {
-			args = append(args, fmt.Sprintf("%s%s", flagPrefix, key))
+			finalArg := fmt.Sprintf("%s%s", flagPrefix, key)
+			logging.Debug("MSI flag no value format applied", "finalArg", finalArg)
+			args = append(args, finalArg)
 		}
 	}
 
@@ -1640,12 +1650,15 @@ func runEXEInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 
 		// Split flags only on the first whitespace or equals sign for auto-detection
 		var key, val string
+		var originalUsedEquals bool
 		if strings.Contains(flag, "=") {
 			parts := strings.SplitN(flag, "=", 2)
 			key, val = parts[0], parts[1]
+			originalUsedEquals = true
 		} else if strings.Contains(flag, " ") {
 			parts := strings.SplitN(flag, " ", 2)
 			key, val = parts[0], strings.TrimSpace(parts[1])
+			originalUsedEquals = false
 		} else {
 			key = flag
 		}
@@ -1654,9 +1667,11 @@ func runEXEInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 		flagPrefix := detectFlagStyle(installerPath, key)
 
 		if val != "" {
-			if shouldUseEqualsFormat(key, val) {
+			// Preserve the original format the user specified (equals vs space)
+			if originalUsedEquals || shouldUseEqualsFormat(key, val) {
 				args = append(args, fmt.Sprintf("%s%s=%s", flagPrefix, key, quoteIfNeeded(val)))
 			} else {
+				// User originally used space format, preserve it
 				args = append(args, fmt.Sprintf("%s%s", flagPrefix, key), quoteIfNeeded(val))
 			}
 		} else {
@@ -1778,13 +1793,8 @@ func shouldUseEqualsFormat(key, value string) bool {
 	return false
 }
 
-// isEnvironmentStyleFlag checks if flag looks like an environment variable
+// isEnvironmentStyleFlag checks if flag looks like an environment variable or MSI property
 func isEnvironmentStyleFlag(flagName string) bool {
-	// Check for ALL_CAPS with underscores pattern
-	if !strings.Contains(flagName, "_") {
-		return false
-	}
-
 	// Must be all uppercase letters, numbers, and underscores
 	for _, r := range flagName {
 		if !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
@@ -1792,7 +1802,16 @@ func isEnvironmentStyleFlag(flagName string) bool {
 		}
 	}
 
-	return true
+	// Must have at least one letter and be all uppercase
+	hasLetter := false
+	for _, r := range flagName {
+		if r >= 'A' && r <= 'Z' {
+			hasLetter = true
+			break
+		}
+	}
+
+	return hasLetter && len(flagName) > 0
 }
 
 // quoteIfNeeded adds double quotes if the string contains spaces and doesn't already have them.
