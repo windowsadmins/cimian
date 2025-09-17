@@ -1054,17 +1054,6 @@ func cimianImport(
 	// Set uninstaller (for all types)
 	pkgsInfo.Uninstaller = uninstaller
 
-	// ─── decide architecture tag ────────────────────────────────────────────────
-	archTag := ""
-	if len(pkgsInfo.SupportedArch) == 1 {
-		// Include arch tag for pkginfo filename when there's exactly one architecture
-		primaryArch := strings.ToLower(pkgsInfo.SupportedArch[0])
-		archTag = "-" + primaryArch + "-"
-	} else {
-		// For multiple architectures, use separator for pkginfo filename
-		archTag = "-"
-	}
-
 	// Step 9: prompt user for subdir
 	repoSubPath, err := promptInstallerItemPath(metadata.RepoPath)
 	if err != nil {
@@ -1169,7 +1158,7 @@ func cimianImport(
 	}
 
 	err = writePkgInfoFile(pkginfoFolderPath, pkgsInfo,
-		pkgsInfo.Name, pkgsInfo.Version, archTag)
+		pkgsInfo.Name, pkgsInfo.Version)
 	if err != nil {
 		return false, fmt.Errorf("failed to write final pkginfo: %v", err)
 	}
@@ -1885,7 +1874,7 @@ func replacePathUserProfile(p string) string {
 }
 
 // writePkgInfoFile writes the final YAML
-func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, sanitizedVersion, archTag string) error {
+func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, sanitizedVersion string) error {
 	// First ensure outputDir is an absolute path and normalize it
 	absOutputDir, err := filepath.Abs(outputDir)
 	if err != nil {
@@ -1896,11 +1885,16 @@ func writePkgInfoFile(outputDir string, pkgsInfo PkgsInfo, sanitizedName, saniti
 	absOutputDir = strings.ReplaceAll(absOutputDir, "/", "\\")
 
 	// Create pkginfo filename with sanitized components
-	outputPath := filepath.Join(absOutputDir,
-		sanitizeName(sanitizedName)+
-			archTag+
-			sanitizeName(sanitizedVersion)+
-			".yaml")
+	var filename string
+	if len(pkgsInfo.SupportedArch) == 1 {
+		// Single architecture: Name-arch-version.yaml
+		primaryArch := strings.ToLower(pkgsInfo.SupportedArch[0])
+		filename = fmt.Sprintf("%s-%s-%s.yaml", sanitizeName(sanitizedName), primaryArch, sanitizeName(sanitizedVersion))
+	} else {
+		// Multiple architectures: Name-version.yaml
+		filename = fmt.Sprintf("%s-%s.yaml", sanitizeName(sanitizedName), sanitizeName(sanitizedVersion))
+	}
+	outputPath := filepath.Join(absOutputDir, filename)
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
