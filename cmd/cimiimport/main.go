@@ -16,9 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -36,78 +34,9 @@ var (
 	logger         *logging.Logger
 )
 
-// parseVersion handles version normalization for date-based versions while preserving other formats.
-// ONLY converts versions that match current year patterns (e.g., 25.M.D or 25.M.D.HM for 2025).
-// This prevents aggressive conversion of semantic versions that happen to look date-like.
-// All other version formats are passed through unchanged.
+// parseVersion simply returns the version string as-is without any modifications.
+// This ensures version numbers are preserved exactly as provided in the source package.
 func parseVersion(versionStr string) string {
-	if versionStr == "" {
-		return versionStr
-	}
-
-	parts := strings.Split(versionStr, ".")
-
-	// Handle date-based versions: YYYY.MM.DD or YYYY.MM.DD.HHmm
-	if len(parts) == 3 || len(parts) == 4 {
-		// Check if this looks like a date format by validating the first part as a year
-		if yearNum, err := strconv.Atoi(parts[0]); err == nil {
-			// Get current year to determine if we should do date conversion
-			currentYear := time.Now().Year()
-			currentYearShort := currentYear - 2000 // Convert 2025 -> 25
-			
-			isCurrentYearDateFormat := false
-			
-			// Only convert if it matches current year patterns:
-			// 1. Full current year (e.g., 2025.M.D)
-			// 2. Current year short form (e.g., 25.M.D)
-			if yearNum == currentYear {
-				isCurrentYearDateFormat = true
-			} else if yearNum == currentYearShort && len(parts) >= 3 {
-				// Additional validation for 2-digit year: check if month and day parts are date-like
-				if monthNum, err := strconv.Atoi(parts[1]); err == nil && monthNum >= 1 && monthNum <= 12 {
-					if dayNum, err := strconv.Atoi(parts[2]); err == nil && dayNum >= 1 && dayNum <= 31 {
-						isCurrentYearDateFormat = true
-					}
-				}
-			}
-			
-			if isCurrentYearDateFormat {
-				// Validate all parts are numeric for date format
-				var numericParts []int
-				allNumeric := true
-				for _, part := range parts {
-					if num, err := strconv.Atoi(part); err == nil {
-						numericParts = append(numericParts, num)
-					} else {
-						allNumeric = false
-						break
-					}
-				}
-
-				if allNumeric && len(numericParts) >= 3 {
-					year := numericParts[0]
-					month := numericParts[1]
-					day := numericParts[2]
-
-					// Convert 2-digit year to 4-digit year (handle current year only)
-					if year < 100 {
-						year = currentYear // Always use current year for 2-digit years
-					}
-
-					// Ensure month and day are zero-padded for date-based versions
-					if len(numericParts) == 4 {
-						// 4-part date version: YYYY.MM.DD.HHmm
-						return fmt.Sprintf("%d.%02d.%02d.%d", year, month, day, numericParts[3])
-					} else {
-						// 3-part date version: YYYY.MM.DD
-						return fmt.Sprintf("%d.%02d.%02d", year, month, day)
-					}
-				}
-			}
-		}
-	}
-
-	// For all other version formats (like 1.1.2, 1.2.3.4, etc.), pass through unchanged
 	return versionStr
 }
 
