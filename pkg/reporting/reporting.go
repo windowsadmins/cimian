@@ -1123,9 +1123,6 @@ func (exp *DataExporter) GenerateCurrentItemsTable() ([]ItemRecord, error) {
 // SetCurrentSessionPackages stores the actual packages processed in the current session
 // This is the authoritative list for items.json generation
 func (exp *DataExporter) SetCurrentSessionPackages(packages []string) {
-	if exp.currentSessionPackages == nil {
-		exp.currentSessionPackages = make([]string, 0, len(packages))
-	}
 	exp.currentSessionPackages = packages
 	logging.Info("Set current session packages for items.json", "count", len(packages))
 	logging.Debug("Session packages stored in DataExporter", "packages", packages)
