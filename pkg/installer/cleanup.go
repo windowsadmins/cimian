@@ -462,7 +462,7 @@ func (pc *ProcessCleanup) clearMSIInProgressKeys() error {
 
 // WaitForMSIAvailable waits for the Windows Installer service to become available with intelligent retry
 func (pc *ProcessCleanup) WaitForMSIAvailable(maxWaitMinutes int) error {
-	// CRITICAL FIX: Prevent concurrent MSI recovery operations
+	// Prevent concurrent MSI recovery operations
 	msiRecoveryMutex.Lock()
 	defer msiRecoveryMutex.Unlock()
 	
@@ -533,7 +533,7 @@ func (pc *ProcessCleanup) WaitForMSIAvailable(maxWaitMinutes int) error {
 					logging.Error("Service restart failed", "error", err)
 				} else {
 					logging.Info("Windows Installer service restart completed")
-					// CRITICAL FIX: Wait for service to fully initialize after restart
+					// Wait for service to fully initialize after restart
 					time.Sleep(10 * time.Second)
 					// Check if restart actually fixed the issue
 					if quickStatus, _ := pc.checkMSIServiceStatus(); quickStatus != nil && quickStatus.IsRunning && quickStatus.IsResponsive {
@@ -616,7 +616,7 @@ func (pc *ProcessCleanup) WaitForMSIAvailable(maxWaitMinutes int) error {
 
 // determineRecoveryStrategy determines the best recovery strategy based on current status and retry count
 func (pc *ProcessCleanup) determineRecoveryStrategy(status *MSIServiceStatus, retryAttempt int) string {
-	// CRITICAL FIX: Early exit if we've exceeded max retries
+	// Early exit if we've exceeded max retries
 	if retryAttempt >= pc.retryConfig.MaxRetries {
 		return "wait" // No more intervention
 	}
