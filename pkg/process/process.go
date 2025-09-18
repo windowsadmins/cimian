@@ -24,6 +24,34 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// constructPackageURL creates a robust URL for package installers
+// This function ensures consistent URL construction across ALL functions in the codebase
+func constructPackageURL(location string, cfg *config.Configuration) string {
+	if location == "" {
+		return ""
+	}
+
+	// If already a complete URL, return as-is
+	if strings.HasPrefix(location, "http://") || strings.HasPrefix(location, "https://") {
+		return location
+	}
+
+	// Normalize Windows backslashes to forward slashes for web URLs
+	location = strings.ReplaceAll(location, "\\", "/")
+
+	// Ensure base URL doesn't end with slash
+	baseURL := strings.TrimRight(cfg.SoftwareRepoURL, "/")
+	
+	// Handle different path formats:
+	if strings.HasPrefix(location, "/") {
+		// Absolute path: /apps/software.exe -> baseURL/pkgs/apps/software.exe
+		return baseURL + "/pkgs" + location
+	} else {
+		// Relative path: apps/software.exe -> baseURL/pkgs/apps/software.exe
+		return baseURL + "/pkgs/" + location
+	}
+}
+
 // Global map to track item sources for debugging and logging
 var itemSources = make(map[string]catalog.ItemSource)
 
@@ -300,11 +328,9 @@ func Installs(installs []string, catalogsMap map[int]map[string]catalog.Item, _,
 			continue
 		}
 
-		// Ensure the URL is properly constructed
+		// Ensure the URL is properly constructed using robust function
 		if validItem.Installer.Location != "" {
-			if validItem.Installer.Location[0] == '/' {
-				validItem.Installer.Location = cfg.SoftwareRepoURL + validItem.Installer.Location
-			}
+			validItem.Installer.Location = constructPackageURL(validItem.Installer.Location, cfg)
 			logging.Debug("Package download URL", "url", validItem.Installer.Location)
 		}
 
@@ -403,11 +429,9 @@ func Updates(updates []string, catalogsMap map[int]map[string]catalog.Item, _, c
 			continue
 		}
 
-		// Construct proper URL for the installer
+		// Construct proper URL for the installer using robust function
 		if validItem.Installer.Location != "" {
-			if strings.HasPrefix(validItem.Installer.Location, "/") {
-				validItem.Installer.Location = cfg.SoftwareRepoURL + "/pkgs" + validItem.Installer.Location
-			}
+			validItem.Installer.Location = constructPackageURL(validItem.Installer.Location, cfg)
 			logging.Debug("Package installer URL", "url", validItem.Installer.Location)
 		}
 
@@ -1406,15 +1430,8 @@ func downloadItemFile(item catalog.Item, cfg *config.Configuration, verbosity in
 		return "", fmt.Errorf("no installer location found for item: %s", item.Name)
 	}
 
-	// Construct the full URL (same logic as in managedsoftwareupdate/main.go)
-	fullURL := item.Installer.Location
-	if strings.HasPrefix(fullURL, "/") || strings.HasPrefix(fullURL, "\\") {
-		fullURL = strings.ReplaceAll(fullURL, "\\", "/")
-		if !strings.HasPrefix(fullURL, "/") {
-			fullURL = "/" + fullURL
-		}
-		fullURL = strings.TrimRight(cfg.SoftwareRepoURL, "/") + "/pkgs" + fullURL
-	}
+	// Construct the full URL using robust function
+	fullURL := constructPackageURL(item.Installer.Location, cfg)
 
 	// Reconstruct the local file path (same logic as in download.InstallPendingUpdates)
 	subPath := getSubPathFromURL(fullURL, cfg)
