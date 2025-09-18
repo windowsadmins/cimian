@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -203,6 +204,7 @@ type ItemAttempt struct {
 type DataExporter struct {
 	baseDir string
 	manifestPackageCache map[string]int // Cache for manifest package counts to avoid repetitive parsing
+	currentSessionPackages []string     // Actual packages processed in the current session (for items.json)
 }
 
 // NewDataExporter creates a new data exporter
@@ -943,98 +945,63 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 	// Get system architecture for compatibility checking
 	systemArch := exp.getSystemArchitecture()
 	
-	// Get the root manifest path - this should contain the current managed items
-	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
+	// Get configuration to access client identifier
+	config := exp.loadCimianConfiguration()
+	if config == nil || config.ClientIdentifier == "" {
+		return fmt.Errorf("no client identifier found in configuration")
+	}
 	
-	logging.Debug("Starting populateFromCurrentManifests", "manifestsDir", manifestsDir)
+	logging.Debug("Starting populateFromCurrentManifests using cached manifests", "clientIdentifier", config.ClientIdentifier)
 	
 	packagesFound := 0
-	manifestsProcessed := 0
 	
-	// Try to find the main manifest file(s)
-	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			logging.Debug("Skipping path due to walk error", "path", path, "error", err)
-			return nil // Continue on errors
+	// Use the same manifest loading approach as the main application - load cached manifests
+	manifestItems, err := exp.loadCachedManifestsForReporting(config)
+	if err != nil {
+		return fmt.Errorf("failed to load cached manifests: %v", err)
+	}
+	
+	logging.Info("Loaded manifest items for reporting", "count", len(manifestItems))
+	
+	// Process each manifest item
+	for _, manifestItem := range manifestItems {
+		packageName := manifestItem.Name
+		if packageName == "" {
+			continue
 		}
 		
-		// Skip directories
-		if info.IsDir() {
-			return nil
+		// Initialize item stats if not exists
+		if _, exists := itemStats[packageName]; !exists {
+			itemStats[packageName] = &comprehensiveItemStat{
+				Name:           packageName,
+				Sessions:       make(map[string]bool),
+				RecentAttempts: []ItemAttempt{},
+			}
+			packagesFound++
+			logging.Debug("Added package from cached manifest", "package", packageName, "source", manifestItem.SourceManifest)
 		}
 		
-		// Only process YAML files
-		if !strings.HasSuffix(strings.ToLower(path), ".yaml") && !strings.HasSuffix(strings.ToLower(path), ".yml") {
-			return nil
+		stats := itemStats[packageName]
+		
+		// Set version information from catalog
+		if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
+			stats.LatestVersion = catalogVersion
 		}
 		
-		logging.Debug("Processing manifest file", "file", path)
-		manifestsProcessed++
-		
-		// Parse the manifest file
-		manifest, parseErr := exp.parseManifestFile(path)
-		if parseErr != nil {
-			logging.Debug("Failed to parse manifest file", "file", path, "error", parseErr)
-			return nil // Continue on parse errors
+		// Set display name from catalog
+		if displayName, hasDisplayName := catalogDisplayNames[strings.ToLower(packageName)]; hasDisplayName && displayName != "" {
+			stats.DisplayName = displayName
+		} else {
+			stats.DisplayName = packageName // Fallback to package name
 		}
 		
-		// Extract items from all managed install categories
-		allItems := []interface{}{}
-		allItems = append(allItems, manifest.ManagedInstalls...)
-		allItems = append(allItems, manifest.ManagedUninstalls...)
-		allItems = append(allItems, manifest.ManagedUpdates...)
-		allItems = append(allItems, manifest.OptionalInstalls...)
+		// Check architecture compatibility first
+		compatible, supportedArchs := exp.checkArchitectureCompatibility(packageName, systemArch)
 		
-		// Process each item
-		for _, item := range allItems {
-			var packageName string
-			
-			// Handle different item formats (string or object)
-			switch v := item.(type) {
-			case string:
-				packageName = v
-			case map[string]interface{}:
-				if name, ok := v["name"].(string); ok {
-					packageName = name
-				}
-			}
-			
-			if packageName == "" {
-				continue
-			}
-			
-			// Initialize item stats if not exists
-			if _, exists := itemStats[packageName]; !exists {
-				itemStats[packageName] = &comprehensiveItemStat{
-					Name:           packageName,
-					Sessions:       make(map[string]bool),
-					RecentAttempts: []ItemAttempt{},
-				}
-				packagesFound++
-				logging.Debug("Added package from manifest", "package", packageName, "file", filepath.Base(path))
-			}
-			
-			stats := itemStats[packageName]
-			
-			// Set version information from catalog
-			if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
-				stats.LatestVersion = catalogVersion
-			}
-			
-			// Set display name from catalog
-			if displayName, hasDisplayName := catalogDisplayNames[strings.ToLower(packageName)]; hasDisplayName && displayName != "" {
-				stats.DisplayName = displayName
-			} else {
-				stats.DisplayName = packageName // Fallback to package name
-			}
-			
-			// Check architecture compatibility first
-			compatible, supportedArchs := exp.checkArchitectureCompatibility(packageName, systemArch)
-			
-			// Check installed status from registry
-			registryVersion := exp.getRegistryVersion(packageName)
-			if registryVersion != "" {
-				stats.InstalledVersion = registryVersion
+		// Check installed status from registry
+		registryVersion := exp.getRegistryVersion(packageName)
+		if registryVersion != "" {
+			stats.InstalledVersion = registryVersion
 				
 			if !compatible && len(supportedArchs) > 0 {
 				// Package is installed but not compatible with current architecture
@@ -1055,24 +1022,24 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 			} else {
 				stats.CurrentStatus = "Pending"
 			}
-		}			// Set item type based on which array it came from
-			if stats.ItemType == "" {
-				stats.ItemType = "managed_installs" // Default
-			}
 		}
 		
-		return nil
-	})
+		// Set item type based on manifest item action
+		if stats.ItemType == "" {
+			stats.ItemType = manifestItem.Action // Use the action from the manifest item
+			if stats.ItemType == "" {
+				stats.ItemType = "managed_installs" // Default fallback
+			}
+		}
+	}
 	
-	// check for SelfServeManifest.yaml which contains self-service items
-	selfServeManifestPath := filepath.Join(filepath.Dir(manifestsDir), "SelfServeManifest.yaml")
+	// Also check for SelfServeManifest.yaml which contains self-service items
+	selfServeManifestPath := filepath.Join("C:\\ProgramData\\ManagedInstalls", "SelfServeManifest.yaml")
 	if _, err := os.Stat(selfServeManifestPath); err == nil {
 		logging.Debug("Processing SelfServeManifest.yaml", "path", selfServeManifestPath)
 		
 		selfServeManifest, parseErr := exp.parseManifestFile(selfServeManifestPath)
 		if parseErr == nil {
-			manifestsProcessed++
-			
 			// Process self-serve managed installs
 			for _, item := range selfServeManifest.ManagedInstalls {
 				if itemName, ok := item.(string); ok && itemName != "" {
@@ -1123,23 +1090,110 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 		logging.Debug("SelfServeManifest.yaml not found", "path", selfServeManifestPath)
 	}
 	
-	logging.Info("populateFromCurrentManifests completed", 
-		"manifestsProcessed", manifestsProcessed, 
+	logging.Info("populateFromCurrentManifests completed using cached manifests", 
 		"packagesFound", packagesFound,
-		"walkError", err)
+		"clientIdentifier", config.ClientIdentifier)
 	
 	if packagesFound == 0 {
-		return fmt.Errorf("no managed packages found in manifests directory %s (processed %d manifest files)", manifestsDir, manifestsProcessed)
+		return fmt.Errorf("no managed packages found using cached manifests for client identifier %s", config.ClientIdentifier)
 	}
 	
-	return err
+	return nil
+}
+
+// GenerateCurrentItemsTable creates a current snapshot of all items currently managed by manifests
+// This is specifically for items.json - current state only, NO historical data
+func (exp *DataExporter) GenerateCurrentItemsTable() ([]ItemRecord, error) {
+	// Debug logging to check if session packages are available
+	logging.Debug("GenerateCurrentItemsTable called", "sessionPackagesCount", len(exp.currentSessionPackages))
+	
+	// Use the actual packages processed in the current session if available
+	if exp.currentSessionPackages != nil && len(exp.currentSessionPackages) > 0 {
+		logging.Info("Using current session packages for items.json", "count", len(exp.currentSessionPackages))
+		return exp.GenerateCurrentItemsFromPackages(exp.currentSessionPackages)
+	}
+	
+	// Fallback: Log that we need the current session data
+	logging.Warn("GenerateCurrentItemsTable called without current session package data - this should not happen")
+	logging.Info("items.json should only contain packages from the current manifest processing")
+	
+	return []ItemRecord{}, nil
+}
+
+// SetCurrentSessionPackages stores the actual packages processed in the current session
+// This is the authoritative list for items.json generation
+func (exp *DataExporter) SetCurrentSessionPackages(packages []string) {
+	if exp.currentSessionPackages == nil {
+		exp.currentSessionPackages = make([]string, 0, len(packages))
+	}
+	exp.currentSessionPackages = packages
+	logging.Info("Set current session packages for items.json", "count", len(packages))
+	logging.Debug("Session packages stored in DataExporter", "packages", packages)
+}
+// This is the correct approach - use the actual packages that were processed in the current session
+func (exp *DataExporter) GenerateCurrentItemsFromPackages(packages []string) ([]ItemRecord, error) {
+	if len(packages) == 0 {
+		logging.Warn("GenerateCurrentItemsFromPackages called with empty package list")
+		return []ItemRecord{}, nil
+	}
+
+	logging.Info("Generating current items table from actual processed packages", "count", len(packages))
+
+	// Load catalog data to get authoritative version information
+	catalogVersions := exp.loadCatalogVersions()
+	catalogDisplayNames := exp.loadCatalogDisplayNames()
+
+	// Convert to ItemRecord format - ONLY current session packages
+	var items []ItemRecord
+	for _, packageName := range packages {
+		catalogVersion := catalogVersions[packageName]
+		displayName := catalogDisplayNames[packageName]
+		if displayName == "" {
+			displayName = packageName
+		}
+
+		// Create item record with current status only
+		item := ItemRecord{
+			ID:                    strings.ToLower(strings.ReplaceAll(packageName, " ", "")),
+			ItemName:              packageName,
+			DisplayName:           displayName,
+			ItemType:              "managedinstall", // Default type - could be enhanced later
+			CurrentStatus:         "Pending", // Conservative status - could query actual status
+			LatestVersion:         catalogVersion,
+			InstalledVersion:      "", // Would need status check to populate
+			LastSeenInSession:     "",
+			LastSuccessfulTime:    "",
+			LastAttemptTime:       "",
+			LastAttemptStatus:     "",
+			LastUpdate:            time.Now().Format("2006-01-02T15:04:05Z"),
+			InstallCount:          0,
+			UpdateCount:           0,
+			RemovalCount:          0,
+			FailureCount:          0,
+			WarningCount:          0,
+			TotalSessions:         0,
+			InstallLoopDetected:   false,
+			RecentAttempts:        []ItemAttempt{},
+		}
+
+		items = append(items, item)
+		logging.Debug("Added current session package to items", "package", packageName)
+	}
+
+	// Sort items by name for consistent output
+	sort.Slice(items, func(i, j int) bool {
+		return strings.ToLower(items[i].ItemName) < strings.ToLower(items[j].ItemName)
+	})
+
+	logging.Info("Generated current items table from session packages", "count", len(items))
+	return items, nil
 }
 
 // GenerateItemsTable creates a comprehensive view of all items ever managed by Cimian
 func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error) {
 	itemStats := make(map[string]*comprehensiveItemStat)
 
-	// CRITICAL FIX: First populate from current manifest state
+	// First populate from current manifest state
 	// This ensures we always have data even without historical events
 	err := exp.populateFromCurrentManifests(itemStats)
 	if err != nil {
@@ -1167,7 +1221,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			}
 			logging.Info("Comprehensive manifest discovery added %d packages to items collection", len(comprehensiveItems))
 		} else {
-			logging.Error("CRITICAL: Both primary and comprehensive manifest discovery failed - items.json will be incomplete")
+			logging.Error("Both primary and comprehensive manifest discovery failed - items.json will be incomplete")
 		}
 	}
 
@@ -1351,7 +1405,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 		}
 	}
 
-	// CRITICAL FIX: Add items from current manifest state (even if no events exist)
+	// Add items from current manifest state (even if no events exist)
 	// This ensures ReportMate gets data for all currently managed packages
 	currentManifestItems := exp.getCurrentManagedItems()
 	for _, item := range currentManifestItems {
@@ -1512,7 +1566,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			record.LastAttemptTime = stats.LastAttemptTime.Format(time.RFC3339)
 		}
 
-		// CRITICAL FIX: Correct status for packages successfully installed but not tracked in registry
+		// Correct status for packages successfully installed but not tracked in registry
 		// This addresses the core issue where packages like FortiClient-VPN show "Pending" despite successful installation
 		if record.CurrentStatus == "Pending Install" || record.CurrentStatus == "Not Installed" || record.CurrentStatus == "Pending" {
 			// Use direct Windows registry check for installed software
@@ -1695,10 +1749,10 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate items table
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Generate current items table for items.json (current snapshot only, no historical data)
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
-		return fmt.Errorf("failed to generate items table: %w", err)
+		return fmt.Errorf("failed to generate current items table: %w", err)
 	}
 
 	// Generate events table (last 48 hours for performance)
@@ -1757,10 +1811,10 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate current items state 
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Generate current items state (current snapshot only)
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
-		return fmt.Errorf("failed to generate items table: %w", err)
+		return fmt.Errorf("failed to generate current items table: %w", err)
 	}
 
 	// Generate events up to current point
@@ -1801,10 +1855,10 @@ func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem s
 	
 	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
 
-	// Regenerate items table with latest status
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Regenerate current items table with latest status (current snapshot only)
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
-		return fmt.Errorf("failed to generate items table: %w", err)
+		return fmt.Errorf("failed to generate current items table: %w", err)
 	}
 
 	// Update the items.json file
@@ -2920,8 +2974,8 @@ func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageNa
 }
 
 // getTotalManagedPackagesFromManifest gets the total number of managed packages from the current manifest
-// This fixes the critical bug where sessions show 0 managed packages when no actions were performed
-// CRITICAL FIX: Handle hierarchical manifest paths (e.g., "Shared/Curriculum/Animation/C3234/CintiqLab16")
+// This fixes a bug where sessions show 0 managed packages when no actions were performed
+// Handle hierarchical manifest paths (e.g., "Shared/Curriculum/Animation/C3234/CintiqLab16")
 func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *SessionConfig) int {
 	if sessionConfig == nil || sessionConfig.Manifest == "" {
 		return 0
@@ -3414,4 +3468,239 @@ func (exp *DataExporter) deduplicateManagedItems(items []ManagedItem) []ManagedI
 	}
 	
 	return unique
+}
+
+// loadCachedManifestsForReporting loads manifests from the cached manifests directory
+// using the same approach as the main application, ensuring complete package discovery
+func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]ManifestItem, error) {
+	manifestsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "manifests")
+	
+	// Check if manifests directory exists
+	if _, err := os.Stat(manifestsDir); os.IsNotExist(err) {
+		return []ManifestItem{}, nil // No cached manifests
+	}
+	
+	var allItems []ManifestItem
+	visitedManifests := make(map[string]bool)
+	var manifestsToProcess []string
+	
+	// Start with the primary manifest (client identifier)
+	primaryManifest := cfg.ClientIdentifier + ".yaml"
+	primaryManifestPath := filepath.Join(manifestsDir, primaryManifest)
+	
+	// If the client identifier contains path separators, try to construct the full path
+	if strings.Contains(cfg.ClientIdentifier, "/") {
+		// Convert forward slashes to backslashes for Windows paths
+		windowsPath := strings.ReplaceAll(cfg.ClientIdentifier, "/", "\\")
+		primaryManifest = windowsPath + ".yaml"
+		primaryManifestPath = filepath.Join(manifestsDir, primaryManifest)
+	}
+	
+	if _, err := os.Stat(primaryManifestPath); os.IsNotExist(err) {
+		// Client identifier manifest doesn't exist, so scan ALL cached manifests
+		// This handles --manifest flag usage where any combination of manifests might be cached
+		logging.Debug("Client identifier manifest not found, scanning all cached manifests", "clientIdentifier", cfg.ClientIdentifier)
+		
+		err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			
+			if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") {
+				// Convert absolute path to relative path from manifests directory
+				relPath, err := filepath.Rel(manifestsDir, path)
+				if err != nil {
+					relPath = info.Name() // Fallback to just the filename
+				}
+				manifestsToProcess = append(manifestsToProcess, relPath)
+			}
+			return nil
+		})
+		
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan manifests directory: %v", err)
+		}
+		
+		if len(manifestsToProcess) == 0 {
+			return []ManifestItem{}, nil // No YAML manifests found
+		}
+	} else {
+		// Start processing queue with the primary manifest
+		manifestsToProcess = append(manifestsToProcess, primaryManifest)
+	}
+	
+	// Process manifests recursively, following included_manifests
+	for len(manifestsToProcess) > 0 {
+		// Get next manifest to process
+		currentManifest := manifestsToProcess[0]
+		manifestsToProcess = manifestsToProcess[1:]
+		
+		// Skip if already processed
+		if visitedManifests[currentManifest] {
+			continue
+		}
+		visitedManifests[currentManifest] = true
+		
+		// Load and parse the manifest
+		var manifestPath string
+		if strings.Contains(currentManifest, "\\") {
+			// This is a relative path like "Assigned\Staff\IT.yaml" 
+			// Construct the full path relative to the manifests directory
+			manifestPath = filepath.Join(manifestsDir, currentManifest)
+		} else {
+			// Simple manifest name in the root manifests directory
+			manifestPath = filepath.Join(manifestsDir, currentManifest)
+		}
+		
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			logging.Warn("Failed to read cached manifest", "file", currentManifest, "path", manifestPath, "error", err)
+			continue
+		}
+		
+		var manifestFile ReportingManifestFile
+		if err := yaml.Unmarshal(data, &manifestFile); err != nil {
+			logging.Warn("Failed to parse cached manifest", "file", currentManifest, "error", err)
+			continue
+		}
+		
+		// Use filename as name if not specified
+		manifestName := manifestFile.Name
+		if manifestName == "" {
+			manifestName = strings.TrimSuffix(currentManifest, ".yaml")
+		}
+		
+		logging.Debug("Processing cached manifest for reporting", "file", currentManifest, "name", manifestName)
+		
+		// Convert manifest arrays to individual items
+		
+		// Process ManagedInstalls
+		for _, pkgName := range manifestFile.ManagedInstalls {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, ManifestItem{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "install",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedUpdates
+		for _, pkgName := range manifestFile.ManagedUpdates {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, ManifestItem{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "update",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedUninstalls
+		for _, pkgName := range manifestFile.ManagedUninstalls {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, ManifestItem{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "uninstall",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process OptionalInstalls
+		for _, pkgName := range manifestFile.OptionalInstalls {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, ManifestItem{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "optional",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedProfiles
+		for _, pkgName := range manifestFile.ManagedProfiles {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, ManifestItem{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "profile",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Process ManagedApps
+		for _, pkgName := range manifestFile.ManagedApps {
+			if pkgName == "" {
+				continue
+			}
+			allItems = append(allItems, ManifestItem{
+				Name:           pkgName,
+				Version:        "", // Will be filled from catalog
+				Catalogs:       manifestFile.Catalogs,
+				Action:         "app",
+				SourceManifest: manifestName,
+			})
+		}
+		
+		// Queue included manifests for processing
+		for _, includedManifest := range manifestFile.IncludedManifests {
+			if includedManifest == "" {
+				continue
+			}
+			
+			// Ensure .yaml extension
+			if !strings.HasSuffix(includedManifest, ".yaml") && !strings.HasSuffix(includedManifest, ".yml") {
+				// Only add .yaml if it doesn't already have an extension
+				if !strings.Contains(includedManifest, ".") {
+					includedManifest = includedManifest + ".yaml"
+				}
+			}
+			
+			// Add to queue if not already visited
+			if !visitedManifests[includedManifest] {
+				manifestsToProcess = append(manifestsToProcess, includedManifest)
+			}
+		}
+	}
+	
+	logging.Info("Loaded items from cached manifests for reporting", "count", len(allItems))
+	return allItems, nil
+}
+
+// ManifestItem represents an individual item from a manifest for reporting purposes
+type ManifestItem struct {
+	Name           string   `json:"name"`
+	Version        string   `json:"version"`
+	Catalogs       []string `json:"catalogs"`
+	Action         string   `json:"action"`
+	SourceManifest string   `json:"source_manifest"`
+}
+
+// ReportingManifestFile represents the structure of manifest YAML files for reporting
+type ReportingManifestFile struct {
+	Name              string   `yaml:"name"`
+	ManagedInstalls   []string `yaml:"managed_installs"`
+	ManagedUninstalls []string `yaml:"managed_uninstalls"`
+	ManagedUpdates    []string `yaml:"managed_updates"`
+	OptionalInstalls  []string `yaml:"optional_installs"`
+	ManagedProfiles   []string `yaml:"managed_profiles"`
+	ManagedApps       []string `yaml:"managed_apps"`
+	IncludedManifests []string `yaml:"included_manifests"`
+	Catalogs          []string `yaml:"catalogs"`
 }

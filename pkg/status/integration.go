@@ -42,7 +42,6 @@ func GetInstalledVersionMultiSource(item catalog.Item) (string, VersionSource, e
 }
 
 // updateCimianRegistryFromDiscoveredVersion syncs Cimian's registry with discovered versions
-// This is critical for preventing version drift at scale
 func updateCimianRegistryFromDiscoveredVersion(item catalog.Item, discoveredVersion string, source VersionSource) {
 	// Only update if the discovered version is from a higher-confidence source
 	highConfidenceSources := []VersionSource{

@@ -1319,6 +1319,24 @@ func main() {
 	// Apply item filter if specified
 	manifestItems = itemFilter.Apply(manifestItems)
 
+	logging.Info("DEBUG: About to extract package names for items.json", "manifestItemsCount", len(manifestItems))
+
+	// Extract actual package names for reporting
+	// This ensures items.json contains only the packages from the current session
+	var currentSessionPackages []string
+	for _, manifestItem := range manifestItems {
+		if manifestItem.Name != "" {
+			currentSessionPackages = append(currentSessionPackages, manifestItem.Name)
+		}
+	}
+	
+	logging.Info("DEBUG: Extracted package names", "count", len(currentSessionPackages))
+	
+	// Store these packages in the existing reporting system for accurate items.json generation
+	exporter.SetCurrentSessionPackages(currentSessionPackages)
+	
+	logging.Info("Set current session packages for items.json reporting", "count", len(currentSessionPackages))
+
 	// Clear and set up source tracking for all manifest items
 	process.ClearItemSources()
 	for _, manifestItem := range manifestItems {
@@ -1469,10 +1487,8 @@ func main() {
 		// PROGRESSIVE REPORTING: Generate reports immediately after checkonly phase
 		// This ensures we have visibility into the current state even if installation hangs
 		logging.Info("Generating post-checkonly reports for external monitoring tools...")
-		baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
-		exporter := reporting.NewDataExporter(baseDir)
 		
-		// Create reports directory early and generate progressive reports
+		// Use the existing exporter that has the session packages already set
 		if err := exporter.ExportProgressiveReports(3, "post-checkonly"); err != nil {
 			logging.Warn("Failed to export post-checkonly reports: %v", err)
 		} else {
@@ -1833,7 +1849,7 @@ func main() {
 		logger.Warning("Failed to end structured logging session: %v", err)
 	}
 
-	// CRITICAL FIX: Generate reports AFTER session is finalized
+	// Generate reports AFTER session is finalized
 	// This ensures session status, failure counts, and end times are properly captured
 	statusReporter.Detail("Generating final system reports...")
 	finalExporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)

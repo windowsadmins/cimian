@@ -353,7 +353,7 @@ func InstallPendingUpdates(downloadItems map[string]string, cfg *config.Configur
 				"name", name, "url", url, "error", err)
 			downloadErrors = append(downloadErrors, fmt.Errorf("failed to download %s: %v", name, err))
 			failureCount++
-			continue // Continue processing other downloads - this is critical!
+			continue // Continue processing other downloads
 		}
 
 		// Reconstruct exact local path the file ended up in (MUST match DownloadFile logic)
