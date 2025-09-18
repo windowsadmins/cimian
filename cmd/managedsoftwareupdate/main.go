@@ -3453,6 +3453,7 @@ func clearCacheFolderSelective(cachePath, logsPath string) {
 func clearChocolateyCache() {
 	chocoTempPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "temp")
 	chocoLibPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "lib-bad")
+	chocoMainLibPath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", "lib")
 	chocoCachePath := filepath.Join(os.Getenv("ProgramData"), "chocolatey", ".chocolatey")
 	
 	// Clear chocolatey temp directory
@@ -3476,6 +3477,21 @@ func clearChocolateyCache() {
 			logger.Warning("Failed to clear chocolatey lib-bad directory: %v", err)
 		} else {
 			logger.Debug("Cleared chocolatey lib-bad directory: %s", chocoLibPath)
+		}
+	}
+	
+	// Clear main lib directory (where corrupted .nupkg files can accumulate)
+	// This prevents the "not a valid nupkg file" errors that occur when packages get corrupted
+	if _, err := os.Stat(chocoMainLibPath); err == nil {
+		err := os.RemoveAll(chocoMainLibPath)
+		if err != nil {
+			logger.Warning("Failed to clear chocolatey main lib directory: %v", err)
+		} else {
+			logger.Debug("Cleared chocolatey main lib directory: %s", chocoMainLibPath)
+		}
+		// Recreate the lib directory
+		if err := os.MkdirAll(chocoMainLibPath, 0755); err != nil {
+			logger.Warning("Failed to recreate chocolatey main lib directory: %v", err)
 		}
 	}
 	
