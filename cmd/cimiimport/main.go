@@ -1905,6 +1905,15 @@ func sanitizeName(name string) string {
 		}
 		return '-'
 	}, name)
+	
+	// Clean up consecutive dashes
+	for strings.Contains(name, "--") {
+		name = strings.ReplaceAll(name, "--", "-")
+	}
+	
+	// Remove leading and trailing dashes
+	name = strings.Trim(name, "-")
+	
 	return name
 }
 
