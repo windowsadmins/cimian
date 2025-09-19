@@ -919,6 +919,22 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					return false, nil
 				}
 			}
+		} else if strings.ToLower(item.Installer.Type) == "msi" {
+			// MSI with no product code - this is a configuration issue
+			logging.Warn("MSI installer type detected but no product_code specified - installation will be attempted",
+				"item", item.Name, "installerType", item.Installer.Type)
+			
+			// For MSI installers without product codes, we cannot reliably detect installation
+			// Default to attempting installation (safer than assuming it's installed)
+			if installType == "uninstall" {
+				logging.Info("MSI uninstall requested but no product_code available - assuming not installed",
+					"item", item.Name)
+				return false, nil
+			} else {
+				logging.Info("MSI install/update requested but no product_code available - proceeding with installation",
+					"item", item.Name)
+				return true, nil
+			}
 		}
 		return false, nil
 	}
@@ -1459,9 +1475,24 @@ func getFileVersionQuiet(filePath string, quiet bool) (string, error) {
 
 // checkMsiProductCode queries registry for productCode, compares vs. checkVersion
 func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
+	logging.Debug("Checking MSI product code in registry",
+		"productCode", productCode, "requiredVersion", checkVersion)
+		
 	installedVersionStr := findMsiVersion(productCode)
 	if installedVersionStr == "" {
+		logging.Debug("MSI product code not found in registry (checked both 64-bit and 32-bit paths)",
+			"productCode", productCode)
 		return false, false
+	}
+
+	logging.Debug("Found MSI product in registry",
+		"productCode", productCode, "installedVersion", installedVersionStr)
+
+	// If no version requirement specified, just presence is enough
+	if checkVersion == "" {
+		logging.Debug("No version requirement specified, MSI presence sufficient",
+			"productCode", productCode)
+		return true, true
 	}
 
 	installedVersion, err := goversion.NewVersion(installedVersionStr)
@@ -1485,17 +1516,42 @@ func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
 	}
 
 	versionMatch := !installedVersion.LessThan(checkVer)
+	
+	logging.Debug("MSI version comparison complete",
+		"productCode", productCode,
+		"installedVersion", installedVersionStr,
+		"requiredVersion", checkVersion,
+		"versionMatch", versionMatch,
+		"installedVersionParsed", installedVersion.String(),
+		"requiredVersionParsed", checkVer.String())
+		
 	return true, versionMatch
 }
 
 // findMsiVersion retrieves the DisplayVersion from registry for the MSI productCode
+// Checks both 64-bit and 32-bit registry locations
 func findMsiVersion(productCode string) string {
-	regPath := fmt.Sprintf("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s", productCode)
-	versionStr, err := getRegistryValue(regPath, "DisplayVersion")
-	if err != nil {
-		return ""
+	// First check 64-bit registry location
+	regPath64 := fmt.Sprintf("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s", productCode)
+	versionStr, err := getRegistryValue(regPath64, "DisplayVersion")
+	if err == nil && versionStr != "" {
+		logging.Debug("Found MSI product in 64-bit registry",
+			"productCode", productCode, "registryPath", regPath64, "version", versionStr)
+		return versionStr
 	}
-	return versionStr
+	
+	// If not found in 64-bit, check 32-bit registry location
+	regPath32 := fmt.Sprintf("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s", productCode)
+	versionStr, err = getRegistryValue(regPath32, "DisplayVersion")
+	if err == nil && versionStr != "" {
+		logging.Debug("Found MSI product in 32-bit registry", 
+			"productCode", productCode, "registryPath", regPath32, "version", versionStr)
+		return versionStr
+	}
+	
+	logging.Debug("MSI product not found in either registry location",
+		"productCode", productCode, "checkedPaths", []string{regPath64, regPath32})
+	return ""
 }
 
 // getRegistryValue reads a string value from local-machine registry
