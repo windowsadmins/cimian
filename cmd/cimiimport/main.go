@@ -1074,8 +1074,8 @@ func cimianImport(
 			return false, fmt.Errorf("failed to copy installer: %v", err)
 		}
 
-		// Set the installer location relative to repo root
-		pkgsInfo.Installer.Location = filepath.Join("pkgs", repoSubPath, installerFilename)
+		// Set the installer location relative to pkgs directory
+		pkgsInfo.Installer.Location = filepath.Join(repoSubPath, installerFilename)
 		pkgsInfo.Installer.Location = strings.ReplaceAll(pkgsInfo.Installer.Location, "\\", "/") // Use forward slashes
 	}
 
