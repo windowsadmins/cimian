@@ -408,7 +408,7 @@ func main() {
 
 	// 5) Check if we're in a git repository and run git pull BEFORE import to ensure we're up to date
 	if isGitRepository(conf.RepoPath) {
-		logger.Printf("Git repository detected, pulling latest changes before import...")
+		logger.Printf("Git repository detected at %s, pulling latest changes before import...", conf.RepoPath)
 		if err := runGitPull(conf.RepoPath); err != nil {
 			logger.Warning("Git pull failed (continuing anyway): %v", err)
 		}
@@ -1869,7 +1869,7 @@ to be the main installer path. Example:
 
 Options:
   -i, --installs-array <path>   Add a path to final 'installs' array (multiple OK)
-  --repo_path=<path>            Override the Cimian repo path
+  --repo_path=<path>            Override the Cimian repo path (used for git operations and package storage)
   --arch=<arch>                 Override architecture (e.g. x64,arm64)
   --uninstaller=<path>          Specify an optional uninstaller
   --minimum_os_version=<version> Minimum Windows version required (e.g. 10.0.19041)
