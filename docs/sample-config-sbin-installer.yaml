@@ -1,0 +1,46 @@
+# Sample Cimian Configuration with sbin-installer Integration
+#
+# This sample configuration demonstrates the new sbin-installer integration options
+# alongside existing Cimian configuration settings.
+
+# Core Cimian Settings
+SoftwareRepoURL: "https://your-cimian-server.com/deployment"
+CachePath: "C:\\ProgramData\\ManagedInstalls\\cache"
+ClientIdentifier: "YourOrganization/Department/Location/ComputerName"
+
+# Installer Configuration - NEW sbin-installer Integration
+#
+# These settings control how Cimian handles .pkg and .nupkg package installations
+ForceChocolatey: false              # Force use of Chocolatey for all packages (default: false)
+PreferSbinInstaller: true           # Prefer sbin-installer over Chocolatey when available (default: true)
+SbinInstallerPath: ""               # Override path to installer.exe (empty = auto-detect)
+SbinInstallerTargetRoot: "/"        # Default target for sbin-installer (default: "/")
+
+# Cache Management Settings
+CacheMaxSizeGB: 10                  # Maximum cache size in GB
+CacheRetentionDays: 1               # Days to retain cached files
+CacheCleanupOnStartup: true         # Clean cache on startup
+CachePreserveInstalledItems: true   # Keep cache for installed items
+
+# PowerShell Settings
+ForceExecutionPolicyBypass: true    # Always use -ExecutionPolicy Bypass
+
+# Installer Timeout
+InstallerTimeoutMinutes: 30         # Default timeout for all installers
+
+# Logging and Debugging
+LogLevel: "INFO"                    # DEBUG, INFO, WARN, ERROR
+Verbose: false                      # Verbose logging
+Debug: false                        # Debug mode
+
+# Enterprise Examples:
+# 
+# Force Chocolatey Only (disable sbin-installer):
+# ForceChocolatey: true
+# PreferSbinInstaller: false
+#
+# Use Custom sbin-installer Location:
+# SbinInstallerPath: "C:\\Tools\\installer.exe"
+#
+# Install to Custom Target Root:
+# SbinInstallerTargetRoot: "C:\\"

@@ -38,7 +38,272 @@ var (
 
 	// Typically "C:\\ProgramData\\chocolatey\\bin\\choco.exe"
 	chocolateyBin = filepath.Join(os.Getenv("ProgramData"), "chocolatey", "bin", "choco.exe")
+	
+	// sbin-installer path - auto-detected or configurable
+	sbinInstallerBin = ""
 )
+
+// detectSbinInstaller attempts to find the sbin-installer executable
+func detectSbinInstaller(cfg *config.Configuration) string {
+	// Use configured path if specified
+	if cfg != nil && cfg.SbinInstallerPath != "" {
+		if _, err := os.Stat(cfg.SbinInstallerPath); err == nil {
+			logging.Debug("Using configured sbin-installer path", "path", cfg.SbinInstallerPath)
+			return cfg.SbinInstallerPath
+		}
+		logging.Warn("Configured sbin-installer path not found", "path", cfg.SbinInstallerPath)
+	}
+
+	// Try common installation paths
+	commonPaths := []string{
+		filepath.Join(os.Getenv("ProgramFiles"), "sbin", "installer.exe"),
+		filepath.Join(os.Getenv("ProgramW6432"), "sbin", "installer.exe"),
+		"installer.exe", // Try from PATH
+	}
+
+	for _, path := range commonPaths {
+		if _, err := os.Stat(path); err == nil {
+			logging.Debug("Found sbin-installer", "path", path)
+			return path
+		}
+		// Also try resolving from PATH
+		if path == "installer.exe" {
+			if resolved, err := exec.LookPath(path); err == nil {
+				logging.Debug("Found sbin-installer in PATH", "path", resolved)
+				return resolved
+			}
+		}
+	}
+
+	logging.Debug("sbin-installer not found in any common locations")
+	return ""
+}
+
+// isSbinInstallerAvailable checks if sbin-installer is available and functional
+func isSbinInstallerAvailable(cfg *config.Configuration) bool {
+	// If Chocolatey is forced, don't use sbin-installer
+	if cfg != nil && cfg.ForceChocolatey {
+		logging.Debug("Chocolatey forced via configuration, skipping sbin-installer")
+		return false
+	}
+
+	// If sbin-installer preference is disabled, don't use it
+	if cfg != nil && !cfg.GetPreferSbinInstaller() {
+		logging.Debug("sbin-installer preference disabled via configuration")
+		return false
+	}
+
+	// Try to detect sbin-installer
+	if sbinInstallerBin == "" {
+		sbinInstallerBin = detectSbinInstaller(cfg)
+	}
+
+	if sbinInstallerBin == "" {
+		logging.Debug("sbin-installer not available")
+		return false
+	}
+
+	// Test that it's functional by checking version
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, sbinInstallerBin, "--vers")
+	if err := cmd.Run(); err != nil {
+		logging.Debug("sbin-installer version check failed", "error", err, "path", sbinInstallerBin)
+		return false
+	}
+
+	logging.Debug("sbin-installer is available and functional", "path", sbinInstallerBin)
+	return true
+}
+
+// runSbinInstaller executes the sbin-installer tool with the given package file
+func runSbinInstaller(packagePath string, item catalog.Item, cfg *config.Configuration) (string, error) {
+	if sbinInstallerBin == "" {
+		return "", fmt.Errorf("sbin-installer not available")
+	}
+
+	target := "/"
+	if cfg != nil {
+		target = cfg.GetSbinInstallerTargetRoot()
+	}
+
+	logging.Info("Installing package with sbin-installer", "item", item.Name, "package", packagePath, "target", target)
+
+	// Build command arguments
+	cmdArgs := []string{
+		"--pkg", packagePath,
+		"--target", target,
+		"--verbose", // Always use verbose for better logging
+	}
+
+	// Create context with timeout
+	timeoutMinutes := 30 // Default timeout
+	if cfg != nil && cfg.InstallerTimeoutMinutes > 0 {
+		timeoutMinutes = cfg.InstallerTimeoutMinutes
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
+	defer cancel()
+
+	logging.Debug("runSbinInstaller command", "exe", sbinInstallerBin, "args", strings.Join(cmdArgs, " "))
+
+	// Execute the command
+	cmd := exec.CommandContext(ctx, sbinInstallerBin, cmdArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	output, err := cmd.CombinedOutput()
+	outputStr := strings.TrimSpace(string(output))
+
+	if err != nil {
+		logging.Error("sbin-installer execution failed", "item", item.Name, "error", err, "output", outputStr)
+		return outputStr, fmt.Errorf("sbin-installer failed: %w", err)
+	}
+
+	logging.Info("sbin-installer completed successfully", "item", item.Name)
+	logging.Debug("sbin-installer output", "item", item.Name, "output", outputStr)
+
+	return outputStr, nil
+}
+
+// installOrUpgradePkgWithSbin handles .pkg installs using sbin-installer with fallback to Chocolatey
+func installOrUpgradePkgWithSbin(item catalog.Item, packagePath, cachePath string, cfg *config.Configuration) (string, error) {
+	logging.Info("Installing .pkg package with sbin-installer", "item", item.Name, "package", packagePath)
+
+	// Run catalog preinstall_script if present
+	if err := executePreInstallScript(item, cachePath); err != nil {
+		return "", err
+	}
+
+	// Execute sbin-installer
+	output, err := runSbinInstaller(packagePath, item, cfg)
+	if err != nil {
+		logging.Error("sbin-installer .pkg installation failed", "item", item.Name, "error", err)
+		
+		// Log the failure for ReportMate
+		status := logging.StatusFromError("sbin_installer_pkg", err)
+		logging.LogEventEntry("install", "sbin_installer_pkg", status,
+			fmt.Sprintf("sbin-installer .pkg installation failed: %s", err.Error()),
+			logging.WithContext("item", item.Name),
+			logging.WithContext("package_path", packagePath),
+			logging.WithContext("installer_type", "pkg"),
+			logging.WithContext("error_details", err.Error()))
+
+		return output, err
+	}
+
+	// Store version in registry
+	storeInstalledVersionInRegistry(catalog.Item{
+		Name:    item.Name,
+		Version: item.Version,
+	})
+
+	// Attempt immediate cleanup if item has installs array for verification
+	immediateCleanupAfterInstall(item, packagePath, cfg)
+
+	// Run catalog postinstall_script if present
+	executePostInstallScript(item, cachePath)
+
+	logging.Info("sbin-installer .pkg installation succeeded", "item", item.Name)
+	return output, nil
+}
+
+// installOrUpgradeNupkgWithSbin handles .nupkg installs using sbin-installer with fallback to Chocolatey
+func installOrUpgradeNupkgWithSbin(item catalog.Item, nupkgPath, cachePath string, cfg *config.Configuration) (string, error) {
+	logging.Info("Installing .nupkg package with sbin-installer", "item", item.Name, "package", nupkgPath)
+
+	// Run catalog preinstall_script if present
+	if err := executePreInstallScript(item, cachePath); err != nil {
+		return "", err
+	}
+
+	// For .nupkg files, we need to extract and run chocolateyBeforeInstall.ps1 if present
+	// This maintains compatibility with existing Chocolatey packages
+	// Note: chocolateyInstall.ps1 is handled automatically by sbin-installer's package processing
+	if err := extractAndRunChocolateyBeforeInstall(nupkgPath, item); err != nil {
+		logging.Warn("chocolateyBeforeInstall.ps1 execution failed, continuing with installation", "item", item.Name, "error", err)
+	}
+
+	// Execute sbin-installer
+	output, err := runSbinInstaller(nupkgPath, item, cfg)
+	if err != nil {
+		logging.Error("sbin-installer .nupkg installation failed", "item", item.Name, "error", err)
+		
+		// Log the failure for ReportMate
+		status := logging.StatusFromError("sbin_installer_nupkg", err)
+		logging.LogEventEntry("install", "sbin_installer_nupkg", status,
+			fmt.Sprintf("sbin-installer .nupkg installation failed: %s", err.Error()),
+			logging.WithContext("item", item.Name),
+			logging.WithContext("package_path", nupkgPath),
+			logging.WithContext("installer_type", "nupkg"),
+			logging.WithContext("error_details", err.Error()))
+
+		return output, err
+	}
+
+	// Store version in registry
+	storeInstalledVersionInRegistry(catalog.Item{
+		Name:    item.Name,
+		Version: item.Version,
+	})
+
+	// Attempt immediate cleanup if item has installs array for verification
+	immediateCleanupAfterInstall(item, nupkgPath, cfg)
+
+	// Run catalog postinstall_script if present
+	executePostInstallScript(item, cachePath)
+
+	logging.Info("sbin-installer .nupkg installation succeeded", "item", item.Name)
+	return output, nil
+}
+
+// installOrUpgradePackage handles both .nupkg and .pkg installs with sbin-installer primary, Chocolatey fallback
+func installOrUpgradePackage(item catalog.Item, packagePath, cachePath string, cfg *config.Configuration) (string, error) {
+	// Determine package type from file extension
+	ext := strings.ToLower(filepath.Ext(packagePath))
+	
+	logging.Debug("Installing package", "item", item.Name, "package", packagePath, "extension", ext)
+
+	// For .pkg files, only try sbin-installer (no Chocolatey fallback for .pkg)
+	if ext == ".pkg" {
+		if isSbinInstallerAvailable(cfg) {
+			return installOrUpgradePkgWithSbin(item, packagePath, cachePath, cfg)
+		} else {
+			return "", fmt.Errorf(".pkg packages require sbin-installer, but it is not available")
+		}
+	}
+
+	// For .nupkg files, try sbin-installer first, then fallback to Chocolatey
+	if ext == ".nupkg" {
+		// Try sbin-installer first if available and preferred
+		if isSbinInstallerAvailable(cfg) {
+			logging.Info("Attempting .nupkg installation with sbin-installer", "item", item.Name)
+			output, err := installOrUpgradeNupkgWithSbin(item, packagePath, cachePath, cfg)
+			if err == nil {
+				logging.Info("sbin-installer .nupkg installation successful", "item", item.Name)
+				return output, nil
+			}
+			
+			// Log the sbin-installer failure but continue to Chocolatey fallback
+			logging.Warn("sbin-installer .nupkg installation failed, falling back to Chocolatey", 
+				"item", item.Name, "error", err)
+			
+			// Log this as a warning event for monitoring
+			logging.LogEventEntry("install", "sbin_installer_fallback", logging.StatusWarning,
+				"sbin-installer failed, attempting Chocolatey fallback",
+				logging.WithContext("item", item.Name),
+				logging.WithContext("package_path", packagePath),
+				logging.WithContext("sbin_installer_error", err.Error()),
+				logging.WithContext("fallback_action", "chocolatey"))
+		}
+
+		// Fallback to existing Chocolatey installation logic
+		logging.Info("Using Chocolatey for .nupkg installation", "item", item.Name)
+		return installOrUpgradeNupkg(item, packagePath, cachePath, cfg)
+	}
+
+	// Unsupported package type
+	return "", fmt.Errorf("unsupported package type: %s (supported: .pkg, .nupkg)", ext)
+}
 
 // buildPowerShellArgs creates a consistent set of PowerShell arguments with execution policy bypass
 func buildPowerShellArgs(cfg *config.Configuration, args ...string) []string {
@@ -244,25 +509,28 @@ func Install(item catalog.Item, action, localFile, cachePath string, checkOnly b
 			return "Script-only installation success", nil
 		}
 
-		// If it's a nupkg, handle it via Chocolatey logic
-		if strings.ToLower(item.Installer.Type) == "nupkg" {
-			result, err := installOrUpgradeNupkg(item, localFile, cachePath, cfg)
+		// If it's a nupkg or pkg, handle it via the unified package installer
+		packageExt := strings.ToLower(filepath.Ext(localFile))
+		if packageExt == ".nupkg" || packageExt == ".pkg" || strings.ToLower(item.Installer.Type) == "nupkg" || strings.ToLower(item.Installer.Type) == "pkg" {
+			result, err := installOrUpgradePackage(item, localFile, cachePath, cfg)
 			if err != nil {
-				logging.Error("NUPKG installation failed", "item", item.Name, "error", err)
+				logging.Error("Package installation failed", "item", item.Name, "type", packageExt, "error", err)
 				// Log event for ItemRecord tracking
-				status := logging.StatusFromError("nupkg_install", err)
+				status := logging.StatusFromError("package_install", err)
 				logging.LogEventEntry("install", "install_package", status,
-					fmt.Sprintf("NUPKG installation failed: %v", err),
+					fmt.Sprintf("Package installation failed: %v", err),
 					logging.WithContext("item", item.Name),
 					logging.WithContext("error", err.Error()),
-					logging.WithContext("installer_type", "nupkg"))
+					logging.WithContext("installer_type", packageExt),
+					logging.WithContext("package_path", localFile))
 				return result, err
 			}
-			// Log successful nupkg installation
+			// Log successful package installation
 			logging.LogEventEntry("install", "install_package", logging.StatusInstalled,
-				"NUPKG installation completed successfully",
+				"Package installation completed successfully",
 				logging.WithContext("item", item.Name),
-				logging.WithContext("installer_type", "nupkg"))
+				logging.WithContext("installer_type", packageExt),
+				logging.WithContext("package_path", localFile))
 			return result, err
 		}
 
