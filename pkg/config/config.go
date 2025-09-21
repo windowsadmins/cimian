@@ -61,6 +61,13 @@ type Configuration struct {
 	CacheCleanupOnStartup       *bool `yaml:"CacheCleanupOnStartup"`       // Perform cache cleanup on startup (default: true)
 	CachePreserveInstalledItems *bool `yaml:"CachePreserveInstalledItems"` // Keep cache for currently installed items (default: true)
 
+	// Package installer settings
+	// Controls which installer system to use for .nupkg and .pkg packages
+	ForceChocolatey         bool   `yaml:"ForceChocolatey"`         // Force Chocolatey for all package installations (default: false)
+	PreferSbinInstaller     bool   `yaml:"PreferSbinInstaller"`     // Prefer sbin-installer over Chocolatey when available (default: true)
+	SbinInstallerPath       string `yaml:"SbinInstallerPath"`       // Override path to installer.exe (default: auto-detect from PATH)
+	SbinInstallerTargetRoot string `yaml:"SbinInstallerTargetRoot"` // Default target root for sbin-installer installations (default: "/")
+
 	// Internal flag to skip self-service manifest processing (not exposed in YAML)
 	SkipSelfService bool `yaml:"-"`
 }
@@ -79,6 +86,24 @@ func (c *Configuration) GetCachePreserveInstalledItems() bool {
 		return true // Default to enabled
 	}
 	return *c.CachePreserveInstalledItems
+}
+
+// GetPreferSbinInstaller returns whether to prefer sbin-installer over Chocolatey, with true as default
+func (c *Configuration) GetPreferSbinInstaller() bool {
+	// If Chocolatey is explicitly forced, don't prefer sbin-installer
+	if c.ForceChocolatey {
+		return false
+	}
+	// Default to preferring sbin-installer when it becomes available
+	return c.PreferSbinInstaller || c.PreferSbinInstaller == false // Default: true
+}
+
+// GetSbinInstallerTargetRoot returns the target root for sbin-installer installations, with "/" as default
+func (c *Configuration) GetSbinInstallerTargetRoot() string {
+	if c.SbinInstallerTargetRoot == "" {
+		return "/" // Default to system root
+	}
+	return c.SbinInstallerTargetRoot
 }
 
 // LoadConfig loads the configuration from a YAML file.
