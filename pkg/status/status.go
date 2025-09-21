@@ -21,6 +21,7 @@ import (
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	cimiversion "github.com/windowsadmins/cimian/pkg/version"
 	"golang.org/x/sys/windows/registry"
@@ -2254,4 +2255,41 @@ func isVersionCompatible(current, required, checkType string) (bool, error) {
 	}
 
 	return false, fmt.Errorf("invalid check type: %s", checkType)
+}
+
+// DeduplicateCatalogItems iterates all catalog items and returns the one with the highest version.
+func DeduplicateCatalogItems(items []catalog.Item) catalog.Item {
+	best := items[0]
+	
+	for _, candidate := range items[1:] {
+		if IsOlderVersion(best.Version, candidate.Version) {
+			best = candidate
+		}
+	}
+	
+	return best
+}
+
+// DeduplicateManifestItems filters the slice of manifest items so that for each package name
+// only the one with the highest version remains.
+func DeduplicateManifestItems(manifestItems []manifest.Item) []manifest.Item {
+	dedup := make(map[string]manifest.Item)
+	for _, m := range manifestItems {
+		if m.Name == "" {
+			continue
+		}
+		key := strings.ToLower(m.Name)
+		if existing, ok := dedup[key]; ok {
+			if IsOlderVersion(existing.Version, m.Version) {
+				dedup[key] = m
+			}
+		} else {
+			dedup[key] = m
+		}
+	}
+	var result []manifest.Item
+	for _, m := range dedup {
+		result = append(result, m)
+	}
+	return result
 }
