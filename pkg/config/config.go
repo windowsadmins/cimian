@@ -68,6 +68,21 @@ type Configuration struct {
 	SbinInstallerPath       string `yaml:"SbinInstallerPath"`       // Override path to installer.exe (default: auto-detect from PATH)
 	SbinInstallerTargetRoot string `yaml:"SbinInstallerTargetRoot"` // Default target root for sbin-installer installations (default: "/")
 
+	// .pkg package format settings
+	// Signature verification and security policies for .pkg packages
+	PkgRequireSignature        bool     `yaml:"PkgRequireSignature"`        // Require cryptographic signatures for all .pkg packages (default: true)
+	PkgRequireTrustedCert      bool     `yaml:"PkgRequireTrustedCert"`      // Require signatures from trusted certificate authorities (default: true)
+	PkgTrustedCertThumbprints  []string `yaml:"PkgTrustedCertThumbprints"`  // List of trusted certificate thumbprints for .pkg packages
+	PkgTrustedCertCommonNames  []string `yaml:"PkgTrustedCertCommonNames"`  // List of trusted certificate common names for .pkg packages
+	PkgAllowUnsignedDevelopers []string `yaml:"PkgAllowUnsignedDevelopers"` // List of developer names allowed to install unsigned .pkg packages
+	PkgSignatureTimestampGrace int      `yaml:"PkgSignatureTimestampGrace"` // Grace period in days for timestamp validation (default: 30)
+	
+	// .pkg installer preferences
+	PkgPreferSbinInstaller     bool   `yaml:"PkgPreferSbinInstaller"`     // Prefer sbin-installer for .pkg packages (default: true)
+	PkgSbinInstallerArgs       string `yaml:"PkgSbinInstallerArgs"`       // Additional arguments for sbin-installer with .pkg packages
+	PkgSignatureValidationMode string `yaml:"PkgSignatureValidationMode"` // Signature validation mode: "strict", "warn", "off" (default: "strict")
+	PkgExtractTempPath         string `yaml:"PkgExtractTempPath"`         // Temporary extraction path for .pkg packages (default: system temp)
+
 	// Internal flag to skip self-service manifest processing (not exposed in YAML)
 	SkipSelfService bool `yaml:"-"`
 }
@@ -104,6 +119,83 @@ func (c *Configuration) GetSbinInstallerTargetRoot() string {
 		return "/" // Default to system root
 	}
 	return c.SbinInstallerTargetRoot
+}
+
+// GetPkgRequireSignature returns whether .pkg packages require cryptographic signatures, with true as default
+func (c *Configuration) GetPkgRequireSignature() bool {
+	// Default to requiring signatures for security
+	return c.PkgRequireSignature || !c.PkgRequireSignature // This will default to true
+}
+
+// GetPkgRequireTrustedCert returns whether .pkg signatures must be from trusted CAs, with true as default
+func (c *Configuration) GetPkgRequireTrustedCert() bool {
+	// Default to requiring trusted certificate authorities
+	return c.PkgRequireTrustedCert || !c.PkgRequireTrustedCert // This will default to true
+}
+
+// GetPkgSignatureTimestampGrace returns the grace period for timestamp validation, with 30 days as default
+func (c *Configuration) GetPkgSignatureTimestampGrace() int {
+	if c.PkgSignatureTimestampGrace <= 0 {
+		return 30 // Default to 30 days grace period
+	}
+	return c.PkgSignatureTimestampGrace
+}
+
+// GetPkgPreferSbinInstaller returns whether to prefer sbin-installer for .pkg packages, with true as default
+func (c *Configuration) GetPkgPreferSbinInstaller() bool {
+	// Default to preferring sbin-installer for .pkg packages
+	return c.PkgPreferSbinInstaller || !c.PkgPreferSbinInstaller // This will default to true
+}
+
+// GetPkgSignatureValidationMode returns the signature validation mode, with "strict" as default
+func (c *Configuration) GetPkgSignatureValidationMode() string {
+	if c.PkgSignatureValidationMode == "" {
+		return "strict" // Default to strict validation
+	}
+	// Validate allowed values
+	switch c.PkgSignatureValidationMode {
+	case "strict", "warn", "off":
+		return c.PkgSignatureValidationMode
+	default:
+		return "strict" // Fallback to strict for invalid values
+	}
+}
+
+// GetPkgExtractTempPath returns the temporary extraction path for .pkg packages, with system temp as default
+func (c *Configuration) GetPkgExtractTempPath() string {
+	if c.PkgExtractTempPath == "" {
+		return os.TempDir() // Default to system temporary directory
+	}
+	return c.PkgExtractTempPath
+}
+
+// IsPkgDeveloperTrusted checks if a developer name is in the trusted unsigned developers list
+func (c *Configuration) IsPkgDeveloperTrusted(developerName string) bool {
+	for _, trustedDev := range c.PkgAllowUnsignedDevelopers {
+		if strings.EqualFold(developerName, trustedDev) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPkgCertTrusted checks if a certificate is trusted based on thumbprint or common name
+func (c *Configuration) IsPkgCertTrusted(thumbprint, commonName string) bool {
+	// Check thumbprint first (more specific)
+	for _, trustedThumbprint := range c.PkgTrustedCertThumbprints {
+		if strings.EqualFold(thumbprint, trustedThumbprint) {
+			return true
+		}
+	}
+	
+	// Check common name
+	for _, trustedCN := range c.PkgTrustedCertCommonNames {
+		if strings.EqualFold(commonName, trustedCN) {
+			return true
+		}
+	}
+	
+	return false
 }
 
 // LoadConfig loads the configuration from a YAML file.
@@ -306,6 +398,18 @@ func loadCSPFromRegistryPath(registryPath string, config *Configuration) error {
 	// Load array configuration values
 	loadStringArrayFromRegistry(key, "Catalogs", &config.Catalogs)
 	loadStringArrayFromRegistry(key, "LocalManifests", &config.LocalManifests)
+
+	// Load .pkg package format settings
+	loadBoolFromRegistry(key, "PkgRequireSignature", &config.PkgRequireSignature)
+	loadBoolFromRegistry(key, "PkgRequireTrustedCert", &config.PkgRequireTrustedCert)
+	loadBoolFromRegistry(key, "PkgPreferSbinInstaller", &config.PkgPreferSbinInstaller)
+	loadStringFromRegistry(key, "PkgSbinInstallerArgs", &config.PkgSbinInstallerArgs)
+	loadStringFromRegistry(key, "PkgSignatureValidationMode", &config.PkgSignatureValidationMode)
+	loadStringFromRegistry(key, "PkgExtractTempPath", &config.PkgExtractTempPath)
+	loadIntFromRegistry(key, "PkgSignatureTimestampGrace", &config.PkgSignatureTimestampGrace)
+	loadStringArrayFromRegistry(key, "PkgTrustedCertThumbprints", &config.PkgTrustedCertThumbprints)
+	loadStringArrayFromRegistry(key, "PkgTrustedCertCommonNames", &config.PkgTrustedCertCommonNames)
+	loadStringArrayFromRegistry(key, "PkgAllowUnsignedDevelopers", &config.PkgAllowUnsignedDevelopers)
 
 	return nil
 }
