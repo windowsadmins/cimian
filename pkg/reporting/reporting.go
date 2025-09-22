@@ -116,7 +116,14 @@ type EventRecord struct {
 	ErrorDetails   *ErrorDetails `json:"error_details,omitempty"`
 	
 	// ENHANCEMENT 5: Installation method context
-	InstallerType  string `json:"installer_type,omitempty"`  // "chocolatey", "nupkg", "msi", "exe", "zip"
+	InstallerType  string `json:"installer_type,omitempty"`  // "chocolatey", "nupkg", "msi", "exe", "zip", "pkg", "sbin_installer"
+	
+	// .pkg package enhancements for events
+	PackageFormat        string `json:"package_format,omitempty"`         // "nupkg", "pkg", "msi", "exe"
+	IsSigned             bool   `json:"is_signed,omitempty"`              // Whether package is cryptographically signed
+	SignatureStatus      string `json:"signature_status,omitempty"`       // "valid", "invalid", "not_signed", "unknown"
+	SignatureAlgorithm   string `json:"signature_algorithm,omitempty"`    // Signature algorithm used
+	CertificateSubject   string `json:"certificate_subject,omitempty"`    // Certificate subject DN
 	
 	// Enhanced fields for external reporting tools
 	Details string        `json:"details,omitempty"`
@@ -174,8 +181,29 @@ type ItemRecord struct {
 	LoopDetails         *InstallLoopDetail `json:"loop_details,omitempty"`
 
 	// Enhanced metadata for external reporting tools
-	InstallMethod string `json:"install_method,omitempty"` // "nupkg", "msi", "exe", "pwsh"
+	InstallMethod string `json:"install_method,omitempty"` // "nupkg", "msi", "exe", "pwsh", "pkg"
 	Type          string `json:"type"`                     // Package manager type identifier
+
+	// .pkg package enhancements
+	PackageFormat        string `json:"package_format,omitempty"`         // "nupkg", "pkg", "msi", "exe"
+	PackageID            string `json:"package_id,omitempty"`             // Package identifier (for .pkg packages)
+	Developer            string `json:"developer,omitempty"`              // Package developer/publisher
+	Architecture         string `json:"architecture,omitempty"`           // Package architecture (x64, arm64)
+	InstallLocation      string `json:"install_location,omitempty"`       // Installation location for copy-type packages
+	IsSigned             bool   `json:"is_signed,omitempty"`              // Whether package is cryptographically signed
+	SignatureStatus      string `json:"signature_status,omitempty"`       // "valid", "invalid", "not_signed", "unknown"
+	SignatureAlgorithm   string `json:"signature_algorithm,omitempty"`    // Signature algorithm used
+	CertificateSubject   string `json:"certificate_subject,omitempty"`    // Certificate subject DN
+	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"` // Certificate thumbprint
+	SignatureTimestamp   string `json:"signature_timestamp,omitempty"`    // When package was signed
+	
+	// Additional .pkg metadata fields
+	SignerCertificate    string `json:"signer_certificate,omitempty"`     // Certificate thumbprint or identifier
+	SignerCommonName     string `json:"signer_common_name,omitempty"`     // Certificate common name
+	DeveloperName        string `json:"developer_name,omitempty"`         // Developer name from build-info
+	DeveloperOrganization string `json:"developer_organization,omitempty"` // Developer organization
+	SbinInstaller        string `json:"sbin_installer,omitempty"`         // sbin-installer used for installation
+	PkgBuildVersion      string `json:"pkg_build_version,omitempty"`      // Package build version
 
 	// Error information
 	LastError      string        `json:"last_error,omitempty"`
@@ -936,6 +964,34 @@ func (exp *DataExporter) getRegistryVersion(packageName string) string {
 	return ""
 }
 
+// getPkgRegistryMetadata retrieves enhanced .pkg package metadata from registry
+// PkgRegistryMetadata represents enhanced .pkg package metadata from registry
+type PkgRegistryMetadata struct {
+	Version               string
+	PackageFormat         string
+	PackageID             string
+	Developer             string
+	Description           string
+	Architecture          string
+	InstallLocation       string
+	InstallType           string
+	IsSigned              bool
+	SignatureAlgorithm    string
+	CertificateSubject    string
+	CertificateThumbprint string
+	SignatureTimestamp    string
+	InstalledDate         string
+	
+	// Additional fields for .pkg format support
+	SignatureStatus       string  // "valid", "invalid", "not_signed", "unknown"
+	SignerCertificate     string  // Certificate thumbprint or identifier
+	SignerCommonName      string  // Certificate common name
+	DeveloperName         string  // Developer name from build-info
+	DeveloperOrganization string  // Developer organization
+	SbinInstaller         string  // sbin-installer used for installation
+	PkgBuildVersion       string  // Package build version
+}
+
 // populateFromCurrentManifests loads current manifest state to ensure all managed packages are represented
 func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comprehensiveItemStat) error {
 	// Load catalog data to get version information
@@ -998,10 +1054,42 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 		// Check architecture compatibility first
 		compatible, supportedArchs := exp.checkArchitectureCompatibility(packageName, systemArch)
 		
-		// Check installed status from registry
+		// Check installed status from registry and get enhanced .pkg metadata
 		registryVersion := exp.getRegistryVersion(packageName)
+		pkgMetadata := exp.getPkgRegistryMetadata(packageName)
+		
 		if registryVersion != "" {
 			stats.InstalledVersion = registryVersion
+			
+			// Apply .pkg metadata if available
+			if pkgMetadata.PackageFormat != "" {
+				stats.PackageFormat = pkgMetadata.PackageFormat
+				stats.PackageID = pkgMetadata.PackageID
+				stats.Developer = pkgMetadata.Developer
+				stats.Architecture = pkgMetadata.Architecture
+				stats.InstallLocation = pkgMetadata.InstallLocation
+				stats.IsSigned = pkgMetadata.IsSigned
+				
+				// Determine install method from package format and type
+				if pkgMetadata.PackageFormat == "pkg" {
+					stats.InstallMethod = "pkg"
+				} else if pkgMetadata.PackageFormat == "nupkg" {
+					stats.InstallMethod = "nupkg"
+				}
+				
+				// Set signature status based on signature information
+				if pkgMetadata.IsSigned && pkgMetadata.SignatureAlgorithm != "" {
+					stats.SignatureStatus = "valid" // Assume valid if stored (installer verified it)
+					stats.SignatureAlgorithm = pkgMetadata.SignatureAlgorithm
+					stats.CertificateSubject = pkgMetadata.CertificateSubject
+					stats.CertificateThumbprint = pkgMetadata.CertificateThumbprint
+					stats.SignatureTimestamp = pkgMetadata.SignatureTimestamp
+				} else if pkgMetadata.IsSigned {
+					stats.SignatureStatus = "unknown"
+				} else if pkgMetadata.PackageFormat == "pkg" {
+					stats.SignatureStatus = "not_signed"
+				}
+			}
 				
 			if !compatible && len(supportedArchs) > 0 {
 				// Package is installed but not compatible with current architecture
@@ -1462,6 +1550,18 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 				stats.InstalledVersion = registryVersion
 			}
 		}
+		
+		// Populate .pkg metadata from registry (enhanced installation tracking)
+		pkgMetadata := exp.getPkgRegistryMetadata(stats.Name)
+		stats.PackageFormat = pkgMetadata.PackageFormat
+		stats.SignatureStatus = pkgMetadata.SignatureStatus
+		stats.SignerCertificate = pkgMetadata.SignerCertificate
+		stats.SignerCommonName = pkgMetadata.SignerCommonName
+		stats.SignatureTimestamp = pkgMetadata.SignatureTimestamp
+		stats.DeveloperName = pkgMetadata.DeveloperName
+		stats.DeveloperOrganization = pkgMetadata.DeveloperOrganization
+		stats.SbinInstaller = pkgMetadata.SbinInstaller
+		stats.PkgBuildVersion = pkgMetadata.PkgBuildVersion
 	}
 
 	// Convert to records
@@ -1549,6 +1649,17 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			// Enhanced metadata for external reporting tools
 			InstallMethod: installMethod,
 			Type:          "cimian",
+			
+			// .pkg format specific fields (from registry metadata)
+			PackageFormat:        stats.PackageFormat,
+			SignatureStatus:      stats.SignatureStatus,
+			SignerCertificate:    stats.SignerCertificate,
+			SignerCommonName:     stats.SignerCommonName,
+			SignatureTimestamp:   stats.SignatureTimestamp,
+			DeveloperName:        stats.DeveloperName,
+			DeveloperOrganization: stats.DeveloperOrganization,
+			SbinInstaller:        stats.SbinInstaller,
+			PkgBuildVersion:      stats.PkgBuildVersion,
 
 			// Error information
 			LastError:      stats.LastError,
@@ -1697,6 +1808,59 @@ func (exp *DataExporter) getInstalledVersionFromWindowsRegistry(itemName string)
 	}
 	
 	return ""
+}
+
+// getPkgRegistryMetadata reads .pkg specific metadata from Windows registry
+// This is where enhanced installation tracking stores signature verification results
+func (exp *DataExporter) getPkgRegistryMetadata(itemName string) PkgRegistryMetadata {
+	// Try Cimian's package tracking registry first
+	cimianKey := `SOFTWARE\Cimian\InstalledPackages\` + itemName
+	if key, err := registry.OpenKey(registry.LOCAL_MACHINE, cimianKey, registry.QUERY_VALUE); err == nil {
+		defer key.Close()
+		
+		metadata := PkgRegistryMetadata{}
+		
+		// Read package format
+		if format, _, err := key.GetStringValue("PackageFormat"); err == nil {
+			metadata.PackageFormat = format
+		}
+		
+		// Read signature status
+		if status, _, err := key.GetStringValue("SignatureStatus"); err == nil {
+			metadata.SignatureStatus = status
+		}
+		
+		// Read certificate information
+		if cert, _, err := key.GetStringValue("SignerCertificate"); err == nil {
+			metadata.SignerCertificate = cert
+		}
+		if cn, _, err := key.GetStringValue("SignerCommonName"); err == nil {
+			metadata.SignerCommonName = cn
+		}
+		if timestamp, _, err := key.GetStringValue("SignatureTimestamp"); err == nil {
+			metadata.SignatureTimestamp = timestamp
+		}
+		
+		// Read developer information
+		if dev, _, err := key.GetStringValue("DeveloperName"); err == nil {
+			metadata.DeveloperName = dev
+		}
+		if org, _, err := key.GetStringValue("DeveloperOrganization"); err == nil {
+			metadata.DeveloperOrganization = org
+		}
+		
+		// Read installer information
+		if installer, _, err := key.GetStringValue("SbinInstaller"); err == nil {
+			metadata.SbinInstaller = installer
+		}
+		if buildVer, _, err := key.GetStringValue("PkgBuildVersion"); err == nil {
+			metadata.PkgBuildVersion = buildVer
+		}
+		
+		return metadata
+	}
+	
+	return PkgRegistryMetadata{} // Return empty struct if no .pkg metadata found
 }
 
 // ExportDataJSON exports all tables to a JSON file for external tool consumption
@@ -1968,6 +2132,28 @@ type comprehensiveItemStat struct {
 	LastWarning         string
 	InstallLoopDetected bool
 	LoopDetails         *InstallLoopDetail // Enhanced loop information
+
+	// .pkg package enhancements
+	PackageFormat        string
+	PackageID            string
+	Developer            string
+	Architecture         string
+	InstallLocation      string
+	InstallMethod        string
+	IsSigned             bool
+	SignatureStatus      string
+	SignatureAlgorithm   string
+	CertificateSubject   string
+	CertificateThumbprint string
+	SignatureTimestamp   string
+	
+	// Additional .pkg metadata fields
+	SignerCertificate    string  // Certificate thumbprint or identifier
+	SignerCommonName     string  // Certificate common name
+	DeveloperName        string  // Developer name from build-info
+	DeveloperOrganization string // Developer organization
+	SbinInstaller        string  // sbin-installer used for installation
+	PkgBuildVersion      string  // Package build version
 }
 
 func (exp *DataExporter) getRecentSessions(limitDays int) ([]string, error) {

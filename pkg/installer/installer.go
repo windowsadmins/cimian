@@ -23,6 +23,7 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/catalog"
 	"github.com/windowsadmins/cimian/pkg/config"
+	"github.com/windowsadmins/cimian/pkg/extract"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
 	"github.com/windowsadmins/cimian/pkg/retry"
@@ -169,6 +170,87 @@ func runSbinInstaller(packagePath string, item catalog.Item, cfg *config.Configu
 func installOrUpgradePkgWithSbin(item catalog.Item, packagePath, cachePath string, cfg *config.Configuration) (string, error) {
 	logging.Info("Installing .pkg package with sbin-installer", "item", item.Name, "package", packagePath)
 
+	// Extract and verify .pkg metadata
+	buildInfo, err := extract.ExtractPkgBuildInfo(packagePath)
+	if err != nil {
+		logging.Error("Failed to extract .pkg metadata", "item", item.Name, "error", err)
+		return "", fmt.Errorf("failed to extract .pkg metadata: %v", err)
+	}
+
+	// Log package information
+	logging.Info("Package metadata extracted", 
+		"item", item.Name,
+		"package_id", buildInfo.Product.Identifier,
+		"package_version", buildInfo.Product.Version,
+		"developer", buildInfo.Product.Developer,
+		"architecture", buildInfo.Product.Architecture)
+
+	// Verify signature if package is signed
+	if buildInfo.Signature != nil {
+		logging.Info("Verifying package signature", "item", item.Name, "algorithm", buildInfo.Signature.Algorithm)
+		
+		verificationResult := extract.VerifyPkgSignature(packagePath)
+		if !verificationResult.Valid {
+			errorMsg := fmt.Sprintf("Package signature verification failed: %s", verificationResult.Details)
+			
+			// Check if signature verification is required
+			if cfg != nil && cfg.GetPkgRequireSignature() {
+				logging.Error("Signature verification failed and is required", "item", item.Name, "error", verificationResult.Details)
+				
+				// Log signature verification failure
+				logging.LogEventEntry("install", "signature_verification", logging.StatusError,
+					fmt.Sprintf("Package signature verification failed: %s", verificationResult.Details),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("package_path", packagePath),
+					logging.WithContext("signature_error", verificationResult.Details),
+					logging.WithContext("certificate_valid", fmt.Sprintf("%v", verificationResult.CertificateValid)),
+					logging.WithContext("hash_valid", fmt.Sprintf("%v", verificationResult.HashValid)),
+					logging.WithContext("signature_valid", fmt.Sprintf("%v", verificationResult.SignatureValid)))
+				
+				return "", fmt.Errorf(errorMsg)
+			} else {
+				// Log as warning if not required
+				logging.Warn("Package signature verification failed but not required", "item", item.Name, "details", verificationResult.Details)
+				
+				logging.LogEventEntry("install", "signature_verification", logging.StatusWarning,
+					fmt.Sprintf("Package signature verification failed but proceeding: %s", verificationResult.Details),
+					logging.WithContext("item", item.Name),
+					logging.WithContext("package_path", packagePath),
+					logging.WithContext("signature_error", verificationResult.Details))
+			}
+		} else {
+			logging.Info("Package signature verification succeeded", "item", item.Name, "details", verificationResult.Details)
+			
+			// Log successful signature verification
+			logging.LogEventEntry("install", "signature_verification", "success",
+				"Package signature verification succeeded",
+				logging.WithContext("item", item.Name),
+				logging.WithContext("package_path", packagePath),
+				logging.WithContext("signature_details", verificationResult.Details),
+				logging.WithContext("certificate_subject", buildInfo.Signature.Certificate.Subject),
+				logging.WithContext("algorithm", buildInfo.Signature.Algorithm))
+		}
+	} else if cfg != nil && cfg.GetPkgRequireSignature() {
+		errorMsg := "Package is not signed but signature verification is required"
+		logging.Error(errorMsg, "item", item.Name)
+		
+		logging.LogEventEntry("install", "signature_verification", logging.StatusError,
+			errorMsg,
+			logging.WithContext("item", item.Name),
+			logging.WithContext("package_path", packagePath),
+			logging.WithContext("signature_required", "true"))
+		
+		return "", fmt.Errorf(errorMsg)
+	}
+
+	// Generate installs array for tracking
+	installItems, err := extract.BuildPkgInstalls(packagePath, buildInfo.Product.Identifier, buildInfo.Product.Version)
+	if err != nil {
+		logging.Warn("Failed to generate install items for tracking", "item", item.Name, "error", err)
+	} else {
+		logging.Debug("Generated install items for tracking", "item", item.Name, "count", len(installItems))
+	}
+
 	// Run catalog preinstall_script if present
 	if err := executePreInstallScript(item, cachePath); err != nil {
 		return "", err
@@ -179,29 +261,42 @@ func installOrUpgradePkgWithSbin(item catalog.Item, packagePath, cachePath strin
 	if err != nil {
 		logging.Error("sbin-installer .pkg installation failed", "item", item.Name, "error", err)
 		
-		// Log the failure for ReportMate
+		// Log the failure for ReportMate with enhanced context
 		status := logging.StatusFromError("sbin_installer_pkg", err)
 		logging.LogEventEntry("install", "sbin_installer_pkg", status,
 			fmt.Sprintf("sbin-installer .pkg installation failed: %s", err.Error()),
 			logging.WithContext("item", item.Name),
 			logging.WithContext("package_path", packagePath),
 			logging.WithContext("installer_type", "pkg"),
+			logging.WithContext("package_id", buildInfo.Product.Identifier),
+			logging.WithContext("package_version", buildInfo.Product.Version),
+			logging.WithContext("developer", buildInfo.Product.Developer),
+			logging.WithContext("signed", fmt.Sprintf("%v", buildInfo.Signature != nil)),
 			logging.WithContext("error_details", err.Error()))
 
 		return output, err
 	}
 
-	// Store version in registry
-	storeInstalledVersionInRegistry(catalog.Item{
-		Name:    item.Name,
-		Version: item.Version,
-	})
+	// Store enhanced version information in registry with .pkg metadata
+	storeInstalledVersionInRegistryWithPkgInfo(item, buildInfo)
 
 	// Attempt immediate cleanup if item has installs array for verification
 	immediateCleanupAfterInstall(item, packagePath, cfg)
 
 	// Run catalog postinstall_script if present
 	executePostInstallScript(item, cachePath)
+
+	// Log successful installation with enhanced context
+	logging.LogEventEntry("install", "sbin_installer_pkg", logging.StatusInstalled,
+		"sbin-installer .pkg installation succeeded",
+		logging.WithContext("item", item.Name),
+		logging.WithContext("package_path", packagePath),
+		logging.WithContext("installer_type", "pkg"),
+		logging.WithContext("package_id", buildInfo.Product.Identifier),
+		logging.WithContext("package_version", buildInfo.Product.Version),
+		logging.WithContext("developer", buildInfo.Product.Developer),
+		logging.WithContext("install_location", buildInfo.InstallLocation),
+		logging.WithContext("signed", fmt.Sprintf("%v", buildInfo.Signature != nil)))
 
 	logging.Info("sbin-installer .pkg installation succeeded", "item", item.Name)
 	return output, nil
@@ -350,6 +445,93 @@ func storeInstalledVersionInRegistry(item catalog.Item) {
 	}
 	logging.Debug("Wrote local installed version to registry",
 		"item", item.Name, "version", versionStr)
+
+	// If this is a Cimian package, also write to the main Cimian registry key
+	itemName := strings.ToLower(strings.TrimSpace(item.Name))
+	if itemName == "cimian" || itemName == "cimiantools" || strings.HasPrefix(itemName, "cimian-") || strings.HasPrefix(itemName, "cimiantools-") {
+		if err := config.WriteCimianVersionToRegistry(versionStr); err != nil {
+			logging.Warn("Failed to write Cimian version to main registry key", "error", err)
+		} else {
+			logging.Info("Updated Cimian version in registry", "version", versionStr)
+		}
+	}
+}
+
+// storeInstalledVersionInRegistryWithPkgInfo stores enhanced package information for .pkg packages
+func storeInstalledVersionInRegistryWithPkgInfo(item catalog.Item, buildInfo *extract.PkgBuildInfo) {
+	regPath := `Software\ManagedInstalls\` + item.Name
+	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, regPath, registry.SET_VALUE)
+	if err != nil {
+		logging.Warn("Failed to create registry key for installed version",
+			"key", regPath, "error", err)
+		return
+	}
+	defer k.Close()
+
+	// Store basic version info
+	versionStr := strings.TrimSpace(item.Version)
+	if versionStr == "" && buildInfo != nil {
+		versionStr = strings.TrimSpace(buildInfo.Product.Version)
+	}
+	if versionStr == "" {
+		versionStr = "0.0.0"
+	}
+	err = k.SetStringValue("Version", versionStr)
+	if err != nil {
+		logging.Warn("Failed to set 'Version' in registry", "key", regPath, "error", err)
+		return
+	}
+
+	// Store .pkg specific metadata if available
+	if buildInfo != nil {
+		// Package format
+		k.SetStringValue("PackageFormat", "pkg")
+		
+		// Product information
+		if buildInfo.Product.Identifier != "" {
+			k.SetStringValue("PackageID", buildInfo.Product.Identifier)
+		}
+		if buildInfo.Product.Developer != "" {
+			k.SetStringValue("Developer", buildInfo.Product.Developer)
+		}
+		if buildInfo.Product.Description != "" {
+			k.SetStringValue("Description", buildInfo.Product.Description)
+		}
+		if buildInfo.Product.Architecture != "" {
+			k.SetStringValue("Architecture", buildInfo.Product.Architecture)
+		}
+		
+		// Installation information
+		if buildInfo.InstallLocation != "" {
+			k.SetStringValue("InstallLocation", buildInfo.InstallLocation)
+			k.SetStringValue("InstallType", "copy")
+		} else {
+			k.SetStringValue("InstallType", "installer")
+		}
+		
+		// Signature information
+		if buildInfo.Signature != nil {
+			k.SetStringValue("Signed", "true")
+			k.SetStringValue("SignatureAlgorithm", buildInfo.Signature.Algorithm)
+			k.SetStringValue("CertificateSubject", buildInfo.Signature.Certificate.Subject)
+			k.SetStringValue("CertificateThumbprint", buildInfo.Signature.Certificate.Thumbprint)
+			k.SetStringValue("SignatureTimestamp", buildInfo.Signature.Timestamp)
+		} else {
+			k.SetStringValue("Signed", "false")
+		}
+		
+		// Installation timestamp
+		k.SetStringValue("InstalledDate", time.Now().UTC().Format(time.RFC3339))
+	}
+
+	logging.Debug("Wrote enhanced .pkg installed version to registry",
+		"item", item.Name, "version", versionStr, "packageID", 
+		func() string {
+			if buildInfo != nil {
+				return buildInfo.Product.Identifier
+			}
+			return ""
+		}())
 
 	// If this is a Cimian package, also write to the main Cimian registry key
 	itemName := strings.ToLower(strings.TrimSpace(item.Name))
