@@ -19,6 +19,7 @@
 #  PackageOnly    package existing binaries only (skip build), create both MSI and NUPKG
 #  NupkgOnly      create .nupkg packages only using existing binaries (skip build and MSI)
 #  MsiOnly        create MSI packages only using existing binaries (skip build and NUPKG)
+#  PkgOnly        create .pkg packages only using existing binaries (direct binary payload)
 #
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing (no .intunewin)
@@ -33,7 +34,8 @@
 #   .\build.ps1 -SkipMSI             # Build only .nupkg packages, skip MSI packaging
 #   .\build.ps1 -PackageOnly         # Package existing binaries (both MSI and NUPKG)
 #   .\build.ps1 -NupkgOnly           # Create only .nupkg packages from existing binaries
-#   .\build.ps1 -MsiOnly             # Create only MSI packages from existing binaries
+#   .\build.ps1 -MsiOnly             # Create only MSI packages from existing binaries  
+#   .\build.ps1 -PkgOnly             # Create only .pkg packages from existing binaries (direct payload)
 param(
     [switch]$Sign,
     [switch]$NoSign,
@@ -49,7 +51,8 @@ param(
     [switch]$SkipMSI,  # Skip MSI packaging, build only .nupkg packages
     [switch]$PackageOnly,  # Package existing binaries only (skip build), create both MSI and NUPKG
     [switch]$NupkgOnly,    # Create .nupkg packages only using existing binaries (skip build and MSI)
-    [switch]$MsiOnly       # Create MSI packages only using existing binaries (skip build and NUPKG)
+    [switch]$MsiOnly,      # Create MSI packages only using existing binaries (skip build and NUPKG)
+    [switch]$PkgOnly       # Create .pkg packages only using existing binaries (direct binary payload)
 )
 #   GLOBALS  
 # Friendly name (CN) of the enterprise code-signing certificate you push with Intune
@@ -284,6 +287,7 @@ if ($SignMSI) {
     if ($PackageOnly) { $conflictingFlags += "-PackageOnly" }
     if ($NupkgOnly) { $conflictingFlags += "-NupkgOnly" }
     if ($MsiOnly) { $conflictingFlags += "-MsiOnly" }
+    if ($PkgOnly) { $conflictingFlags += "-PkgOnly" }
     
     if ($conflictingFlags.Count -gt 0) {
         Write-Log "Cannot use -SignMSI with the following flags: $($conflictingFlags -join ', ')" "ERROR"
@@ -1048,7 +1052,7 @@ if ($Binaries -or $Binary) {
 #  PACKAGE-ONLY MODE EARLY EXIT
 # 
 # Early exit for package-only modes - skip all build steps and go directly to packaging
-if ($PackageOnly -or $NupkgOnly -or $MsiOnly) {
+if ($PackageOnly -or $NupkgOnly -or $MsiOnly -or $PkgOnly) {
     Write-Log "Package-only mode detected - skipping build steps and going directly to packaging..." "INFO"
     
     # Validate that binaries exist before attempting to package
@@ -1068,14 +1072,29 @@ if ($PackageOnly -or $NupkgOnly -or $MsiOnly) {
     
     # Basic tool validation for packaging
     $requiredTools = @()
-    if (-not $MsiOnly) {
+    if (-not $MsiOnly -and -not $PkgOnly) {
         $requiredTools += @{ Name = "nuget.commandline"; Command = "nuget" }
     }
-    if (-not $NupkgOnly) {
+    if (-not $NupkgOnly -and -not $PkgOnly) {
         # Check for WiX
         $wixBin = Find-WiXBinPath
         if (-not $wixBin) {
             Write-Log "WiX Toolset is required for MSI packaging but not found." "ERROR"
+            exit 1
+        }
+    }
+    # For .pkg packaging, we need cimipkg which should be in release directories
+    if ($PkgOnly -or $PackageOnly) {
+        $cimipkgFound = $false
+        foreach ($arch in @("x64", "arm64")) {
+            if (Test-Path "release\$arch\cimipkg.exe") {
+                $cimipkgFound = $true
+                break
+            }
+        }
+        if (-not $cimipkgFound) {
+            Write-Log "cimipkg.exe is required for .pkg packaging but not found in release directories." "ERROR"
+            Write-Log "Build cimipkg first with: .\build.ps1 -Binary cimipkg -Sign" "INFO"
             exit 1
         }
     }
@@ -1101,12 +1120,16 @@ if ($PackageOnly -or $NupkgOnly -or $MsiOnly) {
     # Set mode-specific flags
     if ($NupkgOnly) {
         $SkipMSI = $true
-        Write-Log "NUPKG-only mode: Will skip MSI packaging" "INFO"
+        Write-Log "NUPKG-only mode: Will skip MSI and .pkg packaging" "INFO"
     } elseif ($MsiOnly) {
         # No special flags needed for MSI-only, NuGet packaging conditional is already set
-        Write-Log "MSI-only mode: Will skip NuGet packaging" "INFO"
+        Write-Log "MSI-only mode: Will skip NuGet and .pkg packaging" "INFO"
+    } elseif ($PkgOnly) {
+        # PkgOnly uses direct binary payload, no MSI dependency needed
+        $SkipMSI = $true
+        Write-Log ".pkg-only mode: Will use direct binary payload in .pkg packages" "INFO"
     } elseif ($PackageOnly) {
-        Write-Log "Package-only mode: Will create both MSI and NuGet packages" "INFO"
+        Write-Log "Package-only mode: Will create MSI, NuGet, and .pkg packages" "INFO"
     }
     
     # Jump directly to packaging section - we'll handle the specific mode logic there
@@ -1838,8 +1861,8 @@ foreach ($msiArch in $msiArchs) {
     Write-Log "Skipping MSI package building due to -SkipMSI flag" "INFO"
 }
 
-# Step 11: Prepare NuGet Packages for both x64 and arm64 (unless -MsiOnly is specified)
-if (-not $MsiOnly) {
+# Step 11: Prepare NuGet Packages for both x64 and arm64 (unless -MsiOnly or -PkgOnly is specified)
+if (-not $MsiOnly -and -not $PkgOnly) {
     Write-Log "Preparing NuGet packages for x64 and arm64..." "INFO"
 foreach ($arch in $archs) {
     $pkgTempDir  = "release\nupkg_$arch"
@@ -1909,7 +1932,140 @@ foreach ($arch in $archs) {
 Write-Log "NuGet packaging for all architectures completed." "SUCCESS"
 
 } else {
-    Write-Log "Skipping NuGet package creation due to -MsiOnly flag" "INFO"
+    Write-Log "Skipping NuGet package creation due to -MsiOnly or -PkgOnly flag" "INFO"
+}
+
+# Step 11.5: Create .pkg Packages for both x64 and arm64 (Modern package format)
+if (-not $MsiOnly -and -not $NupkgOnly) {
+    Write-Log "Creating .pkg packages for x64 and arm64..." "INFO"
+    
+    # Ensure cimipkg tool is available
+    if (-not (Test-Path "release\x64\cimipkg.exe") -and -not (Test-Path "release\arm64\cimipkg.exe")) {
+        Write-Log "cimipkg.exe not found in release directories. .pkg packages cannot be created." "WARNING"
+        Write-Log "Build cimipkg first with: .\build.ps1 -Binary cimipkg -Sign" "INFO"
+    } else {
+        foreach ($arch in $archs) {
+            $binariesDir = "release\$arch"
+            $cimipkgPath = "release\$arch\cimipkg.exe"
+            
+            # Skip if binaries directory doesn't exist for this architecture
+            if (-not (Test-Path $binariesDir)) {
+                Write-Log "Binaries directory not found for $arch architecture: $binariesDir" "WARNING"
+                continue
+            }
+            
+            # Skip if cimipkg doesn't exist for this architecture
+            if (-not (Test-Path $cimipkgPath)) {
+                Write-Log "cimipkg.exe not found for $arch architecture: $cimipkgPath" "WARNING"
+                continue
+            }
+            
+            # Create temporary .pkg build directory
+            $pkgTempDir = "release\pkg_$arch"
+            if (Test-Path $pkgTempDir) { Remove-Item $pkgTempDir -Recurse -Force }
+            New-Item -ItemType Directory -Path $pkgTempDir -Force | Out-Null
+            
+            # Create payload directory and copy all binaries
+            $payloadDir = Join-Path $pkgTempDir "payload"
+            New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
+            
+            Write-Log "Copying CimianTools binaries for $arch architecture to .pkg payload..." "INFO"
+            $expectedExecutables = @(
+                'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
+                'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe','repoclean.exe'
+            )
+            
+            $missingExecutables = @()
+            foreach ($exe in $expectedExecutables) {
+                $sourcePath = Join-Path $binariesDir $exe
+                $destPath = Join-Path $payloadDir $exe
+                
+                if (Test-Path $sourcePath) {
+                    Copy-Item $sourcePath $destPath -Force
+                    Write-Log "Copied $exe to .pkg payload" "INFO"
+                } else {
+                    $missingExecutables += $exe
+                }
+            }
+            
+            if ($missingExecutables.Count -gt 0) {
+                Write-Log "Missing executables for $arch architecture: $($missingExecutables -join ', ')" "WARNING"
+                Write-Log "Continuing with available executables..." "WARNING"
+            }
+            
+            # Create scripts directory and copy postinstall script
+            $scriptsDir = Join-Path $pkgTempDir "scripts"
+            New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+            
+            $postinstallTemplatePath = "build\pkg\postinstall.ps1"
+            $postinstallPath = Join-Path $scriptsDir "postinstall.ps1"
+            if (Test-Path $postinstallTemplatePath) {
+                $postinstallTemplate = Get-Content $postinstallTemplatePath -Raw
+                $postinstallContent = $postinstallTemplate -replace '\{\{VERSION\}\}', $env:SEMANTIC_VERSION
+                $postinstallContent | Set-Content $postinstallPath -Encoding UTF8
+                Write-Log "Created postinstall.ps1 script in scripts directory for .pkg" "INFO"
+            } else {
+                Write-Log "Postinstall template not found: $postinstallTemplatePath" "WARNING"
+            }
+            
+            # Create build-info.yaml from template
+            $buildInfoTemplate = Get-Content "build\pkg\build-info.yaml" -Raw
+            $buildInfoContent = $buildInfoTemplate -replace '\{\{VERSION\}\}', $env:SEMANTIC_VERSION
+            $buildInfoContent = $buildInfoContent -replace '\{\{ARCHITECTURE\}\}', $arch
+            $buildInfoPath = Join-Path $pkgTempDir "build-info.yaml"
+            $buildInfoContent | Set-Content $buildInfoPath -Encoding UTF8
+            
+            Write-Log "Creating .pkg package for $arch architecture..." "INFO"
+            
+            # Build the .pkg package using cimipkg
+            try {
+                # Use the cimipkg tool to create the package (pass the build directory)
+                $cimipkgArgs = @()
+                
+                # Add verbose flag if needed
+                $cimipkgArgs += "--verbose"
+                
+                # Add the project directory as the last argument
+                $cimipkgArgs += $pkgTempDir
+                
+                # Execute cimipkg from the parent directory
+                $process = Start-Process -FilePath $cimipkgPath -ArgumentList $cimipkgArgs -Wait -NoNewWindow -PassThru
+                
+                if ($process.ExitCode -eq 0) {
+                    Write-Log ".pkg package created successfully for ${arch}" "SUCCESS"
+                    
+                    # Look for the created .pkg file in the build subdirectory
+                    $buildDir = Join-Path $pkgTempDir "build"
+                    if (Test-Path $buildDir) {
+                        $createdPkgFiles = Get-ChildItem -Path $buildDir -Filter "*.pkg"
+                        foreach ($pkgFile in $createdPkgFiles) {
+                            $pkgSize = $pkgFile.Length
+                            Write-Log ".pkg package created: $($pkgFile.Name) ($([math]::Round($pkgSize / 1MB, 2)) MB)" "INFO"
+                            
+                            # Move to release directory with expected naming
+                            $expectedName = "CimianTools-$arch-$env:RELEASE_VERSION.pkg"
+                            $targetPath = "release\$expectedName"
+                            Copy-Item $pkgFile.FullName $targetPath -Force
+                            Write-Log "Moved .pkg package to: $expectedName" "INFO"
+                        }
+                    } else {
+                        Write-Log "Build directory not found after cimipkg execution: $buildDir" "WARNING"
+                    }
+                } else {
+                    Write-Log "Failed to create .pkg package for ${arch} (exit code: $($process.ExitCode))" "ERROR"
+                }
+                
+            } catch {
+                Write-Log "Error creating .pkg package for ${arch}: $_" "ERROR"
+            } finally {
+                # Clean up temporary directory
+                Remove-Item $pkgTempDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Log ".pkg packaging for all architectures completed." "SUCCESS"
+    }
+} else {
+    Write-Log "Skipping .pkg package creation due to -MsiOnly or -NupkgOnly flag" "INFO"
 }
 
 # Step 12: Prepare IntuneWin Packages for both x64 and arm64 (Optional)
