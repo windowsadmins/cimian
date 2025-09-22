@@ -1076,7 +1076,7 @@ func cimianImport(
 
 		// Set the installer location relative to pkgs directory
 		pkgsInfo.Installer.Location = filepath.Join(repoSubPath, installerFilename)
-		pkgsInfo.Installer.Location = strings.ReplaceAll(pkgsInfo.Installer.Location, "\\", "/") // Use forward slashes
+		pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(pkgsInfo.Installer.Location) // Use Windows-style backslashes
 	}
 
 	// Step 13: write pkginfo to pkgsinfo subdir
