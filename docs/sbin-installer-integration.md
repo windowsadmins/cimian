@@ -1,13 +1,14 @@
 # sbin-installer Integration in Cimian
 
-This document describes the integration of the new `sbin-installer` tool as the primary package installation system in Cimian, replacing Chocolatey as the default installer while maintaining backward compatibility.
+This document describes the integration of the new `sbin-installer` tool as the primary package installation system in Cimian, with enhanced support for modern `.pkg` packages and cryptographic signature verification.
 
 ## Overview
 
-Cimian now supports the lightweight `sbin-installer` tool (from https://github.com/windowsadmins/sbin-installer) as the preferred method for installing both `.nupkg` and `.pkg` packages. This provides a cleaner, more predictable installation experience without the complexity and overhead of Chocolatey.
+Cimian now supports the lightweight `sbin-installer` tool (from https://github.com/windowsadmins/sbin-installer) as the preferred method for installing both modern `.pkg` packages and legacy `.nupkg` packages. This provides a cleaner, more predictable installation experience with enterprise-grade security features.
 
 ## Key Benefits
 
+- **Modern Package Support**: Native `.pkg` package format with embedded cryptographic signatures
 - **No Cache Management**: Runs directly from package location without maintaining state
 - **Deterministic**: Predictable, simple operation inspired by macOS `/usr/sbin/installer`
 - **Lightweight**: Single executable with no external dependencies
@@ -27,6 +28,47 @@ The system follows this installation preference order:
 2. **Chocolatey (fallback)** - If sbin-installer fails or is unavailable
 3. **Maintain compatibility** - Existing Chocolatey packages continue to work
 
+## Modern .pkg Package Format
+
+### Package Structure
+Modern `.pkg` packages created by `cimipkg` have this structure:
+```
+package-name-1.0.0.pkg (ZIP archive)
+├── build-info.yaml           # Package metadata with embedded signature
+├── payload/                  # Files to be installed
+│   └── application files...
+└── scripts/                  # Installation scripts (optional)
+    ├── preinstall.ps1
+    └── postinstall.ps1
+```
+
+### Cryptographic Signature Integration
+
+When packages are built with `cimipkg -sign`, comprehensive signature metadata is embedded directly in the `build-info.yaml` file:
+
+```yaml
+signature:
+  algorithm: "SHA256withRSA"
+  certificate:
+    subject: "CN=Company Name, O=Organization"
+    thumbprint: "A1B2C3D4E5F6789012345678901234567890ABCD"
+    not_before: "2024-01-01T00:00:00Z"
+    not_after: "2025-12-31T23:59:59Z"
+  package_hash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  content_hash: "sha256:a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+  signed_hash: "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+  timestamp: "2024-12-20T10:30:45Z"
+  version: "1.0"
+```
+
+### Security Benefits
+
+- **Embedded Signatures**: No external signature files needed
+- **Package Integrity**: SHA256 hashes verify complete package contents
+- **Certificate Validation**: Full certificate chain verification
+- **Tamper Detection**: Any modification invalidates the signature
+- **Enterprise Trust**: Uses Windows Certificate Store infrastructure
+
 ## Configuration Options
 
 Add these settings to your `Config.yaml`:
@@ -37,6 +79,13 @@ ForceChocolatey: false              # Force Chocolatey for all packages (default
 PreferSbinInstaller: true           # Prefer sbin-installer when available (default: true)
 SbinInstallerPath: ""               # Custom path to installer.exe (default: auto-detect)
 SbinInstallerTargetRoot: "/"        # Target root for installations (default: "/")
+
+# .pkg package signature verification
+RequireSignedPackages: true         # Require cryptographic signatures (default: false)
+SignatureVerification: "required"   # required, optional, disabled
+TrustedCertificates:                # Optional: specific trusted certificates
+  - thumbprint: "A1B2C3D4E5F6789012345678901234567890ABCD"
+    name: "Company Code Signing Certificate"
 ```
 
 ### Configuration Details

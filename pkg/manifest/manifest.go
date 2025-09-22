@@ -57,6 +57,12 @@ type Item struct {
 
 	// Add a field to record if the item is for install/update/uninstall
 	Action string `yaml:"-"` // internal use
+	
+	// Package format support for mixed .pkg/.nupkg catalogs
+	PackageFormat     string `yaml:"-"` // "pkg" or "nupkg", detected from installer type/location
+	InstallerType     string `yaml:"-"` // From catalog entry installer.type field
+	InstallerHash     string `yaml:"-"` // From catalog entry installer.hash field
+	InstallerSize     int64  `yaml:"-"` // From catalog entry installer.size field
 
 	// Source tracking - not persisted to YAML, used for runtime tracking
 	SourceManifest string `yaml:"-"` // Which manifest this item came from
@@ -521,6 +527,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SourceManifest: mf.Name,
 				})
 			} else {
+				// Detect package format for mixed catalog support
+				packageFormat := detectPackageFormat(&catEntry)
+				
 				finalItems = append(finalItems, Item{
 					Name:              catEntry.Name,
 					Version:           catEntry.Version,
@@ -530,6 +539,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					OnDemand:          catEntry.OnDemand,
 					Action:            "install", // or "install"
 					SourceManifest:    mf.Name,
+					// Mixed catalog format support
+					PackageFormat:     packageFormat,
+					InstallerType:     catEntry.Installer.Type,
+					InstallerHash:     catEntry.Installer.Hash,
+					InstallerSize:     catEntry.Installer.Size,
 				})
 			}
 		}
@@ -555,6 +569,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SourceManifest: mf.Name,
 				})
 			} else {
+				// Detect package format for mixed catalog support
+				packageFormat := detectPackageFormat(&catEntry)
+				
 				finalItems = append(finalItems, Item{
 					Name:              catEntry.Name,
 					Version:           catEntry.Version,
@@ -564,6 +581,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					OnDemand:          catEntry.OnDemand,
 					Action:            "update",
 					SourceManifest:    mf.Name,
+					// Mixed catalog format support
+					PackageFormat:     packageFormat,
+					InstallerType:     catEntry.Installer.Type,
+					InstallerHash:     catEntry.Installer.Hash,
+					InstallerSize:     catEntry.Installer.Size,
 				})
 			}
 		}
@@ -589,6 +611,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SourceManifest: mf.Name,
 				})
 			} else {
+				// Detect package format for mixed catalog support
+				packageFormat := detectPackageFormat(&catEntry)
+				
 				finalItems = append(finalItems, Item{
 					Name:              catEntry.Name,
 					Version:           catEntry.Version,
@@ -598,6 +623,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					OnDemand:          catEntry.OnDemand,
 					Action:            "optional",
 					SourceManifest:    mf.Name,
+					// Mixed catalog format support
+					PackageFormat:     packageFormat,
+					InstallerType:     catEntry.Installer.Type,
+					InstallerHash:     catEntry.Installer.Hash,
+					InstallerSize:     catEntry.Installer.Size,
 				})
 			}
 		}
@@ -624,6 +654,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					SourceManifest: mf.Name,
 				})
 			} else {
+				// Detect package format for mixed catalog support
+				packageFormat := detectPackageFormat(&catEntry)
+				
 				// Possibly we only need name + version for uninstall, or the uninstaller data?
 				finalItems = append(finalItems, Item{
 					Name:              catEntry.Name,
@@ -634,6 +667,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 					OnDemand:          catEntry.OnDemand,
 					Action:            "uninstall",
 					SourceManifest:    mf.Name,
+					// Mixed catalog format support
+					PackageFormat:     packageFormat,
+					InstallerType:     catEntry.Installer.Type,
+					InstallerHash:     catEntry.Installer.Hash,
+					InstallerSize:     catEntry.Installer.Size,
 				})
 			}
 		}
@@ -706,6 +744,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 								SourceManifest: "SelfServeManifest",
 							})
 						} else {
+							// Detect package format for mixed catalog support
+							packageFormat := detectPackageFormat(&catEntry)
+							
 							finalItems = append(finalItems, Item{
 								Name:              catEntry.Name,
 								Version:           catEntry.Version,
@@ -715,6 +756,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 								OnDemand:          catEntry.OnDemand,
 								Action:            "install",
 								SourceManifest:    "SelfServeManifest",
+								// Mixed catalog format support
+								PackageFormat:     packageFormat,
+								InstallerType:     catEntry.Installer.Type,
+								InstallerHash:     catEntry.Installer.Hash,
+								InstallerSize:     catEntry.Installer.Size,
 							})
 						}
 					}
@@ -742,6 +788,9 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 								SourceManifest: "SelfServeManifest",
 							})
 						} else {
+							// Detect package format for mixed catalog support
+							packageFormat := detectPackageFormat(&catEntry)
+							
 							finalItems = append(finalItems, Item{
 								Name:              catEntry.Name,
 								Version:           catEntry.Version,
@@ -751,6 +800,11 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 								OnDemand:          catEntry.OnDemand,
 								Action:            "uninstall",
 								SourceManifest:    "SelfServeManifest",
+								// Mixed catalog format support
+								PackageFormat:     packageFormat,
+								InstallerType:     catEntry.Installer.Type,
+								InstallerHash:     catEntry.Installer.Hash,
+								InstallerSize:     catEntry.Installer.Size,
 							})
 						}
 					}
@@ -929,6 +983,34 @@ func getSystemArchitecture() string {
 	// Fallback to runtime.GOARCH if environment variable is not available
 	// This import would need to be added if not already present
 	return "unknown"
+}
+
+// detectPackageFormat determines package format from catalog entry
+// Returns "pkg" for .pkg packages, "nupkg" for NuGet packages, or "unknown"
+func detectPackageFormat(entry *CatalogEntry) string {
+	// Check installer type first - this is the most reliable method
+	if entry.Installer.Type != "" {
+		installerType := strings.ToLower(entry.Installer.Type)
+		switch installerType {
+		case "pkg", ".pkg":
+			return "pkg"
+		case "nupkg", ".nupkg", "nuget":
+			return "nupkg"
+		}
+	}
+	
+	// Fallback to file extension detection from location
+	if entry.Installer.Location != "" {
+		location := strings.ToLower(entry.Installer.Location)
+		if strings.HasSuffix(location, ".pkg") {
+			return "pkg"
+		} else if strings.HasSuffix(location, ".nupkg") {
+			return "nupkg"
+		}
+	}
+	
+	// Default assumption for backward compatibility
+	return "nupkg"
 }
 
 // getWindowsVersionBasic gets basic Windows version info without complex dependencies
