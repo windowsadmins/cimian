@@ -1,5 +1,6 @@
 # CimianTools .pkg Postinstall Script
 # Adapted from chocolateyInstall.ps1 for .pkg package format
+# Process termination is handled by preinstall.ps1 BEFORE file operations
 $ErrorActionPreference = 'Stop'
 
 Write-Host "CimianTools .pkg Postinstall: Setting up services and scheduled tasks..." -ForegroundColor Green
@@ -17,90 +18,6 @@ $arch = $env:PROCESSOR_ARCHITECTURE
 Write-Host "Target architecture: $arch" -ForegroundColor Green
 
 try {
-    # Stop CimianWatcher service if it's running (needed for upgrades)
-    Write-Host "Checking for existing CimianWatcher service..."
-    $existingService = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
-    
-    if ($existingService) {
-        Write-Host "Found existing CimianWatcher service with status: $($existingService.Status)"
-        if ($existingService.Status -eq "Running") {
-            Write-Host "Stopping CimianWatcher service for upgrade..."
-            try {
-                Stop-Service -Name "CimianWatcher" -Force -ErrorAction Stop
-                Start-Sleep -Seconds 3
-                Write-Host "CimianWatcher service stopped successfully"
-            } catch {
-                Write-Warning "Failed to stop CimianWatcher service: $_"
-                Write-Host "Attempting to forcefully terminate cimiwatcher.exe processes..."
-                try {
-                    Get-Process -Name "cimiwatcher" -ErrorAction SilentlyContinue | Stop-Process -Force
-                    Start-Sleep -Seconds 2
-                    Write-Host "Forcefully terminated cimiwatcher.exe processes"
-                } catch {
-                    Write-Warning "Failed to terminate cimiwatcher.exe processes: $_"
-                }
-            }
-        }
-    }
-    
-    # Stop ALL Cimian processes before file operations (comprehensive approach)
-    Write-Host "Stopping ALL Cimian processes for upgrade..."
-    try {
-        # Get all Cimian processes using wildcard pattern
-        $cimianProcesses = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil", "repoclean" -ErrorAction SilentlyContinue
-        
-        if ($cimianProcesses) {
-            Write-Host "Found $($cimianProcesses.Count) Cimian process(es) to terminate:"
-            foreach ($proc in $cimianProcesses) {
-                Write-Host "  - $($proc.Name) (PID: $($proc.Id))"
-            }
-            
-            # First attempt: graceful termination
-            Write-Host "Attempting graceful termination of all Cimian processes..."
-            $cimianProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 5
-            
-            # Verify all processes are terminated
-            $remainingProcesses = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil", "repoclean" -ErrorAction SilentlyContinue
-            if ($remainingProcesses) {
-                Write-Host "Some Cimian processes still running, using taskkill for aggressive termination..."
-                
-                # Use taskkill for each known Cimian executable
-                $cimianExes = @("cimiwatcher.exe", "managedsoftwareupdate.exe", "cimitrigger.exe", "cimistatus.exe", 
-                               "cimiimport.exe", "cimipkg.exe", "makecatalogs.exe", "makepkginfo.exe", "manifestutil.exe", "repoclean.exe")
-                
-                foreach ($exeName in $cimianExes) {
-                    try {
-                        & taskkill /F /IM $exeName /T 2>$null
-                    } catch {
-                        # Ignore errors for processes that aren't running
-                    }
-                }
-                
-                Start-Sleep -Seconds 3
-                
-                # Final verification
-                $finalCheck = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil", "repoclean" -ErrorAction SilentlyContinue
-                if ($finalCheck) {
-                    Write-Warning "Some Cimian processes may still be running after aggressive termination:"
-                    foreach ($proc in $finalCheck) {
-                        Write-Warning "  - $($proc.Name) (PID: $($proc.Id))"
-                    }
-                } else {
-                    Write-Host "All Cimian processes successfully terminated"
-                }
-            } else {
-                Write-Host "All Cimian processes successfully terminated"
-            }
-        } else {
-            Write-Host "No Cimian processes found running"
-        }
-    } catch {
-        Write-Warning "Error during comprehensive Cimian process termination: $_"
-        Write-Warning "Some file operations may fail due to locked files"
-    }
-
-    # Verify all expected executables are present
     Write-Host "Verifying CimianTools executables..."
     $expected = @(
         'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
@@ -137,7 +54,9 @@ try {
     $cimiwatcherExe = Join-Path $InstallDir "cimiwatcher.exe"
     if (Test-Path $cimiwatcherExe) {
         try {
-            # If service was already installed, we may just need to start it
+            # Check if service already exists
+            $existingService = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
+            
             if ($existingService) {
                 Write-Host "CimianWatcher service already installed, restarting it..."
                 try {

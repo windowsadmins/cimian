@@ -11,7 +11,7 @@
 #  Task XX        run specific task: build, package, all (default: all)
 #  Binaries       build and sign only the .exe binaries, skip all packaging
 #  Binary XX      build and sign only a specific binary (e.g., cimistatus)
-#  Install        after building, install the MSI package (requires elevation)
+#  Install        after building, install the .pkg package (requires elevation)
 #  IntuneWin      create .intunewin packages (adds build time, only needed for deployment)
 #  Dev            development mode: stops services, faster iteration
 #  SignMSI        sign existing MSI files in release directory (standalone operation)
@@ -26,7 +26,7 @@
 #   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
 #   .\build.ps1 -Binary cimistatus -Sign # Build and sign only cimistatus binary
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
-#   .\build.ps1 -Install             # Build and install the MSI package
+#   .\build.ps1 -Install             # Build and install the .pkg package
 #   .\build.ps1 -IntuneWin           # Full build including .intunewin packages
 #   .\build.ps1 -Dev -Install        # Development mode: fast rebuild and install
 #   .\build.ps1 -SignMSI             # Sign existing MSI files in release directory
@@ -272,7 +272,7 @@ if ($Binary) {
 }
 # If Install flag is set with Binaries or Binary, show error
 if ($Install -and ($Binaries -or $Binary)) {
-    Write-Log "Cannot use -Install with -Binaries or -Binary flag. MSI packages are needed for installation." "ERROR"
+    Write-Log "Cannot use -Install with -Binaries or -Binary flag. .pkg packages are needed for installation." "ERROR"
     exit 1
 }
 
@@ -297,7 +297,7 @@ if ($SignMSI) {
 }
 # If Install flag is set, ensure Task includes packaging
 if ($Install -and $Task -eq "build") {
-    Write-Log "Install flag detected - forcing Task to 'all' to ensure MSI packages are built." "INFO"
+    Write-Log "Install flag detected - forcing Task to 'all' to ensure .pkg packages are built." "INFO"
     $Task = "all"
 }
 if ($NoSign) {
@@ -2008,6 +2008,18 @@ if (-not $MsiOnly -and -not $NupkgOnly) {
                 Write-Log "Postinstall template not found: $postinstallTemplatePath" "WARNING"
             }
             
+            # Copy preinstall script
+            $preinstallTemplatePath = "build\pkg\preinstall.ps1"
+            $preinstallPath = Join-Path $scriptsDir "preinstall.ps1"
+            if (Test-Path $preinstallTemplatePath) {
+                $preinstallTemplate = Get-Content $preinstallTemplatePath -Raw
+                $preinstallContent = $preinstallTemplate -replace '\{\{VERSION\}\}', $env:SEMANTIC_VERSION
+                $preinstallContent | Set-Content $preinstallPath -Encoding UTF8
+                Write-Log "Created preinstall.ps1 script in scripts directory for .pkg" "INFO"
+            } else {
+                Write-Log "Preinstall template not found: $preinstallTemplatePath" "WARNING"
+            }
+            
             # Create build-info.yaml from template
             $buildInfoTemplate = Get-Content "build\pkg\build-info.yaml" -Raw
             $buildInfoContent = $buildInfoTemplate -replace '\{\{VERSION\}\}', $env:SEMANTIC_VERSION
@@ -2195,44 +2207,107 @@ if ($Sign -and -not $SkipMSI) {
 }
 
 Write-Log "Build and packaging process completed successfully." "SUCCESS"
-# Step 15: Install MSI Package if requested
+# Step 15: Install .pkg Package if requested
 if ($Install) {
-    Write-Log "Install flag detected. Attempting to install MSI package..." "INFO"
+    Write-Log "Install flag detected. Attempting to install .pkg package..." "INFO"
     # Determine the current architecture for installation
     $currentArch = if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") { "x64" } else { "arm64" }
     
-    # If RELEASE_VERSION is not set, try to detect it from existing MSI files
+    # Check if sudo installer is available
+    if (-not (Get-Command "sudo" -ErrorAction SilentlyContinue)) {
+        Write-Log "sudo command not found. Installing gsudo for package installation..." "INFO"
+        try {
+            Install-Chocolatey
+            choco install gsudo --no-progress --yes --force | Out-Null
+            # Refresh PATH to ensure sudo is available
+            if ($env:ChocolateyInstall -and (Test-Path "$env:ChocolateyInstall\helpers\refreshenv.cmd")) {
+                & "$env:ChocolateyInstall\helpers\refreshenv.cmd"
+            }
+            # Add common gsudo paths
+            $possibleSudoPaths = @(
+                "C:\ProgramData\chocolatey\bin",
+                "C:\Program Files\gsudo\Current",
+                "$env:ProgramFiles\gsudo\Current"
+            )
+            foreach ($p in $possibleSudoPaths) {
+                if (Test-Path (Join-Path $p "sudo.exe")) {
+                    $env:Path = "$p;$env:Path"
+                    break
+                }
+            }
+            if (-not (Get-Command "sudo" -ErrorAction SilentlyContinue)) {
+                Write-Log "Failed to install or locate sudo command. Cannot proceed with .pkg installation." "ERROR"
+                exit 1
+            }
+            Write-Log "sudo (gsudo) installed successfully." "SUCCESS"
+        }
+        catch {
+            Write-Log "Failed to install sudo (gsudo): $_" "ERROR"
+            exit 1
+        }
+    }
+    
+    # Check if installer command is available (sbin-installer)
+    if (-not (Get-Command "installer" -ErrorAction SilentlyContinue)) {
+        Write-Log "installer command not found. Checking for sbin-installer..." "INFO"
+        # Check common installation paths for sbin-installer
+        $possibleInstallerPaths = @(
+            "C:\Program Files\sbin-installer\installer.exe",
+            "C:\Program Files (x86)\sbin-installer\installer.exe",
+            "C:\sbin-installer\installer.exe",
+            ".\installer.exe"
+        )
+        $installerFound = $false
+        foreach ($path in $possibleInstallerPaths) {
+            if (Test-Path $path) {
+                # Add to PATH temporarily
+                $installerDir = Split-Path $path -Parent
+                $env:Path = "$installerDir;$env:Path"
+                $installerFound = $true
+                Write-Log "Found sbin-installer at: $path" "SUCCESS"
+                break
+            }
+        }
+        if (-not $installerFound) {
+            Write-Log "sbin-installer not found. Please install sbin-installer to use .pkg package installation." "ERROR"
+            Write-Log "You can install it from: https://github.com/microsoft/sbin-installer" "INFO"
+            Write-Log "Fallback: You can manually extract and install the .pkg file (it's a ZIP archive)." "INFO"
+            exit 1
+        }
+    }
+    
+    # If RELEASE_VERSION is not set, try to detect it from existing .pkg files
     if (-not $env:RELEASE_VERSION) {
-        $existingMsi = Get-ChildItem -Path "release" -Filter "Cimian-$currentArch-*.msi" | Select-Object -First 1
-        if ($existingMsi) {
-            # Extract version from filename: Cimian-arm64-2025.08.22.1948.msi -> 2025.08.22.1948
-            if ($existingMsi.Name -match "Cimian-$currentArch-(.+)\.msi") {
+        $existingPkg = Get-ChildItem -Path "release" -Filter "CimianTools-$currentArch-*.pkg" | Select-Object -First 1
+        if ($existingPkg) {
+            # Extract version from filename: CimianTools-arm64-2025.08.22.1948.pkg -> 2025.08.22.1948
+            if ($existingPkg.Name -match "CimianTools-$currentArch-(.+)\.pkg") {
                 $env:RELEASE_VERSION = $matches[1]
-                Write-Log "Detected RELEASE_VERSION from existing MSI: $env:RELEASE_VERSION" "INFO"
+                Write-Log "Detected RELEASE_VERSION from existing .pkg: $env:RELEASE_VERSION" "INFO"
             }
         }
     }
     
-    $msiToInstall = "release\Cimian-$currentArch-$env:RELEASE_VERSION.msi"
-    # Check if the MSI for current architecture exists
-    if (-not (Test-Path $msiToInstall)) {
-        Write-Log "MSI package for current architecture ($currentArch) not found at '$msiToInstall'" "WARNING"
+    $pkgToInstall = "release\CimianTools-$currentArch-$env:RELEASE_VERSION.pkg"
+    # Check if the .pkg for current architecture exists
+    if (-not (Test-Path $pkgToInstall)) {
+        Write-Log ".pkg package for current architecture ($currentArch) not found at '$pkgToInstall'" "WARNING"
         
-        # Try to find any MSI for current architecture with any version
-        $currentArchMsis = Get-ChildItem -Path "release" -Filter "Cimian-$currentArch-*.msi"
-        if ($currentArchMsis.Count -gt 0) {
-            $msiToInstall = $currentArchMsis[0].FullName
-            Write-Log "Found MSI for current architecture: $($currentArchMsis[0].Name)" "INFO"
+        # Try to find any .pkg for current architecture with any version
+        $currentArchPkgs = Get-ChildItem -Path "release" -Filter "CimianTools-$currentArch-*.pkg"
+        if ($currentArchPkgs.Count -gt 0) {
+            $pkgToInstall = $currentArchPkgs[0].FullName
+            Write-Log "Found .pkg for current architecture: $($currentArchPkgs[0].Name)" "INFO"
         } else {
             # Try the other architecture as fallback
             $fallbackArch = if ($currentArch -eq "x64") { "arm64" } else { "x64" }
-            $fallbackMsis = Get-ChildItem -Path "release" -Filter "Cimian-$fallbackArch-*.msi"
-            if ($fallbackMsis.Count -gt 0) {
-                $msiToInstall = $fallbackMsis[0].FullName
-                Write-Log "Using fallback MSI for $fallbackArch architecture: $($fallbackMsis[0].Name)" "INFO"
+            $fallbackPkgs = Get-ChildItem -Path "release" -Filter "CimianTools-$fallbackArch-*.pkg"
+            if ($fallbackPkgs.Count -gt 0) {
+                $pkgToInstall = $fallbackPkgs[0].FullName
+                Write-Log "Using fallback .pkg for $fallbackArch architecture: $($fallbackPkgs[0].Name)" "INFO"
             } else {
-                Write-Log "No MSI packages found for installation. Available files in release:" "ERROR"
-                Get-ChildItem -Path "release" -Filter "*.msi" | ForEach-Object {
+                Write-Log "No .pkg packages found for installation. Available files in release:" "ERROR"
+                Get-ChildItem -Path "release" -Filter "*.pkg" | ForEach-Object {
                     Write-Log "  $($_.Name)" "INFO"
                 }
                 Write-Log "Installation aborted." "ERROR"
@@ -2241,7 +2316,7 @@ if ($Install) {
         }
     }
     
-    # Pre-installation: Stop any running Cimian services to prevent restart manager dialog
+    # Pre-installation: Stop any running Cimian services to prevent conflicts
     Write-Log "Pre-installation: Stopping existing Cimian services..." "INFO"
     try {
         # Stop the service using multiple methods
@@ -2279,13 +2354,40 @@ if ($Install) {
         Write-Log "Pre-installation cleanup had some issues, but continuing: $_" "WARNING"
     }
     
-    # Attempt to install the MSI
-    $installSuccess = Install-MsiPackage -MsiPath $msiToInstall
-    if ($installSuccess) {
-        Write-Log "Cimian has been successfully installed!" "SUCCESS"
-        Write-Log "You can now use the Cimian tools from the command line." "INFO"
-    } else {
-        Write-Log "Installation failed. Please check the installation log at $env:TEMP\cimian_install.log for details." "ERROR"
+    # Attempt to install the .pkg package using sudo installer
+    Write-Log "Installing .pkg package: $pkgToInstall" "INFO"
+    try {
+        # Convert to absolute path for installer
+        $absolutePkgPath = (Resolve-Path $pkgToInstall).Path
+        Write-Log "Installing .pkg from absolute path: $absolutePkgPath" "INFO"
+        
+        # Use sudo installer to install the .pkg package
+        $installArgs = @("installer", $absolutePkgPath)
+        $installProcess = Start-Process -FilePath "sudo" -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
+        
+        if ($installProcess.ExitCode -eq 0) {
+            Write-Log "Cimian has been successfully installed from .pkg package!" "SUCCESS"
+            Write-Log "You can now use the Cimian tools from C:\Program Files\Cimian\" "INFO"
+            
+            # Verify installation by checking if binaries exist
+            $installDir = "C:\Program Files\Cimian"
+            if (Test-Path $installDir) {
+                $installedFiles = Get-ChildItem $installDir -Filter "*.exe" | Select-Object -First 5
+                Write-Log "Installed binaries:" "INFO"
+                $installedFiles | ForEach-Object { Write-Log "  $($_.Name)" "INFO" }
+                if ($installedFiles.Count -gt 5) {
+                    Write-Log "  ... and $($installedFiles.Count - 5) more binaries" "INFO"
+                }
+            }
+        } else {
+            Write-Log "Installation failed with exit code $($installProcess.ExitCode)" "ERROR"
+            Write-Log "Check the installer output above for details." "ERROR"
+            exit 1
+        }
+    }
+    catch {
+        Write-Log "Failed to install .pkg package: $_" "ERROR"
+        Write-Log "You can manually extract and install the .pkg file (it's a ZIP archive with payload and scripts directories)." "INFO"
         exit 1
     }
 }
