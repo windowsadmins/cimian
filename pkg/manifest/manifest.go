@@ -381,6 +381,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 	// Start from just the main "client_identifier"
 	manifestsToProcess := []string{cfg.ClientIdentifier}
+	logging.Debug("Starting manifest processing", "initialManifest", cfg.ClientIdentifier)
 
 	// We'll keep a global map of packageName => CatalogEntry
 	catalogMap := make(map[string]CatalogEntry)
@@ -391,10 +392,14 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	// BFS: process each named manifest
 	for len(manifestsToProcess) > 0 {
 		currentName := manifestsToProcess[0]
+		originalName := currentName
 		manifestsToProcess = manifestsToProcess[1:] // pop front
 		currentName = ensureYamlExtension(strings.ReplaceAll(currentName, `\`, `/`))
+		
+		logging.Debug("Processing manifest", "originalName", originalName, "processedName", currentName)
 
 		if visitedManifests[currentName] {
+			logging.Debug("Skipping already visited manifest", "manifest", currentName)
 			continue
 		}
 		visitedManifests[currentName] = true
@@ -403,13 +408,25 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		manifestURL := fmt.Sprintf("%s/manifests/%s",
 			strings.TrimRight(cfg.SoftwareRepoURL, "/"),
 			currentName)
-		localPath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, currentName)
+		
+		// For local path, convert forward slashes to backslashes for Windows
+		localCurrentName := strings.ReplaceAll(currentName, `/`, `\`)
+		localPath := filepath.Join(`C:\ProgramData\ManagedInstalls\manifests`, localCurrentName)
+		
+		logging.Debug("Downloading manifest", "url", manifestURL, "localPath", localPath)
 
 		// Download the manifest
 		if err := download.DownloadFile(manifestURL, localPath, cfg, 0, utils.NewNoOpReporter()); err != nil {
 			logging.Warn("Failed to download manifest", "manifestURL", manifestURL, "error", err)
+			
+			// If this is the primary manifest and it fails, this explains the catalog issue
+			if len(allManifests) == 0 {
+				logging.Error("CRITICAL: Primary manifest download failed", "clientIdentifier", cfg.ClientIdentifier, "url", manifestURL, "error", err)
+			}
 			continue
 		}
+
+		logging.Debug("Successfully downloaded manifest", "url", manifestURL)
 
 		// Read the .yaml
 		data, err := os.ReadFile(localPath)
@@ -443,6 +460,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 		}
 
 		// For each Catalog in this manifest, we always download & parse => add to catalogMap
+		logging.Debug("Processing catalogs for manifest", "manifest", mf.Name, "catalogs", mf.Catalogs)
 		for _, catName := range mf.Catalogs {
 			if catName == "" {
 				continue
@@ -450,6 +468,7 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 
 			// Track this catalog name for updating cfg.Catalogs
 			catalogNames[catName] = true
+			logging.Debug("Added catalog to collection", "catalog", catName)
 
 			catURL := fmt.Sprintf("%s/catalogs/%s.yaml",
 				strings.TrimRight(cfg.SoftwareRepoURL, "/"),
