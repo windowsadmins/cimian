@@ -1617,7 +1617,7 @@ func main() {
 		}
 		statusReporter.Message("Installing and updating applications...")
 		statusReporter.Percent(0) // Start progress tracking
-		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg, statusReporter, verbosity); err != nil {
+		if err := downloadAndInstallWithAdvancedLogic(allToInstall, fullCatalogMap, cfg, statusReporter, verbosity, exporter); err != nil {
 			statusReporter.Error(fmt.Errorf("some installations failed: %v", err))
 			if verbosity > 0 {
 				logger.Error("✗ Some installations failed: %v", err)
@@ -1852,17 +1852,17 @@ func main() {
 	// Generate reports AFTER session is finalized
 	// This ensures session status, failure counts, and end times are properly captured
 	statusReporter.Detail("Generating final system reports...")
-	finalExporter := reporting.NewDataExporter(`C:\ProgramData\ManagedInstalls\logs`)
 	
-	// Generate comprehensive final reports
-	if err := finalExporter.ExportToReportsDirectory(3); err != nil {
+	// Use the same exporter instance that was used during progressive reporting
+	// This preserves any current session error information stored during processing
+	if err := exporter.ExportToReportsDirectory(3); err != nil {
 		logger.Warning("Failed to generate final reports: %v", err)
 	} else {
 		logger.Info("Final reports exported successfully to C:\\ProgramData\\ManagedInstalls\\reports")
 	}
 	
 	// Also generate a final progressive report to mark completion
-	if err := finalExporter.ExportProgressiveReports(3, "session-complete"); err != nil {
+	if err := exporter.ExportProgressiveReports(3, "session-complete"); err != nil {
 		logger.Warning("Failed to export session-complete reports: %v", err)
 	} else {
 		logger.Debug("Session completion marker reports generated")
@@ -2604,7 +2604,7 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 }
 
 // downloadAndInstallWithAdvancedLogic handles downloading & installing with advanced dependency logic
-func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration, statusReporter utils.Reporter, verbosity int) error {
+func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration, statusReporter utils.Reporter, verbosity int, exporter *reporting.DataExporter) error {
 	// Get list of currently installed items for dependency checking
 	statusReporter.Detail("Checking currently installed items...")
 	installedItems := getInstalledItemNames()
@@ -2617,7 +2617,7 @@ func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[in
 
 	statusReporter.Detail(fmt.Sprintf("Processing %d items for installation...", len(itemNames)))
 	// Use the new advanced dependency processing and properly return its result
-	err := process.InstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg, verbosity, statusReporter)
+	err := process.InstallsWithAdvancedLogic(itemNames, catalogMap, installedItems, cfg.CachePath, false, cfg, verbosity, statusReporter, exporter)
 	
 	// Return the actual result from the installation process
 	return err

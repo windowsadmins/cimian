@@ -968,16 +968,14 @@ func UninstallsWithDependencies(itemNames []string, catalogsMap map[int]map[stri
 // Recursively handles requires and update_for relationships
 // Returns error only if ALL items fail, continues processing other items if some fail
 func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[string]catalog.Item,
-	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration, verbosity int, reporter utils.Reporter) error {
+	installedItems []string, cachePath string, checkOnly bool, cfg *config.Configuration, verbosity int, reporter utils.Reporter, exporter *reporting.DataExporter) error {
 	// Track processed items to avoid infinite loops
 	processedInstalls := make(map[string]bool)
 	var failedItems []string
 	var msiFailedItems []string // Track MSI-specific failures for service recovery
 	var successCount int
 
-	// PROGRESSIVE REPORTING: Initialize reporter for per-item updates
-	baseDir := filepath.Join(os.Getenv("ProgramData"), "ManagedInstalls", "logs")
-	exporter := reporting.NewDataExporter(baseDir)
+	// PROGRESSIVE REPORTING: Use the provided exporter instance that has current session package data
 
 	// Process each item recursively with full dependency logic
 	for i, itemName := range itemNames {
@@ -986,8 +984,10 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 		
 		// PROGRESSIVE REPORTING: Update items.json after each item is processed
 		var itemStatus string
+		var errorMsg string
 		if err != nil {
 			itemStatus = "failed"
+			errorMsg = err.Error()
 			// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
 			failedItems = append(failedItems, itemName)
 			
@@ -1012,12 +1012,13 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 			}
 		} else {
 			itemStatus = "completed"
+			errorMsg = "" // Clear any previous error
 			successCount++
 		}
 
 		// PROGRESSIVE REPORTING: Export updated items.json after each item
 		if !checkOnly { // Only during actual installations
-			if exportErr := exporter.ExportItemProgressUpdate(3, itemName, itemStatus); exportErr != nil {
+			if exportErr := exporter.ExportItemProgressUpdate(3, itemName, itemStatus, errorMsg); exportErr != nil {
 				logging.Debug("Failed to export progressive item update", "item", itemName, "error", exportErr)
 				// Don't fail the installation if reporting fails
 			} else {

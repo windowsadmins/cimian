@@ -206,7 +206,7 @@ type ItemRecord struct {
 	PkgBuildVersion      string `json:"pkg_build_version,omitempty"`      // Package build version
 
 	// Error information
-	LastError      string        `json:"last_error,omitempty"`
+	LastError      string        `json:"last_error"`
 	LastWarning    string        `json:"last_warning,omitempty"`
 	RecentAttempts []ItemAttempt `json:"recent_attempts,omitempty"` // Last 5 attempts for loop detection
 }
@@ -233,6 +233,7 @@ type DataExporter struct {
 	baseDir string
 	manifestPackageCache map[string]int // Cache for manifest package counts to avoid repetitive parsing
 	currentSessionPackages []string     // Actual packages processed in the current session (for items.json)
+	currentItemErrors map[string]string // Map of item names to their current error messages
 }
 
 // NewDataExporter creates a new data exporter
@@ -240,6 +241,7 @@ func NewDataExporter(baseDir string) *DataExporter {
 	return &DataExporter{
 		baseDir: baseDir,
 		manifestPackageCache: make(map[string]int),
+		currentItemErrors: make(map[string]string),
 	}
 }
 
@@ -1054,8 +1056,8 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 		// Check architecture compatibility first
 		compatible, supportedArchs := exp.checkArchitectureCompatibility(packageName, systemArch)
 		
-		// Check installed status from registry and get enhanced .pkg metadata
-		registryVersion := exp.getRegistryVersion(packageName)
+		// Check installed status from comprehensive registry checking (both Cimian and Windows registry)
+		registryVersion := exp.getInstalledVersionFromRegistry(packageName)
 		pkgMetadata := exp.getPkgRegistryMetadata(packageName)
 		
 		if registryVersion != "" {
@@ -1606,6 +1608,15 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 		if stats.LatestVersion == "" || stats.LatestVersion == "Unknown" {
 			standardStatus = "Error"
 		}
+		
+		// ENHANCEMENT: Inject current session error if available
+		if currentError, hasError := exp.currentItemErrors[stats.Name]; hasError {
+			stats.LastError = currentError
+			// Update status to indicate current failure
+			if standardStatus != "Error" { // Don't override existing error status
+				standardStatus = "Error"
+			}
+		}
 
 		// Determine last update timestamp
 		lastUpdate := ""
@@ -1972,10 +1983,10 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate current items state (current snapshot only)
-	packages, err := exp.GenerateCurrentItemsTable()
+	// Generate comprehensive items state with full status checking
+	packages, err := exp.GenerateItemsTable(limitDays)
 	if err != nil {
-		return fmt.Errorf("failed to generate current items table: %w", err)
+		return fmt.Errorf("failed to generate comprehensive items table: %w", err)
 	}
 
 	// Generate events up to current point
@@ -2008,7 +2019,15 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 
 // ExportItemProgressUpdate exports updated items.json after each item installation
 // This gives ReportMate real-time visibility into installation progress
-func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string) error {
+func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string, errorMsg string) error {
+	// Store current item error for inclusion in items.json
+	if errorMsg != "" && status == "failed" {
+		exp.currentItemErrors[completedItem] = errorMsg
+	} else {
+		// Clear any previous error for successful items
+		delete(exp.currentItemErrors, completedItem)
+	}
+	
 	// Ensure reports directory exists
 	if err := exp.EnsureReportsDirectoryExists(); err != nil {
 		return err
@@ -2016,10 +2035,10 @@ func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem s
 	
 	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
 
-	// Regenerate current items table with latest status (current snapshot only)
-	packages, err := exp.GenerateCurrentItemsTable()
+	// Generate full comprehensive items table with version info and status checks
+	packages, err := exp.GenerateItemsTable(limitDays)
 	if err != nil {
-		return fmt.Errorf("failed to generate current items table: %w", err)
+		return fmt.Errorf("failed to generate comprehensive items table: %w", err)
 	}
 
 	// Update the items.json file

@@ -2362,7 +2362,7 @@ if ($Install) {
         Write-Log "Installing .pkg from absolute path: $absolutePkgPath" "INFO"
         
         # Use sudo installer to install the .pkg package
-        $installArgs = @("installer", $absolutePkgPath)
+        $installArgs = @("installer", "--pkg", $absolutePkgPath)
         $installProcess = Start-Process -FilePath "sudo" -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
         
         if ($installProcess.ExitCode -eq 0) {
