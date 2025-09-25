@@ -61,7 +61,6 @@ func PrintFull() {
 
 // Normalize trims trailing ".0" segments from version strings and removes leading zeros from all segments.
 func Normalize(version string) string {
-	original := version
 	parts := strings.Split(version, ".")
 	
 	// Remove leading zeros from all segments
@@ -82,11 +81,6 @@ func Normalize(version string) string {
 	}
 	
 	result := strings.Join(parts, ".")
-	
-	// Debug logging for version normalization (comment out for production)
-	if original != result {
-		fmt.Printf("[DEBUG] Version normalized: %s -> %s\n", original, result)
-	}
 	
 	return result
 }
