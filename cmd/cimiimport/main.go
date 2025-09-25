@@ -1192,6 +1192,31 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.Description = ""
 		metadata.InstallerType = "exe"
 
+	case ".pkg":
+		ident, name, ver, dev, desc := extract.PkgMetadata(packagePath)
+
+		// For reverse domain identifiers, only keep the last part after the dot
+		if strings.Contains(ident, ".") {
+			parts := strings.Split(ident, ".")
+			metadata.ID = parts[len(parts)-1]
+		} else {
+			metadata.ID = ident
+		}
+
+		metadata.Title = name
+		metadata.Version = parseVersion(ver) // Normalize version to YYYY.MM.DD format
+		metadata.Developer = dev
+		metadata.Description = desc
+		metadata.InstallerType = "pkg"
+
+		// Build installs array from payload contents
+		pkgItems, err := extract.BuildPkgInstalls(packagePath, metadata.ID, metadata.Version)
+		if err != nil {
+			fmt.Printf("Warning: BuildPkgInstalls failed: %v\n", err)
+		} else {
+			metadata.Installs = convertExtractItems(pkgItems)
+		}
+
 	default:
 		metadata.InstallerType = "unknown"
 		metadata.Title = parsePackageName(filepath.Base(packagePath))
