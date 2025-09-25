@@ -1461,7 +1461,7 @@ func main() {
 	// Print summary of planned actions.
 	statusReporter.Detail(fmt.Sprintf("Found %d updates, %d new installs, %d removals", len(toUpdate), len(toInstall), len(toUninstall)))
 
-	printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate, dedupedManifestItems, localCatalogMap, cfg)
+	printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate, dedupedManifestItems, localCatalogMap, cfg, exporter)
 
 	// If check-only mode, exit after summary.
 	if *checkOnly {
@@ -2755,7 +2755,7 @@ func truncateString(s string, width int) string {
 
 // printEnhancedManagedItemsSnapshot prints a comprehensive snapshot of all managed items
 // including pending actions and the complete managed software inventory
-func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalog.Item, manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration) {
+func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalog.Item, manifestItems []manifest.Item, localCatalogMap map[string]catalog.Item, cfg *config.Configuration, exporter *reporting.DataExporter) {
 	// Categorize all manifest items by action type
 	var managedInstalls []manifest.Item
 	var managedUpdates []manifest.Item
@@ -2961,6 +2961,127 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 		}
 		logger.Info("----------------------------------------------------------------------")
 		logger.Info("")
+	}
+
+	// ENHANCEMENT: Collect rich package information for accurate items.json reporting
+	// This ensures the reporting system has access to actual status and version information
+	var richPackageInfo []reporting.SessionPackageInfo
+	
+	// Helper function to determine item type based on action
+	determineItemType := func(action string) string {
+		switch action {
+		case "install":
+			return "managedinstall"
+		case "update":
+			return "managedupdate"
+		case "uninstall":
+			return "manageduninstall"
+		case "optional":
+			return "optionalinstall"
+		case "profile":
+			return "managedprofile"
+		case "app":
+			return "managedapp"
+		default:
+			return "managedinstall" // default fallback
+		}
+	}
+
+	// Collect information from all managed installs
+	for _, item := range managedInstalls {
+		status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
+		version := item.Version
+		if version == "" {
+			version = "Unknown"
+		}
+		
+		richPackageInfo = append(richPackageInfo, reporting.SessionPackageInfo{
+			Name:        item.Name,
+			Version:     version,
+			Status:      status,
+			ItemType:    determineItemType(item.Action),
+			DisplayName: item.Name, // Could be enhanced with catalog display name
+		})
+	}
+
+	// Collect information from optional installs
+	for _, item := range optionalInstalls {
+		status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
+		version := item.Version
+		if version == "" {
+			version = "Unknown"
+		}
+		
+		richPackageInfo = append(richPackageInfo, reporting.SessionPackageInfo{
+			Name:        item.Name,
+			Version:     version,
+			Status:      status,
+			ItemType:    determineItemType(item.Action),
+			DisplayName: item.Name,
+		})
+	}
+
+	// Collect information from managed updates
+	for _, item := range managedUpdates {
+		status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
+		version := item.Version
+		if version == "" {
+			version = "Unknown"
+		}
+		
+		richPackageInfo = append(richPackageInfo, reporting.SessionPackageInfo{
+			Name:        item.Name,
+			Version:     version,
+			Status:      status,
+			ItemType:    determineItemType(item.Action),
+			DisplayName: item.Name,
+		})
+	}
+
+	// Collect information from managed uninstalls
+	for _, item := range managedUninstalls {
+		status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
+		version := item.Version
+		if version == "" {
+			version = "Unknown"
+		}
+		
+		richPackageInfo = append(richPackageInfo, reporting.SessionPackageInfo{
+			Name:        item.Name,
+			Version:     version,
+			Status:      status,
+			ItemType:    determineItemType(item.Action),
+			DisplayName: item.Name,
+		})
+	}
+
+	// Collect information from managed profiles
+	for _, item := range managedProfiles {
+		richPackageInfo = append(richPackageInfo, reporting.SessionPackageInfo{
+			Name:        item.Name,
+			Version:     item.Version,
+			Status:      "Managed",  // Profiles don't have traditional install status
+			ItemType:    determineItemType(item.Action),
+			DisplayName: item.Name,
+		})
+	}
+
+	// Collect information from managed apps
+	for _, item := range managedApps {
+		richPackageInfo = append(richPackageInfo, reporting.SessionPackageInfo{
+			Name:        item.Name,
+			Version:     item.Version,
+			Status:      "Managed",  // Apps don't have traditional install status
+			ItemType:    determineItemType(item.Action),
+			DisplayName: item.Name,
+		})
+	}
+
+	// Pass the rich package information to the reporting system
+	// This replaces the basic string-only package list with comprehensive data
+	if exporter != nil {
+		exporter.SetCurrentSessionPackagesInfo(richPackageInfo)
+		logging.Info("Enhanced items.json reporting: set %d packages with rich status information", len(richPackageInfo))
 	}
 
 	// Summary footer with complete inventory statistics

@@ -228,11 +228,22 @@ type ItemAttempt struct {
 	Version   string `json:"version,omitempty"`
 }
 
+// SessionPackageInfo holds comprehensive information about a package in the current session
+type SessionPackageInfo struct {
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Status          string `json:"status"`          // "Installed", "Pending Install", "Pending Update", etc.
+	ItemType        string `json:"item_type"`       // "managedinstall", "managedupdate", etc.
+	DisplayName     string `json:"display_name"`
+	InstalledVersion string `json:"installed_version,omitempty"`
+}
+
 // DataExporter provides methods to export Cimian logs for external monitoring tool consumption
 type DataExporter struct {
 	baseDir string
 	manifestPackageCache map[string]int // Cache for manifest package counts to avoid repetitive parsing
-	currentSessionPackages []string     // Actual packages processed in the current session (for items.json)
+	currentSessionPackages []string     // Actual packages processed in the current session (for items.json) - DEPRECATED
+	currentSessionPackagesInfo []SessionPackageInfo // Rich package information for the current session (for items.json)
 	currentItemErrors map[string]string // Map of item names to their current error messages
 }
 
@@ -242,6 +253,7 @@ func NewDataExporter(baseDir string) *DataExporter {
 		baseDir: baseDir,
 		manifestPackageCache: make(map[string]int),
 		currentItemErrors: make(map[string]string),
+		currentSessionPackagesInfo: make([]SessionPackageInfo, 0),
 	}
 }
 
@@ -1195,11 +1207,18 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 // This is specifically for items.json - current state only, NO historical data
 func (exp *DataExporter) GenerateCurrentItemsTable() ([]ItemRecord, error) {
 	// Debug logging to check if session packages are available
-	logging.Debug("GenerateCurrentItemsTable called", "sessionPackagesCount", len(exp.currentSessionPackages))
+	logging.Debug("GenerateCurrentItemsTable called", "sessionPackagesCount", len(exp.currentSessionPackages), "sessionPackagesInfoCount", len(exp.currentSessionPackagesInfo))
 	
-	// Use the actual packages processed in the current session if available
+	// Prefer rich package information if available
+	if exp.currentSessionPackagesInfo != nil && len(exp.currentSessionPackagesInfo) > 0 {
+		logging.Info("Using rich current session packages info for items.json", "count", len(exp.currentSessionPackagesInfo))
+		return exp.GenerateCurrentItemsFromPackagesInfo(exp.currentSessionPackagesInfo)
+	}
+	
+	// Fallback to basic packages processed in the current session if available
 	if exp.currentSessionPackages != nil && len(exp.currentSessionPackages) > 0 {
 		logging.Info("Using current session packages for items.json", "count", len(exp.currentSessionPackages))
+		logging.Warn("Using fallback method - status information may be limited")
 		return exp.GenerateCurrentItemsFromPackages(exp.currentSessionPackages)
 	}
 	
@@ -1217,6 +1236,87 @@ func (exp *DataExporter) SetCurrentSessionPackages(packages []string) {
 	logging.Info("Set current session packages for items.json", "count", len(packages))
 	logging.Debug("Session packages stored in DataExporter", "packages", packages)
 }
+
+// SetCurrentSessionPackagesInfo stores rich package information from the current session
+// This is the preferred method for accurate items.json generation with proper status
+func (exp *DataExporter) SetCurrentSessionPackagesInfo(packagesInfo []SessionPackageInfo) {
+	exp.currentSessionPackagesInfo = packagesInfo
+	logging.Info("Set current session packages info for items.json", "count", len(packagesInfo))
+	if len(packagesInfo) > 0 {
+		logging.Debug("Session packages info sample", 
+			"first_package", packagesInfo[0].Name, 
+			"first_status", packagesInfo[0].Status, 
+			"first_version", packagesInfo[0].Version)
+	}
+}
+
+// GenerateCurrentItemsFromPackagesInfo creates ItemRecord entries from rich session package information
+// This is the preferred method that preserves actual status and version information
+func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []SessionPackageInfo) ([]ItemRecord, error) {
+	if len(packagesInfo) == 0 {
+		logging.Warn("GenerateCurrentItemsFromPackagesInfo called with empty package info list")
+		return []ItemRecord{}, nil
+	}
+
+	logging.Info("Generating current items table from rich session package info", "count", len(packagesInfo))
+
+	// Load catalog data for additional enrichment
+	catalogDisplayNames := exp.loadCatalogDisplayNames()
+
+	// Convert to ItemRecord format - using actual status and version information
+	var items []ItemRecord
+	for _, pkgInfo := range packagesInfo {
+		displayName := pkgInfo.DisplayName
+		if displayName == "" {
+			// Try catalog display name as fallback
+			catalogDisplayName := catalogDisplayNames[pkgInfo.Name]
+			if catalogDisplayName != "" {
+				displayName = catalogDisplayName
+			} else {
+				displayName = pkgInfo.Name
+			}
+		}
+
+		// Create item record with ACTUAL status and version information
+		item := ItemRecord{
+			ID:                    strings.ToLower(strings.ReplaceAll(pkgInfo.Name, " ", "")),
+			ItemName:              pkgInfo.Name,
+			DisplayName:           displayName,
+			ItemType:              pkgInfo.ItemType,
+			CurrentStatus:         pkgInfo.Status,                                      // ACTUAL STATUS - not hardcoded "Pending"
+			LatestVersion:         pkgInfo.Version,                                     // ACTUAL VERSION from catalog/manifest
+			InstalledVersion:      pkgInfo.InstalledVersion,                           // ACTUAL INSTALLED VERSION if available
+			LastSeenInSession:     time.Now().Format("2006-01-02T15:04:05Z"),         // Mark as seen in current session
+			LastSuccessfulTime:    "",  // Would be populated from historical data if available
+			LastAttemptTime:       "",  // Would be populated from historical data if available
+			LastAttemptStatus:     "",  // Would be populated from historical data if available
+			LastUpdate:            time.Now().Format("2006-01-02T15:04:05Z"),
+			InstallCount:          0,   // These would come from historical analysis
+			UpdateCount:           0,
+			RemovalCount:          0,
+			FailureCount:          0,
+			WarningCount:          0,
+			TotalSessions:         0,
+			InstallLoopDetected:   false,
+		}
+
+		items = append(items, item)
+		logging.Debug("Added current session package info to items", 
+			"package", pkgInfo.Name, 
+			"status", pkgInfo.Status, 
+			"version", pkgInfo.Version,
+			"itemType", pkgInfo.ItemType)
+	}
+
+	// Sort items by name for consistent output
+	sort.Slice(items, func(i, j int) bool {
+		return strings.ToLower(items[i].ItemName) < strings.ToLower(items[j].ItemName)
+	})
+
+	logging.Info("Generated current items table from rich session package info", "count", len(items))
+	return items, nil
+}
+
 // This is the correct approach - use the actual packages that were processed in the current session
 func (exp *DataExporter) GenerateCurrentItemsFromPackages(packages []string) ([]ItemRecord, error) {
 	if len(packages) == 0 {
@@ -1983,10 +2083,10 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate comprehensive items state with full status checking
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Generate current items state using the rich session package data
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
-		return fmt.Errorf("failed to generate comprehensive items table: %w", err)
+		return fmt.Errorf("failed to generate current items table: %w", err)
 	}
 
 	// Generate events up to current point
