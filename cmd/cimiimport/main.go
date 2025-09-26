@@ -1195,15 +1195,16 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 	case ".pkg":
 		ident, name, ver, dev, desc := extract.PkgMetadata(packagePath)
 
-		// For reverse domain identifiers, only keep the last part after the dot
-		if strings.Contains(ident, ".") {
-			parts := strings.Split(ident, ".")
-			metadata.ID = parts[len(parts)-1]
+		// Use the name field as the primary identifier, fall back to identifier if name is empty
+		if strings.TrimSpace(name) != "" {
+			metadata.ID = name
+			metadata.Title = name
 		} else {
+			// Fallback: use identifier, but prefer the full identifier over just the last part
 			metadata.ID = ident
+			metadata.Title = ident
 		}
 
-		metadata.Title = name
 		metadata.Version = parseVersion(ver) // Normalize version to YYYY.MM.DD format
 		metadata.Developer = dev
 		metadata.Description = desc
@@ -1270,8 +1271,10 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	// If nointeractive flag is set, use all defaults
 	if noInteractive {
 		// Pre-define fallback strings
-		if m.ID == "" {
+		if m.ID == "" && m.Title == "" {
 			m.ID = parsePackageName(filepath.Base(packagePath))
+		} else if m.ID == "" && m.Title != "" {
+			m.ID = m.Title
 		}
 		if m.Version == "" {
 			m.Version = "1.0.0"
@@ -1308,9 +1311,12 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	reader := bufio.NewReader(os.Stdin)
 
 	// Pre-define fallback strings
-	defaultID := m.ID
-	if defaultID == "" {
-		defaultID = parsePackageName(filepath.Base(packagePath))
+	defaultName := m.Title
+	if defaultName == "" {
+		defaultName = m.ID
+	}
+	if defaultName == "" {
+		defaultName = parsePackageName(filepath.Base(packagePath))
 	}
 	defaultVersion := m.Version
 	if defaultVersion == "" {
@@ -1321,7 +1327,7 @@ func promptForAllMetadata(packagePath string, m Metadata, conf *config.Configura
 	defaultCategory := m.Category
 
 	// read each field
-	m.ID = readLineWithDefault(reader, "Name", defaultID)
+	m.ID = readLineWithDefault(reader, "Name", defaultName)
 	m.Version = parseVersion(readLineWithDefault(reader, "Version", defaultVersion)) // Normalize version input
 	m.Developer = readLineWithDefault(reader, "Developer", defaultDeveloper)
 	m.Description = readLineWithDefault(reader, "Description", defaultDescription)
