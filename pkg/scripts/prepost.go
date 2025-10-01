@@ -14,6 +14,10 @@ import (
 // escape codes from the script output are preserved.
 // Debug messages about the PowerShell executable and its version are printed
 // only if the provided verbosity is 3 or greater.
+//
+// IMPORTANT: Always uses Windows PowerShell (powershell.exe) instead of PowerShell Core (pwsh.exe)
+// because preflight.ps1 depends on legacy PackageManagement and PowerShellGet modules that don't
+// work properly in PowerShell Core.
 func runScript(
 	scriptPath string,
 	displayName string,
@@ -21,17 +25,15 @@ func runScript(
 	logInfo func(string, ...interface{}),
 	logError func(string, ...interface{}),
 ) error {
-	// 1. Find the PowerShell executable.
-	psExe, err := exec.LookPath("pwsh.exe")
+	// 1. Find Windows PowerShell executable (always use 5.1, not Core).
+	// This prevents issues with the preflight script's re-invocation logic and legacy module dependencies.
+	psExe, err := exec.LookPath("powershell.exe")
 	if err != nil {
-		psExe, err = exec.LookPath("powershell.exe")
-		if err != nil {
-			return fmt.Errorf("neither pwsh.exe nor powershell.exe were found: %v", err)
-		}
-	} else {
-		if verbosity >= 3 {
-			logInfo("Using PowerShell Core (pwsh) for %s", displayName)
-		}
+		return fmt.Errorf("powershell.exe not found (Windows PowerShell 5.1 required): %v", err)
+	}
+	
+	if verbosity >= 3 {
+		logInfo("Using Windows PowerShell 5.1 for %s", displayName)
 	}
 
 	// 2. Print the PowerShell version only if verbosity is high.
