@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
 
 // runScript executes the PowerShell script at the provided path,
@@ -18,6 +17,10 @@ import (
 // IMPORTANT: Always uses Windows PowerShell (powershell.exe) instead of PowerShell Core (pwsh.exe)
 // because preflight.ps1 depends on legacy PackageManagement and PowerShellGet modules that don't
 // work properly in PowerShell Core.
+//
+// FUNCTION IS TEMPORARILY set to NEVER return an error, even if the script fails. Preflight/postflight -- does not match Munki's behavior, which fails the entire run if pre/postflight fails. Future versions will change this.
+// failures must never block the main managedsoftwareupdate run. Script failures are logged but
+// the function always returns nil to ensure the main workflow continues.
 func runScript(
 	scriptPath string,
 	displayName string,
@@ -25,45 +28,53 @@ func runScript(
 	logInfo func(string, ...interface{}),
 	logError func(string, ...interface{}),
 ) error {
-	// 1. Find Windows PowerShell executable (always use 5.1, not Core).
+	// 1. Use Windows PowerShell 5.1 executable directly (not pwsh.exe).
 	// This prevents issues with the preflight script's re-invocation logic and legacy module dependencies.
-	psExe, err := exec.LookPath("powershell.exe")
-	if err != nil {
-		return fmt.Errorf("powershell.exe not found (Windows PowerShell 5.1 required): %v", err)
+	// Always use the full path to avoid any PATH issues with PowerShell Core.
+	psExe := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	
+	// Fallback to PATH lookup if the direct path doesn't exist (edge case)
+	if _, err := os.Stat(psExe); os.IsNotExist(err) {
+		var lookupErr error
+		psExe, lookupErr = exec.LookPath("powershell.exe")
+		if lookupErr != nil {
+			return fmt.Errorf("powershell.exe not found (Windows PowerShell 5.1 required): %v", lookupErr)
+		}
 	}
 	
 	if verbosity >= 3 {
-		logInfo("Using Windows PowerShell 5.1 for %s", displayName)
+		logInfo("Using Windows PowerShell 5.1 (%s) for %s", psExe, displayName)
 	}
 
-	// 2. Print the PowerShell version only if verbosity is high.
-	if verbosity >= 3 {
-		if versionBytes, verErr := exec.Command(psExe, "--version").CombinedOutput(); verErr == nil {
-			logInfo("%s version: %s", psExe, strings.TrimSpace(string(versionBytes)))
-		}
-	}
-
-	// 3. Build the command to run the script.
+	// 2. Build the command to run the script.
 	cmd := exec.Command(
 		psExe,
 		"-NoLogo",
 		"-NoProfile",
+		"-NonInteractive",
 		"-ExecutionPolicy", "Bypass",
 		"-File", scriptPath,
 		"-Verbosity", strconv.Itoa(verbosity),
 	)
 	cmd.Dir = filepath.Dir(scriptPath)
 	// Set TERM so that ANSI colors are preserved.
-	cmd.Env = append(cmd.Env, "TERM=xterm-256color")
-	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	
+	// Connect stdin, stdout, and stderr for real-time output
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = nil
 
-	// 4. Run the command and capture its output.
-	outputBytes, execErr := cmd.CombinedOutput()
-	// Print the raw output so any ANSI codes are passed through.
-	fmt.Print(string(outputBytes))
+	// 3. Run the command and wait for completion.
+	// IMPORTANT: Never fail the main run if preflight/postflight fails
+	execErr := cmd.Run()
 	if execErr != nil {
-		logError("%s script error: %v", displayName, execErr)
-		return fmt.Errorf("%s script error: %w", displayName, execErr)
+		logError("%s script error: %v (continuing anyway)", displayName, execErr)
+		// Log the error but DO NOT return it - must continue with main run
+		if verbosity >= 3 {
+			logInfo("%s script failed but continuing with managed software update", displayName)
+		}
+		return nil  // Always return nil to continue the main run
 	}
 
 	if verbosity >= 3 {
