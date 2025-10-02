@@ -756,29 +756,9 @@ if ($Binaries -or $Binary) {
     }
     # Only do essential checks for binaries mode
     if (-not (Test-Command "go")) {
-        Write-Log "Go is not installed or not in PATH. Installing..." "INFO"
-        Install-Chocolatey
-        choco install go --no-progress --yes --force | Out-Null
-        # Force environment reload
-        if ($env:ChocolateyInstall -and (Test-Path "$env:ChocolateyInstall\helpers\refreshenv.cmd")) {
-            & "$env:ChocolateyInstall\helpers\refreshenv.cmd"
-        }
-        # Check common Go paths
-        $possibleGoPaths = @(
-            "C:\Program Files\Go\bin",
-            "C:\Go\bin",
-            "C:\ProgramData\chocolatey\bin"
-        )
-        foreach ($p in $possibleGoPaths) {
-            if (Test-Path (Join-Path $p "go.exe")) {
-                $env:Path = "$p;$env:Path"
-                break
-            }
-        }
-        if (-not (Test-Command "go")) {
-            Write-Log "Go installation failed. Exiting..." "ERROR"
-            exit 1
-        }
+        Write-Log "Go is not installed or not in PATH. Please install Go manually." "ERROR"
+        Write-Log "Download Go from: https://go.dev/dl/" "INFO"
+        exit 1
     }
     # Set version for binaries (inline to avoid function dependency)
     $currentTime = Get-Date
@@ -816,6 +796,7 @@ if ($Binaries -or $Binary) {
         "x64"   = "amd64"
         "arm64" = "arm64"
     }
+
     foreach ($arch in $archs) {
         $releaseArchDir = "release\$arch"
         if (-not (Test-Path $releaseArchDir)) {
@@ -1099,12 +1080,12 @@ if ($PackageOnly -or $NupkgOnly -or $MsiOnly -or $PkgOnly) {
         }
     }
     
-    # Install required tools if needed
+    # Check for required tools
     foreach ($tool in $requiredTools) {
         if (-not (Test-Command $tool.Command)) {
-            Write-Log "$($tool.Name) is required for packaging. Installing..." "INFO"
-            Install-Chocolatey
-            choco install $tool.Name --no-progress --yes --force | Out-Null
+            Write-Log "$($tool.Name) is required for packaging but not found." "ERROR"
+            Write-Log "Please install $($tool.Name) manually before running package-only mode." "INFO"
+            exit 1
         }
     }
     
@@ -1168,35 +1149,6 @@ function Remove-VersionResources {
     }
 }
 
-# Function to ensure Chocolatey is installed
-function Install-Chocolatey {
-    Write-Log "Checking if Chocolatey is installed..." "INFO"
-    if (-not (Test-Command "choco")) {
-        Write-Log "Chocolatey is not installed. Installing now..." "INFO"
-        try {
-            # Bypass Execution Policy and install Chocolatey
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-            Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            Write-Log "Chocolatey installed successfully." "SUCCESS"
-            $chocoBinPath = "C:\ProgramData\chocolatey\bin"
-            if (Test-Path $chocoBinPath) {
-                $env:Path = "$chocoBinPath;$env:Path"
-                Write-Log "Added '$chocoBinPath' to PATH to ensure 'choco' is recognized in this session." "INFO"
-            }
-            else {
-                Write-Log "'$chocoBinPath' does not exist; cannot add to PATH." "WARNING"
-            }
-        }
-        catch {
-            Write-Log "Failed to install Chocolatey. Error: $_" "ERROR"
-            exit 1
-        }
-    }
-    else {
-        Write-Log "Chocolatey is already installed." "SUCCESS"
-    }
-}
 # 
 #  SKIP BUILD STEPS FOR PACKAGE-ONLY MODES
 # 
@@ -1264,10 +1216,8 @@ if (-not ($PackageOnly -or $NupkgOnly -or $MsiOnly)) {
         }
     }
 
-# Step 1: Ensure Chocolatey is installed
-Install-Chocolatey
-# Step 2: Install required tools via Chocolatey
-Write-Log "Checking and installing required tools..." "INFO"
+# Step 1: Check for required tools
+Write-Log "Checking for required tools..." "INFO"
 $tools = @(
     @{ Name = "nuget.commandline"; Command = "nuget" },
     @{ Name = "go"; Command = "go" },
@@ -1280,18 +1230,12 @@ if ($IntuneWin) {
 foreach ($tool in $tools) {
     $toolName    = $tool.Name
     $toolCommand = $tool.Command
-    Write-Log "Checking if $toolName is already installed..." "INFO"
+    Write-Log "Checking if $toolName is installed..." "INFO"
     if (Test-Command $toolCommand) {
         Write-Log "$toolName is already installed and available via command '$toolCommand'." "SUCCESS"
-        continue
-    }
-    Write-Log "$toolName is not installed. Installing via Chocolatey..." "INFO"
-    try {
-        choco install $toolName --no-progress --yes --force | Out-Null
-        Write-Log "$toolName installed successfully." "SUCCESS"
-    }
-    catch {
-        Write-Log "Failed to install $toolName. Error: $_" "ERROR"
+    } else {
+        Write-Log "$toolName is not installed or not in PATH." "ERROR"
+        Write-Log "Please install $toolName manually before running the build." "INFO"
         exit 1
     }
 }
@@ -1309,44 +1253,13 @@ if ($wixBin) {
     if ($LASTEXITCODE -eq 0) {
         Write-Log "WiX v6 installed successfully." "SUCCESS"
     } else {
-        Write-Log "Failed to install WiX v6. Falling back to WiX v3..." "WARNING"
-        choco install wixtoolset --yes --no-progress --force | Out-Null
-        Write-Log "WiX v3 installed successfully." "SUCCESS"
+        Write-Log "Failed to install WiX v6. Please install WiX manually." "ERROR"
+        Write-Log "Install WiX v6: dotnet tool install --global wix" "INFO"
+        Write-Log "Or install WiX v3 from: https://wixtoolset.org/" "INFO"
+        exit 1
     }
 }
-Write-Log "Required tools check and installation completed." "SUCCESS"
-# Force environment reload via Chocolateley's refreshenv
-if ($env:ChocolateyInstall -and (Test-Path "$env:ChocolateyInstall\helpers\refreshenv.cmd")) {
-    Write-Log "Forcibly reloading environment with refreshenv.cmd..." "INFO"
-    & "$env:ChocolateyInstall\helpers\refreshenv.cmd"
-}
-# Check if 'go' is now recognized
-if (-not (Test-Command "go")) {
-    Write-Log "Go still not recognized; appending common install paths manually..." "WARNING"
-    $possibleGoPaths = @(
-        "C:\Program Files\Go\bin",
-        "C:\Go\bin",
-        "C:\ProgramData\chocolatey\bin",
-        "C:\ProgramData\chocolatey\lib\go\bin"
-    )
-    foreach ($p in $possibleGoPaths) {
-        if (Test-Path (Join-Path $p "go.exe")) {
-            $env:Path = "$p;$env:Path"
-            Write-Log "Added '$p' to PATH. Checking 'go' again..." "INFO"
-            if (Test-Command "go") {
-                Write-Log "'go' is now recognized." "SUCCESS"
-                break
-            }
-        }
-    }
-}
-if (-not (Test-Command "go")) {
-    Write-Log "Go is still not recognized. Installation may have failed or PATH is wonky." "ERROR"
-    exit 1
-}
-else {
-    Write-Log "Go is recognized in this session." "SUCCESS"
-}
+Write-Log "Required tools check completed." "SUCCESS"
 # Step 2: Ensure Go is available
 Write-Log "Verifying Go installation..." "INFO"
 if (-not (Test-Command "go")) {
