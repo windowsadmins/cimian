@@ -1047,8 +1047,7 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 				Sessions:       make(map[string]bool),
 				RecentAttempts: []ItemAttempt{},
 			}
-			packagesFound++
-			logging.Debug("Added package from cached manifest", "package", packageName, "source", manifestItem.SourceManifest)
+			packagesFound++ 
 		}
 		
 		stats := itemStats[packageName]
@@ -2121,10 +2120,11 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 // This gives ReportMate real-time visibility into installation progress
 func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string, errorMsg string) error {
 	// Store current item error for inclusion in items.json
-	if errorMsg != "" && status == "failed" {
+	// CRITICAL FIX: Store ANY error message, regardless of status string variations
+	if errorMsg != "" {
 		exp.currentItemErrors[completedItem] = errorMsg
-	} else {
-		// Clear any previous error for successful items
+	} else if status == "completed" || status == "success" {
+		// Only clear errors on explicit success
 		delete(exp.currentItemErrors, completedItem)
 	}
 	
