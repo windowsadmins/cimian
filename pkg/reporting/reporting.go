@@ -1215,7 +1215,7 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 							RecentAttempts:     []ItemAttempt{},
 						}
 						packagesFound++
-						logging.Info("Added self-serve package to reporting", "package", itemName)
+						logging.Debug("Added self-serve package to reporting", "package", itemName)
 					}
 				}
 			}
