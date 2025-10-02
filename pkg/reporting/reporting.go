@@ -236,6 +236,8 @@ type SessionPackageInfo struct {
 	ItemType        string `json:"item_type"`       // "managedinstall", "managedupdate", etc.
 	DisplayName     string `json:"display_name"`
 	InstalledVersion string `json:"installed_version,omitempty"`
+	ErrorMessage    string `json:"error_message,omitempty"` // Current session error if any
+	WarningMessage  string `json:"warning_message,omitempty"` // Current session warning if any
 }
 
 // DataExporter provides methods to export Cimian logs for external monitoring tool consumption
@@ -254,6 +256,39 @@ func NewDataExporter(baseDir string) *DataExporter {
 		manifestPackageCache: make(map[string]int),
 		currentItemErrors: make(map[string]string),
 		currentSessionPackagesInfo: make([]SessionPackageInfo, 0),
+	}
+}
+
+// RecordItemError records an error message for a specific item (for dynamic error tracking)
+func (exp *DataExporter) RecordItemError(itemName string, errorMsg string) {
+	if itemName == "" || errorMsg == "" {
+		return
+	}
+	
+	// Store in error map
+	exp.currentItemErrors[itemName] = errorMsg
+	
+	// Update SessionPackageInfo if it exists
+	for i := range exp.currentSessionPackagesInfo {
+		if exp.currentSessionPackagesInfo[i].Name == itemName {
+			exp.currentSessionPackagesInfo[i].ErrorMessage = errorMsg
+			break
+		}
+	}
+}
+
+// RecordItemWarning records a warning message for a specific item (for dynamic warning tracking)
+func (exp *DataExporter) RecordItemWarning(itemName string, warningMsg string) {
+	if itemName == "" || warningMsg == "" {
+		return
+	}
+	
+	// Update SessionPackageInfo if it exists
+	for i := range exp.currentSessionPackagesInfo {
+		if exp.currentSessionPackagesInfo[i].Name == itemName {
+			exp.currentSessionPackagesInfo[i].WarningMessage = warningMsg
+			break
+		}
 	}
 }
 
@@ -1261,6 +1296,7 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 
 	// Load catalog data for additional enrichment
 	catalogDisplayNames := exp.loadCatalogDisplayNames()
+	catalogVersions := exp.loadCatalogVersions()
 
 	// Convert to ItemRecord format - using actual status and version information
 	var items []ItemRecord
@@ -1272,11 +1308,32 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 			if catalogDisplayName != "" {
 				displayName = catalogDisplayName
 			} else {
-				displayName = pkgInfo.Name
+			displayName = pkgInfo.Name
+		}
+	}
+
+		// Get warning from package info (captures all log warnings dynamically)
+		var lastWarning string
+		var warningCount int
+		
+		// Use warning from session package info if available (from logs)
+		if pkgInfo.WarningMessage != "" {
+			lastWarning = pkgInfo.WarningMessage
+			warningCount = 1
+		} else {
+			// Fallback: Check for "not in catalog" warning
+			_, inCatalog := catalogVersions[strings.ToLower(pkgInfo.Name)]
+			if !inCatalog && pkgInfo.Version == "" {
+				lastWarning = fmt.Sprintf("Package '%s' not found in any catalog", pkgInfo.Name)
+				warningCount = 1
+				logging.Warn("Package not found in catalog", "package", pkgInfo.Name)
 			}
 		}
+		
+		// Try to get install count from registry (historical data)
+		installCount := exp.getInstallCountFromRegistry(pkgInfo.Name)
 
-		// Create item record with ACTUAL status and version information
+		// Create item record with ACTUAL status and version information from current session
 		item := ItemRecord{
 			ID:                    strings.ToLower(strings.ReplaceAll(pkgInfo.Name, " ", "")),
 			ItemName:              pkgInfo.Name,
@@ -1286,17 +1343,19 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 			LatestVersion:         pkgInfo.Version,                                     // ACTUAL VERSION from catalog/manifest
 			InstalledVersion:      pkgInfo.InstalledVersion,                           // ACTUAL INSTALLED VERSION if available
 			LastSeenInSession:     time.Now().Format("2006-01-02T15:04:05Z"),         // Mark as seen in current session
-			LastSuccessfulTime:    "",  // Would be populated from historical data if available
-			LastAttemptTime:       "",  // Would be populated from historical data if available
-			LastAttemptStatus:     "",  // Would be populated from historical data if available
+			LastSuccessfulTime:    "",  // Not needed for real-time fleet monitoring
+			LastAttemptTime:       time.Now().Format("2006-01-02T15:04:05Z"),         // Current session attempt
+			LastAttemptStatus:     pkgInfo.Status,                                      // Current attempt status
 			LastUpdate:            time.Now().Format("2006-01-02T15:04:05Z"),
-			InstallCount:          0,   // These would come from historical analysis
+			InstallCount:          installCount,                                        // Historical install count from registry
 			UpdateCount:           0,
 			RemovalCount:          0,
 			FailureCount:          0,
-			WarningCount:          0,
+			WarningCount:          warningCount,                                        // Warning count for catalog issues
 			TotalSessions:         0,
 			InstallLoopDetected:   false,
+			LastError:             pkgInfo.ErrorMessage,                                // Error message for Current session error message
+			LastWarning:           lastWarning,                                         // Warning message for catalog issues
 		}
 
 		items = append(items, item)
@@ -2082,10 +2141,11 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate current items state using the rich session package data
-	packages, err := exp.GenerateCurrentItemsTable()
+	// CRITICAL FIX: Use comprehensive items table with full error tracking, not basic current items
+	// This ensures items.json includes last_error, last_attempt_time, failure_count, etc.
+	packages, err := exp.GenerateItemsTable(limitDays)
 	if err != nil {
-		return fmt.Errorf("failed to generate current items table: %w", err)
+		return fmt.Errorf("failed to generate comprehensive items table: %w", err)
 	}
 
 	// Generate events up to current point
@@ -2118,14 +2178,47 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 
 // ExportItemProgressUpdate exports updated items.json after each item installation
 // This gives ReportMate real-time visibility into installation progress
-func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string, errorMsg string) error {
-	// Store current item error for inclusion in items.json
-	// CRITICAL FIX: Store ANY error message, regardless of status string variations
-	if errorMsg != "" {
-		exp.currentItemErrors[completedItem] = errorMsg
+func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string, errorMsg string, warningMsg ...string) error {
+	// CRITICAL: Update SessionPackageInfo with current error/warning messages for real-time reporting
+	
+	// Extract warning message from variadic parameter
+	var warning string
+	if len(warningMsg) > 0 {
+		warning = warningMsg[0]
+	}
+	
+	if errorMsg != "" || warning != "" {
+		// Store error in map for comprehensive reporting (errors take precedence)
+		if errorMsg != "" {
+			exp.currentItemErrors[completedItem] = errorMsg
+		}
+		
+		// Update the SessionPackageInfo object with the error/warning
+		for i := range exp.currentSessionPackagesInfo {
+			if exp.currentSessionPackagesInfo[i].Name == completedItem {
+				if errorMsg != "" {
+					exp.currentSessionPackagesInfo[i].ErrorMessage = errorMsg
+				}
+				if warning != "" {
+					exp.currentSessionPackagesInfo[i].WarningMessage = warning
+				}
+				exp.currentSessionPackagesInfo[i].Status = status // Update status too
+				break
+			}
+		}
 	} else if status == "completed" || status == "success" {
 		// Only clear errors on explicit success
 		delete(exp.currentItemErrors, completedItem)
+		
+		// Clear error and warning from SessionPackageInfo
+		for i := range exp.currentSessionPackagesInfo {
+			if exp.currentSessionPackagesInfo[i].Name == completedItem {
+				exp.currentSessionPackagesInfo[i].ErrorMessage = ""
+				exp.currentSessionPackagesInfo[i].WarningMessage = ""
+				exp.currentSessionPackagesInfo[i].Status = status
+				break
+			}
+		}
 	}
 	
 	// Ensure reports directory exists
@@ -2813,6 +2906,24 @@ func (exp *DataExporter) getCimianManagedVersion(packageName string) string {
 		return ""
 	}
 	return ver
+}
+
+// getInstallCountFromRegistry retrieves the install count from registry for a package
+func (exp *DataExporter) getInstallCountFromRegistry(packageName string) int {
+	// Read from HKLM\Software\ManagedInstalls\<packageName>\InstallCount
+	regPath := `Software\ManagedInstalls\` + packageName
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, regPath, registry.QUERY_VALUE)
+	if err != nil {
+		return 0
+	}
+	defer k.Close()
+
+	// Try to read InstallCount as DWORD
+	count, _, err := k.GetIntegerValue("InstallCount")
+	if err != nil {
+		return 0
+	}
+	return int(count)
 }
 
 // getUninstallRegistryVersion gets version from Windows uninstall registry
