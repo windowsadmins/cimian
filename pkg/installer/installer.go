@@ -371,28 +371,42 @@ func installOrUpgradePackage(item catalog.Item, packagePath, cachePath string, c
 	if ext == ".nupkg" {
 		// Try sbin-installer first if available and preferred
 		if isSbinInstallerAvailable(cfg) {
-			logging.Info("Attempting .nupkg installation with sbin-installer", "item", item.Name)
+			logging.Info("[INSTALLER METHOD: sbin-installer] Attempting .nupkg installation", "item", item.Name, "package", filepath.Base(packagePath))
 			output, err := installOrUpgradeNupkgWithSbin(item, packagePath, cachePath, cfg)
 			if err == nil {
-				logging.Info("sbin-installer .nupkg installation successful", "item", item.Name)
+				logging.Info("[INSTALLER METHOD: sbin-installer] Installation successful", "item", item.Name)
 				return output, nil
 			}
 			
-			// Log the sbin-installer failure but continue to Chocolatey fallback
-			logging.Warn("sbin-installer .nupkg installation failed, falling back to Chocolatey", 
-				"item", item.Name, "error", err)
+			// Check if choco is available before attempting fallback
+			if _, err := os.Stat(chocolateyBin); os.IsNotExist(err) {
+				logging.Error("sbin-installer failed and choco is not available for fallback",
+					"item", item.Name,
+					"sbin_installer_error", err,
+					"choco_path", chocolateyBin)
+				return "", fmt.Errorf("sbin-installer failed: %v (choco fallback not available at %s)", err, chocolateyBin)
+			}
+			
+			// Log the sbin-installer failure but continue to choco fallback
+			logging.Warn("[INSTALLER METHOD: sbin-installer → choco] Preferred installer failed, falling back to choco", 
+				"item", item.Name, "sbin_error", err)
 			
 			// Log this as a warning event for monitoring
 			logging.LogEventEntry("install", "sbin_installer_fallback", logging.StatusWarning,
-				"sbin-installer failed, attempting Chocolatey fallback",
+				"sbin-installer (preferred) failed, attempting choco fallback",
 				logging.WithContext("item", item.Name),
 				logging.WithContext("package_path", packagePath),
 				logging.WithContext("sbin_installer_error", err.Error()),
-				logging.WithContext("fallback_action", "chocolatey"))
+				logging.WithContext("fallback_action", "choco"))
+		} else {
+			// Check if choco is available when sbin-installer is not
+			if _, err := os.Stat(chocolateyBin); os.IsNotExist(err) {
+				return "", fmt.Errorf("sbin-installer not available and choco not found at %s - cannot install .nupkg packages", chocolateyBin)
+			}
 		}
 
-		// Fallback to existing Chocolatey installation logic
-		logging.Info("Using Chocolatey for .nupkg installation", "item", item.Name)
+		// Fallback to existing choco installation logic
+		logging.Info("[INSTALLER METHOD: choco] Using choco for .nupkg installation", "item", item.Name, "package", filepath.Base(packagePath))
 		return installOrUpgradeNupkg(item, packagePath, cachePath, cfg)
 	}
 
@@ -1219,6 +1233,11 @@ func installOrUpgradeNupkg(item catalog.Item, downloadedFile, cachePath string, 
 
 // doChocoInstall runs choco install with the given nupkg file.
 func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item, cfg *config.Configuration) (string, error) {
+	// Check if choco is actually available
+	if _, err := os.Stat(chocolateyBin); os.IsNotExist(err) {
+		return "", fmt.Errorf("choco not installed: %s not found (install Chocolatey or deploy sbin-installer for .nupkg support)", chocolateyBin)
+	}
+	
 	// Run catalog preinstall_script if present
 	if err := executePreInstallScript(item, cachePath); err != nil {
 		return "", err
@@ -1245,7 +1264,11 @@ func doChocoInstall(filePath, pkgID, pkgVer, cachePath string, item catalog.Item
 
 	out, err := runCMD(chocolateyBin, cmdArgs)
 	if err != nil {
-		logging.Error("Choco install failed", "pkgID", pkgID, "error", err)
+		logging.Error("[INSTALLER METHOD: choco] Installation failed",
+			"item", item.Name,
+			"package_id", pkgID,
+			"version", pkgVer,
+			"error", err)
 		
 		// Log the Chocolatey failure as an event for ReportMate
 		status := logging.StatusFromError("chocolatey_install", err)
@@ -2594,6 +2617,25 @@ func runCMDWithWindowsElevation(command string, arguments []string) (string, err
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode := exitErr.ExitCode()
+			
+			// Detect PowerShell ObjectNotFound/CommandNotFoundException errors and simplify
+			if strings.Contains(errStr, "ObjectNotFound") || strings.Contains(errStr, "CommandNotFoundException") {
+				// Extract the command that wasn't found
+				notFoundCmd := command
+				if strings.Contains(errStr, "ObjectNotFound: (") {
+					// Extract from "ObjectNotFound: (C:\Path\to\command.exe:String)"
+					if start := strings.Index(errStr, "ObjectNotFound: ("); start != -1 {
+						if end := strings.Index(errStr[start:], ":"); end != -1 {
+							notFoundCmd = strings.TrimSpace(errStr[start+len("ObjectNotFound: (") : start+end])
+						}
+					}
+				}
+				logging.Error("Command not found",
+					"command", notFoundCmd,
+					"exitCode", exitCode)
+				return outStr, fmt.Errorf("command not found: %s (verify the executable is installed and in PATH)", notFoundCmd)
+			}
+			
 			logging.Error("PowerShell command failed",
 				"command", command, "args", arguments, "exitCode", exitCode,
 				"stderr", errStr, "psCommand", psCommand)
