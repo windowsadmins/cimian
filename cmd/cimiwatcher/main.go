@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -10,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
@@ -37,7 +40,153 @@ const (
 	pollInterval = 10 * time.Second
 )
 
+// Win32 API constants and types for session-aware process launching
+var (
+	wtsapi32                    = syscall.NewLazyDLL("wtsapi32.dll")
+	kernel32                    = syscall.NewLazyDLL("kernel32.dll")
+	advapi32                    = syscall.NewLazyDLL("advapi32.dll")
+	userenv                     = syscall.NewLazyDLL("userenv.dll")
+	
+	procWTSGetActiveConsoleSessionId = kernel32.NewProc("WTSGetActiveConsoleSessionId")
+	procWTSQueryUserToken            = wtsapi32.NewProc("WTSQueryUserToken")
+	procDuplicateTokenEx             = advapi32.NewProc("DuplicateTokenEx")
+	procCreateEnvironmentBlock       = userenv.NewProc("CreateEnvironmentBlock")
+	procDestroyEnvironmentBlock      = userenv.NewProc("DestroyEnvironmentBlock")
+	procCreateProcessAsUser          = advapi32.NewProc("CreateProcessAsUserW")
+)
+
+const (
+	TOKEN_DUPLICATE       = 0x0002
+	TOKEN_QUERY           = 0x0008
+	TOKEN_ASSIGN_PRIMARY  = 0x0001
+	MAXIMUM_ALLOWED       = 0x02000000
+	CREATE_UNICODE_ENVIRONMENT = 0x00000400
+	CREATE_NO_WINDOW           = 0x08000000
+	NORMAL_PRIORITY_CLASS      = 0x00000020
+	CREATE_NEW_CONSOLE         = 0x00000010
+)
+
+type STARTUPINFO struct {
+	Cb              uint32
+	_               *uint16
+	Desktop         *uint16
+	Title           *uint16
+	X               uint32
+	Y               uint32
+	XSize           uint32
+	YSize           uint32
+	XCountChars     uint32
+	YCountChars     uint32
+	FillAttribute   uint32
+	Flags           uint32
+	ShowWindow      uint16
+	_               uint16
+	_               *byte
+	StdInput        syscall.Handle
+	StdOutput       syscall.Handle
+	StdError        syscall.Handle
+}
+
+type PROCESS_INFORMATION struct {
+	Process   syscall.Handle
+	Thread    syscall.Handle
+	ProcessId uint32
+	ThreadId  uint32
+}
+
 var logger debug.Log
+
+// launchGUIInUserSession launches a GUI application in the active user session
+// This is necessary when running from a Windows service (Session 0) to display UI
+func launchGUIInUserSession(exePath string, logger debug.Log) error {
+	// Get the active console session ID
+	sessionID, _, _ := procWTSGetActiveConsoleSessionId.Call()
+	if sessionID == 0xFFFFFFFF { // WTS_CURRENT_SESSION means no active session
+		return fmt.Errorf("no active user session found")
+	}
+
+	logger.Info(1, fmt.Sprintf("Active console session ID: %d", sessionID))
+
+	// Get user token for the active session
+	var userToken syscall.Handle
+	ret, _, err := procWTSQueryUserToken.Call(uintptr(sessionID), uintptr(unsafe.Pointer(&userToken)))
+	if ret == 0 {
+		return fmt.Errorf("WTSQueryUserToken failed: %v", err)
+	}
+	defer syscall.CloseHandle(userToken)
+
+	// Duplicate the token to get a primary token
+	var duplicateToken syscall.Handle
+	ret, _, err = procDuplicateTokenEx.Call(
+		uintptr(userToken),
+		MAXIMUM_ALLOWED,
+		0, // No security attributes
+		2, // SecurityImpersonation level
+		1, // TokenPrimary
+		uintptr(unsafe.Pointer(&duplicateToken)),
+	)
+	if ret == 0 {
+		return fmt.Errorf("DuplicateTokenEx failed: %v", err)
+	}
+	defer syscall.CloseHandle(duplicateToken)
+
+	// Create environment block for the user
+	var environment uintptr
+	ret, _, err = procCreateEnvironmentBlock.Call(
+		uintptr(unsafe.Pointer(&environment)),
+		uintptr(duplicateToken),
+		0, // Don't inherit from calling process
+	)
+	if ret == 0 {
+		return fmt.Errorf("CreateEnvironmentBlock failed: %v", err)
+	}
+	defer procDestroyEnvironmentBlock.Call(environment)
+
+	// Set working directory to exe directory (needed for multi-file .NET builds)
+	workingDir := filepath.Dir(exePath)
+
+	// Setup STARTUPINFO and PROCESS_INFORMATION structures
+	si := STARTUPINFO{
+		Cb: uint32(unsafe.Sizeof(STARTUPINFO{})),
+	}
+	
+	// Set desktop to interactive desktop
+	desktopName, _ := syscall.UTF16PtrFromString("winsta0\\default")
+	si.Desktop = desktopName
+
+	pi := PROCESS_INFORMATION{}
+
+	// Convert paths to UTF16
+	exePathPtr, _ := syscall.UTF16PtrFromString(exePath)
+	workingDirPtr, _ := syscall.UTF16PtrFromString(workingDir)
+
+	// Create process as user in the active session
+	creationFlags := CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE | NORMAL_PRIORITY_CLASS
+	ret, _, err = procCreateProcessAsUser.Call(
+		uintptr(duplicateToken),
+		uintptr(unsafe.Pointer(exePathPtr)),
+		0, // No command line args
+		0, // No process security attributes
+		0, // No thread security attributes
+		0, // Don't inherit handles
+		uintptr(creationFlags),
+		environment,
+		uintptr(unsafe.Pointer(workingDirPtr)),
+		uintptr(unsafe.Pointer(&si)),
+		uintptr(unsafe.Pointer(&pi)),
+	)
+	
+	if ret == 0 {
+		return fmt.Errorf("CreateProcessAsUser failed: %v", err)
+	}
+
+	// Close process and thread handles (we don't need to wait)
+	syscall.CloseHandle(pi.Process)
+	syscall.CloseHandle(pi.Thread)
+
+	logger.Info(1, fmt.Sprintf("Launched GUI process (PID: %d) in session %d", pi.ProcessId, sessionID))
+	return nil
+}
 
 type cimianWatcherService struct {
 	ctx              context.Context
@@ -114,8 +263,17 @@ func runService(name string, isDebug bool) {
 	run := &cimianWatcherService{}
 
 	if isDebug {
-		// For debug mode, create dummy channels
-		run.Execute(nil, make(chan svc.ChangeRequest), make(chan svc.Status))
+		// For debug mode, create buffered channels and drain them
+		changes := make(chan svc.ChangeRequest, 10)
+		status := make(chan svc.Status, 10)
+		
+		// Drain status channel in background
+		go func() {
+			for range status {
+			}
+		}()
+		
+		run.Execute(nil, changes, status)
 	} else {
 		svc.Run(name, run)
 	}
@@ -138,7 +296,8 @@ func (m *cimianWatcherService) Execute(args []string, r <-chan svc.ChangeRequest
 	}
 
 	// Check for pending self-updates on service start
-	m.checkAndPerformSelfUpdate()
+	// TEMPORARILY DISABLED: self-update is crashing the service
+	// m.checkAndPerformSelfUpdate()
 
 	s <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 	logger.Info(1, "Cimian watcher service is now running")
@@ -258,6 +417,8 @@ func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 	logger.Info(1, fmt.Sprintf("Starting %s bootstrap update process", updateType))
 
 	// First, start managedsoftwareupdate in the background
+	// Since this service runs as SYSTEM, we need to launch the process properly
+	// The executable should run with the service's SYSTEM privileges
 	var updateCmd *exec.Cmd
 	if withGUI {
 		// Run with verbose output for GUI monitoring
@@ -266,6 +427,14 @@ func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 		// Run headless mode
 		updateCmd = exec.Command(cimianExePath, "--auto")
 	}
+
+	// Set working directory to avoid path issues
+	updateCmd.Dir = filepath.Dir(cimianExePath)
+
+	// Capture output for debugging errors
+	var stdoutBuf, stderrBuf bytes.Buffer
+	updateCmd.Stdout = &stdoutBuf
+	updateCmd.Stderr = &stderrBuf
 
 	// Start the update process
 	if err := updateCmd.Start(); err != nil {
@@ -283,11 +452,12 @@ func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 		if _, err := os.Stat(cimistatus); err == nil {
 			logger.Info(1, "Starting CimianStatus UI for monitoring")
 
-			guiCmd := exec.Command(cimistatus)
-			if err := guiCmd.Start(); err != nil {
+			// Services run in Session 0 (non-interactive), need to launch GUI in active user session
+			// Use Win32 APIs to create process in interactive session
+			if err := launchGUIInUserSession(cimistatus, logger); err != nil {
 				logger.Error(1, fmt.Sprintf("Failed to start CimianStatus UI: %v", err))
 			} else {
-				logger.Info(1, fmt.Sprintf("Started CimianStatus UI (PID: %d)", guiCmd.Process.Pid))
+				logger.Info(1, "Successfully launched CimianStatus UI in user session")
 			}
 		} else {
 			logger.Error(1, fmt.Sprintf("CimianStatus not found at: %s", cimistatus))
@@ -298,8 +468,19 @@ func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 	go func() {
 		if err := updateCmd.Wait(); err != nil {
 			logger.Error(1, fmt.Sprintf("%s bootstrap update process failed: %v", updateType, err))
+			// Log captured error output for debugging
+			if stderrBuf.Len() > 0 {
+				logger.Error(1, fmt.Sprintf("Process stderr: %s", stderrBuf.String()))
+			}
+			if stdoutBuf.Len() > 0 {
+				logger.Info(1, fmt.Sprintf("Process stdout: %s", stdoutBuf.String()))
+			}
 		} else {
 			logger.Info(1, fmt.Sprintf("%s bootstrap update process completed successfully", updateType))
+			// Log output on success too for debugging
+			if stdoutBuf.Len() > 0 {
+				logger.Info(1, fmt.Sprintf("Process output: %s", stdoutBuf.String()[:min(500, stdoutBuf.Len())]))
+			}
 		}
 
 		// Clean up the flag file after completion
@@ -503,4 +684,11 @@ func exePath() (string, error) {
 		return "", fmt.Errorf("%s is not a regular file", p)
 	}
 	return p, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
