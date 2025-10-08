@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="WixToolset.Sdk/6.0.1">
+<Project Sdk="WixToolset.Sdk/6.0.2">
 
   <PropertyGroup>
     <OutputName>Cimian</OutputName>
@@ -24,7 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.1" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
   </ItemGroup>
 
 </Project>
