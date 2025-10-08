@@ -849,7 +849,7 @@ if ($Binaries -or $Binary) {
                         # Fallback to PATH-based dotnet if system path doesn't exist
                         $dotnetPath = "dotnet"
                     }
-                    & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
+                    & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=false -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
                     if ($LASTEXITCODE -ne 0) {
                         throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
                     }
@@ -1392,7 +1392,7 @@ foreach ($arch in $archs) {
                     # Fallback to PATH-based dotnet if system path doesn't exist
                     $dotnetPath = "dotnet"
                 }
-                & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=true -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
+                & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=false -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
                 if ($LASTEXITCODE -ne 0) {
                     throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
                 }
