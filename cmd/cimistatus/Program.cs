@@ -77,12 +77,26 @@ namespace Cimian.Status
 
             var host = hostBuilder.Build();
 
-            // Create and run WPF application
+            // Create WPF application and ensure resources are initialized
             var app = new App();
             
-            // Set the main window from DI container
-            app.MainWindow = host.Services.GetRequiredService<MainWindow>();
-            app.MainWindow.Show();
+            // IMPORTANT: Set Startup event handler BEFORE calling Run()
+            // This ensures resources are fully loaded when MainWindow is created
+            app.Startup += (sender, e) =>
+            {
+                try
+                {
+                    var mainWindow = host.Services.GetRequiredService<MainWindow>();
+                    mainWindow.Show();
+                    app.MainWindow = mainWindow;
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to start CimianStatus: {ex.Message}\n\nSee Event Log for details.", 
+                        "CimianStatus Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    app.Shutdown(1);
+                }
+            };
             
             app.Run();
         }

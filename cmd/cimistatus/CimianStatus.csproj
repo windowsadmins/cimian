@@ -16,7 +16,7 @@
     <FileVersion>2025.7.13.0</FileVersion>
     <ApplicationIcon>cimian.ico</ApplicationIcon>
     <StartupObject>Cimian.Status.Program</StartupObject>
-    <PublishSingleFile>true</PublishSingleFile>
+    <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

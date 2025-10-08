@@ -15,8 +15,8 @@ namespace Cimian.Status.Views
         private readonly MainViewModel _viewModel;
         private readonly IStatusServer _statusServer;
         private readonly ILogger<MainWindow> _logger;
-        private readonly double _baseHeight = 450;
-        private readonly double _expandedHeight = 700;
+        private readonly double _baseHeight = 350;
+        private readonly double _expandedHeight = 800;
 
         public MainWindow(MainViewModel viewModel, IStatusServer statusServer, ILogger<MainWindow> logger)
         {
@@ -143,58 +143,33 @@ namespace Cimian.Status.Views
             }
         }
 
-        private void CloseWindow_Click(object sender, RoutedEventArgs e)
+        private void LogScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            try
+            // Explicitly set the TextBox width to match the ScrollViewer's viewport width
+            if (sender is ScrollViewer scrollViewer)
             {
-                // Terminate any running managedsoftwareupdate.exe processes
-                var processes = Process.GetProcessesByName("managedsoftwareupdate");
-                foreach (var process in processes)
+                var textBox = LogTextBox;
+                if (textBox != null)
                 {
-                    try
-                    {
-                        _logger.LogInformation("Terminating managedsoftwareupdate.exe process (PID: {ProcessId})", process.Id);
-                        process.Kill();
-                        process.WaitForExit(5000); // Wait up to 5 seconds for clean exit
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning("Failed to terminate managedsoftwareupdate.exe process (PID: {ProcessId}): {Error}", 
-                            process.Id, ex.Message);
-                    }
-                    finally
-                    {
-                        process.Dispose();
-                    }
+                    // Set width to viewport width minus padding
+                    textBox.Width = scrollViewer.ViewportWidth;
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError("Error while terminating processes: {Error}", ex.Message);
-            }
-
-            Close();
         }
 
-        private void Window_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
-        {
-            if (e.ChangedButton == System.Windows.Input.MouseButton.Left)
-            {
-                DragMove();
-            }
-        }
+        // Moved to OnClosed event - handles both X button and Alt+F4
 
         private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(_viewModel.IsLogViewerExpanded))
             {
-                // Animate window height change
+                // Animate window height change smoothly
                 var targetHeight = _viewModel.IsLogViewerExpanded ? _expandedHeight : _baseHeight;
                 AnimateWindowHeight(targetHeight);
             }
             else if (e.PropertyName == nameof(_viewModel.ShouldScrollToBottom))
             {
-                // Auto-scroll to bottom when log text changes
+                // Auto-scroll to bottom when log text changes - use lower priority to reduce lag
                 Dispatcher.BeginInvoke(() =>
                 {
                     var scrollViewer = FindName("LogScrollViewer") as ScrollViewer;
@@ -202,20 +177,24 @@ namespace Cimian.Status.Views
                     {
                         scrollViewer.ScrollToEnd();
                     }
-                });
+                }, System.Windows.Threading.DispatcherPriority.Background);
             }
         }
 
         private void AnimateWindowHeight(double targetHeight)
         {
+            // Only animate if height is actually changing
+            if (Math.Abs(Height - targetHeight) < 1)
+                return;
+
             var animation = new System.Windows.Media.Animation.DoubleAnimation
             {
                 From = Height,
                 To = targetHeight,
-                Duration = TimeSpan.FromMilliseconds(300),
+                Duration = TimeSpan.FromMilliseconds(250),
                 EasingFunction = new System.Windows.Media.Animation.CubicEase 
                 { 
-                    EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut 
+                    EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut 
                 }
             };
 
@@ -245,6 +224,27 @@ namespace Cimian.Status.Views
         {
             try
             {
+                // Terminate any running managedsoftwareupdate.exe processes
+                var processes = Process.GetProcessesByName("managedsoftwareupdate");
+                foreach (var process in processes)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Terminating managedsoftwareupdate.exe process (PID: {ProcessId})", process.Id);
+                        process.Kill();
+                        process.WaitForExit(5000); // Wait up to 5 seconds for clean exit
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("Failed to terminate managedsoftwareupdate.exe process (PID: {ProcessId}): {Error}", 
+                            process.Id, ex.Message);
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+
                 // Unsubscribe from events
                 _statusServer.MessageReceived -= OnStatusMessageReceived;
                 _viewModel.PropertyChanged -= OnViewModelPropertyChanged;

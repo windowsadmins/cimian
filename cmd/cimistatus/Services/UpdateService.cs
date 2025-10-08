@@ -36,16 +36,36 @@ namespace Cimian.Status.Services
                 _isExecutingUpdate = true;
                 _updateCompleted = false;
 
-                // Immediately show that we're starting
+                // Immediately show that we're starting with fast feedback
                 StatusChanged?.Invoke(this, new StatusEventArgs 
                 { 
-                    Message = "Initializing update process..." 
+                    Message = "Starting update process..." 
                 });
                 ProgressChanged?.Invoke(this, new ProgressEventArgs 
                 { 
-                    Percentage = 5, 
-                    Message = "Starting update..." 
+                    Percentage = 0, 
+                    Message = "Initializing..." 
                 });
+
+                // Check if there's already a process running first (fastest path)
+                var existingProcesses = Process.GetProcessesByName("managedsoftwareupdate");
+                if (existingProcesses.Length > 0)
+                {
+                    _logger.LogInformation("Found existing managedsoftwareupdate process, monitoring it...");
+                    StatusChanged?.Invoke(this, new StatusEventArgs 
+                    { 
+                        Message = "Connected to running update process..." 
+                    });
+                    ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                    { 
+                        Percentage = 10, 
+                        Message = "Monitoring existing process..." 
+                    });
+                    
+                    // Monitor the existing process
+                    await MonitorExistingProcessAsync(existingProcesses[0]);
+                    return;
+                }
 
                 // First try to trigger via CimianWatcher service (preferred method)
                 if (await TryTriggerViaBootstrapAsync())
@@ -187,6 +207,90 @@ namespace Cimian.Status.Services
                     Message = "Service trigger failed, trying direct approach..." 
                 });
                 return false;
+            }
+        }
+
+        private async Task MonitorExistingProcessAsync(Process process)
+        {
+            try
+            {
+                _logger.LogInformation("Monitoring existing process PID: {ProcessId}", process.Id);
+                
+                StatusChanged?.Invoke(this, new StatusEventArgs 
+                { 
+                    Message = $"Monitoring update process (PID: {process.Id})..." 
+                });
+
+                ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                { 
+                    Percentage = 15, 
+                    Message = "Connected to running process, waiting for updates..." 
+                });
+
+                // Wait for the real progress from TCP messages
+                // The OnStatusMessageReceived method will handle progress updates
+                
+                // Wait for completion with timeout (15 minutes)
+                var completed = await Task.Run(() => process.WaitForExit(900000));
+
+                // If we didn't receive a "quit" message but the process completed, handle it
+                if (completed && !_updateCompleted)
+                {
+                    var exitCode = process.ExitCode;
+                    _logger.LogInformation("Process completed with exit code: {ExitCode}", exitCode);
+
+                    ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                    { 
+                        Percentage = 100, 
+                        Message = "Process completed" 
+                    });
+
+                    var success = exitCode == 0;
+                    var errorMessage = success ? null : $"Process exit code: {exitCode}";
+
+                    StatusChanged?.Invoke(this, new StatusEventArgs 
+                    { 
+                        Message = success ? "Update completed successfully" : $"Update failed with exit code {exitCode}",
+                        IsError = !success
+                    });
+
+                    Completed?.Invoke(this, new UpdateCompletedEventArgs 
+                    { 
+                        Success = success, 
+                        ErrorMessage = errorMessage,
+                        ExitCode = exitCode
+                    });
+                }
+                else if (!completed)
+                {
+                    _logger.LogWarning("Process monitoring timed out");
+                    
+                    StatusChanged?.Invoke(this, new StatusEventArgs 
+                    { 
+                        Message = "Process monitoring timed out", 
+                        IsError = true 
+                    });
+                    
+                    Completed?.Invoke(this, new UpdateCompletedEventArgs 
+                    { 
+                        Success = false, 
+                        ErrorMessage = "Process monitoring timed out after 15 minutes" 
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error monitoring existing process");
+                StatusChanged?.Invoke(this, new StatusEventArgs 
+                { 
+                    Message = "Error monitoring process", 
+                    IsError = true 
+                });
+                Completed?.Invoke(this, new UpdateCompletedEventArgs 
+                { 
+                    Success = false, 
+                    ErrorMessage = ex.Message 
+                });
             }
         }
 
@@ -461,6 +565,9 @@ namespace Cimian.Status.Services
             return null;
         }
 
+        private DateTime _lastStatusUpdate = DateTime.MinValue;
+        private readonly TimeSpan _statusUpdateThrottle = TimeSpan.FromMilliseconds(50);
+
         private void OnStatusMessageReceived(object? sender, StatusMessage message)
         {
             // Only process messages when we're actively running an update
@@ -468,32 +575,45 @@ namespace Cimian.Status.Services
 
             try
             {
+                // Throttle status updates to prevent UI flooding
+                var now = DateTime.Now;
+                var shouldThrottle = (now - _lastStatusUpdate) < _statusUpdateThrottle;
+
                 switch (message.Type?.ToLowerInvariant())
                 {
                     case "statusmessage":
-                        StatusChanged?.Invoke(this, new StatusEventArgs 
-                        { 
-                            Message = message.Data, 
-                            IsError = message.Error 
-                        });
+                        if (!shouldThrottle || message.Error)
+                        {
+                            _lastStatusUpdate = now;
+                            StatusChanged?.Invoke(this, new StatusEventArgs 
+                            { 
+                                Message = message.Data, 
+                                IsError = message.Error 
+                            });
+                        }
                         break;
 
                     case "detailmessage":
-                        ProgressChanged?.Invoke(this, new ProgressEventArgs 
-                        { 
-                            Percentage = -1, // Keep current percentage
-                            Message = message.Data 
-                        });
+                        if (!shouldThrottle)
+                        {
+                            _lastStatusUpdate = now;
+                            ProgressChanged?.Invoke(this, new ProgressEventArgs 
+                            { 
+                                Percentage = -1, // Keep current percentage
+                                Message = message.Data 
+                            });
+                        }
                         break;
 
                     case "percentprogress":
                     case "percentProgress": // Handle both case variations
                         if (message.Percent >= 0)
                         {
+                            // Allow all progress percentage updates (they're already throttled in ViewModel)
                             ProgressChanged?.Invoke(this, new ProgressEventArgs 
                             { 
                                 Percentage = message.Percent,
-                                Message = $"Progress: {message.Percent}%"
+                                Message = !string.IsNullOrEmpty(message.Data) ? message.Data : $"Progress: {message.Percent}%"
                             });
                         }
                         break;
@@ -501,6 +621,7 @@ namespace Cimian.Status.Services
                     case "quit":
                         _logger.LogInformation("Received quit message from managedsoftwareupdate");
                         _updateCompleted = true;
+                        _lastStatusUpdate = now;
                         
                         // Assume success if we got a quit message (process completed normally)
                         ProgressChanged?.Invoke(this, new ProgressEventArgs 

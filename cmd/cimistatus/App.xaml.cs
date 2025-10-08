@@ -5,6 +5,12 @@ namespace Cimian.Status
 {
     public partial class App : Application
     {
+        public App()
+        {
+            // This calls the generated InitializeComponent() which loads App.xaml resources
+            InitializeComponent();
+        }
+
         protected override void OnStartup(StartupEventArgs e)
         {
             // Set theme preference based on system settings
