@@ -25,6 +25,7 @@ namespace Cimian.Status.Services
         
         // Live log tailing functionality
         event EventHandler<string>? LogLineReceived;
+        event EventHandler<int>? ProgressDetected;
         Task StartLogTailingAsync();
         Task StopLogTailingAsync();
         bool IsLogTailing { get; }

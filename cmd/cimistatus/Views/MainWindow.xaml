@@ -3,19 +3,17 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.modernwpf.com/2019"
         xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
-        ui:WindowHelper.UseModernWindowStyle="False"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        ui:TitleBar.ExtendViewIntoTitleBar="False"
         Title="Cimian Status" 
-        Height="550" 
-        Width="600"
-        MinHeight="550"
-        MinWidth="500"
+        Height="600" 
+        Width="700"
+        MinHeight="450"
+        MinWidth="600"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
         Icon="../cimian.ico"
-        Background="{DynamicResource ApplicationPageBackgroundThemeBrush}"
-        MouseLeftButtonDown="Window_MouseLeftButtonDown"
-        WindowStyle="None"
-        AllowsTransparency="True">
+        Background="{DynamicResource ApplicationPageBackgroundThemeBrush}">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
@@ -81,15 +79,15 @@
         </EventTrigger>
     </Window.Triggers>
 
-    <Grid Margin="32">
+    <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="150" MinHeight="100"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto" MinHeight="100"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <!-- Header Section with Modern Design -->
-        <Grid Grid.Row="0" Margin="0,40,0,32">
+        <Grid Grid.Row="0" Margin="0,16,0,24">
             <!-- App Icon with 30px padding -->
             <Border Width="64" Height="64" 
                     CornerRadius="12"
@@ -98,7 +96,7 @@
                     HorizontalAlignment="Left"
                     VerticalAlignment="Center">
                 <Border.Effect>
-                    <DropShadowEffect Color="{StaticResource AccentColor}" 
+                    <DropShadowEffect Color="#FF0078D4" 
                                     Direction="270" 
                                     ShadowDepth="0" 
                                     BlurRadius="12" 
@@ -109,20 +107,11 @@
                        RenderOptions.BitmapScalingMode="HighQuality"/>
             </Border>
 
-            <!-- Centered Title Section (spans entire window width) -->
+            <!-- Centered Title Section -->
             <TextBlock Text="Managed Software Update" 
                       Style="{StaticResource TitleTextStyle}"
                       VerticalAlignment="Center" 
                       HorizontalAlignment="Center"/>
-
-            <!-- Close Button -->
-            <Button VerticalAlignment="Center"
-                    HorizontalAlignment="Right"
-                    Content="×"
-                    Click="CloseWindow_Click"
-                    Style="{StaticResource CloseButtonStyle}"
-                    ToolTip="Close and stop updates"
-                    Margin="0,0,40,0"/>
         </Grid>
 
         <!-- Main Status Card -->
@@ -186,104 +175,127 @@
                 </Grid.RowDefinitions>
 
                 <!-- Log Viewer Header (Always Visible) -->
-                <Button Grid.Row="0"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        Padding="16,12"
-                        HorizontalContentAlignment="Center"
-                        Click="ToggleLogViewer_Click">
-                    <Grid HorizontalAlignment="Center">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-                        <TextBlock Grid.Column="0"
-                                  Text="Log"
-                                  Style="{StaticResource SubtitleTextStyle}"
-                                  VerticalAlignment="Center"
-                                  HorizontalAlignment="Center"
-                                  Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
+                    <!-- Log Toggle Button -->
+                    <Button Grid.Column="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="16,12"
+                            HorizontalContentAlignment="Center"
+                            Click="ToggleLogViewer_Click">
+                        <Grid HorizontalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
 
-                        <TextBlock Grid.Column="1"
-                                  VerticalAlignment="Center"
-                                  Margin="12,0,0,0"
-                                  Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="True">
-                                            <Setter Property="Text" Value="▲"/>
-                                        </DataTrigger>
-                                        <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="False">
-                                            <Setter Property="Text" Value="▼"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </Grid>
-                </Button>
+                            <TextBlock Grid.Column="0"
+                                      Text="Log"
+                                      Style="{StaticResource SubtitleTextStyle}"
+                                      VerticalAlignment="Center"
+                                      HorizontalAlignment="Center"
+                                      Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"/>
 
-                <!-- Log Viewer Content (Collapsible) -->
-                <Border Grid.Row="1"
+                            <TextBlock Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      Margin="12,0,0,0"
+                                      Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource BodyTextStyle}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="True">
+                                                <Setter Property="Text" Value="▲"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="False">
+                                                <Setter Property="Text" Value="▼"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </Button>
+
+                    <!-- Copy Log Button (Always Visible) -->
+                    <Button Grid.Column="1"
+                            Content="Copy Log"
+                            VerticalAlignment="Center"
+                            Margin="0,0,12,0"
+                            Padding="12,6"
+                            Click="CopyLog_Click"
+                            Style="{StaticResource SecondaryButtonStyle}"
+                            FontSize="12"/>
+                </Grid>
+
+                <!-- Log Viewer Content (Collapsible with animation) -->
+                <Border x:Name="LogViewerBorder"
+                        Grid.Row="1"
                         Background="{DynamicResource ControlFillColorTertiaryBrush}"
                         CornerRadius="6"
-                        Margin="12,0,12,12"
-                        MinHeight="120"
-                        MaxHeight="350">
+                        Margin="12,0,12,12">
                     <Border.Style>
                         <Style TargetType="Border">
+                            <Setter Property="Height" Value="0"/>
+                            <Setter Property="Visibility" Value="Collapsed"/>
                             <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="False">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                </DataTrigger>
                                 <DataTrigger Binding="{Binding IsLogViewerExpanded}" Value="True">
                                     <Setter Property="Visibility" Value="Visible"/>
+                                    <DataTrigger.EnterActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetProperty="Height"
+                                                               From="0" To="400" Duration="0:0:0.3">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseOut"/>
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </DataTrigger.EnterActions>
+                                    <DataTrigger.ExitActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetProperty="Height"
+                                                               To="0" Duration="0:0:0.2">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseIn"/>
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </DataTrigger.ExitActions>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </Border.Style>
 
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*" MinHeight="80"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-
-                        <!-- Log Text Area -->
-                        <ScrollViewer x:Name="LogScrollViewer"
-                                      Grid.Row="0"
-                                      VerticalScrollBarVisibility="Auto"
-                                      HorizontalScrollBarVisibility="Auto"
-                                      Padding="12,12,12,8"
-                                      CanContentScroll="False">
-                            <TextBox x:Name="LogTextBox"
-                                     Text="{Binding LogText, Mode=OneWay}"
-                                     FontFamily="Consolas"
-                                     FontSize="11"
-                                     Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
-                                     Background="Transparent"
-                                     BorderThickness="0"
-                                     IsReadOnly="True"
-                                     TextWrapping="NoWrap"
-                                     AcceptsReturn="True"
-                                     VerticalScrollBarVisibility="Disabled"
-                                     HorizontalScrollBarVisibility="Disabled"
-                                     SelectionBrush="{DynamicResource AccentColorBrush}"
-                                     IsReadOnlyCaretVisible="True"/>
-                        </ScrollViewer>
-
-                        <!-- Copy Button -->
-                        <Button Grid.Row="1"
-                                Content="Copy Log"
-                                HorizontalAlignment="Right"
-                                Margin="12,4,12,8"
-                                Padding="12,6"
-                                Click="CopyLog_Click"
-                                Style="{StaticResource SecondaryButtonStyle}"
-                                FontSize="12"/>
-                    </Grid>
+                    <!-- Log Text Area with Text Wrapping -->
+                    <ScrollViewer x:Name="LogScrollViewer"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  SizeChanged="LogScrollViewer_SizeChanged">
+                        <TextBox x:Name="LogTextBox"
+                                 Text="{Binding LogText, Mode=OneWay}"
+                                 FontFamily="Cascadia Mono, Consolas, Courier New"
+                                 FontSize="11"
+                                 Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="12"
+                                 Margin="0"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Disabled"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 SelectionBrush="{StaticResource AccentBrush}"
+                                 IsReadOnlyCaretVisible="True"/>
+                    </ScrollViewer>
                 </Border>
             </Grid>
         </Border>

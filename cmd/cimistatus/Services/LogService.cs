@@ -31,6 +31,7 @@ namespace Cimian.Status.Services
         private readonly StringBuilder _processOutput = new();
 
         public event EventHandler<string>? LogLineReceived;
+        public event EventHandler<int>? ProgressDetected;
         public bool IsLogTailing { get; private set; }
 
         public LogService(ILogger<LogService> logger, IUpdateService updateService)
@@ -192,10 +193,12 @@ namespace Cimian.Status.Services
                     return Task.CompletedTask;
                 }
 
-                // Start with existing content if file exists
+                // Read existing content if file exists
                 if (File.Exists(_currentLogFile))
                 {
-                    _lastPosition = new FileInfo(_currentLogFile).Length;
+                    _lastPosition = 0; // Start from beginning to show existing content
+                    // Read existing content immediately
+                    ReadNewLogContent();
                 }
 
                 // Set up file system watcher for the logs directory
@@ -211,8 +214,8 @@ namespace Cimian.Status.Services
                     _fileWatcher.EnableRaisingEvents = true;
                 }
 
-                // Also poll periodically as backup
-                _pollTimer = new Timer(PollLogFile, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+                // Poll more frequently (250ms) for faster, more responsive log updates
+                _pollTimer = new Timer(PollLogFile, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
 
                 _logger.LogInformation("Started log tailing for: {LogFile}", _currentLogFile);
                 
@@ -334,6 +337,9 @@ namespace Cimian.Status.Services
                     while ((line = reader.ReadLine()) != null)
                     {
                         LogLineReceived?.Invoke(this, line);
+                        
+                        // Try to detect progress from log content
+                        TryDetectProgressFromLog(line);
                     }
 
                     _lastPosition = fileStream.Position;
@@ -355,19 +361,21 @@ namespace Cimian.Status.Services
                 var processes = Process.GetProcessesByName("managedsoftwareupdate");
                 if (processes.Length == 0)
                 {
-                    // No running process - try to start one with output capture
-                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] No running managedsoftwareupdate.exe process found");
-                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Attempting to start process with live output capture...");
+                    // No running process - monitor for new processes starting
+                    LogLineReceived?.Invoke(this, "No running managedsoftwareupdate.exe process found");
+                    LogLineReceived?.Invoke(this, "Monitoring for process start...");
                     
-                    return TryStartProcessWithCapture();
+                    // Start monitoring for new processes
+                    StartProcessMonitoring();
+                    return false; // Return false to also start file monitoring as backup
                 }
 
                 // Use the first (most likely only) process
                 _liveProcess = processes[0];
                 
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Found running managedsoftwareupdate.exe process (PID: {_liveProcess.Id})");
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Monitoring existing process (started by cimitrigger or service)");
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Switching to log file monitoring for live updates...");
+                LogLineReceived?.Invoke(this, $"Found running managedsoftwareupdate.exe process (PID: {_liveProcess.Id})");
+                LogLineReceived?.Invoke(this, "NOTE: Progress bar updates require process started with --show-status flag");
+                LogLineReceived?.Invoke(this, "Monitoring via log file for detailed progress...");
                 
                 // Monitor the existing process without trying to start another one
                 _ = Task.Run(async () =>
@@ -375,8 +383,7 @@ namespace Cimian.Status.Services
                     try
                     {
                         await _liveProcess.WaitForExitAsync();
-                        var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                        LogLineReceived?.Invoke(this, $"[{timestamp}] Process completed with exit code: {_liveProcess.ExitCode}");
+                        LogLineReceived?.Invoke(this, $"Process completed with exit code: {_liveProcess.ExitCode}");
                         _isProcessTailing = false;
                     }
                     catch (Exception ex)
@@ -385,9 +392,9 @@ namespace Cimian.Status.Services
                     }
                 });
                 
-                // Return true to indicate we successfully attached to an existing process
-                // This prevents the caller from trying to start another process
-                return true;
+                // Return false to continue with file monitoring setup
+                // We want to tail the log file even when attaching to existing process
+                return false;
             }
             catch (Exception ex)
             {
@@ -405,11 +412,11 @@ namespace Cimian.Status.Services
             {
                 if (!_updateService.IsExecutableFound())
                 {
-                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] ERROR: managedsoftwareupdate.exe not found");
+                    LogLineReceived?.Invoke(this, "ERROR: managedsoftwareupdate.exe not found");
                     return false;
                 }
 
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Starting managedsoftwareupdate.exe with live output capture (-vv)...");
+                LogLineReceived?.Invoke(this, "Starting managedsoftwareupdate.exe with live output capture (-vv)...");
 
                 _liveProcess = _updateService.LaunchWithOutputCapture(
                     output => {
@@ -425,7 +432,7 @@ namespace Cimian.Status.Services
                 if (_liveProcess != null)
                 {
                     _isProcessTailing = true;
-                    LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Successfully started process with live output capture (PID: {_liveProcess.Id})");
+                    LogLineReceived?.Invoke(this, $"Successfully started process with live output capture (PID: {_liveProcess.Id})");
                     
                     // Monitor for process exit
                     _ = Task.Run(async () =>
@@ -433,8 +440,7 @@ namespace Cimian.Status.Services
                         try
                         {
                             await _liveProcess.WaitForExitAsync();
-                            var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                            LogLineReceived?.Invoke(this, $"[{timestamp}] Process completed with exit code: {_liveProcess.ExitCode}");
+                            LogLineReceived?.Invoke(this, $"Process completed with exit code: {_liveProcess.ExitCode}");
                             _isProcessTailing = false;
                         }
                         catch (Exception ex)
@@ -446,7 +452,7 @@ namespace Cimian.Status.Services
                     return true;
                 }
                 
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Failed to start process with output capture");
+                LogLineReceived?.Invoke(this, "Failed to start process with output capture");
                 return false;
             }
             catch (Exception ex)
@@ -464,20 +470,20 @@ namespace Cimian.Status.Services
         {
             if (_isProcessTailing)
             {
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Process monitoring already active");
+                LogLineReceived?.Invoke(this, "Process monitoring already active");
                 return Task.FromResult(true);
             }
 
-            LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Manually starting process with live monitoring...");
+            LogLineReceived?.Invoke(this, "Manually starting process with live monitoring...");
             
             var result = TryStartProcessWithCapture();
             if (result)
             {
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Live process monitoring started successfully");
+                LogLineReceived?.Invoke(this, "Live process monitoring started successfully");
             }
             else
             {
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Failed to start live process monitoring");
+                LogLineReceived?.Invoke(this, "Failed to start live process monitoring");
             }
             
             return Task.FromResult(result);
@@ -508,7 +514,7 @@ namespace Cimian.Status.Services
                             }
                         }
                         
-                        await Task.Delay(2000, _cancellationTokenSource.Token); // Check every 2 seconds
+                        await Task.Delay(500, _cancellationTokenSource.Token); // Check every 500ms for faster detection
                     }
                 }
                 catch (OperationCanceledException)
@@ -521,6 +527,8 @@ namespace Cimian.Status.Services
                 }
             });
         }
+
+        private int _lastMonitoredProcessId = -1;
 
         /// <summary>
         /// Attempts to capture output from newly started managedsoftwareupdate.exe processes
@@ -535,9 +543,13 @@ namespace Cimian.Status.Services
                 if (process.HasExited)
                     return false;
 
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Monitoring process PID {process.Id}");
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Note: Live console output capture requires launching the process with cimistatus");
-                LogLineReceived?.Invoke(this, $"[{DateTime.Now:HH:mm:ss}] Falling back to log file monitoring...");
+                // Only log once per process to avoid spam
+                if (_lastMonitoredProcessId != process.Id)
+                {
+                    _lastMonitoredProcessId = process.Id;
+                    LogLineReceived?.Invoke(this, $"Found running process PID {process.Id}");
+                    LogLineReceived?.Invoke(this, "Monitoring via log file...");
+                }
                 
                 return false; // Return false to fall back to file tailing
             }
@@ -569,6 +581,65 @@ namespace Cimian.Status.Services
             {
                 var timestamp = DateTime.Now.ToString("HH:mm:ss");
                 LogLineReceived?.Invoke(this, $"[{timestamp}] ERROR: {e.Data}");
+            }
+        }
+
+        private int _totalItems = 0;
+        private int _processedItems = 0;
+
+        /// <summary>
+        /// Attempts to detect progress percentage from log file content patterns
+        /// </summary>
+        private void TryDetectProgressFromLog(string logLine)
+        {
+            try
+            {
+                // Pattern: "INSTALLING/UPDATING (21 items)" or "INSTALLING (5 items)"
+                if ((logLine.Contains("INSTALLING/UPDATING") || logLine.Contains("INSTALLING (")) && logLine.Contains("items)"))
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(logLine, @"\((\d+)\s+items?\)");
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out int items))
+                    {
+                        _totalItems = items;
+                        _processedItems = 0;
+                        _logger.LogInformation("Detected {TotalItems} items to install/update", _totalItems);
+                        ProgressDetected?.Invoke(this, 5); // Start at 5% when we know total
+                    }
+                }
+                // Pattern: "Processing install of item: Chrome source: from managed_updates"
+                else if (logLine.Contains("Processing install of item:") || 
+                         logLine.Contains("Installing item:") ||
+                         logLine.Contains("INFO  Installing item:"))
+                {
+                    _processedItems++;
+                    if (_totalItems > 0)
+                    {
+                        // Calculate progress: 5% start + (90% * items_done / total_items)
+                        int progress = 5 + (int)((90.0 * _processedItems) / _totalItems);
+                        progress = Math.Min(progress, 95); // Cap at 95% until completion
+                        _logger.LogDebug("Progress: {ProcessedItems}/{TotalItems} = {Progress}%", _processedItems, _totalItems, progress);
+                        ProgressDetected?.Invoke(this, progress);
+                    }
+                    else
+                    {
+                        // Don't know total, just show indeterminate progress
+                        _logger.LogDebug("Processing item {ProcessedItems} (total unknown)", _processedItems);
+                    }
+                }
+                // Pattern: "populateFromCurrentManifests completed" or final completion markers
+                else if (logLine.Contains("populateFromCurrentManifests completed") ||
+                         logLine.Contains("All operations completed successfully") ||
+                         logLine.Contains("INSTALLATION COMPLETE"))
+                {
+                    _logger.LogInformation("Installation completed");
+                    ProgressDetected?.Invoke(this, 100); // Completion marker
+                    _totalItems = 0;
+                    _processedItems = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error detecting progress from log line");
             }
         }
     }

@@ -77,6 +77,7 @@ namespace Cimian.Status.ViewModels
 
             // Subscribe to log service events
             _logService.LogLineReceived += OnLogLineReceived;
+            _logService.ProgressDetected += OnProgressDetectedFromLog;
 
             LoadLastRunTime();
         }
@@ -115,6 +116,12 @@ namespace Cimian.Status.ViewModels
                 ProgressText = "Initializing...";
                 StatusText = "Starting update process...";
 
+                // Auto-expand log viewer when starting update for better visibility
+                if (!IsLogViewerExpanded)
+                {
+                    IsLogViewerExpanded = true;
+                }
+                
                 // Start log tailing when update begins
                 await StartLogTailingAsync();
 
@@ -224,35 +231,70 @@ namespace Cimian.Status.ViewModels
             // Ensure UI updates happen on the UI thread
             App.Current.Dispatcher.BeginInvoke(() =>
             {
-                AddLogLine(logLine);
+                // Log lines already have timestamps from managedsoftwareupdate, just append directly
+                LogText += logLine + "\r\n";
+
+                // Keep only the last 1000 lines to prevent memory issues
+                var lines = LogText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+                if (lines.Length > 1000)
+                {
+                    var keepLines = lines.Skip(lines.Length - 1000).ToArray();
+                    LogText = string.Join("\r\n", keepLines);
+                }
+
+                // Trigger scroll to bottom
+                OnPropertyChanged(nameof(ShouldScrollToBottom));
+            });
+        }
+
+        private void OnProgressDetectedFromLog(object? sender, int progress)
+        {
+            // Ensure UI updates happen on the UI thread
+            App.Current.Dispatcher.BeginInvoke(() =>
+            {
+                ProgressValue = progress;
+                ShowProgress = true;
+                IsIndeterminate = false;
+                ProgressText = $"{progress}% (from log analysis)";
             });
         }
 
         private void AddLogLine(string message)
         {
-            var timestamp = DateTime.Now.ToString("HH:mm:ss");
+            var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
             var logEntry = $"[{timestamp}] {message}\r\n";
             LogText += logEntry;
 
-            // Keep only the last 500 lines to prevent memory issues
+            // Keep only the last 1000 lines to prevent memory issues while showing more context
             var lines = LogText.Split(new[] { "\r\n" }, StringSplitOptions.None);
-            if (lines.Length > 500)
+            if (lines.Length > 1000)
             {
-                var keepLines = lines.Skip(lines.Length - 500).ToArray();
+                var keepLines = lines.Skip(lines.Length - 1000).ToArray();
                 LogText = string.Join("\r\n", keepLines);
             }
 
-            // Trigger scroll to bottom
+            // Trigger scroll to bottom (throttled by UI dispatcher)
             OnPropertyChanged(nameof(ShouldScrollToBottom));
         }
 
         // Property to trigger auto-scroll in UI
         public bool ShouldScrollToBottom => !string.IsNullOrEmpty(LogText);
 
+        private DateTime _lastProgressUpdate = DateTime.MinValue;
+        private readonly TimeSpan _progressUpdateThrottle = TimeSpan.FromMilliseconds(100);
+
         private void OnProgressChanged(object? sender, ProgressEventArgs e)
         {
             try
             {
+                // Throttle rapid progress updates to prevent UI lag
+                var now = DateTime.Now;
+                if ((now - _lastProgressUpdate) < _progressUpdateThrottle && e.Percentage < 100)
+                {
+                    return;
+                }
+                _lastProgressUpdate = now;
+
                 // Only update percentage if it's a valid value (>= 0)
                 if (e.Percentage >= 0)
                 {
