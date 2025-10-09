@@ -277,6 +277,24 @@ func waitForProcessCompletion() {
 	fmt.Fprintf(os.Stderr, "\n")
 }
 
+// actionToSourceType maps manifest item action types to their corresponding source type strings
+// for accurate reporting and logging
+func actionToSourceType(action string) string {
+	switch action {
+	case "install":
+		return "managed_installs"
+	case "update":
+		return "managed_updates"
+	case "uninstall":
+		return "managed_uninstalls"
+	case "optional":
+		return "optional_installs"
+	default:
+		// Default to managed_installs for backward compatibility
+		return "managed_installs"
+	}
+}
+
 func main() {
 	enableANSIConsole()
 
@@ -410,6 +428,10 @@ func main() {
 	}
 	defer logging.CloseLogger()
 
+	// Display version at start of every run (before logging initialization)
+	v := version.Version()
+	fmt.Printf("Cimian version is %s\n", v.Version)
+
 	// Enhanced startup info - show basic header even without verbose mode
 	logging.Info("================================================================================")
 	if verbosity > 0 {
@@ -417,6 +439,7 @@ func main() {
 	} else {
 		logging.Info("CIMIAN MANAGED SOFTWARE UPDATE")
 	}
+	logging.Info("Version: %s", v.Version)
 	logging.Info("================================================================================")
 
 	// Update the item filter with the initialized logger
@@ -840,8 +863,9 @@ func main() {
 						logging.Info("Found item needing update in install-only mode", "item", manifestItem.Name, "version", catItem.Version)
 						itemsToInstall = append(itemsToInstall, catItem)
 						
-						// Set item source for reporting
-						process.SetItemSource(manifestItem.Name, manifestItem.SourceManifest, "managed_updates")
+						// Set item source for reporting - map action type to source type
+						sourceType := actionToSourceType(manifestItem.Action)
+						process.SetItemSource(manifestItem.Name, manifestItem.SourceManifest, sourceType)
 					} else {
 						logging.Warn("Item needs update but not found in cached catalogs", "item", manifestItem.Name)
 					}
@@ -2427,7 +2451,9 @@ func prepareDownloadItemsWithCatalog(manifestItems []manifest.Item, catMap map[s
 
 			// Source manifest is already set in the m structure
 			sourceManifest := m.SourceManifest
-			process.SetItemSource(m.Name, sourceManifest, "managed_updates")
+			// Map action type to source type for accurate reporting
+			sourceType := actionToSourceType(m.Action)
+			process.SetItemSource(m.Name, sourceManifest, sourceType)
 
 			results = append(results, catItem)
 		}
