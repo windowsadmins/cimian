@@ -121,16 +121,17 @@ func (c *Configuration) GetSbinInstallerTargetRoot() string {
 	return c.SbinInstallerTargetRoot
 }
 
-// GetPkgRequireSignature returns whether .pkg packages require cryptographic signatures, with true as default
+// GetPkgRequireSignature returns whether .pkg packages require cryptographic signatures, with false as default
 func (c *Configuration) GetPkgRequireSignature() bool {
-	// Default to requiring signatures for security
-	return c.PkgRequireSignature || !c.PkgRequireSignature // This will default to true
+	// For now, default to not requiring signatures to allow unsigned packages
+	// This can be changed to true for production environments via config
+	return c.PkgRequireSignature
 }
 
-// GetPkgRequireTrustedCert returns whether .pkg signatures must be from trusted CAs, with true as default
+// GetPkgRequireTrustedCert returns whether .pkg signatures must be from trusted CAs, with false as default
 func (c *Configuration) GetPkgRequireTrustedCert() bool {
-	// Default to requiring trusted certificate authorities
-	return c.PkgRequireTrustedCert || !c.PkgRequireTrustedCert // This will default to true
+	// Default to not requiring trusted certificate authorities (allows self-signed certs)
+	return c.PkgRequireTrustedCert
 }
 
 // GetPkgSignatureTimestampGrace returns the grace period for timestamp validation, with 30 days as default
