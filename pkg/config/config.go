@@ -317,8 +317,8 @@ func GetDefaultConfig() *Configuration {
 		CloudBucket:                "",
 		ForceBasicAuth:             false,
 		OpenImportedYaml:           true,
-		PreflightFailureAction:     "continue", // Default: continue on preflight failure
-		PostflightFailureAction:    "continue", // Default: continue on postflight failure
+		PreflightFailureAction:     "abort",    // Default: abort on preflight failure (matches Munki behavior)
+		PostflightFailureAction:    "abort",    // Default: abort on postflight failure (matches Munki behavior)
 		InstallerTimeoutMinutes:    10,         // Default: 10 minute timeout for installers
 		ForceExecutionPolicyBypass: true,       // Default: Force -ExecutionPolicy Bypass for all PowerShell scripts
 	}

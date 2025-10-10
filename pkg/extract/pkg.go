@@ -99,6 +99,16 @@ func PkgMetadata(pkgPath string) (string, string, string, string, string) {
 	developer := strings.TrimSpace(buildInfo.Product.Developer)
 	description := strings.TrimSpace(buildInfo.Product.Description)
 
+	// Generate default description if none provided
+	if description == "" && name != "" && version != "" {
+		description = fmt.Sprintf("%s version %s for %s by %s", name, version, identifier, developer)
+		
+		// Add signing information if package is signed
+		if buildInfo.Signature != nil && buildInfo.Signature.Certificate.Subject != "" {
+			description += fmt.Sprintf(" (signed by %s)", buildInfo.Signature.Certificate.Subject)
+		}
+	}
+
 	return identifier, name, version, developer, description
 }
 

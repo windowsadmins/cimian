@@ -18,9 +18,9 @@ import (
 // because preflight.ps1 depends on legacy PackageManagement and PowerShellGet modules that don't
 // work properly in PowerShell Core.
 //
-// FUNCTION IS TEMPORARILY set to NEVER return an error, even if the script fails. Preflight/postflight -- does not match Munki's behavior, which fails the entire run if pre/postflight fails. Future versions will change this.
-// failures must never block the main managedsoftwareupdate run. Script failures are logged but
-// the function always returns nil to ensure the main workflow continues.
+// This function now properly returns errors when scripts fail
+// The calling code (runPreflightIfNeeded/runPostflightIfNeeded) uses PreflightFailureAction
+// and PostflightFailureAction configuration to determine whether to abort, warn, or continue.
 func runScript(
 	scriptPath string,
 	displayName string,
@@ -66,15 +66,12 @@ func runScript(
 	cmd.Stdin = nil
 
 	// 3. Run the command and wait for completion.
-	// IMPORTANT: Never fail the main run if preflight/postflight fails
+	// Return errors so the calling code can decide whether to abort, warn, or continue
+	// based on PreflightFailureAction/PostflightFailureAction configuration.
 	execErr := cmd.Run()
 	if execErr != nil {
-		logError("%s script error: %v (continuing anyway)", displayName, execErr)
-		// Log the error but DO NOT return it - must continue with main run
-		if verbosity >= 3 {
-			logInfo("%s script failed but continuing with managed software update", displayName)
-		}
-		return nil  // Always return nil to continue the main run
+		logError("%s script failed: %v", displayName, execErr)
+		return fmt.Errorf("%s script failed: %w", displayName, execErr)
 	}
 
 	if verbosity >= 3 {
