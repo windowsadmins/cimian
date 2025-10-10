@@ -1932,10 +1932,10 @@ func runPreflightIfNeeded(verbosity int, cfg *config.Configuration) {
 	}
 
 	if err := scripts.RunPreflight(verbosity, logInfo, logError); err != nil {
-		// Get the failure action from configuration (default to "continue")
+		// Get the failure action from configuration (default to "abort" to match Munki behavior)
 		failureAction := cfg.PreflightFailureAction
 		if failureAction == "" {
-			failureAction = "continue"
+			failureAction = "abort"
 		}
 
 		switch strings.ToLower(failureAction) {
@@ -2069,10 +2069,10 @@ func runPostflightIfNeeded(verbosity int, cfg *config.Configuration) {
 	}
 
 	if err := scripts.RunPostflight(verbosity, logInfo, logError); err != nil {
-		// Get the failure action from configuration (default to "continue")
+		// Get the failure action from configuration (default to "abort")
 		failureAction := cfg.PostflightFailureAction
 		if failureAction == "" {
-			failureAction = "continue"
+			failureAction = "abort"
 		}
 
 		switch strings.ToLower(failureAction) {
