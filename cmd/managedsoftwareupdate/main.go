@@ -2494,7 +2494,13 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 	// Create download map from catalog items
 	downloadItems := make(map[string]string)
 	for _, cItem := range items {
-		// Skip script-only items
+		// Skip nopkg (script-only) items - they have no installer file to download
+		if strings.ToLower(cItem.Installer.Type) == "nopkg" {
+			logging.Debug("nopkg item detected, skipping download (script-only)", "item", cItem.Name)
+			continue
+		}
+		
+		// Skip script-only items with no installer type or location
 		if cItem.Installer.Type == "" && cItem.Installer.Location == "" {
 			logging.Debug("Script-only item detected, skipping download", "item", cItem.Name)
 			continue
@@ -2541,11 +2547,15 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 	// Perform installation for each item using the correct paths
 	for _, cItem := range items {
 		// Check if this is a script-only item (no download needed)
-		isScriptOnly := cItem.Installer.Type == "" && cItem.Installer.Location == "" &&
-			(cItem.Check.Script != "" || string(cItem.PreScript) != "" || string(cItem.PostScript) != "")
+		// This includes:
+		// 1. nopkg items (type: nopkg)
+		// 2. Items with no installer type/location but have scripts
+		isNopkg := strings.ToLower(cItem.Installer.Type) == "nopkg"
+		isScriptOnly := (cItem.Installer.Type == "" && cItem.Installer.Location == "" &&
+			(cItem.Check.Script != "" || string(cItem.PreScript) != "" || string(cItem.PostScript) != ""))
 
 		var localFile string
-		if isScriptOnly {
+		if isNopkg || isScriptOnly {
 			// Script-only item - no local file needed
 			logger.Info("Installing script-only item: %s", cItem.Name)
 			localFile = "" // Empty string for script-only items
