@@ -106,6 +106,7 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 	// Track which catalogs were searched for better error reporting
 	var searchedCatalogs []string
 	var candidateItems []catalog.Item
+	var foundButInvalidItems []catalog.Item // Track items found but lacking installation mechanism
 	sysArch := status.GetSystemArchitecture()
 
 	// Search for all items with matching name across all catalogs by reading YAML directly
@@ -140,10 +141,24 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 					validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
 					validUninstallItem := len(item.Uninstaller) > 0
 					validScriptOnlyItem := (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "")
+					// nopkg packages with installs checks are valid (protective packages)
+					validNopkgWithInstalls := (item.Installer.Type == "nopkg" && len(item.Installs) > 0)
 
-					if validInstallItem || validUninstallItem || validScriptOnlyItem {
+					if validInstallItem || validUninstallItem || validScriptOnlyItem || validNopkgWithInstalls {
 						candidateItems = append(candidateItems, item)
 						logging.Debug("Added candidate item", "item", itemName, "catalog", catalogName, "installer_location", item.Installer.Location, "candidate_count", len(candidateItems))
+					} else {
+						// Item found but has no installation mechanism - track for better error reporting
+						foundButInvalidItems = append(foundButInvalidItems, item)
+						logging.Warn("Item found but has no installation mechanism", 
+							"item", itemName, 
+							"catalog", catalogName,
+							"installer_type", item.Installer.Type,
+							"has_location", item.Installer.Location != "",
+							"has_uninstallers", len(item.Uninstaller) > 0,
+							"has_scripts", (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != ""),
+							"has_installs_checks", len(item.Installs) > 0,
+							"issue", "nopkg package must have either scripts or installs checks defined")
 					}
 				}
 			}
@@ -171,10 +186,24 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 				validInstallItem := (item.Installer.Type != "" && item.Installer.Location != "")
 				validUninstallItem := len(item.Uninstaller) > 0
 				validScriptOnlyItem := (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "")
+				// nopkg packages with installs checks are valid (protective packages)
+				validNopkgWithInstalls := (item.Installer.Type == "nopkg" && len(item.Installs) > 0)
 
-				if validInstallItem || validUninstallItem || validScriptOnlyItem {
+				if validInstallItem || validUninstallItem || validScriptOnlyItem || validNopkgWithInstalls {
 					candidateItems = append(candidateItems, item)
 					logging.Debug("Added candidate item (fallback)", "item", itemName, "catalog", catalogName, "installer_location", item.Installer.Location, "candidate_count", len(candidateItems))
+				} else {
+					// Item found but has no installation mechanism - track for better error reporting
+					foundButInvalidItems = append(foundButInvalidItems, item)
+					logging.Warn("Item found but has no installation mechanism", 
+						"item", itemName, 
+						"catalog", catalogName,
+						"installer_type", item.Installer.Type,
+						"has_location", item.Installer.Location != "",
+						"has_uninstallers", len(item.Uninstaller) > 0,
+						"has_scripts", (string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != ""),
+						"has_installs_checks", len(item.Installs) > 0,
+						"issue", "nopkg package must have either scripts or installs checks defined")
 				}
 			} else {
 				logging.Debug("Item not found in catalog", "item", itemName, "catalog", catalogName)
@@ -185,7 +214,44 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 	// If no items found, return error
 	if len(candidateItems) == 0 {
 		catalogList := strings.Join(searchedCatalogs, ", ")
-		// Log source information when item is not found
+		
+		// Check if we found items but they were invalid
+		if len(foundButInvalidItems) > 0 {
+			invalidItem := foundButInvalidItems[0]
+			// Build detailed error message explaining why the item is invalid
+			var reasons []string
+			if invalidItem.Installer.Type == "nopkg" {
+				reasons = append(reasons, "installer type is 'nopkg' (no package)")
+				if invalidItem.Installer.Location == "" {
+					reasons = append(reasons, "no installer location")
+				}
+				if len(invalidItem.Installs) == 0 {
+					reasons = append(reasons, "no 'installs' checks defined")
+				}
+				if string(invalidItem.InstallCheckScript) == "" && string(invalidItem.PreScript) == "" && string(invalidItem.PostScript) == "" {
+					reasons = append(reasons, "no installation scripts (preinstall_script, postinstall_script, or installcheck_script)")
+				}
+			}
+			
+			reasonStr := strings.Join(reasons, ", ")
+			if source, exists := GetItemSource(itemName); exists {
+				logging.Error("Item found but cannot be installed - missing installation mechanism", 
+					"item", itemName, 
+					"source", source.GetSourceDescription(), 
+					"catalogs_searched", catalogList,
+					"reasons", reasonStr)
+				return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s found in catalog but cannot be installed: %s (source: %s). A 'nopkg' package must have either scripts (preinstall_script/postinstall_script/installcheck_script) or 'installs' checks defined", itemName, reasonStr, source.GetSourceDescription())}
+			}
+			
+			logging.Error("Item found but cannot be installed - missing installation mechanism", 
+				"item", itemName, 
+				"source", "unknown - not tracked through manifest processing", 
+				"catalogs_searched", catalogList,
+				"reasons", reasonStr)
+			return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s found in catalog but cannot be installed: %s. A 'nopkg' package must have either scripts (preinstall_script/postinstall_script/installcheck_script) or 'installs' checks defined", itemName, reasonStr)}
+		}
+		
+		// Item truly not found in any catalog
 		if source, exists := GetItemSource(itemName); exists {
 			logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
 			return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
