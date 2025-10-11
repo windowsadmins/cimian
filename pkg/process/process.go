@@ -1213,10 +1213,11 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 		handleOnDemandInstall(item, cachePath, checkOnly, cfg)
 	} else {
 		// Check if this is a script-only item (no installer file needed)
-		if item.Installer.Type == "" && item.Installer.Location == "" &&
+		// This includes both empty installer type and explicit "nopkg" type
+		if (item.Installer.Type == "" || item.Installer.Type == "nopkg") && item.Installer.Location == "" &&
 			(string(item.InstallCheckScript) != "" || string(item.PreScript) != "" || string(item.PostScript) != "") {
 			// Script-only item - call installer directly without downloading
-			logging.Debug("Processing script-only item in processInstallWithAdvancedLogic", "item", item.Name)
+			logging.Debug("Processing script-only item in processInstallWithAdvancedLogic", "item", item.Name, "type", item.Installer.Type)
 			_, err := installerInstall(item, "install", "", cachePath, checkOnly, cfg)
 			if err != nil {
 				return fmt.Errorf("failed to install script-only item %s: %v", itemName, err)

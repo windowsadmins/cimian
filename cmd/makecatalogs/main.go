@@ -20,10 +20,10 @@ import (
 
 var logger *logging.Logger
 
-// Installer parallels cimianimport’s structure.
+// Installer parallels cimianimport's structure.
 type Installer struct {
-	Location    string   `yaml:"location"`
-	Hash        string   `yaml:"hash"`
+	Location    string   `yaml:"location,omitempty"`
+	Hash        string   `yaml:"hash,omitempty"`
 	Type        string   `yaml:"type"`
 	Size        int64    `yaml:"size,omitempty"`
 	Switches    []string `yaml:"switches,omitempty"`
