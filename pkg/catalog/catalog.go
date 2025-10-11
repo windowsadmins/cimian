@@ -49,6 +49,9 @@ type Item struct {
 	// Uninstallability - whether the package can be uninstalled
 	Uninstallable *bool `yaml:"uninstallable,omitempty"` // If explicitly false, uninstall will be skipped; if nil, auto-determined
 
+	// Icon support
+	IconName string `yaml:"icon_name,omitempty"` // Icon filename in repository icons directory
+
 	// Traceability fields - not persisted to YAML, used for runtime tracking
 	SourceManifest string   `yaml:"-"` // Which manifest this item came from
 	SourceType     string   `yaml:"-"` // "managed_installs", "managed_updates", "requires", "update_for", etc.
