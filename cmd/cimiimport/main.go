@@ -32,6 +32,12 @@ var (
 	configAuto     bool
 	noInteractive  bool
 	logger         *logging.Logger
+	iconOutputPath string  // Custom icon output path
+	// ICON EXTRACTION: Early implementation, not production ready
+	// Currently defaults to disabled due to reliability issues with extractions
+	// and incomplete error handling. Enable with --extract-icon flag for testing.
+	// TODO: Fix MSI PowerShell extraction errors, add hash validation, improve reliability
+	skipIconExtract bool = true   // Skip icon extraction by default
 )
 
 // parseVersion simply returns the version string as-is without any modifications.
@@ -67,6 +73,7 @@ type PkgsInfo struct {
 	PostuninstallScript  string             `yaml:"postuninstall_script,omitempty"`
 	InstallCheckScript   string             `yaml:"installcheck_script,omitempty"`
 	UninstallCheckScript string             `yaml:"uninstallcheck_script,omitempty"`
+	IconName             string             `yaml:"icon_name,omitempty"`
 }
 
 // Installer represents the installer/uninstaller details.
@@ -272,12 +279,29 @@ func parseCustomArgs(args []string) (string, []string, map[string]string, bool, 
 			noInteractive = true
 			continue
 		}
+		// Check --skip-icon (deprecated, now default behavior)
+		if arg == "--skip-icon" {
+			skipIconExtract = true
+			continue
+		}
+		// Check --extract-icon (enables icon extraction, which is disabled by default)
+		if arg == "--extract-icon" {
+			skipIconExtract = false
+			continue
+		}
 
 		switch {
 		// -i or --installs-array => next token is file path
 		case arg == "-i" || arg == "--installs-array":
 			if i+1 < len(args) {
 				filePaths = append(filePaths, args[i+1])
+				skipNext = true
+			}
+
+		// --icon flag for custom icon path
+		case arg == "--icon":
+			if i+1 < len(args) {
+				iconOutputPath = args[i+1]
 				skipNext = true
 			}
 
@@ -1077,6 +1101,23 @@ func cimianImport(
 		// Set the installer location relative to pkgs directory
 		pkgsInfo.Installer.Location = filepath.Join(repoSubPath, installerFilename)
 		pkgsInfo.Installer.Location = utils.NormalizeWindowsPath(pkgsInfo.Installer.Location) // Use Windows-style backslashes
+	}
+
+	// Step 12.5: Extract and copy icon
+	// ICON EXTRACTION: Early implementation, not production ready
+	// Icon extraction is disabled by default. Enable with --extract-icon for testing.
+	// Note: MSI extraction has known issues with PowerShell COM interop errors.
+	// Extraction either succeeds or gracefully fails - no fallback icons are generated.
+	if !skipIconExtract {
+		logger.Debug("Extracting icon from installer...")
+		iconResult := extractAndCopyIcon(packagePath, conf.RepoPath, pkgsInfo.Name, iconOutputPath)
+		if iconResult != nil && iconResult.Success {
+			logger.Success("Icon extracted successfully: %s", iconResult.IconPath)
+			pkgsInfo.IconName = filepath.Base(iconResult.IconPath)
+		} else if iconResult != nil {
+			logger.Warning("Icon extraction failed: %v", iconResult.Error)
+			// No fallback icon generation - either extraction works or icon_name is omitted
+		}
 	}
 
 	// Step 13: write pkginfo to pkgsinfo subdir
@@ -1911,9 +1952,30 @@ Options:
   --postinstall-script=<path>   ...
   --preuninstall-script=<path>  ...
   --postuninstall-script=<path> ...
+  --icon <path>                 Custom icon output path when extraction is enabled
+  --extract-icon                Enable icon extraction from installer (EXPERIMENTAL)
+  --skip-icon                   Deprecated: icon extraction is now disabled by default
   --config                      Run interactive configuration setup and exit
   --nointeractive               Run with no prompts, using all defaults
   -h, --help                    Show this usage and exit
+
+Icon Extraction (EXPERIMENTAL - Not Production Ready):
+  Icon extraction is DISABLED by default due to reliability issues, particularly with MSI
+  installers where PowerShell COM interop can fail. Use --extract-icon to enable for testing.
+  
+  When enabled, cimiimport will attempt to extract icons from installers (EXE, MSI, MSIX, NUPKG)
+  and save them to the repo's icons/ directory. The icon filename is recorded in the pkginfo
+  YAML file as 'icon_name'. If extraction fails, no fallback icon is generated.
+
+  Known Issues:
+  - MSI extraction often fails with PowerShell COM interop errors
+  - No hash validation or incremental updates
+  - Error handling needs improvement
+
+  Examples:
+    cimiimport.exe installer.exe                         # Icon extraction disabled (default)
+    cimiimport.exe installer.exe --extract-icon          # Enable icon extraction (testing only)
+    cimiimport.exe installer.exe --extract-icon --icon custom.png  # Custom output path
 
 If you specify both an installer path and one or more -i/--installs-array 
 flags, the final PkgsInfo will incorporate your user-provided filePaths 
@@ -2123,4 +2185,48 @@ func generateAppInstallerInstallCheckScript(appInstallerPath string) (string, er
 	script = strings.ReplaceAll(script, "\r", "\n")
 	
 	return script, nil
+}
+
+// extractAndCopyIcon extracts icon from installer and copies it to the repo's icons directory
+// extractAndCopyIcon attempts to extract an icon from the installer file.
+// EARLY IMPLEMENTATION: Not production ready. MSI extraction has known PowerShell COM errors.
+// This function either succeeds or returns an error - no fallback icon generation.
+// Returns an IconExtractResult with success status and path information.
+func extractAndCopyIcon(installerPath, repoPath, packageName, customOutputPath string) *extract.IconExtractResult {
+	// Determine the output path
+	var outputPath string
+	if customOutputPath != "" {
+		// User specified a custom icon path
+		if !filepath.IsAbs(customOutputPath) {
+			// If relative, make it relative to repo/icons
+			outputPath = filepath.Join(repoPath, "icons", customOutputPath)
+		} else {
+			outputPath = customOutputPath
+		}
+	} else {
+		// Default: repo/icons/packagename.png
+		outputPath = filepath.Join(repoPath, "icons", sanitizeName(packageName)+".png")
+	}
+
+	// Ensure the icons directory exists
+	iconsDir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(iconsDir, 0755); err != nil {
+		return &extract.IconExtractResult{
+			Success: false,
+			Error:   fmt.Errorf("failed to create icons directory: %w", err),
+			Method:  "none",
+		}
+	}
+
+	// Extract the icon
+	result, err := extract.ExtractIconFromInstaller(installerPath, outputPath)
+	if err != nil {
+		return &extract.IconExtractResult{
+			Success: false,
+			Error:   err,
+			Method:  "failed",
+		}
+	}
+
+	return result
 }

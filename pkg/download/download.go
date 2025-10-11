@@ -751,11 +751,131 @@ func formatSpeed(bytesPerSecond float64) string {
 
 // formatDuration formats duration into human-readable format
 func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	} else if d < time.Hour {
-		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
-	} else {
-		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
-	}
+        if d < time.Minute {
+                return fmt.Sprintf("%ds", int(d.Seconds()))
+        } else if d < time.Hour {
+                return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+        } else {
+                return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+        }
+}
+
+// DownloadIcon downloads an icon file from the repository icons directory
+// to the local icons cache directory at C:\ProgramData\ManagedInstalls\icons\
+// Icon downloads are non-fatal - missing icons will not prevent software installation
+func DownloadIcon(iconName string, cfg *config.Configuration, verbosity int) error {
+        if iconName == "" {
+                return nil // No icon to download
+        }
+
+        // Construct icon URL: baseURL/icons/iconName (lowercase "icons")
+        iconURL := strings.TrimSuffix(cfg.SoftwareRepoURL, "/") + "/icons/" + iconName
+
+        // Construct local icon cache path (hardcoded to C:\ProgramData\ManagedInstalls\icons)
+        localIconDir := `C:\ProgramData\ManagedInstalls\icons`
+        localIconPath := filepath.Join(localIconDir, iconName)
+
+        // Create icons directory if it doesn't exist
+        if err := os.MkdirAll(localIconDir, 0755); err != nil {
+                if verbosity >= 1 {
+                        logging.Info("WARNING: Failed to create icons directory", "error", err)
+                }
+                return nil // Non-fatal, return nil to continue
+        }
+
+        // Check if icon already exists
+        if _, err := os.Stat(localIconPath); err == nil {
+                if verbosity >= 2 {
+                        logging.Debug("Icon already cached", "icon", iconName)
+                }
+                return nil // Icon already exists, nothing to do
+        }
+
+        if verbosity >= 1 {
+                logging.Info("Downloading icon", "icon", iconName)
+        }
+
+        // Download icon with retry logic
+        var downloadErr error
+        retryConfig := retry.RetryConfig{
+                MaxRetries:      3,
+                InitialInterval: 2 * time.Second,
+                Multiplier:      1.5,
+        }
+        
+        err := retry.Retry(retryConfig, func() error {
+                // Create temporary file for atomic download
+                tempFile, err := os.CreateTemp(localIconDir, ".icon-*.tmp")
+                if err != nil {
+                        return err
+                }
+                tempPath := tempFile.Name()
+                defer os.Remove(tempPath) // Clean up temp file on error
+
+                // Create HTTP request
+                req, err := http.NewRequest("GET", iconURL, nil)
+                if err != nil {
+                        tempFile.Close()
+                        return err
+                }
+
+                // Add authentication if configured
+                if cfg.ClientIdentifier != "" {
+                        req.Header.Set("X-Client-Identifier", cfg.ClientIdentifier)
+                }
+
+                // Execute request with timeout
+                client := &http.Client{Timeout: 60 * time.Second}
+                resp, err := client.Do(req)
+                if err != nil {
+                        tempFile.Close()
+                        return err
+                }
+                defer resp.Body.Close()
+
+                // Handle 404 as non-fatal (icon not found in repository)
+                if resp.StatusCode == 404 {
+                        tempFile.Close()
+                        if verbosity >= 1 {
+                                logging.Info("Icon not found in repository", "icon", iconName)
+                        }
+                        return nil // Return nil to stop retries, icon is genuinely missing
+                }
+
+                // Check for other HTTP errors
+                if resp.StatusCode != 200 {
+                        tempFile.Close()
+                        return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+                }
+
+                // Copy response body to temp file
+                _, err = io.Copy(tempFile, resp.Body)
+                tempFile.Close()
+                if err != nil {
+                        return err
+                }
+
+                // Atomically move temp file to final location
+                if err := os.Rename(tempPath, localIconPath); err != nil {
+                        return err
+                }
+
+                if verbosity >= 1 {
+                        logging.Info("Icon downloaded successfully", "icon", iconName, "path", localIconPath)
+                }
+                return nil
+        })
+
+        if err != nil {
+                downloadErr = err
+        }
+
+        // Log errors but return nil (non-fatal)
+        if downloadErr != nil {
+                if verbosity >= 1 {
+                        logging.Info("WARNING: Failed to download icon", "icon", iconName, "error", downloadErr)
+                }
+        }
+
+        return nil // Always return nil - icon downloads are non-fatal
 }
