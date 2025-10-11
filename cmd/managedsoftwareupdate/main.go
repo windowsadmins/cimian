@@ -1442,6 +1442,27 @@ func main() {
 		logging.Info("Loaded local catalog items", "count", len(localCatalogMap))
 	}
 
+	// Download icons for catalog items (non-fatal)
+	if verbosity >= 2 {
+		logging.Info("Downloading icons for catalog items...")
+	}
+	iconCount := 0
+	for _, item := range localCatalogMap {
+		if item.IconName != "" {
+			if err := download.DownloadIcon(item.IconName, cfg, verbosity); err != nil {
+				// Icon downloads are non-fatal, just log the error
+				if verbosity >= 1 {
+					logging.Info("Failed to download icon", "icon", item.IconName, "error", err)
+				}
+			} else {
+				iconCount++
+			}
+		}
+	}
+	if verbosity >= 2 {
+		logging.Info("Icon download complete", "downloaded", iconCount)
+	}
+
 	// Convert to the expected format for advanced dependency processing
 	statusReporter.Detail("Processing dependencies...")
 	if verbosity >= 2 {
