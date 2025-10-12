@@ -12,6 +12,7 @@ namespace Cimian.Status.Services
     {
         private readonly ILogger<UpdateService> _logger;
         private readonly IStatusServer _statusServer;
+        private readonly IEventStreamService _eventStreamService;
 
         public event EventHandler<ProgressEventArgs>? ProgressChanged;
         public event EventHandler<StatusEventArgs>? StatusChanged;
@@ -20,13 +21,23 @@ namespace Cimian.Status.Services
         private volatile bool _isExecutingUpdate = false;
         private volatile bool _updateCompleted = false;
 
-        public UpdateService(ILogger<UpdateService> logger, IStatusServer statusServer)
+        public UpdateService(ILogger<UpdateService> logger, IStatusServer statusServer, IEventStreamService eventStreamService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _statusServer = statusServer ?? throw new ArgumentNullException(nameof(statusServer));
+            _eventStreamService = eventStreamService ?? throw new ArgumentNullException(nameof(eventStreamService));
             
             // Subscribe to status server messages to get real progress from managedsoftwareupdate.exe
             _statusServer.MessageReceived += OnStatusMessageReceived;
+            
+            // Subscribe to event stream for real-time progress from events.jsonl
+            _eventStreamService.ProgressEventReceived += OnProgressEventFromStream;
+            _eventStreamService.StatusEventReceived += OnStatusEventFromStream;
+            _eventStreamService.SessionStarted += OnSessionStarted;
+            _eventStreamService.SessionEnded += OnSessionEnded;
+            
+            // Start monitoring immediately
+            _eventStreamService.StartMonitoring();
         }
 
         public async Task MonitorExistingProcessesAsync()
@@ -760,6 +771,164 @@ namespace Cimian.Status.Services
             
             var fullOutput = string.IsNullOrEmpty(error) ? output : $"{output}\n{error}";
             return (process.ExitCode, fullOutput);
+        }
+
+        /// <summary>
+        /// Handles progress events from the event stream (events.jsonl)
+        /// This provides real-time progress without needing to hook into process output
+        /// </summary>
+        private void OnProgressEventFromStream(object? sender, InstallProgressEvent e)
+        {
+            try
+            {
+                _logger.LogDebug("Progress from event stream: {Package} - {Progress}% - {Message}", 
+                    e.PackageName, e.Progress, e.Message);
+
+                // Update UI with progress
+                ProgressChanged?.Invoke(this, new ProgressEventArgs
+                {
+                    Percentage = e.Progress,
+                    Message = string.IsNullOrEmpty(e.PackageName) 
+                        ? e.Message 
+                        : $"{e.PackageName}: {e.Message}"
+                });
+
+                // Also update status for significant progress
+                if (!string.IsNullOrEmpty(e.PackageName))
+                {
+                    StatusChanged?.Invoke(this, new StatusEventArgs
+                    {
+                        Message = $"Installing {e.PackageName}...",
+                        IsError = false
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error handling progress event from stream");
+            }
+        }
+
+        /// <summary>
+        /// Handles status events from the event stream (events.jsonl)
+        /// </summary>
+        private void OnStatusEventFromStream(object? sender, InstallStatusEvent e)
+        {
+            try
+            {
+                _logger.LogDebug("Status from event stream: {Package} - {Status} - {Message}", 
+                    e.PackageName, e.Status, e.Message);
+
+                // Build display message
+                var message = e.Message;
+                if (!string.IsNullOrEmpty(e.PackageName))
+                {
+                    message = e.Status switch
+                    {
+                        "started" => $"Starting installation of {e.PackageName}...",
+                        "completed" => $"Successfully installed {e.PackageName}",
+                        "failed" => $"Failed to install {e.PackageName}: {e.ErrorMessage}",
+                        _ => $"{e.PackageName}: {e.Message}"
+                    };
+                }
+
+                StatusChanged?.Invoke(this, new StatusEventArgs
+                {
+                    Message = message,
+                    IsError = e.IsError
+                });
+
+                // Update progress for started/completed
+                if (e.Status == "started")
+                {
+                    ProgressChanged?.Invoke(this, new ProgressEventArgs
+                    {
+                        Percentage = 0,
+                        Message = message
+                    });
+                }
+                else if (e.Status == "completed" && string.IsNullOrEmpty(e.PackageName))
+                {
+                    // This might be overall completion
+                    ProgressChanged?.Invoke(this, new ProgressEventArgs
+                    {
+                        Percentage = 100,
+                        Message = message
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error handling status event from stream");
+            }
+        }
+
+        /// <summary>
+        /// Handles session start events
+        /// </summary>
+        private void OnSessionStarted(object? sender, SessionStartEvent e)
+        {
+            try
+            {
+                _logger.LogInformation("Session started: {SessionId}", e.SessionId);
+                
+                _isExecutingUpdate = true;
+                _updateCompleted = false;
+
+                StatusChanged?.Invoke(this, new StatusEventArgs
+                {
+                    Message = "Update session started...",
+                    IsError = false
+                });
+
+                ProgressChanged?.Invoke(this, new ProgressEventArgs
+                {
+                    Percentage = 0,
+                    Message = "Initializing update session..."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error handling session start event");
+            }
+        }
+
+        /// <summary>
+        /// Handles session end events
+        /// </summary>
+        private void OnSessionEnded(object? sender, SessionEndEvent e)
+        {
+            try
+            {
+                _logger.LogInformation("Session ended: Success={Success}, Message={Message}", 
+                    e.Success, e.Message);
+                
+                _updateCompleted = true;
+                _isExecutingUpdate = false;
+
+                StatusChanged?.Invoke(this, new StatusEventArgs
+                {
+                    Message = e.Success ? "Update completed successfully" : "Update completed with errors",
+                    IsError = !e.Success
+                });
+
+                ProgressChanged?.Invoke(this, new ProgressEventArgs
+                {
+                    Percentage = 100,
+                    Message = e.Message
+                });
+
+                Completed?.Invoke(this, new UpdateCompletedEventArgs
+                {
+                    Success = e.Success,
+                    ErrorMessage = e.Success ? null : e.Message,
+                    ExitCode = e.Success ? 0 : 1
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error handling session end event");
+            }
         }
     }
 }
