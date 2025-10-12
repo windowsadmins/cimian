@@ -59,6 +59,7 @@ namespace Cimian.Status
                 {
                     // Register services
                     services.AddSingleton<IStatusServer, StatusServer>();
+                    services.AddSingleton<IEventStreamService, EventStreamService>();
                     services.AddSingleton<IUpdateService, UpdateService>();
                     services.AddSingleton<ILogService, LogService>();
                     services.AddSingleton<IServiceStatusService, ServiceStatusService>();
