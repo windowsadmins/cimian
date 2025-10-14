@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -669,6 +670,17 @@ func main() {
 		} else {
 			logging.Info("Bootstrap mode detected - entering non-interactive installation mode")
 		}
+		
+		// Wait for network connectivity (up to 60 seconds) - critical at startup
+		waitForNetwork(verbosity)
+		
+		// Check if we should skip installation due to user activity
+		if hasGUIUsers() && !isSystemIdle() {
+			logging.Info("System not idle (GUI users active) - skipping bootstrap installation")
+			logging.Info("Bootstrap mode will remain active for next check")
+			os.Exit(0)
+		}
+		
 		*showStatus = true   // Always show status window in bootstrap mode
 		*installOnly = false // Bootstrap mode does check + install
 		*checkOnly = false
@@ -1477,6 +1489,35 @@ func main() {
 		logging.Info("Loaded catalog items across all versions", "count", totalCatalogItems)
 	}
 
+	// Check if Cimian/CimianTools packages exist in catalog, clean up stale selfupdate flag if not
+	hasCimianInCatalog := false
+	for _, versionMap := range fullCatalogMap {
+		for packageName := range versionMap {
+			pkgLower := strings.ToLower(packageName)
+			if pkgLower == "cimian" || pkgLower == "cimiantools" || 
+			   strings.HasPrefix(pkgLower, "cimian-") || strings.HasPrefix(pkgLower, "cimiantools-") {
+				hasCimianInCatalog = true
+				break
+			}
+		}
+		if hasCimianInCatalog {
+			break
+		}
+	}
+	
+	if !hasCimianInCatalog {
+		// No Cimian packages in catalog, remove any stale selfupdate flag
+		selfupdateFlagFile := selfupdate.SelfUpdateFlagFile
+		if _, err := os.Stat(selfupdateFlagFile); err == nil {
+			// File exists, remove it
+			if err := os.Remove(selfupdateFlagFile); err != nil {
+				logging.Warn("Failed to clean up stale selfupdate flag: %v", err)
+			} else {
+				logging.Info("Cleaned up stale selfupdate flag (no Cimian packages in catalog)")
+			}
+		}
+	}
+
 	// Gather actions: updates, new installs, removals.
 	logging.Info("----------------------------------------------------------------------")
 	logging.Info("ANALYZING SOFTWARE REQUIREMENTS")
@@ -1584,6 +1625,7 @@ func main() {
 	allToInstall = append(allToInstall, toUpdate...)
 
 	// Check for self-updates and handle them specially
+	// Note: Stale selfupdate flags are automatically cleaned up if no Cimian packages exist in catalog
 	var selfUpdateItems []catalog.Item
 	var regularItems []catalog.Item
 
@@ -1847,10 +1889,41 @@ func main() {
 		}
 	}
 
-	// Clear bootstrap mode if we completed successfully
+	// In bootstrap mode, check if there are more updates available
+	// Following Munki's behavior: only clear bootstrap if no more updates
 	if isBootstrap {
-		if err := clearBootstrapAfterSuccess(); err != nil {
-			logger.Warning("Failed to clear bootstrap mode: %v", err)
+		// Check if we have more work to do
+		moreUpdatesAvailable := false
+		
+		// Re-check the manifest to see if more updates appeared
+		// This can happen if:
+		// 1. A package installation triggered a conditional_items change
+		// 2. An enrollment script changed the ClientIdentifier
+		// 3. New packages became applicable after dependencies were installed
+		if cfg != nil {
+			logging.Info("Checking for additional updates that may have become available...")
+			
+			// Quick recheck without full processing
+			reCheckManifests, err := manifest.AuthenticatedGet(cfg)
+			if err == nil && len(reCheckManifests) > 0 {
+				// Collect all managed items from the manifest items
+				// Each manifest.Item contains arrays: ManagedInstalls, ManagedUpdates, ManagedUninstalls
+				allPackageNames := []string{}
+				for _, item := range reCheckManifests {
+					allPackageNames = append(allPackageNames, item.ManagedInstalls...)
+					allPackageNames = append(allPackageNames, item.ManagedUpdates...)
+					allPackageNames = append(allPackageNames, item.ManagedUninstalls...)
+				}
+				
+				if len(allPackageNames) > 0 {
+					moreUpdatesAvailable = true
+					logging.Info("Found %d additional items to process in next run", len(allPackageNames))
+				}
+			}
+		}
+		
+		if err := clearBootstrapAfterSuccess(moreUpdatesAvailable); err != nil {
+			logging.Warn("Failed to manage bootstrap mode: %v", err)
 		}
 	}
 
@@ -3812,13 +3885,75 @@ func disableBootstrapMode() error {
 }
 
 // clearBootstrapAfterSuccess removes the bootstrap flag after successful completion
-func clearBootstrapAfterSuccess() error {
+// Following Munki's behavior: only clear if no more updates are available
+func clearBootstrapAfterSuccess(moreUpdatesAvailable bool) error {
 	if !isBootstrapModeEnabled() {
 		return nil
 	}
 
-	logging.Info("Bootstrap process completed successfully - clearing bootstrap mode")
+	if moreUpdatesAvailable {
+		logging.Info("Bootstrap mode: More updates available - keeping bootstrap mode active for next run")
+		return nil
+	}
+
+	logging.Info("Bootstrap process completed - no more updates available - clearing bootstrap mode")
 	return disableBootstrapMode()
+}
+
+// waitForNetwork waits up to 60 seconds for network connectivity to be available
+func waitForNetwork(verbosity int) bool {
+	if verbosity > 0 {
+		logging.Info("Waiting for network connectivity...")
+	}
+	
+	for i := 0; i < 60; i++ {
+		// Try a simple network check - ping a reliable DNS server
+		if isNetworkAvailable() {
+			if verbosity > 0 {
+				logging.Info("Network connectivity established")
+			}
+			return true
+		}
+		time.Sleep(1 * time.Second)
+	}
+	
+	logging.Warn("Network wait timeout - proceeding anyway")
+	return false
+}
+
+// isNetworkAvailable checks if network connectivity is available
+func isNetworkAvailable() bool {
+	// Try to resolve a well-known hostname
+	_, err := net.LookupHost("google.com")
+	return err == nil
+}
+
+// isSystemIdle checks if the system has been idle (no keyboard/mouse input) for at least 10 seconds
+// Following Munki's behavior for bootstrap mode - uses the existing getIdleSeconds() function
+func isSystemIdle() bool {
+	idleSeconds := getIdleSeconds()
+	return idleSeconds > 10
+}
+
+// hasGUIUsers checks if there are any logged-in GUI users
+// In bootstrap mode, we only auto-install if no one is logged in
+func hasGUIUsers() bool {
+	// Check if anyone is logged into a desktop session
+	// On Windows, we can check for explorer.exe processes running in user sessions
+	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq explorer.exe", "/FO", "CSV", "/NH")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	
+	// If explorer.exe is running in a user session, someone is logged in
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "explorer.exe") {
+			return true
+		}
+	}
+	return false
 }
 
 // displayLoadingHeader shows the initial loading information with enhanced format

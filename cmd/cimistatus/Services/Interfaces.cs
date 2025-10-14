@@ -42,4 +42,15 @@ namespace Cimian.Status.Services
         Task StopAsync();
         bool IsRunning { get; }
     }
+
+    public interface IEventStreamService : IDisposable
+    {
+        event EventHandler<InstallProgressEvent>? ProgressEventReceived;
+        event EventHandler<InstallStatusEvent>? StatusEventReceived;
+        event EventHandler<SessionStartEvent>? SessionStarted;
+        event EventHandler<SessionEndEvent>? SessionEnded;
+
+        void StartMonitoring();
+        void StopMonitoring();
+    }
 }

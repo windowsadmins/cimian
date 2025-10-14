@@ -868,6 +868,10 @@ if ($Binaries -or $Binary) {
                         throw "Could not find built executable for $binaryName ($arch)"
                     }
                     # Copy to the expected output location with retry mechanism for file locking issues
+                    # For C# projects, we need to copy ALL files from the output directory, not just the .exe
+                    $sourceDir = Split-Path $builtExe.FullName
+                    $destDir = Split-Path "..\..\$outputPath"
+                    
                     $copySuccess = $false
                     $maxRetries = 5
                     $retryDelay = 2
@@ -876,12 +880,16 @@ if ($Binaries -or $Binary) {
                             # Force garbage collection to release any file handles
                             [System.GC]::Collect()
                             [System.GC]::WaitForPendingFinalizers()
-                            # Use robocopy for more reliable file copying with locked files
-                            & robocopy (Split-Path $builtExe.FullName) (Split-Path "..\..\$outputPath") (Split-Path $builtExe.FullName -Leaf) /R:3 /W:1 /NP /NDL /NJH /NJS | Out-Null
+                            
+                            # Use robocopy to copy the entire directory for C# projects
+                            # /MIR would mirror (delete extra files), /E just copies subdirectories
+                            # /XD excludes subdirectories we don't need (language packs)
+                            & robocopy $sourceDir $destDir /E /R:3 /W:1 /NP /NDL /NJH /NJS /XD "af-ZA" "am-ET" "ar-SA" "az-Latn-AZ" "be-BY" "bg-BG" "bn-BD" "bs-Latn-BA" "ca-ES" "cs" "cs-CZ" "da-DK" "de" "de-DE" "el-GR" "en-GB" "es" "es-ES" "es-MX" "et-EE" "eu-ES" "fa-IR" "fi-FI" "fil-PH" "fr" "fr-CA" "fr-FR" "gl-ES" "he-IL" "hi-IN" "hr-HR" "hu-HU" "id-ID" "is-IS" "it" "it-IT" "ja" "ja-JP" "ka-GE" "kk-KZ" "km-KH" "kn-IN" "ko" "ko-KR" "lo-LA" "lt-LT" "lv-LV" "mk-MK" "ml-IN" "ms-MY" "nb-NO" "nl-NL" "nn-NO" "pl" "pl-PL" "pt-BR" "pt-PT" "ro-RO" "ru" "ru-RU" "sk-SK" "sl-SI" "sq-AL" "sr-Latn-RS" "sv-SE" "sw-KE" "ta-IN" "te-IN" "th-TH" "tr" "tr-TR" "uk-UA" "uz-Latn-UZ" "vi-VN" "zh-Hans" "zh-Hant" | Out-Null
+                            
                             # Robocopy exit codes 0-7 are success, 8+ are errors
                             if ($LASTEXITCODE -le 7 -and (Test-Path "..\..\$outputPath")) {
                                 $copySuccess = $true
-                                Write-Log "Successfully copied $binaryName ($arch) on attempt $retry" "SUCCESS"
+                                Write-Log "Successfully copied $binaryName ($arch) with all dependencies on attempt $retry" "SUCCESS"
                                 break
                             } else {
                                 throw "Robocopy succeeded but file not found at destination"
@@ -894,7 +902,8 @@ if ($Binaries -or $Binary) {
                             } else {
                                 Write-Log "All copy attempts failed for $binaryName ($arch). Falling back to standard copy..." "WARNING"
                                 try {
-                                    Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
+                                    # Fallback: Copy entire directory
+                                    Copy-Item -Path "$sourceDir\*" -Destination $destDir -Recurse -Force
                                     $copySuccess = $true
                                 } catch {
                                     throw "Final fallback copy also failed: $_"
@@ -1410,9 +1419,26 @@ foreach ($arch in $archs) {
                     throw "Could not find built executable for $binaryName ($arch)"
                 }
                 $builtExe = Get-Item $builtExePath
+                
                 # Copy to the expected output location
-                Copy-Item $builtExe.FullName "..\..\$outputPath" -Force
-                Write-Log "$binaryName ($arch, C#) built successfully." "SUCCESS"
+                # For C# projects, we need to copy ALL files from the output directory, not just the .exe
+                $sourceDir = Split-Path $builtExe.FullName
+                $destDir = Split-Path "..\..\$outputPath"
+                
+                try {
+                    # Use robocopy to copy the entire directory for C# projects, excluding language packs
+                    & robocopy $sourceDir $destDir /E /R:3 /W:1 /NP /NDL /NJH /NJS /XD "af-ZA" "am-ET" "ar-SA" "az-Latn-AZ" "be-BY" "bg-BG" "bn-BD" "bs-Latn-BA" "ca-ES" "cs" "cs-CZ" "da-DK" "de" "de-DE" "el-GR" "en-GB" "es" "es-ES" "es-MX" "et-EE" "eu-ES" "fa-IR" "fi-FI" "fil-PH" "fr" "fr-CA" "fr-FR" "gl-ES" "he-IL" "hi-IN" "hr-HR" "hu-HU" "id-ID" "is-IS" "it" "it-IT" "ja" "ja-JP" "ka-GE" "kk-KZ" "km-KH" "kn-IN" "ko" "ko-KR" "lo-LA" "lt-LT" "lv-LV" "mk-MK" "ml-IN" "ms-MY" "nb-NO" "nl-NL" "nn-NO" "pl" "pl-PL" "pt-BR" "pt-PT" "ro-RO" "ru" "ru-RU" "sk-SK" "sl-SI" "sq-AL" "sr-Latn-RS" "sv-SE" "sw-KE" "ta-IN" "te-IN" "th-TH" "tr" "tr-TR" "uk-UA" "uz-Latn-UZ" "vi-VN" "zh-Hans" "zh-Hant" | Out-Null
+                    # Robocopy exit codes 0-7 are success
+                    if ($LASTEXITCODE -le 7) {
+                        Write-Log "$binaryName ($arch, C#) built successfully with all dependencies." "SUCCESS"
+                    } else {
+                        throw "Robocopy failed with exit code $LASTEXITCODE"
+                    }
+                } catch {
+                    Write-Log "Robocopy failed, falling back to standard copy: $_" "WARNING"
+                    Copy-Item -Path "$sourceDir\*" -Destination $destDir -Recurse -Force
+                    Write-Log "$binaryName ($arch, C#) built successfully with all dependencies." "SUCCESS"
+                }
             } catch {
                 Write-Log "Failed to build C# project $binaryName ($arch). Error: $_" "ERROR"
                 Pop-Location
