@@ -1,4 +1,7 @@
 using System;
+using System.IO;
+using System.Linq;
+using System.Security.Principal;
 using System.Threading;
 using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,30 +17,85 @@ namespace Cimian.Status
     {
         private static Mutex? _mutex;
 
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        static extern bool AllocConsole();
+        
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern bool SetProcessDPIAware();
+        
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern int GetSystemMetrics(int nIndex);
+        const int SM_REMOTESESSION = 0x1000;
+
         [STAThread]
         public static void Main(string[] args)
         {
-            // CimianStatus is a GUI-only application
-            // Check for single instance
-            _mutex = new Mutex(true, "CimianStatusSingleInstance", out bool isNewInstance);
-            
-            if (!isNewInstance)
-            {
-                // Another instance is already running, try to bring it to front
-                BringExistingInstanceToFront();
-                return;
-            }
-
             try
             {
+                // Check if running at login screen
+                bool isLoginScreenMode = args.Contains("--login-screen");
+                bool isSystemContext = WindowsIdentity.GetCurrent().IsSystem;
+                bool hasBootstrapFile = File.Exists(@"C:\ProgramData\ManagedInstalls\.cimian.bootstrap");
+                
+                // Special handling for login screen mode
+                if (isLoginScreenMode || (isSystemContext && hasBootstrapFile))
+                {
+                    RunAtLoginScreen();
+                    return;
+                }
+                
+                // CimianStatus is a GUI-only application
+                // Check for single instance in normal mode
+                _mutex = new Mutex(true, "CimianStatusSingleInstance", out bool isNewInstance);
+                
+                if (!isNewInstance)
+                {
+                    // Another instance is already running, try to bring it to front
+                    BringExistingInstanceToFront();
+                    return;
+                }
+
                 // Run with modern WPF UI
                 RunWithUI(args);
+            }
+            catch (Exception ex)
+            {
+                File.AppendAllText(@"C:\ProgramData\ManagedInstalls\logs\cimistatus_error.log", 
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - Fatal error: {ex}\n");
             }
             finally
             {
                 _mutex?.ReleaseMutex();
                 _mutex?.Dispose();
             }
+        }
+
+        private static void RunAtLoginScreen()
+        {
+            // Set DPI awareness for login screen
+            SetProcessDPIAware();
+            
+            // Check if we're in a remote session
+            bool isRemoteSession = GetSystemMetrics(SM_REMOTESESSION) != 0;
+            if (isRemoteSession)
+            {
+                // Cannot show UI in remote session at login screen
+                return;
+            }
+            
+            // Create simplified application for login screen
+            var app = new Application
+            {
+                ShutdownMode = ShutdownMode.OnMainWindowClose
+            };
+            
+            // Create a simplified window that works at login screen
+            var window = new LoginScreenWindow();
+            
+            // Show window and run
+            window.Show();
+            app.MainWindow = window;
+            app.Run();
         }
 
         private static void RunWithUI(string[] args)
