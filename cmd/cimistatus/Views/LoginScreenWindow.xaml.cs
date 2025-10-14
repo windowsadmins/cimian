@@ -78,16 +78,42 @@ namespace Cimian.Status.Views
                             string eventsFile = Path.Combine(latestSession, "events.jsonl");
                             if (File.Exists(eventsFile))
                             {
-                                // Read the last few lines to get latest progress
-                                var lines = File.ReadAllLines(eventsFile);
-                                
-                                // Parse from end to find latest progress/status
-                                for (int i = lines.Length - 1; i >= Math.Max(0, lines.Length - 20); i--)
+                                try
                                 {
-                                    try
+                                    // Read entire file content
+                                    string content = File.ReadAllText(eventsFile);
+                                    
+                                    // Try to parse as array of JSON objects (pretty-printed format)
+                                    // Split by } followed by optional whitespace and { to find object boundaries
+                                    var jsonObjects = new List<string>();
+                                    int braceDepth = 0;
+                                    int startIndex = -1;
+                                    
+                                    for (int i = 0; i < content.Length; i++)
                                     {
-                                        var json = JsonDocument.Parse(lines[i]);
-                                        var root = json.RootElement;
+                                        if (content[i] == '{')
+                                        {
+                                            if (braceDepth == 0) startIndex = i;
+                                            braceDepth++;
+                                        }
+                                        else if (content[i] == '}')
+                                        {
+                                            braceDepth--;
+                                            if (braceDepth == 0 && startIndex >= 0)
+                                            {
+                                                jsonObjects.Add(content.Substring(startIndex, i - startIndex + 1));
+                                                startIndex = -1;
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Parse from end to find latest progress/status
+                                    for (int i = jsonObjects.Count - 1; i >= Math.Max(0, jsonObjects.Count - 20); i--)
+                                    {
+                                        try
+                                        {
+                                            var json = JsonDocument.Parse(jsonObjects[i]);
+                                            var root = json.RootElement;
 
                                         // Check for progress
                                         if (root.TryGetProperty("progress", out var progressProp))
@@ -140,8 +166,13 @@ namespace Cimian.Status.Views
                                     }
                                     catch
                                     {
-                                        // Skip invalid JSON lines
+                                        // Skip invalid JSON objects
                                     }
+                                }
+                                }
+                                catch
+                                {
+                                    // Failed to read or parse file
                                 }
                             }
                         }
