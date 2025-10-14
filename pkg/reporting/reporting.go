@@ -10,13 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/status"
 	"golang.org/x/sys/windows/registry"
 	"gopkg.in/yaml.v3"
 )
@@ -928,17 +928,8 @@ func (exp *DataExporter) parseManifestFile(filepath string) (*ManifestFile, erro
 
 // getSystemArchitecture returns the current system architecture
 func (exp *DataExporter) getSystemArchitecture() string {
-	// This mimics the logic from pkg/status but simplified for reporting
-	switch runtime.GOARCH {
-	case "amd64":
-		return "x64"
-	case "arm64":
-		return "arm64"
-	case "386":
-		return "x86"
-	default:
-		return runtime.GOARCH
-	}
+	// Use the centralized status.GetSystemArchitecture() which properly detects ARM64
+	return status.GetSystemArchitecture()
 }
 
 // checkArchitectureCompatibility checks if a package supports the current system architecture

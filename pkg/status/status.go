@@ -91,8 +91,27 @@ func IsOlderVersion(local, remote string) bool {
 
 // getSystemArchitecture returns a normalized string for the local system arch
 func GetSystemArchitecture() string {
-	// On Windows, use PROCESSOR_ARCHITECTURE to get the actual system architecture
-	// rather than runtime.GOARCH which reflects the binary's compilation target
+	// CRITICAL FIX: On ARM64 systems running x64 binaries through emulation,
+	// PROCESSOR_ARCHITECTURE reports "AMD64" (the emulated architecture).
+	// We must check PROCESSOR_IDENTIFIER first to detect the native ARM64 hardware.
+	if procID := os.Getenv("PROCESSOR_IDENTIFIER"); procID != "" {
+		procIDUpper := strings.ToUpper(procID)
+		if strings.Contains(procIDUpper, "ARM") {
+			return "arm64"
+		}
+	}
+
+	// Check PROCESSOR_ARCHITEW6432 for native architecture on WoW64 systems
+	if nativeArch := os.Getenv("PROCESSOR_ARCHITEW6432"); nativeArch != "" {
+		switch strings.ToUpper(nativeArch) {
+		case "AMD64", "X86_64":
+			return "x64"
+		case "ARM64":
+			return "arm64"
+		}
+	}
+
+	// Check PROCESSOR_ARCHITECTURE (may report emulated architecture on ARM64)
 	if arch := os.Getenv("PROCESSOR_ARCHITECTURE"); arch != "" {
 		switch strings.ToUpper(arch) {
 		case "AMD64", "X86_64":

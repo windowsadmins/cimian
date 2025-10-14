@@ -773,12 +773,7 @@ if ($Binaries -or $Binary) {
     go mod download
     # Build binaries
     Write-Log "Building binaries for x64 and arm64..." "INFO"
-    # Create and clean release directories
-    if (Test-Path "release") {
-        Remove-Item -Path "release\*" -Recurse -Force
-    } else {
-        New-Item -ItemType Directory -Path "release" -Force | Out-Null
-    }
+    
     $binaryDirs = Get-ChildItem -Directory -Path "./cmd"
     # Filter to specific binary if -Binary parameter is specified
     if ($Binary) {
@@ -788,9 +783,27 @@ if ($Binaries -or $Binary) {
             exit 1
         }
         Write-Log "Building only binary: $Binary" "INFO"
+        # For single binary mode, only remove the specific binary files, not all release files
+        foreach ($arch in @("x64", "arm64")) {
+            $targetFile = "release\$arch\$Binary.exe"
+            if (Test-Path $targetFile) {
+                Remove-Item -Path $targetFile -Force -ErrorAction SilentlyContinue
+            }
+        }
     } else {
         Write-Log "Building all binaries" "INFO"
+        # Create and clean release directories only when building all
+        if (Test-Path "release") {
+            Remove-Item -Path "release\*" -Recurse -Force
+        } else {
+            New-Item -ItemType Directory -Path "release" -Force | Out-Null
+        }
     }
+    # Ensure release directories exist
+    if (-not (Test-Path "release")) {
+        New-Item -ItemType Directory -Path "release" -Force | Out-Null
+    }
+    
     $archs = @("x64", "arm64")
     $goarchMap = @{
         "x64"   = "amd64"
