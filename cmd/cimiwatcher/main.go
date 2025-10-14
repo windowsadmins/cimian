@@ -49,6 +49,8 @@ var (
 	
 	procWTSGetActiveConsoleSessionId = kernel32.NewProc("WTSGetActiveConsoleSessionId")
 	procWTSQueryUserToken            = wtsapi32.NewProc("WTSQueryUserToken")
+	procWTSEnumerateSessions         = wtsapi32.NewProc("WTSEnumerateSessionsW")
+	procWTSFreeMemory                = wtsapi32.NewProc("WTSFreeMemory")
 	procDuplicateTokenEx             = advapi32.NewProc("DuplicateTokenEx")
 	procCreateEnvironmentBlock       = userenv.NewProc("CreateEnvironmentBlock")
 	procDestroyEnvironmentBlock      = userenv.NewProc("DestroyEnvironmentBlock")
@@ -64,7 +66,25 @@ const (
 	CREATE_NO_WINDOW           = 0x08000000
 	NORMAL_PRIORITY_CLASS      = 0x00000020
 	CREATE_NEW_CONSOLE         = 0x00000010
+	
+	// WTS Session States
+	WTSActive       = 0
+	WTSConnected    = 1
+	WTSConnectQuery = 2
+	WTSShadow       = 3
+	WTSDisconnected = 4
+	WTSIdle         = 5
+	WTSListen       = 6
+	WTSReset        = 7
+	WTSDown         = 8
+	WTSInit         = 9
 )
+
+type WTS_SESSION_INFO struct {
+	SessionID      uint32
+	pWinStationName *uint16
+	State          uint32
+}
 
 type STARTUPINFO struct {
 	Cb              uint32
@@ -97,20 +117,49 @@ type PROCESS_INFORMATION struct {
 var logger debug.Log
 
 // hasActiveUserSession checks if there are any active user sessions (logged in users)
+// Returns true if a user is actively logged in, false if at login screen or no user
 func hasActiveUserSession() bool {
-	sessionID, _, _ := procWTSGetActiveConsoleSessionId.Call()
-	if sessionID == 0xFFFFFFFF {
-		return false
+	// Use WTSEnumerateSessions to check session states
+	var pSessionInfo uintptr
+	var sessionCount uint32
+	
+	ret, _, _ := procWTSEnumerateSessions.Call(
+		0, // WTS_CURRENT_SERVER_HANDLE
+		0, // Reserved
+		1, // Version
+		uintptr(unsafe.Pointer(&pSessionInfo)),
+		uintptr(unsafe.Pointer(&sessionCount)),
+	)
+	
+	if ret == 0 {
+		// Failed to enumerate - fall back to old method
+		sessionID, _, _ := procWTSGetActiveConsoleSessionId.Call()
+		if sessionID == 0xFFFFFFFF || sessionID == 0 {
+			return false
+		}
+		return true
 	}
 	
-	// Session ID 0 is typically the services session, Session ID 1+ are user sessions
-	// Try to get user token for the session to verify it's actually an active user
-	if sessionID > 0 {
-		var userToken syscall.Handle
-		ret, _, _ := procWTSQueryUserToken.Call(uintptr(sessionID), uintptr(unsafe.Pointer(&userToken)))
-		if ret != 0 {
-			syscall.CloseHandle(userToken)
-			return true
+	defer procWTSFreeMemory.Call(pSessionInfo)
+	
+	// Check each session for an active logged-in user
+	sessionInfoSize := unsafe.Sizeof(WTS_SESSION_INFO{})
+	for i := uint32(0); i < sessionCount; i++ {
+		sessionInfo := (*WTS_SESSION_INFO)(unsafe.Pointer(pSessionInfo + uintptr(i)*sessionInfoSize))
+		
+		// Look for Active sessions (not just Connected or at login screen)
+		// WTSActive (0) means user is logged in and active
+		if sessionInfo.State == WTSActive && sessionInfo.SessionID > 0 {
+			// Double-check by trying to get user token
+			var userToken syscall.Handle
+			ret, _, _ := procWTSQueryUserToken.Call(
+				uintptr(sessionInfo.SessionID),
+				uintptr(unsafe.Pointer(&userToken)),
+			)
+			if ret != 0 {
+				syscall.CloseHandle(userToken)
+				return true
+			}
 		}
 	}
 	
@@ -214,25 +263,106 @@ func launchGUIInUserSession(exePath string, logger debug.Log) error {
 func launchAtLoginScreen(exePath string, logger debug.Log) error {
 	logger.Info(1, "Launching GUI at login screen (no active user session)")
 	
-	// For login screen, we run with SYSTEM privileges and --login-screen flag
-	// The application will handle the UI display in Session 0 or console session
-	cmd := exec.Command(exePath, "--login-screen")
-	
-	// Set working directory
-	cmd.Dir = filepath.Dir(exePath)
-	
-	// Configure to run as SYSTEM with window visible
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    false,
-		CreationFlags: CREATE_NEW_CONSOLE,
+	// Even at login screen, there's a console session (usually Session 1)
+	// We need to launch in that session to display GUI
+	sessionID, _, _ := procWTSGetActiveConsoleSessionId.Call()
+	if sessionID == 0xFFFFFFFF || sessionID == 0 {
+		return fmt.Errorf("no console session available for login screen display")
 	}
 	
-	// Start the process
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start GUI at login screen: %v", err)
+	logger.Info(1, fmt.Sprintf("Console session for login screen: %d", sessionID))
+	
+	// Get session token - even though no user is logged in, we can still get session context
+	var userToken syscall.Handle
+	ret, _, err := procWTSQueryUserToken.Call(uintptr(sessionID), uintptr(unsafe.Pointer(&userToken)))
+	if ret == 0 {
+		// If we can't get session token, try launching as SYSTEM with session targeting
+		logger.Info(1, fmt.Sprintf("Could not get session token (expected at login screen): %v", err))
+		
+		// Try alternative approach: Launch as SYSTEM but target the console session
+		cmd := exec.Command(exePath, "--login-screen")
+		cmd.Dir = filepath.Dir(exePath)
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    false,
+			CreationFlags: CREATE_NEW_CONSOLE,
+		}
+		
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start GUI at login screen: %v", err)
+		}
+		
+		logger.Info(1, fmt.Sprintf("Launched GUI at login screen as SYSTEM (PID: %d)", cmd.Process.Pid))
+		return nil
+	}
+	defer syscall.CloseHandle(userToken)
+	
+	// We have a session token - use CreateProcessAsUser to launch in the console session
+	// This will display on the interactive desktop even without a logged-in user
+	
+	var duplicateToken syscall.Handle
+	ret, _, err = procDuplicateTokenEx.Call(
+		uintptr(userToken),
+		MAXIMUM_ALLOWED,
+		0,
+		2, // SecurityImpersonation
+		1, // TokenPrimary
+		uintptr(unsafe.Pointer(&duplicateToken)),
+	)
+	if ret == 0 {
+		return fmt.Errorf("DuplicateTokenEx failed: %v", err)
+	}
+	defer syscall.CloseHandle(duplicateToken)
+	
+	var environment uintptr
+	ret, _, err = procCreateEnvironmentBlock.Call(
+		uintptr(unsafe.Pointer(&environment)),
+		uintptr(duplicateToken),
+		0,
+	)
+	if ret == 0 {
+		return fmt.Errorf("CreateEnvironmentBlock failed: %v", err)
+	}
+	defer procDestroyEnvironmentBlock.Call(environment)
+	
+	workingDir := filepath.Dir(exePath)
+	
+	si := STARTUPINFO{
+		Cb: uint32(unsafe.Sizeof(STARTUPINFO{})),
 	}
 	
-	logger.Info(1, fmt.Sprintf("Launched GUI at login screen (PID: %d)", cmd.Process.Pid))
+	desktopName, _ := syscall.UTF16PtrFromString("winsta0\\default")
+	si.Desktop = desktopName
+	
+	pi := PROCESS_INFORMATION{}
+	
+	// Build command line with --login-screen flag
+	cmdLine := fmt.Sprintf("\"%s\" --login-screen", exePath)
+	cmdLinePtr, _ := syscall.UTF16PtrFromString(cmdLine)
+	workingDirPtr, _ := syscall.UTF16PtrFromString(workingDir)
+	
+	creationFlags := CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE | NORMAL_PRIORITY_CLASS
+	ret, _, err = procCreateProcessAsUser.Call(
+		uintptr(duplicateToken),
+		0, // No application name
+		uintptr(unsafe.Pointer(cmdLinePtr)), // Command line with args
+		0,
+		0,
+		0,
+		uintptr(creationFlags),
+		environment,
+		uintptr(unsafe.Pointer(workingDirPtr)),
+		uintptr(unsafe.Pointer(&si)),
+		uintptr(unsafe.Pointer(&pi)),
+	)
+	
+	if ret == 0 {
+		return fmt.Errorf("CreateProcessAsUser failed for login screen: %v", err)
+	}
+	
+	syscall.CloseHandle(pi.Process)
+	syscall.CloseHandle(pi.Thread)
+	
+	logger.Info(1, fmt.Sprintf("Launched GUI at login screen in session %d (PID: %d)", sessionID, pi.ProcessId))
 	return nil
 }
 
