@@ -2293,22 +2293,30 @@ func DeduplicateCatalogItems(items []catalog.Item) catalog.Item {
 // only the one with the highest version remains.
 func DeduplicateManifestItems(manifestItems []manifest.Item) []manifest.Item {
 	dedup := make(map[string]manifest.Item)
+	// Track order of first appearance to preserve manifest order
+	var orderedKeys []string
+	
 	for _, m := range manifestItems {
 		if m.Name == "" {
 			continue
 		}
 		key := strings.ToLower(m.Name)
 		if existing, ok := dedup[key]; ok {
+			// If we find a newer version, update it but keep the original position
 			if IsOlderVersion(existing.Version, m.Version) {
 				dedup[key] = m
 			}
 		} else {
+			// First time seeing this item - track its order
+			orderedKeys = append(orderedKeys, key)
 			dedup[key] = m
 		}
 	}
+	
+	// Build result in the original order items were first encountered
 	var result []manifest.Item
-	for _, m := range dedup {
-		result = append(result, m)
+	for _, key := range orderedKeys {
+		result = append(result, dedup[key])
 	}
 	return result
 }

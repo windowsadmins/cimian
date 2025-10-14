@@ -1619,10 +1619,28 @@ func main() {
 		logging.Warn("Failed to export execution-start reports: %v", err)
 	}
 
-	// Combine install and update items and perform installations.
+	// Combine install and update items while preserving manifest order
+	// Build lookup maps for quick checking
+	toInstallMap := make(map[string]catalog.Item)
+	for _, item := range toInstall {
+		toInstallMap[strings.ToLower(item.Name)] = item
+	}
+	toUpdateMap := make(map[string]catalog.Item)
+	for _, item := range toUpdate {
+		toUpdateMap[strings.ToLower(item.Name)] = item
+	}
+	
+	// Iterate through deduplicated manifest items in order
+	// and add items that need install or update
 	var allToInstall []catalog.Item
-	allToInstall = append(allToInstall, toInstall...)
-	allToInstall = append(allToInstall, toUpdate...)
+	for _, mItem := range dedupedManifestItems {
+		key := strings.ToLower(mItem.Name)
+		if item, found := toInstallMap[key]; found {
+			allToInstall = append(allToInstall, item)
+		} else if item, found := toUpdateMap[key]; found {
+			allToInstall = append(allToInstall, item)
+		}
+	}
 
 	// Check for self-updates and handle them specially
 	// Note: Stale selfupdate flags are automatically cleaned up if no Cimian packages exist in catalog
