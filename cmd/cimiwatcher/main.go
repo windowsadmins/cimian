@@ -96,6 +96,27 @@ type PROCESS_INFORMATION struct {
 
 var logger debug.Log
 
+// hasActiveUserSession checks if there are any active user sessions (logged in users)
+func hasActiveUserSession() bool {
+	sessionID, _, _ := procWTSGetActiveConsoleSessionId.Call()
+	if sessionID == 0xFFFFFFFF {
+		return false
+	}
+	
+	// Session ID 0 is typically the services session, Session ID 1+ are user sessions
+	// Try to get user token for the session to verify it's actually an active user
+	if sessionID > 0 {
+		var userToken syscall.Handle
+		ret, _, _ := procWTSQueryUserToken.Call(uintptr(sessionID), uintptr(unsafe.Pointer(&userToken)))
+		if ret != 0 {
+			syscall.CloseHandle(userToken)
+			return true
+		}
+	}
+	
+	return false
+}
+
 // launchGUIInUserSession launches a GUI application in the active user session
 // This is necessary when running from a Windows service (Session 0) to display UI
 func launchGUIInUserSession(exePath string, logger debug.Log) error {
@@ -185,6 +206,33 @@ func launchGUIInUserSession(exePath string, logger debug.Log) error {
 	syscall.CloseHandle(pi.Thread)
 
 	logger.Info(1, fmt.Sprintf("Launched GUI process (PID: %d) in session %d", pi.ProcessId, sessionID))
+	return nil
+}
+
+// launchAtLoginScreen launches a GUI application at the Windows login screen
+// Uses SYSTEM privileges to display UI when no user is logged in
+func launchAtLoginScreen(exePath string, logger debug.Log) error {
+	logger.Info(1, "Launching GUI at login screen (no active user session)")
+	
+	// For login screen, we run with SYSTEM privileges and --login-screen flag
+	// The application will handle the UI display in Session 0 or console session
+	cmd := exec.Command(exePath, "--login-screen")
+	
+	// Set working directory
+	cmd.Dir = filepath.Dir(exePath)
+	
+	// Configure to run as SYSTEM with window visible
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    false,
+		CreationFlags: CREATE_NEW_CONSOLE,
+	}
+	
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start GUI at login screen: %v", err)
+	}
+	
+	logger.Info(1, fmt.Sprintf("Launched GUI at login screen (PID: %d)", cmd.Process.Pid))
 	return nil
 }
 
@@ -452,12 +500,23 @@ func (m *cimianWatcherService) triggerBootstrapUpdate(withGUI bool) {
 		if _, err := os.Stat(cimistatus); err == nil {
 			logger.Info(1, "Starting CimianStatus UI for monitoring")
 
-			// Services run in Session 0 (non-interactive), need to launch GUI in active user session
-			// Use Win32 APIs to create process in interactive session
-			if err := launchGUIInUserSession(cimistatus, logger); err != nil {
-				logger.Error(1, fmt.Sprintf("Failed to start CimianStatus UI: %v", err))
+			// Check if there's an active user session
+			if hasActiveUserSession() {
+				// Active user logged in - launch in their session
+				logger.Info(1, "Active user session detected - launching in user session")
+				if err := launchGUIInUserSession(cimistatus, logger); err != nil {
+					logger.Error(1, fmt.Sprintf("Failed to start CimianStatus UI in user session: %v", err))
+				} else {
+					logger.Info(1, "Successfully launched CimianStatus UI in user session")
+				}
 			} else {
-				logger.Info(1, "Successfully launched CimianStatus UI in user session")
+				// No user logged in - launch at login screen
+				logger.Info(1, "No active user session - launching at login screen")
+				if err := launchAtLoginScreen(cimistatus, logger); err != nil {
+					logger.Error(1, fmt.Sprintf("Failed to start CimianStatus UI at login screen: %v", err))
+				} else {
+					logger.Info(1, "Successfully launched CimianStatus UI at login screen")
+				}
 			}
 		} else {
 			logger.Error(1, fmt.Sprintf("CimianStatus not found at: %s", cimistatus))
