@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/windowsadmins/cimian/pkg/config"
@@ -327,16 +328,129 @@ func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []I
 // Returns the item and true if found, or an empty item and false if not found.
 func GetItemByName(itemName string, catalogMap map[int]map[string]Item) (Item, bool) {
 	itemNameLower := strings.ToLower(itemName)
+	
+	// Get system architecture using local function to avoid circular dependency
+	sysArch := getSystemArch()
+	
+	var archCompatibleItem Item
+	var fallbackItem Item
+	var foundArchCompatible bool
+	var foundFallback bool
 
+	// IMPORTANT: Iterate through ALL items first to find arch-compatible version
+	// Don't return early - map iteration order is random in Go!
 	for _, catalog := range catalogMap {
 		for name, item := range catalog {
 			if strings.ToLower(name) == itemNameLower {
-				return item, true
+				// Check if this item supports the current system architecture
+				if supportsArch(item, sysArch) {
+					if !foundArchCompatible {
+						archCompatibleItem = item
+						foundArchCompatible = true
+						logging.Debug("GetItemByName found arch-compatible item",
+							"item", itemName, "sysArch", sysArch, "itemArch", item.SupportedArch,
+							"installer", item.Installer.Location)
+					}
+				} else {
+					// Keep a fallback in case no arch-compatible version exists
+					if !foundFallback {
+						fallbackItem = item
+						foundFallback = true
+						logging.Debug("GetItemByName found non-compatible item",
+							"item", itemName, "sysArch", sysArch, "itemArch", item.SupportedArch,
+							"installer", item.Installer.Location)
+					}
+				}
 			}
 		}
 	}
 
+	// Return arch-compatible version if found
+	if foundArchCompatible {
+		logging.Debug("GetItemByName returning arch-compatible item",
+			"item", itemName, "sysArch", sysArch, "itemArch", archCompatibleItem.SupportedArch)
+		return archCompatibleItem, true
+	}
+
+	// Return fallback if we found an item but no arch-compatible version exists
+	if foundFallback {
+		logging.Debug("GetItemByName returning fallback (no arch-compatible version found)",
+			"item", itemName, "sysArch", sysArch, "fallbackArch", fallbackItem.SupportedArch)
+		return fallbackItem, true
+	}
+
 	return Item{}, false
+}
+
+// getSystemArch returns the system architecture (duplicated from status to avoid circular dependency)
+func getSystemArch() string {
+	// Check PROCESSOR_IDENTIFIER first for ARM detection
+	if procID := os.Getenv("PROCESSOR_IDENTIFIER"); procID != "" {
+		if strings.Contains(strings.ToUpper(procID), "ARM") {
+			return "arm64"
+		}
+	}
+	
+	// Check PROCESSOR_ARCHITEW6432 for native architecture on WoW64
+	if nativeArch := os.Getenv("PROCESSOR_ARCHITEW6432"); nativeArch != "" {
+		switch strings.ToUpper(nativeArch) {
+		case "AMD64", "X86_64":
+			return "x64"
+		case "ARM64":
+			return "arm64"
+		}
+	}
+	
+	// Check PROCESSOR_ARCHITECTURE
+	if arch := os.Getenv("PROCESSOR_ARCHITECTURE"); arch != "" {
+		switch strings.ToUpper(arch) {
+		case "AMD64", "X86_64":
+			return "x64"
+		case "X86", "386":
+			return "x86"
+		case "ARM64":
+			return "arm64"
+		default:
+			return strings.ToLower(arch)
+		}
+	}
+	
+	// Fallback to runtime.GOARCH
+	switch runtime.GOARCH {
+	case "amd64", "x86_64":
+		return "x64"
+	case "386":
+		return "x86"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+// supportsArch checks if an item supports the given architecture
+func supportsArch(item Item, sysArch string) bool {
+	if len(item.SupportedArch) == 0 {
+		return true // No architecture restriction
+	}
+	
+	sysArchNorm := normalizeArch(sysArch)
+	for _, arch := range item.SupportedArch {
+		if normalizeArch(arch) == sysArchNorm {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeArch normalizes architecture names
+func normalizeArch(arch string) string {
+	arch = strings.ToLower(arch)
+	if arch == "amd64" || arch == "x86_64" {
+		return "x64"
+	}
+	if arch == "386" {
+		return "x86"
+	}
+	return arch
 }
 
 // removeDuplicates removes duplicate strings from a slice
