@@ -2079,10 +2079,12 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate current items table for items.json (current snapshot only, no historical data)
-	packages, err := exp.GenerateCurrentItemsTable()
+	// Generate comprehensive items table for items.json
+	// Uses GenerateItemsTable() which includes ALL managed packages from manifests
+	// with proper version tracking, install status, and error history
+	packages, err := exp.GenerateItemsTable(limitDays)
 	if err != nil {
-		return fmt.Errorf("failed to generate current items table: %w", err)
+		return fmt.Errorf("failed to generate items table: %w", err)
 	}
 
 	// Generate events table (last 48 hours for performance)
