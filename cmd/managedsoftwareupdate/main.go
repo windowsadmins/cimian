@@ -674,13 +674,6 @@ func main() {
 		// Wait for network connectivity (up to 60 seconds) - critical at startup
 		waitForNetwork(verbosity)
 		
-		// Check if we should skip installation due to user activity
-		if hasGUIUsers() && !isSystemIdle() {
-			logging.Info("System not idle (GUI users active) - skipping bootstrap installation")
-			logging.Info("Bootstrap mode will remain active for next check")
-			os.Exit(0)
-		}
-		
 		*showStatus = true   // Always show status window in bootstrap mode
 		*installOnly = false // Bootstrap mode does check + install
 		*checkOnly = false
@@ -3946,33 +3939,6 @@ func isNetworkAvailable() bool {
 	return err == nil
 }
 
-// isSystemIdle checks if the system has been idle (no keyboard/mouse input) for at least 10 seconds
-// Following Munki's behavior for bootstrap mode - uses the existing getIdleSeconds() function
-func isSystemIdle() bool {
-	idleSeconds := getIdleSeconds()
-	return idleSeconds > 10
-}
-
-// hasGUIUsers checks if there are any logged-in GUI users
-// In bootstrap mode, we only auto-install if no one is logged in
-func hasGUIUsers() bool {
-	// Check if anyone is logged into a desktop session
-	// On Windows, we can check for explorer.exe processes running in user sessions
-	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq explorer.exe", "/FO", "CSV", "/NH")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	
-	// If explorer.exe is running in a user session, someone is logged in
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "explorer.exe") {
-			return true
-		}
-	}
-	return false
-}
 
 // displayLoadingHeader shows the initial loading information with enhanced format
 func displayLoadingHeader(targetItems []string, verbosity int) {
