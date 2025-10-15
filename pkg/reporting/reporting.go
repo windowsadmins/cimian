@@ -1292,9 +1292,9 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 	// Convert to ItemRecord format - using actual status and version information
 	var items []ItemRecord
 	for _, pkgInfo := range packagesInfo {
-		// Device Management Service-managed items: managed_profiles and managed_apps
-		// These are installed by Device Management Service, not Cimian, and should not appear in items.json
-		if pkgInfo.ItemType == "managed_profiles" || pkgInfo.ItemType == "managed_apps" {
+		// SKIP Device Management Service-managed items: profiles and apps
+		// Check for the actual ItemType values set by determineItemType() in main.go
+		if pkgInfo.ItemType == "managedprofile" || pkgInfo.ItemType == "managedapp" {
 			logging.Debug("Excluding Device Management Service-managed item from items.json", "item", pkgInfo.Name, "type", pkgInfo.ItemType)
 			continue
 		}
@@ -1727,13 +1727,6 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	sessionConfig := exp.loadCimianConfiguration() // Load config for cache path info
 
 	for _, stats := range itemStats {
-		// EXCLUDE Device Management Service-managed items: managed_profiles and managed_apps
-		// These are installed by Device Management Service, not Cimian, and should not appear in items.json
-		if stats.ItemType == "managed_profiles" || stats.ItemType == "managed_apps" {
-			logging.Debug("Excluding Device Management Service-managed item from items.json", "item", stats.Name, "type", stats.ItemType)
-			continue
-		}
-		
 		// Generate standard reporting ID (lowercase, no spaces)
 		itemID := strings.ToLower(strings.ReplaceAll(stats.Name, " ", "-"))
 
@@ -2084,10 +2077,10 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// Generate comprehensive items table for items.json
-	// Uses GenerateItemsTable() which includes ALL managed packages from manifests
-	// with proper version tracking, install status, and error history
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Generate current items table for items.json from the current session manifest packages
+	// This uses the actual packages processed in the current session (set via SetCurrentSessionPackagesInfo)
+	// NOT historical event data - ensures items.json matches the managed items table
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
 		return fmt.Errorf("failed to generate items table: %w", err)
 	}
@@ -2148,11 +2141,12 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 		return fmt.Errorf("failed to generate sessions table: %w", err)
 	}
 
-	// CRITICAL FIX: Use comprehensive items table with full error tracking, not basic current items
-	// This ensures items.json includes last_error, last_attempt_time, failure_count, etc.
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Generate current items table for items.json from the current session manifest packages
+	// This uses the actual packages processed in the current session (set via SetCurrentSessionPackagesInfo)
+	// NOT historical event data - ensures items.json matches the managed items table
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
-		return fmt.Errorf("failed to generate comprehensive items table: %w", err)
+		return fmt.Errorf("failed to generate current items table: %w", err)
 	}
 
 	// Generate events up to current point
@@ -2577,9 +2571,13 @@ func (exp *DataExporter) inferItemType(packageName, sessionDir string, event Eve
 	case "remove":
 		return "managed_uninstalls"
 	case "profile":
-		return "managed_profiles"
+		// Profiles are managed by Device Management Service, not Cimian
+		// Return "unknown" so they get filtered out
+		return "unknown"
 	case "app":
-		return "managed_apps"
+		// Apps are managed by Device Management Service, not Cimian
+		// Return "unknown" so they get filtered out
+		return "unknown"
 	default:
 		return "unknown"
 	}
@@ -4050,33 +4048,11 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 			})
 		}
 		
-		// Process ManagedProfiles
-		for _, pkgName := range manifestFile.ManagedProfiles {
-			if pkgName == "" {
-				continue
-			}
-			allItems = append(allItems, ManifestItem{
-				Name:           pkgName,
-				Version:        "", // Will be filled from catalog
-				Catalogs:       manifestFile.Catalogs,
-				Action:         "profile",
-				SourceManifest: manifestName,
-			})
-		}
+		// SKIP ManagedProfiles - managed by Device Management Service, not Cimian
+		// These should NOT appear in items.json as they are not Cimian-managed installations
 		
-		// Process ManagedApps
-		for _, pkgName := range manifestFile.ManagedApps {
-			if pkgName == "" {
-				continue
-			}
-			allItems = append(allItems, ManifestItem{
-				Name:           pkgName,
-				Version:        "", // Will be filled from catalog
-				Catalogs:       manifestFile.Catalogs,
-				Action:         "app",
-				SourceManifest: manifestName,
-			})
-		}
+		// SKIP ManagedApps - managed by Device Management Service, not Cimian
+		// These should NOT appear in items.json as they are not Cimian-managed installations
 		
 		// Queue included manifests for processing
 		for _, includedManifest := range manifestFile.IncludedManifests {
