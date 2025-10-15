@@ -1292,6 +1292,13 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 	// Convert to ItemRecord format - using actual status and version information
 	var items []ItemRecord
 	for _, pkgInfo := range packagesInfo {
+		// Device Management Service-managed items: managed_profiles and managed_apps
+		// These are installed by Device Management Service, not Cimian, and should not appear in items.json
+		if pkgInfo.ItemType == "managed_profiles" || pkgInfo.ItemType == "managed_apps" {
+			logging.Debug("Excluding Device Management Service-managed item from items.json", "item", pkgInfo.Name, "type", pkgInfo.ItemType)
+			continue
+		}
+		
 		displayName := pkgInfo.DisplayName
 		if displayName == "" {
 			// Try catalog display name as fallback
@@ -1720,6 +1727,13 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	sessionConfig := exp.loadCimianConfiguration() // Load config for cache path info
 
 	for _, stats := range itemStats {
+		// EXCLUDE Device Management Service-managed items: managed_profiles and managed_apps
+		// These are installed by Device Management Service, not Cimian, and should not appear in items.json
+		if stats.ItemType == "managed_profiles" || stats.ItemType == "managed_apps" {
+			logging.Debug("Excluding Device Management Service-managed item from items.json", "item", stats.Name, "type", stats.ItemType)
+			continue
+		}
+		
 		// Generate standard reporting ID (lowercase, no spaces)
 		itemID := strings.ToLower(strings.ReplaceAll(stats.Name, " ", "-"))
 
