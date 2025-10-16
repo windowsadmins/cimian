@@ -71,9 +71,9 @@ type SessionSummary struct {
 	PackagesPending      int     `json:"packages_pending"`
 	PackagesFailed       int     `json:"packages_failed"`
 	CacheSizeMB          float64 `json:"cache_size_mb,omitempty"`
-	
+
 	// ENHANCEMENT 4: Failed package details for ReportMate
-	FailedPackages       []FailedPackageInfo `json:"failed_packages,omitempty"`
+	FailedPackages []FailedPackageInfo `json:"failed_packages,omitempty"`
 }
 
 // FailedPackageInfo provides details about failed packages for ReportMate
@@ -87,21 +87,21 @@ type FailedPackageInfo struct {
 
 // EventRecord represents a row in the events table
 type EventRecord struct {
-	EventID    string `json:"event_id"`
-	SessionID  string `json:"session_id"`
-	Timestamp  string `json:"timestamp"`
-	Level      string `json:"level"`
-	EventType  string `json:"event_type"`
-	
+	EventID   string `json:"event_id"`
+	SessionID string `json:"session_id"`
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	EventType string `json:"event_type"`
+
 	// ENHANCEMENT 1: Enhanced package context for ReportMate
 	PackageID      string `json:"package_id,omitempty"`      // Package identifier for correlation
 	PackageName    string `json:"package_name,omitempty"`    // Human readable name
 	PackageVersion string `json:"package_version,omitempty"` // Version being processed
-	
+
 	// Legacy fields (maintained for compatibility)
-	Package    string `json:"package,omitempty"`
-	Version    string `json:"version,omitempty"`
-	
+	Package string `json:"package,omitempty"`
+	Version string `json:"version,omitempty"`
+
 	Action     string `json:"action"`
 	Status     string `json:"status"`
 	Message    string `json:"message"`
@@ -113,18 +113,18 @@ type EventRecord struct {
 	SourceLine int    `json:"source_line"`
 
 	// ENHANCEMENT 3: Enhanced error information
-	ErrorDetails   *ErrorDetails `json:"error_details,omitempty"`
-	
+	ErrorDetails *ErrorDetails `json:"error_details,omitempty"`
+
 	// ENHANCEMENT 5: Installation method context
-	InstallerType  string `json:"installer_type,omitempty"`  // "chocolatey", "nupkg", "msi", "exe", "zip", "pkg", "sbin_installer"
-	
+	InstallerType string `json:"installer_type,omitempty"` // "chocolatey", "nupkg", "msi", "exe", "zip", "pkg", "sbin_installer"
+
 	// .pkg package enhancements for events
-	PackageFormat        string `json:"package_format,omitempty"`         // "nupkg", "pkg", "msi", "exe"
-	IsSigned             bool   `json:"is_signed,omitempty"`              // Whether package is cryptographically signed
-	SignatureStatus      string `json:"signature_status,omitempty"`       // "valid", "invalid", "not_signed", "unknown"
-	SignatureAlgorithm   string `json:"signature_algorithm,omitempty"`    // Signature algorithm used
-	CertificateSubject   string `json:"certificate_subject,omitempty"`    // Certificate subject DN
-	
+	PackageFormat      string `json:"package_format,omitempty"`      // "nupkg", "pkg", "msi", "exe"
+	IsSigned           bool   `json:"is_signed,omitempty"`           // Whether package is cryptographically signed
+	SignatureStatus    string `json:"signature_status,omitempty"`    // "valid", "invalid", "not_signed", "unknown"
+	SignatureAlgorithm string `json:"signature_algorithm,omitempty"` // Signature algorithm used
+	CertificateSubject string `json:"certificate_subject,omitempty"` // Certificate subject DN
+
 	// Enhanced fields for external reporting tools
 	Details string        `json:"details,omitempty"`
 	Context *EventContext `json:"context,omitempty"`
@@ -170,12 +170,12 @@ type ItemRecord struct {
 	LastUpdate         string `json:"last_update"`         // Most recent activity timestamp
 
 	// Statistics
-	InstallCount        int  `json:"install_count"`
-	UpdateCount         int  `json:"update_count"`
-	RemovalCount        int  `json:"removal_count"`
-	FailureCount        int  `json:"failure_count"`
-	WarningCount        int  `json:"warning_count"`
-	TotalSessions       int  `json:"total_sessions"`
+	InstallCount  int `json:"install_count"`
+	UpdateCount   int `json:"update_count"`
+	RemovalCount  int `json:"removal_count"`
+	FailureCount  int `json:"failure_count"`
+	WarningCount  int `json:"warning_count"`
+	TotalSessions int `json:"total_sessions"`
 	// ENHANCEMENT 6: Enhanced install loop detection
 	InstallLoopDetected bool               `json:"install_loop_detected"`
 	LoopDetails         *InstallLoopDetail `json:"loop_details,omitempty"`
@@ -185,25 +185,25 @@ type ItemRecord struct {
 	Type          string `json:"type"`                     // Package manager type identifier
 
 	// .pkg package enhancements
-	PackageFormat        string `json:"package_format,omitempty"`         // "nupkg", "pkg", "msi", "exe"
-	PackageID            string `json:"package_id,omitempty"`             // Package identifier (for .pkg packages)
-	Developer            string `json:"developer,omitempty"`              // Package developer/publisher
-	Architecture         string `json:"architecture,omitempty"`           // Package architecture (x64, arm64)
-	InstallLocation      string `json:"install_location,omitempty"`       // Installation location for copy-type packages
-	IsSigned             bool   `json:"is_signed,omitempty"`              // Whether package is cryptographically signed
-	SignatureStatus      string `json:"signature_status,omitempty"`       // "valid", "invalid", "not_signed", "unknown"
-	SignatureAlgorithm   string `json:"signature_algorithm,omitempty"`    // Signature algorithm used
-	CertificateSubject   string `json:"certificate_subject,omitempty"`    // Certificate subject DN
+	PackageFormat         string `json:"package_format,omitempty"`         // "nupkg", "pkg", "msi", "exe"
+	PackageID             string `json:"package_id,omitempty"`             // Package identifier (for .pkg packages)
+	Developer             string `json:"developer,omitempty"`              // Package developer/publisher
+	Architecture          string `json:"architecture,omitempty"`           // Package architecture (x64, arm64)
+	InstallLocation       string `json:"install_location,omitempty"`       // Installation location for copy-type packages
+	IsSigned              bool   `json:"is_signed,omitempty"`              // Whether package is cryptographically signed
+	SignatureStatus       string `json:"signature_status,omitempty"`       // "valid", "invalid", "not_signed", "unknown"
+	SignatureAlgorithm    string `json:"signature_algorithm,omitempty"`    // Signature algorithm used
+	CertificateSubject    string `json:"certificate_subject,omitempty"`    // Certificate subject DN
 	CertificateThumbprint string `json:"certificate_thumbprint,omitempty"` // Certificate thumbprint
-	SignatureTimestamp   string `json:"signature_timestamp,omitempty"`    // When package was signed
-	
+	SignatureTimestamp    string `json:"signature_timestamp,omitempty"`    // When package was signed
+
 	// Additional .pkg metadata fields
-	SignerCertificate    string `json:"signer_certificate,omitempty"`     // Certificate thumbprint or identifier
-	SignerCommonName     string `json:"signer_common_name,omitempty"`     // Certificate common name
-	DeveloperName        string `json:"developer_name,omitempty"`         // Developer name from build-info
+	SignerCertificate     string `json:"signer_certificate,omitempty"`     // Certificate thumbprint or identifier
+	SignerCommonName      string `json:"signer_common_name,omitempty"`     // Certificate common name
+	DeveloperName         string `json:"developer_name,omitempty"`         // Developer name from build-info
 	DeveloperOrganization string `json:"developer_organization,omitempty"` // Developer organization
-	SbinInstaller        string `json:"sbin_installer,omitempty"`         // sbin-installer used for installation
-	PkgBuildVersion      string `json:"pkg_build_version,omitempty"`      // Package build version
+	SbinInstaller         string `json:"sbin_installer,omitempty"`         // sbin-installer used for installation
+	PkgBuildVersion       string `json:"pkg_build_version,omitempty"`      // Package build version
 
 	// Error information
 	LastError      string        `json:"last_error"`
@@ -213,10 +213,10 @@ type ItemRecord struct {
 
 // InstallLoopDetail provides enhanced information about install loops
 type InstallLoopDetail struct {
-	DetectionCriteria  string `json:"detection_criteria"`
-	LoopStartSession   string `json:"loop_start_session"`
-	SuspectedCause     string `json:"suspected_cause"`
-	Recommendation     string `json:"recommendation"`
+	DetectionCriteria string `json:"detection_criteria"`
+	LoopStartSession  string `json:"loop_start_session"`
+	SuspectedCause    string `json:"suspected_cause"`
+	Recommendation    string `json:"recommendation"`
 }
 
 // ItemAttempt represents a single install/update attempt for loop detection
@@ -230,31 +230,31 @@ type ItemAttempt struct {
 
 // SessionPackageInfo holds comprehensive information about a package in the current session
 type SessionPackageInfo struct {
-	Name            string `json:"name"`
-	Version         string `json:"version"`
-	Status          string `json:"status"`          // "Installed", "Pending Install", "Pending Update", etc.
-	ItemType        string `json:"item_type"`       // "managedinstall", "managedupdate", etc.
-	DisplayName     string `json:"display_name"`
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	Status           string `json:"status"`    // "Installed", "Pending Install", "Pending Update", etc.
+	ItemType         string `json:"item_type"` // "managedinstall", "managedupdate", etc.
+	DisplayName      string `json:"display_name"`
 	InstalledVersion string `json:"installed_version,omitempty"`
-	ErrorMessage    string `json:"error_message,omitempty"` // Current session error if any
-	WarningMessage  string `json:"warning_message,omitempty"` // Current session warning if any
+	ErrorMessage     string `json:"error_message,omitempty"`   // Current session error if any
+	WarningMessage   string `json:"warning_message,omitempty"` // Current session warning if any
 }
 
 // DataExporter provides methods to export Cimian logs for external monitoring tool consumption
 type DataExporter struct {
-	baseDir string
-	manifestPackageCache map[string]int // Cache for manifest package counts to avoid repetitive parsing
-	currentSessionPackages []string     // Actual packages processed in the current session (for items.json) - DEPRECATED
+	baseDir                    string
+	manifestPackageCache       map[string]int       // Cache for manifest package counts to avoid repetitive parsing
+	currentSessionPackages     []string             // Actual packages processed in the current session (for items.json) - DEPRECATED
 	currentSessionPackagesInfo []SessionPackageInfo // Rich package information for the current session (for items.json)
-	currentItemErrors map[string]string // Map of item names to their current error messages
+	currentItemErrors          map[string]string    // Map of item names to their current error messages
 }
 
 // NewDataExporter creates a new data exporter
 func NewDataExporter(baseDir string) *DataExporter {
 	return &DataExporter{
-		baseDir: baseDir,
-		manifestPackageCache: make(map[string]int),
-		currentItemErrors: make(map[string]string),
+		baseDir:                    baseDir,
+		manifestPackageCache:       make(map[string]int),
+		currentItemErrors:          make(map[string]string),
 		currentSessionPackagesInfo: make([]SessionPackageInfo, 0),
 	}
 }
@@ -264,10 +264,10 @@ func (exp *DataExporter) RecordItemError(itemName string, errorMsg string) {
 	if itemName == "" || errorMsg == "" {
 		return
 	}
-	
+
 	// Store in error map
 	exp.currentItemErrors[itemName] = errorMsg
-	
+
 	// Update SessionPackageInfo if it exists
 	for i := range exp.currentSessionPackagesInfo {
 		if exp.currentSessionPackagesInfo[i].Name == itemName {
@@ -282,7 +282,7 @@ func (exp *DataExporter) RecordItemWarning(itemName string, warningMsg string) {
 	if itemName == "" || warningMsg == "" {
 		return
 	}
-	
+
 	// Update SessionPackageInfo if it exists
 	for i := range exp.currentSessionPackagesInfo {
 		if exp.currentSessionPackagesInfo[i].Name == itemName {
@@ -352,14 +352,14 @@ func (exp *DataExporter) determineInstallMethod(packageName string, sessionConfi
 
 	// Check cache directory for package files
 	installMethods := map[string]string{
-		".nupkg":  "nupkg",
-		".msi":    "msi", 
-		".exe":    "exe",
-		".msix":   "msix",
-		".appx":   "appx",
-		".zip":    "zip",
-		".7z":     "archive",
-		".cab":    "cab",
+		".nupkg": "nupkg",
+		".msi":   "msi",
+		".exe":   "exe",
+		".msix":  "msix",
+		".appx":  "appx",
+		".zip":   "zip",
+		".7z":    "archive",
+		".cab":   "cab",
 	}
 
 	for ext, method := range installMethods {
@@ -479,7 +479,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				// Fallback to packages handled if manifest reading fails
 				finalTotalManagedPackages = len(record.PackagesHandled)
 			}
-			
+
 			summary := &SessionSummary{
 				TotalPackagesManaged: finalTotalManagedPackages,
 				PackagesInstalled:    record.Successes,
@@ -492,7 +492,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 			if record.Failures > 0 {
 				summary.FailedPackages = exp.getFailedPackagesForSession(sessionDir)
 			}
-			
+
 			record.Summary = summary
 
 			// If start_time is missing or zero, try to get it from first event
@@ -524,7 +524,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 					if finalTotalManagedPackages == 0 {
 						finalTotalManagedPackages = len(record.PackagesHandled)
 					}
-					
+
 					record.Summary = &SessionSummary{
 						TotalPackagesManaged: finalTotalManagedPackages,
 						PackagesInstalled:    record.Successes,
@@ -653,9 +653,9 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse events: %w", err)
 	}
-	
+
 	for _, logEvent := range events {
-		
+
 		// Parse timestamp
 		timestamp := ""
 		eventTime := time.Time{}
@@ -682,7 +682,7 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 		eventType := ""
 
 		// ENHANCED FIX: Handle both new event format (context.item) and legacy format (properties.item)
-		
+
 		// New event format: check context.item first
 		if context, ok := logEvent["context"].(map[string]interface{}); ok {
 			if item, ok := context["item"].(string); ok {
@@ -693,7 +693,7 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 				version = ver
 			}
 		}
-		
+
 		// Event-level fields in new format
 		if eventTypeVal, ok := logEvent["event_type"].(string); ok {
 			eventType = eventTypeVal
@@ -704,7 +704,7 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 		if statusVal, ok := logEvent["status"].(string); ok {
 			status = statusVal
 		}
-		
+
 		// Legacy format: check properties (fallback)
 		if packageName == "" {
 			if props, ok := logEvent["properties"].(map[string]interface{}); ok {
@@ -863,21 +863,21 @@ func (exp *DataExporter) GenerateEventsTable(sessionID string, limitHours int) (
 		logFilePath := filepath.Join(exp.baseDir, sessionID, "events.jsonl")
 
 		record := EventRecord{
-			EventID:    eventID,
-			SessionID:  sessionID,
-			Timestamp:  timestamp,
-			Level:      level,
-			EventType:  eventType,
-			
+			EventID:   eventID,
+			SessionID: sessionID,
+			Timestamp: timestamp,
+			Level:     level,
+			EventType: eventType,
+
 			// Enhanced package context for ReportMate
 			PackageID:      packageID,
 			PackageName:    packageName,
 			PackageVersion: version,
-			
+
 			// Legacy fields (maintained for compatibility)
-			Package:    packageName,
-			Version:    version,
-			
+			Package: packageName,
+			Version: version,
+
 			Action:     action,
 			Status:     exp.normalizeStatus(status, level, errorMsg),
 			Message:    message,
@@ -916,13 +916,13 @@ func (exp *DataExporter) parseManifestFile(filepath string) (*ManifestFile, erro
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var manifest ManifestFile
 	err = yaml.Unmarshal(data, &manifest)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &manifest, nil
 }
 
@@ -936,37 +936,37 @@ func (exp *DataExporter) getSystemArchitecture() string {
 func (exp *DataExporter) checkArchitectureCompatibility(packageName, systemArch string) (bool, []string) {
 	// Load catalog to get supported architectures
 	catalogsPath := `C:\ProgramData\ManagedInstalls\catalogs`
-	
+
 	var foundSupportedArchs []string
 	compatible := false
-	
+
 	// Try to find the package in catalogs
 	filepath.Walk(catalogsPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || compatible {
 			return nil
 		}
-		
+
 		if !strings.HasSuffix(strings.ToLower(path), ".yaml") {
 			return nil
 		}
-		
+
 		// Parse catalog file
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
-		
+
 		var catalog struct {
 			Items []struct {
 				Name                   string   `yaml:"name"`
 				SupportedArchitectures []string `yaml:"supported_architectures"`
 			} `yaml:"items"`
 		}
-		
+
 		if err := yaml.Unmarshal(data, &catalog); err != nil {
 			return nil
 		}
-		
+
 		// Look for the package in the items array
 		for _, item := range catalog.Items {
 			if strings.EqualFold(item.Name, packageName) {
@@ -982,7 +982,7 @@ func (exp *DataExporter) checkArchitectureCompatibility(packageName, systemArch 
 		}
 		return nil
 	})
-	
+
 	return compatible, foundSupportedArchs
 }
 
@@ -997,7 +997,7 @@ func (exp *DataExporter) getRegistryVersion(packageName string) string {
 			return version
 		}
 	}
-	
+
 	// If basic registry check fails, this might be a package installed through other means
 	// or the registry tracking is incomplete. For reporting purposes, we should return
 	// empty string and let the calling code handle it properly.
@@ -1021,15 +1021,15 @@ type PkgRegistryMetadata struct {
 	CertificateThumbprint string
 	SignatureTimestamp    string
 	InstalledDate         string
-	
+
 	// Additional fields for .pkg format support
-	SignatureStatus       string  // "valid", "invalid", "not_signed", "unknown"
-	SignerCertificate     string  // Certificate thumbprint or identifier
-	SignerCommonName      string  // Certificate common name
-	DeveloperName         string  // Developer name from build-info
-	DeveloperOrganization string  // Developer organization
-	SbinInstaller         string  // sbin-installer used for installation
-	PkgBuildVersion       string  // Package build version
+	SignatureStatus       string // "valid", "invalid", "not_signed", "unknown"
+	SignerCertificate     string // Certificate thumbprint or identifier
+	SignerCommonName      string // Certificate common name
+	DeveloperName         string // Developer name from build-info
+	DeveloperOrganization string // Developer organization
+	SbinInstaller         string // sbin-installer used for installation
+	PkgBuildVersion       string // Package build version
 }
 
 // populateFromCurrentManifests loads current manifest state to ensure all managed packages are represented
@@ -1037,35 +1037,35 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 	// Load catalog data to get version information
 	catalogVersions := exp.loadCatalogVersions()
 	catalogDisplayNames := exp.loadCatalogDisplayNames()
-	
+
 	// Get system architecture for compatibility checking
 	systemArch := exp.getSystemArchitecture()
-	
+
 	// Get configuration to access client identifier
 	config := exp.loadCimianConfiguration()
 	if config == nil || config.ClientIdentifier == "" {
 		return fmt.Errorf("no client identifier found in configuration")
 	}
-	
+
 	logging.Debug("Starting populateFromCurrentManifests using cached manifests", "clientIdentifier", config.ClientIdentifier)
-	
+
 	packagesFound := 0
-	
+
 	// Use the same manifest loading approach as the main application - load cached manifests
 	manifestItems, err := exp.loadCachedManifestsForReporting(config)
 	if err != nil {
 		return fmt.Errorf("failed to load cached manifests: %v", err)
 	}
-	
+
 	logging.Info("Loaded manifest items for reporting", "count", len(manifestItems))
-	
+
 	// Process each manifest item
 	for _, manifestItem := range manifestItems {
 		packageName := manifestItem.Name
 		if packageName == "" {
 			continue
 		}
-		
+
 		// Initialize item stats if not exists
 		if _, exists := itemStats[packageName]; !exists {
 			itemStats[packageName] = &comprehensiveItemStat{
@@ -1073,33 +1073,33 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 				Sessions:       make(map[string]bool),
 				RecentAttempts: []ItemAttempt{},
 			}
-			packagesFound++ 
+			packagesFound++
 		}
-		
+
 		stats := itemStats[packageName]
-		
+
 		// Set version information from catalog
 		if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
 			stats.LatestVersion = catalogVersion
 		}
-		
+
 		// Set display name from catalog
 		if displayName, hasDisplayName := catalogDisplayNames[strings.ToLower(packageName)]; hasDisplayName && displayName != "" {
 			stats.DisplayName = displayName
 		} else {
 			stats.DisplayName = packageName // Fallback to package name
 		}
-		
+
 		// Check architecture compatibility first
 		compatible, supportedArchs := exp.checkArchitectureCompatibility(packageName, systemArch)
-		
+
 		// Check installed status from comprehensive registry checking (both Cimian and Windows registry)
 		registryVersion := exp.getInstalledVersionFromRegistry(packageName)
 		pkgMetadata := exp.getPkgRegistryMetadata(packageName)
-		
+
 		if registryVersion != "" {
 			stats.InstalledVersion = registryVersion
-			
+
 			// Apply .pkg metadata if available
 			if pkgMetadata.PackageFormat != "" {
 				stats.PackageFormat = pkgMetadata.PackageFormat
@@ -1108,14 +1108,14 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 				stats.Architecture = pkgMetadata.Architecture
 				stats.InstallLocation = pkgMetadata.InstallLocation
 				stats.IsSigned = pkgMetadata.IsSigned
-				
+
 				// Determine install method from package format and type
 				if pkgMetadata.PackageFormat == "pkg" {
 					stats.InstallMethod = "pkg"
 				} else if pkgMetadata.PackageFormat == "nupkg" {
 					stats.InstallMethod = "nupkg"
 				}
-				
+
 				// Set signature status based on signature information
 				if pkgMetadata.IsSigned && pkgMetadata.SignatureAlgorithm != "" {
 					stats.SignatureStatus = "valid" // Assume valid if stored (installer verified it)
@@ -1129,7 +1129,7 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 					stats.SignatureStatus = "not_signed"
 				}
 			}
-				
+
 			if !compatible && len(supportedArchs) > 0 {
 				// Package is installed but not compatible with current architecture
 				stats.CurrentStatus = "Warning"
@@ -1150,7 +1150,7 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 				stats.CurrentStatus = "Pending"
 			}
 		}
-		
+
 		// Set item type based on manifest item action
 		if stats.ItemType == "" {
 			stats.ItemType = manifestItem.Action // Use the action from the manifest item
@@ -1159,12 +1159,12 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 			}
 		}
 	}
-	
+
 	// Also check for SelfServeManifest.yaml which contains self-service items
 	selfServeManifestPath := filepath.Join("C:\\ProgramData\\ManagedInstalls", "SelfServeManifest.yaml")
 	if _, err := os.Stat(selfServeManifestPath); err == nil {
 		logging.Debug("Processing SelfServeManifest.yaml", "path", selfServeManifestPath)
-		
+
 		selfServeManifest, parseErr := exp.parseManifestFile(selfServeManifestPath)
 		if parseErr == nil {
 			// Process self-serve managed installs
@@ -1172,20 +1172,20 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 				if itemName, ok := item.(string); ok && itemName != "" {
 					if _, exists := itemStats[itemName]; !exists {
 						logging.Debug("Found self-serve package", "package", itemName)
-						
+
 						// Get version and display information
 						latestVersion := catalogVersions[itemName]
 						if latestVersion == "" {
 							latestVersion = "Unknown"
 						}
-						
+
 						displayName := catalogDisplayNames[itemName]
 						if displayName == "" {
 							displayName = itemName
 						}
-						
+
 						installedVersion := exp.getInstalledVersionFromRegistry(itemName)
-						
+
 						// Check architecture compatibility for self-serve packages too
 						compatible, supportedArchs := exp.checkArchitectureCompatibility(itemName, systemArch)
 						status := "Installed"
@@ -1193,17 +1193,17 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 							status = "Warning"
 							logging.Debug("Self-serve package architecture incompatible", "package", itemName, "system", systemArch, "supported", supportedArchs)
 						}
-						
+
 						itemStats[itemName] = &comprehensiveItemStat{
-							Name:               itemName,
-							DisplayName:        displayName,
-							ItemType:           "self_serve_installs",
-							CurrentStatus:      status,
-							LatestVersion:      latestVersion,
-							InstalledVersion:   installedVersion,
-							LastSeenTime:       time.Now(),
-							Sessions:           make(map[string]bool),
-							RecentAttempts:     []ItemAttempt{},
+							Name:             itemName,
+							DisplayName:      displayName,
+							ItemType:         "self_serve_installs",
+							CurrentStatus:    status,
+							LatestVersion:    latestVersion,
+							InstalledVersion: installedVersion,
+							LastSeenTime:     time.Now(),
+							Sessions:         make(map[string]bool),
+							RecentAttempts:   []ItemAttempt{},
 						}
 						packagesFound++
 						logging.Debug("Added self-serve package to reporting", "package", itemName)
@@ -1216,15 +1216,15 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 	} else {
 		logging.Debug("SelfServeManifest.yaml not found", "path", selfServeManifestPath)
 	}
-	
-	logging.Info("populateFromCurrentManifests completed using cached manifests", 
+
+	logging.Info("populateFromCurrentManifests completed using cached manifests",
 		"packagesFound", packagesFound,
 		"clientIdentifier", config.ClientIdentifier)
-	
+
 	if packagesFound == 0 {
 		return fmt.Errorf("no managed packages found using cached manifests for client identifier %s", config.ClientIdentifier)
 	}
-	
+
 	return nil
 }
 
@@ -1233,24 +1233,24 @@ func (exp *DataExporter) populateFromCurrentManifests(itemStats map[string]*comp
 func (exp *DataExporter) GenerateCurrentItemsTable() ([]ItemRecord, error) {
 	// Debug logging to check if session packages are available
 	logging.Debug("GenerateCurrentItemsTable called", "sessionPackagesCount", len(exp.currentSessionPackages), "sessionPackagesInfoCount", len(exp.currentSessionPackagesInfo))
-	
+
 	// Prefer rich package information if available
 	if exp.currentSessionPackagesInfo != nil && len(exp.currentSessionPackagesInfo) > 0 {
 		logging.Info("Using rich current session packages info for items.json", "count", len(exp.currentSessionPackagesInfo))
 		return exp.GenerateCurrentItemsFromPackagesInfo(exp.currentSessionPackagesInfo)
 	}
-	
+
 	// Fallback to basic packages processed in the current session if available
 	if exp.currentSessionPackages != nil && len(exp.currentSessionPackages) > 0 {
 		logging.Info("Using current session packages for items.json", "count", len(exp.currentSessionPackages))
 		logging.Warn("Using fallback method - status information may be limited")
 		return exp.GenerateCurrentItemsFromPackages(exp.currentSessionPackages)
 	}
-	
+
 	// Fallback: Log that we need the current session data
 	logging.Warn("GenerateCurrentItemsTable called without current session package data - this should not happen")
 	logging.Info("items.json should only contain packages from the current manifest processing")
-	
+
 	return []ItemRecord{}, nil
 }
 
@@ -1268,9 +1268,9 @@ func (exp *DataExporter) SetCurrentSessionPackagesInfo(packagesInfo []SessionPac
 	exp.currentSessionPackagesInfo = packagesInfo
 	logging.Info("Set current session packages info for items.json", "count", len(packagesInfo))
 	if len(packagesInfo) > 0 {
-		logging.Debug("Session packages info sample", 
-			"first_package", packagesInfo[0].Name, 
-			"first_status", packagesInfo[0].Status, 
+		logging.Debug("Session packages info sample",
+			"first_package", packagesInfo[0].Name,
+			"first_status", packagesInfo[0].Status,
 			"first_version", packagesInfo[0].Version)
 	}
 }
@@ -1298,7 +1298,7 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 			logging.Debug("Excluding Device Management Service-managed item from items.json", "item", pkgInfo.Name, "type", pkgInfo.ItemType)
 			continue
 		}
-		
+
 		displayName := pkgInfo.DisplayName
 		if displayName == "" {
 			// Try catalog display name as fallback
@@ -1306,14 +1306,14 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 			if catalogDisplayName != "" {
 				displayName = catalogDisplayName
 			} else {
-			displayName = pkgInfo.Name
+				displayName = pkgInfo.Name
+			}
 		}
-	}
 
 		// Get warning from package info (captures all log warnings dynamically)
 		var lastWarning string
 		var warningCount int
-		
+
 		// Use warning from session package info if available (from logs)
 		if pkgInfo.WarningMessage != "" {
 			lastWarning = pkgInfo.WarningMessage
@@ -1327,39 +1327,39 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 				logging.Warn("Package not found in catalog", "package", pkgInfo.Name)
 			}
 		}
-		
+
 		// Try to get install count from registry (historical data)
 		installCount := exp.getInstallCountFromRegistry(pkgInfo.Name)
 
 		// Create item record with ACTUAL status and version information from current session
 		item := ItemRecord{
-			ID:                    strings.ToLower(strings.ReplaceAll(pkgInfo.Name, " ", "")),
-			ItemName:              pkgInfo.Name,
-			DisplayName:           displayName,
-			ItemType:              pkgInfo.ItemType,
-			CurrentStatus:         pkgInfo.Status,                                      // ACTUAL STATUS - not hardcoded "Pending"
-			LatestVersion:         pkgInfo.Version,                                     // ACTUAL VERSION from catalog/manifest
-			InstalledVersion:      pkgInfo.InstalledVersion,                           // ACTUAL INSTALLED VERSION if available
-			LastSeenInSession:     time.Now().Format("2006-01-02T15:04:05Z"),         // Mark as seen in current session
-			LastSuccessfulTime:    "",  // Not needed for real-time fleet monitoring
-			LastAttemptTime:       time.Now().Format("2006-01-02T15:04:05Z"),         // Current session attempt
-			LastAttemptStatus:     pkgInfo.Status,                                      // Current attempt status
-			LastUpdate:            time.Now().Format("2006-01-02T15:04:05Z"),
-			InstallCount:          installCount,                                        // Historical install count from registry
-			UpdateCount:           0,
-			RemovalCount:          0,
-			FailureCount:          0,
-			WarningCount:          warningCount,                                        // Warning count for catalog issues
-			TotalSessions:         0,
-			InstallLoopDetected:   false,
-			LastError:             pkgInfo.ErrorMessage,                                // Error message for Current session error message
-			LastWarning:           lastWarning,                                         // Warning message for catalog issues
+			ID:                  strings.ToLower(strings.ReplaceAll(pkgInfo.Name, " ", "")),
+			ItemName:            pkgInfo.Name,
+			DisplayName:         displayName,
+			ItemType:            pkgInfo.ItemType,
+			CurrentStatus:       pkgInfo.Status,                            // ACTUAL STATUS - not hardcoded "Pending"
+			LatestVersion:       pkgInfo.Version,                           // ACTUAL VERSION from catalog/manifest
+			InstalledVersion:    pkgInfo.InstalledVersion,                  // ACTUAL INSTALLED VERSION if available
+			LastSeenInSession:   time.Now().Format("2006-01-02T15:04:05Z"), // Mark as seen in current session
+			LastSuccessfulTime:  "",                                        // Not needed for real-time fleet monitoring
+			LastAttemptTime:     time.Now().Format("2006-01-02T15:04:05Z"), // Current session attempt
+			LastAttemptStatus:   pkgInfo.Status,                            // Current attempt status
+			LastUpdate:          time.Now().Format("2006-01-02T15:04:05Z"),
+			InstallCount:        installCount, // Historical install count from registry
+			UpdateCount:         0,
+			RemovalCount:        0,
+			FailureCount:        0,
+			WarningCount:        warningCount, // Warning count for catalog issues
+			TotalSessions:       0,
+			InstallLoopDetected: false,
+			LastError:           pkgInfo.ErrorMessage, // Error message for Current session error message
+			LastWarning:         lastWarning,          // Warning message for catalog issues
 		}
 
 		items = append(items, item)
-		logging.Debug("Added current session package info to items", 
-			"package", pkgInfo.Name, 
-			"status", pkgInfo.Status, 
+		logging.Debug("Added current session package info to items",
+			"package", pkgInfo.Name,
+			"status", pkgInfo.Status,
 			"version", pkgInfo.Version,
 			"itemType", pkgInfo.ItemType)
 	}
@@ -1397,26 +1397,26 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackages(packages []string) ([]
 
 		// Create item record with current status only
 		item := ItemRecord{
-			ID:                    strings.ToLower(strings.ReplaceAll(packageName, " ", "")),
-			ItemName:              packageName,
-			DisplayName:           displayName,
-			ItemType:              "managedinstall", // Default type - could be enhanced later
-			CurrentStatus:         "Pending", // Conservative status - could query actual status
-			LatestVersion:         catalogVersion,
-			InstalledVersion:      "", // Would need status check to populate
-			LastSeenInSession:     "",
-			LastSuccessfulTime:    "",
-			LastAttemptTime:       "",
-			LastAttemptStatus:     "",
-			LastUpdate:            time.Now().Format("2006-01-02T15:04:05Z"),
-			InstallCount:          0,
-			UpdateCount:           0,
-			RemovalCount:          0,
-			FailureCount:          0,
-			WarningCount:          0,
-			TotalSessions:         0,
-			InstallLoopDetected:   false,
-			RecentAttempts:        []ItemAttempt{},
+			ID:                  strings.ToLower(strings.ReplaceAll(packageName, " ", "")),
+			ItemName:            packageName,
+			DisplayName:         displayName,
+			ItemType:            "managedinstall", // Default type - could be enhanced later
+			CurrentStatus:       "Pending",        // Conservative status - could query actual status
+			LatestVersion:       catalogVersion,
+			InstalledVersion:    "", // Would need status check to populate
+			LastSeenInSession:   "",
+			LastSuccessfulTime:  "",
+			LastAttemptTime:     "",
+			LastAttemptStatus:   "",
+			LastUpdate:          time.Now().Format("2006-01-02T15:04:05Z"),
+			InstallCount:        0,
+			UpdateCount:         0,
+			RemovalCount:        0,
+			FailureCount:        0,
+			WarningCount:        0,
+			TotalSessions:       0,
+			InstallLoopDetected: false,
+			RecentAttempts:      []ItemAttempt{},
 		}
 
 		items = append(items, item)
@@ -1442,11 +1442,11 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	if err != nil {
 		// Log but don't fail - continue with event-based data
 		fmt.Printf("Warning: Could not load current manifest data: %v\n", err)
-		
+
 		// COMPREHENSIVE MANIFEST DISCOVERY: If primary method fails, use comprehensive scanning
 		// to ensure we get COMPLETE package data for items.json - this is REQUIRED, not optional
 		logging.Warn("Primary manifest discovery failed, using comprehensive manifest scanning: %v", err)
-		
+
 		// Use comprehensive manifest discovery to ensure 100% completeness
 		if comprehensiveItems := exp.discoverAllManagedPackages(); len(comprehensiveItems) > 0 {
 			for _, item := range comprehensiveItems {
@@ -1479,7 +1479,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 
 	// Load catalog data to get authoritative version information
 	catalogVersions := exp.loadCatalogVersions()
-	
+
 	// Load catalog display names for proper display name information
 	catalogDisplayNames := exp.loadCatalogDisplayNames()
 
@@ -1643,7 +1643,11 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			stats.CurrentStatus = "Install Loop"
 			stats.LoopDetails = loopDetails
 			// Generate warning for install loop detection
-			stats.LastWarning = fmt.Sprintf("Install loop detected: %s - %s", loopDetails.SuspectedCause, loopDetails.Recommendation)
+			if loopDetails.SuspectedCause != "Unknown" && loopDetails.SuspectedCause != "" {
+				stats.LastWarning = fmt.Sprintf("Install loop detected: %s - %s", loopDetails.SuspectedCause, loopDetails.Recommendation)
+			} else {
+				stats.LastWarning = "Install loop detected"
+			}
 			stats.WarningCount++
 		}
 	}
@@ -1653,7 +1657,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 	currentManifestItems := exp.getCurrentManagedItems()
 	for _, item := range currentManifestItems {
 		packageName := item.Name
-		
+
 		// If we don't have this item from events, create it
 		if _, exists := itemStats[packageName]; !exists {
 			itemStats[packageName] = &comprehensiveItemStat{
@@ -1665,15 +1669,15 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 				LastSeenTime:   time.Now(), // Mark as current
 			}
 		}
-		
+
 		// Update with current manifest data
 		stats := itemStats[packageName]
-		
+
 		// Set version information from catalog and registry
 		if catalogVersion, hasCatalogVersion := catalogVersions[strings.ToLower(packageName)]; hasCatalogVersion && catalogVersion != "" {
 			stats.LatestVersion = catalogVersion
 		}
-		
+
 		// Get installed version from registry
 		if registryVersion := exp.getInstalledVersionFromRegistry(packageName); registryVersion != "" {
 			stats.InstalledVersion = registryVersion
@@ -1682,7 +1686,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 				stats.CurrentStatus = "Installed"
 			}
 		}
-		
+
 		// Ensure item type is set
 		if stats.ItemType == "" {
 			stats.ItemType = item.Type
@@ -1708,7 +1712,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 				stats.InstalledVersion = registryVersion
 			}
 		}
-		
+
 		// Populate .pkg metadata from registry (enhanced installation tracking)
 		pkgMetadata := exp.getPkgRegistryMetadata(stats.Name)
 		stats.PackageFormat = pkgMetadata.PackageFormat
@@ -1764,7 +1768,7 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 		if stats.LatestVersion == "" || stats.LatestVersion == "Unknown" {
 			standardStatus = "Error"
 		}
-		
+
 		// ENHANCEMENT: Inject current session error if available
 		if currentError, hasError := exp.currentItemErrors[stats.Name]; hasError {
 			stats.LastError = currentError
@@ -1803,12 +1807,12 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			LastUpdate:        lastUpdate,
 
 			// Statistics
-			InstallCount:        stats.InstallCount,
-			UpdateCount:         stats.UpdateCount,
-			RemovalCount:        stats.RemovalCount,
-			FailureCount:        stats.FailureCount,
-			WarningCount:        stats.WarningCount,
-			TotalSessions:       len(stats.Sessions),
+			InstallCount:  stats.InstallCount,
+			UpdateCount:   stats.UpdateCount,
+			RemovalCount:  stats.RemovalCount,
+			FailureCount:  stats.FailureCount,
+			WarningCount:  stats.WarningCount,
+			TotalSessions: len(stats.Sessions),
 			// ENHANCEMENT 6: Enhanced install loop detection
 			InstallLoopDetected: stats.InstallLoopDetected,
 			LoopDetails:         stats.LoopDetails,
@@ -1816,17 +1820,17 @@ func (exp *DataExporter) GenerateItemsTable(limitDays int) ([]ItemRecord, error)
 			// Enhanced metadata for external reporting tools
 			InstallMethod: installMethod,
 			Type:          "cimian",
-			
+
 			// .pkg format specific fields (from registry metadata)
-			PackageFormat:        stats.PackageFormat,
-			SignatureStatus:      stats.SignatureStatus,
-			SignerCertificate:    stats.SignerCertificate,
-			SignerCommonName:     stats.SignerCommonName,
-			SignatureTimestamp:   stats.SignatureTimestamp,
-			DeveloperName:        stats.DeveloperName,
+			PackageFormat:         stats.PackageFormat,
+			SignatureStatus:       stats.SignatureStatus,
+			SignerCertificate:     stats.SignerCertificate,
+			SignerCommonName:      stats.SignerCommonName,
+			SignatureTimestamp:    stats.SignatureTimestamp,
+			DeveloperName:         stats.DeveloperName,
 			DeveloperOrganization: stats.DeveloperOrganization,
-			SbinInstaller:        stats.SbinInstaller,
-			PkgBuildVersion:      stats.PkgBuildVersion,
+			SbinInstaller:         stats.SbinInstaller,
+			PkgBuildVersion:       stats.PkgBuildVersion,
 
 			// Error information
 			LastError:      stats.LastError,
@@ -1871,16 +1875,16 @@ func (exp *DataExporter) preserveLastSuccessfulInstall(stats *comprehensiveItemS
 				break
 			}
 		}
-		
+
 		// If we found a successful install, return all attempts (preserving the successful one)
 		if lastSuccessfulInstall != nil {
 			return stats.RecentAttempts
 		}
-		
+
 		// If no successful attempts but have other attempts, still return them
 		return stats.RecentAttempts
 	}
-	
+
 	// For packages that show as "Installed" but have no recent_attempts:
 	// Create a preserved entry to show that the package was successfully installed
 	if stats.CurrentStatus == "Installed" {
@@ -1896,22 +1900,22 @@ func (exp *DataExporter) preserveLastSuccessfulInstall(stats *comprehensiveItemS
 			// Use when we last saw this item as final fallback
 			timestamp = stats.LastSeenTime.Format(time.RFC3339)
 		} else {
-			// For packages with no timestamp data at all, use a timestamp from when 
+			// For packages with no timestamp data at all, use a timestamp from when
 			// the report was generated to at least show "installed (timestamp unknown)"
 			timestamp = time.Now().Add(-24 * time.Hour).Format(time.RFC3339) // Subtract 24h to indicate it was installed "before now"
 		}
-		
+
 		return []ItemAttempt{
 			{
-				SessionID: "", // No session ID for preserved entries 
+				SessionID: "", // No session ID for preserved entries
 				Timestamp: timestamp,
 				Action:    "install",
-				Status:    "Success", 
+				Status:    "Success",
 				Version:   stats.InstalledVersion,
 			},
 		}
 	}
-	
+
 	// Return the original attempts for all other cases
 	return stats.RecentAttempts
 }
@@ -1927,7 +1931,7 @@ func (exp *DataExporter) getInstalledVersionFromWindowsRegistry(itemName string)
 		"AzureCLI":        {"Microsoft Azure CLI"},
 		// Add more mappings as needed
 	}
-	
+
 	// Get possible display names for this item
 	var displayNames []string
 	if mappedNames, ok := displayNameMap[itemName]; ok {
@@ -1936,32 +1940,32 @@ func (exp *DataExporter) getInstalledVersionFromWindowsRegistry(itemName string)
 		// Default: use the item name itself and common variations
 		displayNames = []string{itemName}
 	}
-	
+
 	// Check Windows uninstall registry
 	uninstallKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`, registry.ENUMERATE_SUB_KEYS)
 	if err != nil {
 		return ""
 	}
 	defer uninstallKey.Close()
-	
+
 	subKeys, err := uninstallKey.ReadSubKeyNames(-1)
 	if err != nil {
 		return ""
 	}
-	
+
 	for _, subKey := range subKeys {
 		subKeyPath := `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\` + subKey
 		key, err := registry.OpenKey(registry.LOCAL_MACHINE, subKeyPath, registry.QUERY_VALUE)
 		if err != nil {
 			continue
 		}
-		
+
 		displayName, _, err := key.GetStringValue("DisplayName")
 		if err != nil {
 			key.Close()
 			continue
 		}
-		
+
 		// Check if this matches any of our expected display names
 		for _, expectedName := range displayNames {
 			if strings.Contains(displayName, expectedName) || strings.Contains(expectedName, displayName) {
@@ -1973,7 +1977,7 @@ func (exp *DataExporter) getInstalledVersionFromWindowsRegistry(itemName string)
 		}
 		key.Close()
 	}
-	
+
 	return ""
 }
 
@@ -1984,19 +1988,19 @@ func (exp *DataExporter) getPkgRegistryMetadata(itemName string) PkgRegistryMeta
 	cimianKey := `SOFTWARE\Cimian\InstalledPackages\` + itemName
 	if key, err := registry.OpenKey(registry.LOCAL_MACHINE, cimianKey, registry.QUERY_VALUE); err == nil {
 		defer key.Close()
-		
+
 		metadata := PkgRegistryMetadata{}
-		
+
 		// Read package format
 		if format, _, err := key.GetStringValue("PackageFormat"); err == nil {
 			metadata.PackageFormat = format
 		}
-		
+
 		// Read signature status
 		if status, _, err := key.GetStringValue("SignatureStatus"); err == nil {
 			metadata.SignatureStatus = status
 		}
-		
+
 		// Read certificate information
 		if cert, _, err := key.GetStringValue("SignerCertificate"); err == nil {
 			metadata.SignerCertificate = cert
@@ -2007,7 +2011,7 @@ func (exp *DataExporter) getPkgRegistryMetadata(itemName string) PkgRegistryMeta
 		if timestamp, _, err := key.GetStringValue("SignatureTimestamp"); err == nil {
 			metadata.SignatureTimestamp = timestamp
 		}
-		
+
 		// Read developer information
 		if dev, _, err := key.GetStringValue("DeveloperName"); err == nil {
 			metadata.DeveloperName = dev
@@ -2015,7 +2019,7 @@ func (exp *DataExporter) getPkgRegistryMetadata(itemName string) PkgRegistryMeta
 		if org, _, err := key.GetStringValue("DeveloperOrganization"); err == nil {
 			metadata.DeveloperOrganization = org
 		}
-		
+
 		// Read installer information
 		if installer, _, err := key.GetStringValue("SbinInstaller"); err == nil {
 			metadata.SbinInstaller = installer
@@ -2023,10 +2027,10 @@ func (exp *DataExporter) getPkgRegistryMetadata(itemName string) PkgRegistryMeta
 		if buildVer, _, err := key.GetStringValue("PkgBuildVersion"); err == nil {
 			metadata.PkgBuildVersion = buildVer
 		}
-		
+
 		return metadata
 	}
-	
+
 	return PkgRegistryMetadata{} // Return empty struct if no .pkg metadata found
 }
 
@@ -2132,7 +2136,7 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 	if err := exp.EnsureReportsDirectoryExists(); err != nil {
 		return err
 	}
-	
+
 	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
 
 	// Always generate current state of sessions - this includes incomplete sessions
@@ -2165,11 +2169,11 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 	if err := exp.writeJSONFile(filepath.Join(reportsDir, "sessions.json"), sessions); err != nil {
 		return fmt.Errorf("failed to export progressive sessions: %w", err)
 	}
-	
+
 	if err := exp.writeJSONFile(filepath.Join(reportsDir, "events.json"), allEvents); err != nil {
 		return fmt.Errorf("failed to export progressive events: %w", err)
 	}
-	
+
 	if err := exp.writeJSONFile(filepath.Join(reportsDir, "items.json"), packages); err != nil {
 		return fmt.Errorf("failed to export progressive items: %w", err)
 	}
@@ -2181,19 +2185,19 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 // This gives ReportMate real-time visibility into installation progress
 func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string, errorMsg string, warningMsg ...string) error {
 	// CRITICAL: Update SessionPackageInfo with current error/warning messages for real-time reporting
-	
+
 	// Extract warning message from variadic parameter
 	var warning string
 	if len(warningMsg) > 0 {
 		warning = warningMsg[0]
 	}
-	
+
 	if errorMsg != "" || warning != "" {
 		// Store error in map for comprehensive reporting (errors take precedence)
 		if errorMsg != "" {
 			exp.currentItemErrors[completedItem] = errorMsg
 		}
-		
+
 		// Update the SessionPackageInfo object with the error/warning
 		for i := range exp.currentSessionPackagesInfo {
 			if exp.currentSessionPackagesInfo[i].Name == completedItem {
@@ -2210,7 +2214,7 @@ func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem s
 	} else if status == "completed" || status == "success" {
 		// Only clear errors on explicit success
 		delete(exp.currentItemErrors, completedItem)
-		
+
 		// Clear error and warning from SessionPackageInfo
 		for i := range exp.currentSessionPackagesInfo {
 			if exp.currentSessionPackagesInfo[i].Name == completedItem {
@@ -2221,12 +2225,12 @@ func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem s
 			}
 		}
 	}
-	
+
 	// Ensure reports directory exists
 	if err := exp.EnsureReportsDirectoryExists(); err != nil {
 		return err
 	}
-	
+
 	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
 
 	// Generate full comprehensive items table with version info and status checks
@@ -2255,27 +2259,27 @@ func (exp *DataExporter) logWarning(format string, args ...interface{}) {
 // Handles both single-line JSONL format and legacy pretty-printed JSON format
 func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]interface{}, error) {
 	var events []map[string]interface{}
-	
+
 	// Read entire file content
 	file.Seek(0, 0) // Reset to beginning
 	content, err := io.ReadAll(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read events file: %w", err)
 	}
-	
+
 	contentStr := string(content)
-	
+
 	// Try parsing as JSONL first (preferred format)
 	scanner := bufio.NewScanner(strings.NewReader(contentStr))
 	jsonlSuccess := true
 	var jsonlEvents []map[string]interface{}
-	
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		
+
 		var event map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			jsonlSuccess = false
@@ -2283,22 +2287,22 @@ func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]in
 		}
 		jsonlEvents = append(jsonlEvents, event)
 	}
-	
+
 	if jsonlSuccess && len(jsonlEvents) > 0 {
 		return jsonlEvents, nil
 	}
-	
+
 	// Fallback: Try parsing as array of pretty-printed JSON objects
 	// This handles legacy format with indented JSON separated by newlines
-	
+
 	// Split content by lines that start with "}" (end of pretty-printed JSON objects)
 	var jsonStrings []string
 	lines := strings.Split(contentStr, "\n")
 	var currentJson strings.Builder
-	
+
 	for _, line := range lines {
 		currentJson.WriteString(line + "\n")
-		
+
 		if strings.TrimSpace(line) == "}" {
 			// This might be the end of a JSON object
 			jsonStr := strings.TrimSpace(currentJson.String())
@@ -2308,7 +2312,7 @@ func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]in
 			}
 		}
 	}
-	
+
 	// Try to parse each extracted JSON string
 	for _, jsonStr := range jsonStrings {
 		var event map[string]interface{}
@@ -2317,7 +2321,7 @@ func (exp *DataExporter) parseEventsWithRecovery(file *os.File) ([]map[string]in
 		}
 		// Silently skip malformed JSON objects
 	}
-	
+
 	return events, nil
 }
 
@@ -2347,26 +2351,26 @@ type comprehensiveItemStat struct {
 	LoopDetails         *InstallLoopDetail // Enhanced loop information
 
 	// .pkg package enhancements
-	PackageFormat        string
-	PackageID            string
-	Developer            string
-	Architecture         string
-	InstallLocation      string
-	InstallMethod        string
-	IsSigned             bool
-	SignatureStatus      string
-	SignatureAlgorithm   string
-	CertificateSubject   string
+	PackageFormat         string
+	PackageID             string
+	Developer             string
+	Architecture          string
+	InstallLocation       string
+	InstallMethod         string
+	IsSigned              bool
+	SignatureStatus       string
+	SignatureAlgorithm    string
+	CertificateSubject    string
 	CertificateThumbprint string
-	SignatureTimestamp   string
-	
+	SignatureTimestamp    string
+
 	// Additional .pkg metadata fields
-	SignerCertificate    string  // Certificate thumbprint or identifier
-	SignerCommonName     string  // Certificate common name
-	DeveloperName        string  // Developer name from build-info
+	SignerCertificate     string // Certificate thumbprint or identifier
+	SignerCommonName      string // Certificate common name
+	DeveloperName         string // Developer name from build-info
 	DeveloperOrganization string // Developer organization
-	SbinInstaller        string  // sbin-installer used for installation
-	PkgBuildVersion      string  // Package build version
+	SbinInstaller         string // sbin-installer used for installation
+	PkgBuildVersion       string // Package build version
 }
 
 func (exp *DataExporter) getRecentSessions(limitDays int) ([]string, error) {
@@ -2465,12 +2469,12 @@ func (exp *DataExporter) writeJSONFile(path string, v interface{}) error {
 
 // Helper session data structure for reading session.json
 type SessionData struct {
-	SessionID       string     `json:"session_id"`
-	StartTime       string     `json:"start_time"`
-	EndTime         *string    `json:"end_time,omitempty"`
-	RunType         string     `json:"run_type"`
-	Status          string     `json:"status"`
-	DurationSeconds *int64     `json:"duration_seconds,omitempty"`
+	SessionID       string  `json:"session_id"`
+	StartTime       string  `json:"start_time"`
+	EndTime         *string `json:"end_time,omitempty"`
+	RunType         string  `json:"run_type"`
+	Status          string  `json:"status"`
+	DurationSeconds *int64  `json:"duration_seconds,omitempty"`
 	Summary         struct {
 		TotalActions    int      `json:"total_actions"`
 		Installs        int      `json:"installs"`
@@ -2602,7 +2606,7 @@ func (exp *DataExporter) normalizeStatus(status, level, errorMsg string) string 
 
 	// Check for success conditions
 	if statusLower == "completed" || statusLower == "success" || statusLower == "ok" ||
-		statusLower == "installed" || strings.Contains(statusLower, "success") || 
+		statusLower == "installed" || strings.Contains(statusLower, "success") ||
 		strings.Contains(statusLower, "complete") {
 		return "Success"
 	}
@@ -2991,7 +2995,7 @@ func (exp *DataExporter) determineInstallerTypeFromPath(path string) string {
 	if path == "" {
 		return ""
 	}
-	
+
 	path = strings.ToLower(path)
 	switch {
 	case strings.Contains(path, ".nupkg"):
@@ -3020,31 +3024,31 @@ func (exp *DataExporter) createErrorDetails(errorMsg, message, action string) *E
 	details := &ErrorDetails{
 		ErrorType: exp.categorizeError(errorMsg, message),
 	}
-	
+
 	// Extract error code from common patterns
 	if matches := regexp.MustCompile(`exit code[:\s]*(\d+)`).FindStringSubmatch(errorMsg); len(matches) > 1 {
 		if code, err := fmt.Sscanf(matches[1], "%d", &details.ErrorCode); err == nil && code == 1 {
 			// Successfully parsed error code
 		}
 	}
-	
+
 	// Extract command if present
 	if strings.Contains(message, "command") {
 		if matches := regexp.MustCompile(`command[:\s]+"?([^"]+)"?`).FindStringSubmatch(message); len(matches) > 1 {
 			details.Command = strings.TrimSpace(matches[1])
 		}
 	}
-	
+
 	// Add resolution hints based on error type
 	details.ResolutionHint = exp.getResolutionHint(details.ErrorType, errorMsg)
-	
+
 	return details
 }
 
 // categorizeError determines the error type from error message
 func (exp *DataExporter) categorizeError(errorMsg, message string) string {
 	lower := strings.ToLower(errorMsg + " " + message)
-	
+
 	switch {
 	case strings.Contains(lower, "access denied") || strings.Contains(lower, "permission"):
 		return "permission_denied"
@@ -3090,23 +3094,23 @@ func (exp *DataExporter) getResolutionHint(errorType, errorMsg string) string {
 // getFailedPackagesForSession extracts failed package information from session events
 func (exp *DataExporter) getFailedPackagesForSession(sessionDir string) []FailedPackageInfo {
 	var failedPackages []FailedPackageInfo
-	
+
 	// Get events for this session
 	events, err := exp.GenerateEventsTable(sessionDir, 0)
 	if err != nil {
 		return failedPackages
 	}
-	
+
 	// Track failed packages by ID to avoid duplicates
 	failedMap := make(map[string]*FailedPackageInfo)
-	
+
 	for _, event := range events {
 		if event.Status == "Failed" && event.PackageID != "" {
 			packageID := event.PackageID
 			if packageID == "" && event.PackageName != "" {
 				packageID = exp.generatePackageID(event.PackageName)
 			}
-			
+
 			if packageID != "" {
 				// Update or create failed package entry
 				if existing, exists := failedMap[packageID]; exists {
@@ -3126,12 +3130,12 @@ func (exp *DataExporter) getFailedPackagesForSession(sessionDir string) []Failed
 					if event.ErrorDetails != nil {
 						errorType = event.ErrorDetails.ErrorType
 					}
-					
+
 					packageName := event.PackageName
 					if packageName == "" {
 						packageName = event.Package
 					}
-					
+
 					failedMap[packageID] = &FailedPackageInfo{
 						PackageID:    packageID,
 						PackageName:  packageName,
@@ -3143,12 +3147,12 @@ func (exp *DataExporter) getFailedPackagesForSession(sessionDir string) []Failed
 			}
 		}
 	}
-	
+
 	// Convert map to slice
 	for _, failedPkg := range failedMap {
 		failedPackages = append(failedPackages, *failedPkg)
 	}
-	
+
 	return failedPackages
 }
 
@@ -3190,7 +3194,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 	// Detect loop: Multiple scenarios
 	var detectionCriteria string
 	isLoop := false
-	
+
 	// Scenario 1: 3+ install attempts with less than 50% success rate
 	if installAttempts >= 3 {
 		successRate := float64(successCount) / float64(installAttempts)
@@ -3199,7 +3203,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 			isLoop = true
 		}
 	}
-	
+
 	// Scenario 2: Same version reinstalled multiple times
 	if !isLoop {
 		versionCounts := make(map[string]int)
@@ -3208,7 +3212,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 				versionCounts[attempt.Version]++
 			}
 		}
-		
+
 		for version, count := range versionCounts {
 			if count >= 3 {
 				detectionCriteria = fmt.Sprintf("same_version_reinstalled_%s_%d_times", version, count)
@@ -3217,7 +3221,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 			}
 		}
 	}
-	
+
 	// Scenario 3: Rapid consecutive attempts (within short time window)
 	if !isLoop && len(attempts) >= 3 {
 		recentAttempts := attempts[len(attempts)-3:]
@@ -3227,7 +3231,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 				timestamps = append(timestamps, t)
 			}
 		}
-		
+
 		if len(timestamps) >= 3 {
 			// Check if all 3 attempts happened within 1 hour
 			timeSpan := timestamps[len(timestamps)-1].Sub(timestamps[0])
@@ -3237,7 +3241,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 			}
 		}
 	}
-	
+
 	if isLoop {
 		// Create enhanced loop details
 		loopDetails := &InstallLoopDetail{
@@ -3265,13 +3269,13 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 			}
 		}
 	}
-	
+
 	for version, count := range versionCounts {
 		if count >= 2 && successfulReinstalls >= 2 {
 			return fmt.Sprintf("installer_reports_success_but_app_not_detected_v%s", version)
 		}
 	}
-	
+
 	// Pattern 2: Repeated failures - permission/dependency issues
 	failureCount := 0
 	successCount := 0
@@ -3282,7 +3286,7 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 			successCount++
 		}
 	}
-	
+
 	if failureCount >= 2 && successCount == 0 {
 		// Check for common failure patterns
 		if strings.Contains(strings.ToLower(packageName), "adobe") {
@@ -3296,7 +3300,7 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 		}
 		return "installer_permission_dependency_or_conflict_issues"
 	}
-	
+
 	// Pattern 3: Rapid reinstallation attempts
 	if len(attempts) >= 3 {
 		recentAttempts := attempts[len(attempts)-3:]
@@ -3306,7 +3310,7 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 				timestamps = append(timestamps, t)
 			}
 		}
-		
+
 		if len(timestamps) >= 3 {
 			timeSpan := timestamps[len(timestamps)-1].Sub(timestamps[0])
 			if timeSpan < time.Hour {
@@ -3314,12 +3318,12 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 			}
 		}
 	}
-	
+
 	// Pattern 4: Mixed success/failure pattern
 	if failureCount > 0 && successCount > 0 {
 		return "intermittent_system_conditions_or_timing_issues"
 	}
-	
+
 	return "unknown_loop_cause_requires_manual_investigation"
 }
 
@@ -3327,47 +3331,47 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageName string) string {
 	// Get the suspected cause to provide targeted recommendations
 	suspectedCause := exp.analyzeSuspectedCause(attempts, packageName)
-	
+
 	// Cause-specific recommendations
 	switch {
 	case strings.Contains(suspectedCause, "installer_reports_success_but_app_not_detected"):
 		return "Verify installer exit codes and app detection logic in pkginfo; check if silent install parameters are correct"
-		
+
 	case strings.Contains(suspectedCause, "adobe_licensing_or_creative_cloud"):
 		return "Clear Adobe licensing cache, restart Creative Cloud services, or temporarily disable real-time AV scanning"
-		
+
 	case strings.Contains(suspectedCause, "microsoft_installer_service"):
 		return "Restart Windows Installer service, clear MSI cache, or run system in safe mode for troubleshooting"
-		
+
 	case strings.Contains(suspectedCause, "java_version_conflict"):
 		return "Clean Java registry entries, remove conflicting Java versions, or use Java offline installer"
-		
+
 	case strings.Contains(suspectedCause, "system_instability_or_automated_retry"):
 		return "Increase installation delays, check system resources, or implement exponential backoff retry logic"
-		
+
 	case strings.Contains(suspectedCause, "intermittent_system_conditions"):
 		return "Schedule installations during maintenance windows or implement pre-flight system health checks"
-		
+
 	case strings.Contains(suspectedCause, "installer_permission_dependency"):
 		return "Run as SYSTEM account, verify installer dependencies, or check antivirus exclusions"
 	}
-	
+
 	// Package-type specific recommendations
 	packageLower := strings.ToLower(packageName)
 	switch {
 	case strings.Contains(packageLower, "msi"):
 		return "Verify MSI installer silent flags (/quiet /norestart), check admin rights and MSI log files"
-		
+
 	case strings.Contains(packageLower, "exe"):
 		return "Validate EXE installer exit codes, silent parameters, and ensure proper privilege elevation"
-		
+
 	case strings.Contains(packageLower, "nupkg") || strings.Contains(packageLower, "chocolatey"):
 		return "Check Chocolatey package dependencies, verify package source accessibility, clear Chocolatey cache"
-		
+
 	case strings.Contains(packageLower, "powershell") || strings.Contains(packageLower, "ps1"):
 		return "Verify PowerShell execution policy, check script signing requirements, validate module dependencies"
 	}
-	
+
 	// Pattern-based recommendations
 	failureCount := 0
 	successCount := 0
@@ -3378,15 +3382,15 @@ func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageNa
 			successCount++
 		}
 	}
-	
+
 	if failureCount > successCount {
 		return "Primary issue: Consistent failures - Check installer logs, system requirements, and resolve permission/dependency issues"
 	}
-	
+
 	if successCount > 0 && failureCount > 0 {
 		return "Intermittent issue detected - Monitor system resources during installation and implement retry logic with delays"
 	}
-	
+
 	// Default comprehensive recommendation
 	return "Review installer logs, verify system requirements, check for conflicts with AV/security software, and consider manual installation test"
 }
@@ -3398,42 +3402,42 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 	if sessionConfig == nil || sessionConfig.Manifest == "" {
 		return 0
 	}
-	
+
 	// Check cache first to avoid repeated parsing of the same manifest
 	if cachedCount, exists := exp.manifestPackageCache[sessionConfig.Manifest]; exists {
 		// Cache hit - return silently (no logging needed for reporting)
 		return cachedCount
 	}
-	
+
 	// Handle hierarchical paths (e.g., "Shared/Curriculum/Animation/C3234/CintiqLab16" or "Shared\Curriculum\Animation\C3234\CintiqLab16")
 	manifestName := sessionConfig.Manifest
-	
+
 	// Normalize path separators - handle both forward slashes and backslashes
 	// This ensures we work regardless of how the path was constructed (preflight vs manual config)
 	hierarchicalPath := strings.ReplaceAll(manifestName, "/", string(filepath.Separator))
 	hierarchicalPath = strings.ReplaceAll(hierarchicalPath, "\\", string(filepath.Separator))
-	
+
 	// Also create a version with forward slashes for potential Unix-style path matching
 	unixStylePath := strings.ReplaceAll(manifestName, "\\", "/")
-	
+
 	// Try to load the current manifest using hierarchical path resolution
 	manifestPath := ""
-	
+
 	// Look for manifest files in common locations - prioritize hierarchical paths
 	possiblePaths := []string{
 		// PRIORITY 1: Try normalized hierarchical path first (most common for complex deployments)
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath+".yaml"),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath),
-		
+
 		// PRIORITY 2: Try direct name as-is (backward compatibility)
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName+".yaml"),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
-		
+
 		// PRIORITY 3: Try Unix-style path (additional fallback)
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath+".yaml"),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
-		
+
 		// PRIORITY 4: Try with catalogs directory as well (all variations)
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath+".yaml"),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", hierarchicalPath),
@@ -3442,7 +3446,7 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath+".yaml"),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "catalogs", unixStylePath),
 	}
-	
+
 	for _, path := range possiblePaths {
 		if _, err := os.Stat(path); err == nil {
 			manifestPath = path
@@ -3450,19 +3454,19 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 			break
 		}
 	}
-	
+
 	if manifestPath == "" {
 		logging.Debug("Could not find manifest file for package counting", "manifest", sessionConfig.Manifest, "attempted_paths", possiblePaths)
 		return 0
 	}
-	
+
 	// Read and parse the manifest file
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		logging.Debug("Could not read manifest file", "path", manifestPath, "error", err)
 		return 0
 	}
-	
+
 	// Parse manifest YAML to count packages from all relevant arrays
 	var manifest struct {
 		ManagedInstalls   []interface{} `yaml:"managed_installs"`
@@ -3472,21 +3476,21 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 		IncludedManifests []interface{} `yaml:"included_manifests"`
 		Items             []interface{} `yaml:"items"` // Legacy support
 	}
-	
+
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		logging.Debug("Could not parse manifest YAML", "path", manifestPath, "error", err)
 		return 0
 	}
-	
+
 	// Count packages from all relevant manifest arrays (direct packages in this manifest)
-	directPackages := len(manifest.ManagedInstalls) + 
-	                len(manifest.ManagedUninstalls) + 
-	                len(manifest.ManagedUpdates) + 
-	                len(manifest.OptionalInstalls) +
-	                len(manifest.Items) // Legacy support for old format
-	
+	directPackages := len(manifest.ManagedInstalls) +
+		len(manifest.ManagedUninstalls) +
+		len(manifest.ManagedUpdates) +
+		len(manifest.OptionalInstalls) +
+		len(manifest.Items) // Legacy support for old format
+
 	totalPackages := directPackages
-	
+
 	// RECURSIVE FIX: Process included_manifests to get total package count from hierarchy
 	if len(manifest.IncludedManifests) > 0 {
 		// Process included manifests silently - no verbose logging during reporting
@@ -3496,7 +3500,7 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 				tempConfig := &SessionConfig{
 					Manifest: includedManifestName,
 				}
-				
+
 				// Recursively get package count from included manifest
 				// Note: This will use the cache if we've already processed this manifest
 				includedPackages := exp.getTotalManagedPackagesFromManifest(tempConfig)
@@ -3504,15 +3508,15 @@ func (exp *DataExporter) getTotalManagedPackagesFromManifest(sessionConfig *Sess
 			}
 		}
 	}
-	
+
 	// Cache the result to avoid repeated parsing
 	exp.manifestPackageCache[sessionConfig.Manifest] = totalPackages
-	
+
 	// Single clean summary line for reporting
 	if sessionConfig.Manifest == exp.getRootManifest() {
 		logging.Debug("Added managed packages from manifest hierarchy for reporting", "total_packages", totalPackages, "root_manifest", sessionConfig.Manifest)
 	}
-	
+
 	return totalPackages
 }
 
@@ -3534,13 +3538,13 @@ type ManagedItem struct {
 // getCurrentManagedItems retrieves all currently managed items from manifest files
 func (exp *DataExporter) getCurrentManagedItems() []ManagedItem {
 	var items []ManagedItem
-	
+
 	// Get the main manifest path from configuration
 	config := exp.loadCimianConfiguration()
 	if config.ClientIdentifier == "" {
 		return items // No client identifier, can't determine manifest
 	}
-	
+
 	// Try to get items from hierarchical manifest path
 	manifestItems := exp.getItemsFromManifest(config.ClientIdentifier)
 	return manifestItems
@@ -3549,7 +3553,7 @@ func (exp *DataExporter) getCurrentManagedItems() []ManagedItem {
 // getItemsFromManifest recursively extracts all managed items from a manifest and its includes
 func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem {
 	var items []ManagedItem
-	
+
 	// Skip cache entries and prevent infinite loops
 	if exp.manifestPackageCache == nil {
 		exp.manifestPackageCache = make(map[string]int)
@@ -3558,11 +3562,11 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 		return items
 	}
 	exp.manifestPackageCache[manifestName] = 1 // Mark as processing
-	
+
 	// Construct potential manifest file paths (reuse existing logic)
 	hierarchicalPath := strings.ReplaceAll(manifestName, "/", "\\")
 	unixStylePath := strings.ReplaceAll(manifestName, "\\", "/")
-	
+
 	candidatePaths := []string{
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath+".yaml"),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", hierarchicalPath),
@@ -3572,7 +3576,7 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", unixStylePath),
 		filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests", manifestName),
 	}
-	
+
 	var manifestPath string
 	for _, path := range candidatePaths {
 		if _, err := os.Stat(path); err == nil {
@@ -3580,17 +3584,17 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 			break
 		}
 	}
-	
+
 	if manifestPath == "" {
 		return items
 	}
-	
+
 	// Read and parse manifest
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return items
 	}
-	
+
 	var manifest struct {
 		ManagedInstalls   []interface{} `yaml:"managed_installs"`
 		ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
@@ -3599,42 +3603,42 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 		IncludedManifests []interface{} `yaml:"included_manifests"`
 		Items             []interface{} `yaml:"items"`
 	}
-	
+
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return items
 	}
-	
+
 	// Extract items from each category
 	for _, item := range manifest.ManagedInstalls {
 		if itemName, ok := item.(string); ok {
 			items = append(items, ManagedItem{Name: itemName, Type: "managed_installs"})
 		}
 	}
-	
+
 	for _, item := range manifest.ManagedUninstalls {
 		if itemName, ok := item.(string); ok {
 			items = append(items, ManagedItem{Name: itemName, Type: "managed_uninstalls"})
 		}
 	}
-	
+
 	for _, item := range manifest.ManagedUpdates {
 		if itemName, ok := item.(string); ok {
 			items = append(items, ManagedItem{Name: itemName, Type: "managed_updates"})
 		}
 	}
-	
+
 	for _, item := range manifest.OptionalInstalls {
 		if itemName, ok := item.(string); ok {
 			items = append(items, ManagedItem{Name: itemName, Type: "optional_installs"})
 		}
 	}
-	
+
 	for _, item := range manifest.Items {
 		if itemName, ok := item.(string); ok {
 			items = append(items, ManagedItem{Name: itemName, Type: "items"})
 		}
 	}
-	
+
 	// Process included manifests recursively
 	for _, includedManifest := range manifest.IncludedManifests {
 		if manifestName, ok := includedManifest.(string); ok {
@@ -3642,7 +3646,7 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 			items = append(items, includedItems...)
 		}
 	}
-	
+
 	return items
 }
 
@@ -3651,36 +3655,36 @@ func (exp *DataExporter) getItemsFromManifest(manifestName string) []ManagedItem
 func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 	var allItems []ManagedItem
 	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
-	
+
 	logging.Debug("Starting comprehensive manifest discovery in directory", "dir", manifestsDir)
-	
+
 	// Recursively scan ALL manifest files in the manifests directory
 	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			logging.Debug("Skipping path due to error", "path", path, "error", err)
 			return nil // Continue scanning other files
 		}
-		
+
 		// Skip directories
 		if info.IsDir() {
 			return nil
 		}
-		
+
 		// Only process YAML/YML files
-		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") && 
-		   !strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") &&
+			!strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
 			return nil
 		}
-		
+
 		logging.Debug("Processing manifest file", "file", path)
-		
+
 		// Read and parse manifest file
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			logging.Debug("Failed to read manifest file", "file", path, "error", readErr)
 			return nil // Continue with other files
 		}
-		
+
 		var manifest struct {
 			ManagedInstalls   []interface{} `yaml:"managed_installs"`
 			ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
@@ -3688,15 +3692,15 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 			OptionalInstalls  []interface{} `yaml:"optional_installs"`
 			Items             []interface{} `yaml:"items"` // Legacy support
 		}
-		
+
 		if parseErr := yaml.Unmarshal(data, &manifest); parseErr != nil {
 			logging.Debug("Failed to parse manifest YAML", "file", path, "error", parseErr)
 			return nil // Continue with other files
 		}
-		
+
 		// Extract packages from all arrays
 		packageCount := 0
-		
+
 		// Process managed_installs
 		for _, item := range manifest.ManagedInstalls {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3704,7 +3708,7 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process managed_uninstalls
 		for _, item := range manifest.ManagedUninstalls {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3712,7 +3716,7 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process managed_updates
 		for _, item := range manifest.ManagedUpdates {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3720,7 +3724,7 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process optional_installs
 		for _, item := range manifest.OptionalInstalls {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3728,7 +3732,7 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process legacy items array
 		for _, item := range manifest.Items {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3736,25 +3740,25 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		if packageCount > 0 {
 			logging.Debug("Extracted packages from manifest", "file", filepath.Base(path), "count", packageCount)
 		}
-		
+
 		return nil // Continue processing other files
 	})
-	
+
 	if err != nil {
 		logging.Warn("Error during comprehensive manifest discovery walk", "error", err)
 	}
-	
+
 	// Remove duplicates (same package might appear in multiple manifests)
 	uniqueItems := exp.deduplicateManagedItems(allItems)
-	
-	logging.Info("Comprehensive manifest-only discovery completed", 
-		"manifest_packages", len(uniqueItems), 
+
+	logging.Info("Comprehensive manifest-only discovery completed",
+		"manifest_packages", len(uniqueItems),
 		"total_managed_packages", len(uniqueItems))
-	
+
 	return uniqueItems
 }
 
@@ -3762,34 +3766,34 @@ func (exp *DataExporter) discoverAllManagedPackages() []ManagedItem {
 func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 	var items []ManagedItem
 	manifestsDir := filepath.Join("C:\\", "ProgramData", "ManagedInstalls", "manifests")
-	
+
 	// Recursively scan ALL manifest files in the manifests directory
 	err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			logging.Debug("Skipping path due to error", "path", path, "error", err)
 			return nil // Continue scanning other files
 		}
-		
+
 		// Skip directories
 		if info.IsDir() {
 			return nil
 		}
-		
+
 		// Only process YAML/YML files
-		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") && 
-		   !strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
+		if !strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") &&
+			!strings.HasSuffix(strings.ToLower(info.Name()), ".yml") {
 			return nil
 		}
-		
+
 		logging.Debug("Processing manifest file", "file", path)
-		
+
 		// Read and parse manifest file
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			logging.Debug("Failed to read manifest file", "file", path, "error", readErr)
 			return nil // Continue with other files
 		}
-		
+
 		var manifest struct {
 			ManagedInstalls   []interface{} `yaml:"managed_installs"`
 			ManagedUninstalls []interface{} `yaml:"managed_uninstalls"`
@@ -3797,15 +3801,15 @@ func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 			OptionalInstalls  []interface{} `yaml:"optional_installs"`
 			Items             []interface{} `yaml:"items"` // Legacy support
 		}
-		
+
 		if parseErr := yaml.Unmarshal(data, &manifest); parseErr != nil {
 			logging.Debug("Failed to parse manifest YAML", "file", path, "error", parseErr)
 			return nil // Continue with other files
 		}
-		
+
 		// Extract packages from all arrays
 		packageCount := 0
-		
+
 		// Process managed_installs
 		for _, item := range manifest.ManagedInstalls {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3813,7 +3817,7 @@ func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process managed_uninstalls
 		for _, item := range manifest.ManagedUninstalls {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3821,7 +3825,7 @@ func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process managed_updates
 		for _, item := range manifest.ManagedUpdates {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3829,7 +3833,7 @@ func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process optional_installs
 		for _, item := range manifest.OptionalInstalls {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3837,7 +3841,7 @@ func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		// Process legacy items array
 		for _, item := range manifest.Items {
 			if packageName := exp.extractPackageName(item); packageName != "" {
@@ -3845,18 +3849,18 @@ func (exp *DataExporter) scanManifestFiles() []ManagedItem {
 				packageCount++
 			}
 		}
-		
+
 		if packageCount > 0 {
 			logging.Debug("Extracted packages from manifest", "file", filepath.Base(path), "count", packageCount)
 		}
-		
+
 		return nil // Continue processing other files
 	})
-	
+
 	if err != nil {
 		logging.Warn("Error during manifest file scanning", "error", err)
 	}
-	
+
 	return items
 }
 
@@ -3877,14 +3881,14 @@ func (exp *DataExporter) extractPackageName(item interface{}) string {
 func (exp *DataExporter) deduplicateManagedItems(items []ManagedItem) []ManagedItem {
 	seen := make(map[string]bool)
 	var unique []ManagedItem
-	
+
 	for _, item := range items {
 		if !seen[item.Name] {
 			seen[item.Name] = true
 			unique = append(unique, item)
 		}
 	}
-	
+
 	return unique
 }
 
@@ -3892,20 +3896,20 @@ func (exp *DataExporter) deduplicateManagedItems(items []ManagedItem) []ManagedI
 // using the same approach as the main application, ensuring complete package discovery
 func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]ManifestItem, error) {
 	manifestsDir := filepath.Join("C:\\ProgramData\\ManagedInstalls", "manifests")
-	
+
 	// Check if manifests directory exists
 	if _, err := os.Stat(manifestsDir); os.IsNotExist(err) {
 		return []ManifestItem{}, nil // No cached manifests
 	}
-	
+
 	var allItems []ManifestItem
 	visitedManifests := make(map[string]bool)
 	var manifestsToProcess []string
-	
+
 	// Start with the primary manifest (client identifier)
 	primaryManifest := cfg.ClientIdentifier + ".yaml"
 	primaryManifestPath := filepath.Join(manifestsDir, primaryManifest)
-	
+
 	// If the client identifier contains path separators, try to construct the full path
 	if strings.Contains(cfg.ClientIdentifier, "/") {
 		// Convert forward slashes to backslashes for Windows paths
@@ -3913,17 +3917,17 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 		primaryManifest = windowsPath + ".yaml"
 		primaryManifestPath = filepath.Join(manifestsDir, primaryManifest)
 	}
-	
+
 	if _, err := os.Stat(primaryManifestPath); os.IsNotExist(err) {
 		// Client identifier manifest doesn't exist, so scan ALL cached manifests
 		// This handles --manifest flag usage where any combination of manifests might be cached
 		logging.Debug("Client identifier manifest not found, scanning all cached manifests", "clientIdentifier", cfg.ClientIdentifier)
-		
+
 		err := filepath.Walk(manifestsDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
-			
+
 			if !info.IsDir() && strings.HasSuffix(strings.ToLower(info.Name()), ".yaml") {
 				// Convert absolute path to relative path from manifests directory
 				relPath, err := filepath.Rel(manifestsDir, path)
@@ -3934,11 +3938,11 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 			}
 			return nil
 		})
-		
+
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan manifests directory: %v", err)
 		}
-		
+
 		if len(manifestsToProcess) == 0 {
 			return []ManifestItem{}, nil // No YAML manifests found
 		}
@@ -3946,52 +3950,52 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 		// Start processing queue with the primary manifest
 		manifestsToProcess = append(manifestsToProcess, primaryManifest)
 	}
-	
+
 	// Process manifests recursively, following included_manifests
 	for len(manifestsToProcess) > 0 {
 		// Get next manifest to process
 		currentManifest := manifestsToProcess[0]
 		manifestsToProcess = manifestsToProcess[1:]
-		
+
 		// Skip if already processed
 		if visitedManifests[currentManifest] {
 			continue
 		}
 		visitedManifests[currentManifest] = true
-		
+
 		// Load and parse the manifest
 		var manifestPath string
 		if strings.Contains(currentManifest, "\\") {
-			// This is a relative path like "Assigned\Staff\IT.yaml" 
+			// This is a relative path like "Assigned\Staff\IT.yaml"
 			// Construct the full path relative to the manifests directory
 			manifestPath = filepath.Join(manifestsDir, currentManifest)
 		} else {
 			// Simple manifest name in the root manifests directory
 			manifestPath = filepath.Join(manifestsDir, currentManifest)
 		}
-		
+
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
 			logging.Warn("Failed to read cached manifest", "file", currentManifest, "path", manifestPath, "error", err)
 			continue
 		}
-		
+
 		var manifestFile ReportingManifestFile
 		if err := yaml.Unmarshal(data, &manifestFile); err != nil {
 			logging.Warn("Failed to parse cached manifest", "file", currentManifest, "error", err)
 			continue
 		}
-		
+
 		// Use filename as name if not specified
 		manifestName := manifestFile.Name
 		if manifestName == "" {
 			manifestName = strings.TrimSuffix(currentManifest, ".yaml")
 		}
-		
+
 		logging.Debug("Processing cached manifest for reporting", "file", currentManifest, "name", manifestName)
-		
+
 		// Convert manifest arrays to individual items
-		
+
 		// Process ManagedInstalls
 		for _, pkgName := range manifestFile.ManagedInstalls {
 			if pkgName == "" {
@@ -4005,7 +4009,7 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 				SourceManifest: manifestName,
 			})
 		}
-		
+
 		// Process ManagedUpdates
 		for _, pkgName := range manifestFile.ManagedUpdates {
 			if pkgName == "" {
@@ -4019,7 +4023,7 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 				SourceManifest: manifestName,
 			})
 		}
-		
+
 		// Process ManagedUninstalls
 		for _, pkgName := range manifestFile.ManagedUninstalls {
 			if pkgName == "" {
@@ -4033,7 +4037,7 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 				SourceManifest: manifestName,
 			})
 		}
-		
+
 		// Process OptionalInstalls
 		for _, pkgName := range manifestFile.OptionalInstalls {
 			if pkgName == "" {
@@ -4047,19 +4051,19 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 				SourceManifest: manifestName,
 			})
 		}
-		
+
 		// SKIP ManagedProfiles - managed by Device Management Service, not Cimian
 		// These should NOT appear in items.json as they are not Cimian-managed installations
-		
+
 		// SKIP ManagedApps - managed by Device Management Service, not Cimian
 		// These should NOT appear in items.json as they are not Cimian-managed installations
-		
+
 		// Queue included manifests for processing
 		for _, includedManifest := range manifestFile.IncludedManifests {
 			if includedManifest == "" {
 				continue
 			}
-			
+
 			// Ensure .yaml extension
 			if !strings.HasSuffix(includedManifest, ".yaml") && !strings.HasSuffix(includedManifest, ".yml") {
 				// Only add .yaml if it doesn't already have an extension
@@ -4067,14 +4071,14 @@ func (exp *DataExporter) loadCachedManifestsForReporting(cfg *SessionConfig) ([]
 					includedManifest = includedManifest + ".yaml"
 				}
 			}
-			
+
 			// Add to queue if not already visited
 			if !visitedManifests[includedManifest] {
 				manifestsToProcess = append(manifestsToProcess, includedManifest)
 			}
 		}
 	}
-	
+
 	logging.Info("Loaded items from cached manifests for reporting", "count", len(allItems))
 	return allItems, nil
 }
