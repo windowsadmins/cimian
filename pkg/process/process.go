@@ -1174,22 +1174,28 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	if err != nil {
 		// firstItem already logs the error with source information, just return the non-retryable error
 		return err
-	} // Track items scheduled for installation during this operation
-	var scheduledItems []string
+	}
 
 	// Process requires dependencies first
 	if len(item.Requires) > 0 {
 		logging.Debug("Processing requires dependencies", "item", itemName, "requires", item.Requires)
 
 		for _, req := range item.Requires {
-			reqItemName, reqVersion := catalog.SplitNameAndVersion(req)
+			reqItemName, _ := catalog.SplitNameAndVersion(req)
 
 			// Track that this requirement came from the parent item
 			AddItemSourceChain(reqItemName, "requires", "dependency-chain", itemName)
 
-			// Check if requirement is already satisfied
-			if isRequirementSatisfied(reqItemName, reqVersion, installedItems, scheduledItems) {
-				logging.Debug("Requirement already satisfied", "item", itemName, "requirement", req)
+			// Check if requirement is already processed (installed or scheduled in this session)
+			// Use processedInstalls map which is properly shared across recursive calls
+			if processedInstalls[reqItemName] {
+				logging.Debug("Requirement already processed in this session", "item", itemName, "requirement", req)
+				continue
+			}
+			
+			// Also check if requirement is in the installed items list (already installed before this session)
+			if isItemInList(reqItemName, installedItems) {
+				logging.Debug("Requirement already installed before this session", "item", itemName, "requirement", req)
 				continue
 			}
 
@@ -1201,9 +1207,6 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 				logging.Error("Failed to install required dependency", "dependency", reqItemName, "error", err)
 				return fmt.Errorf("failed to install required dependency %s: %v", reqItemName, err)
 			}
-
-			// Add to scheduled items for future dependency checks
-			scheduledItems = append(scheduledItems, reqItemName)
 		}
 	}
 
@@ -1453,6 +1456,17 @@ func findUpdateItemsInstalled(itemName string, catalogsMap map[int]map[string]ca
 	}
 
 	return updateItems
+}
+
+// isItemInList checks if an item name is in a list of items (case-insensitive)
+func isItemInList(itemName string, itemList []string) bool {
+	for _, item := range itemList {
+		listItemName, _ := catalog.SplitNameAndVersion(item)
+		if strings.EqualFold(itemName, listItemName) {
+			return true
+		}
+	}
+	return false
 }
 
 // isOnDemandItem checks if an item has the OnDemand flag set
