@@ -182,8 +182,23 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 // For example, AdobeCameraRaw is an update for Adobe Photoshop, but doesn't update
 // the version of Adobe Photoshop itself.
 // Returns a list of catalog item names that are updates for manifestitem.
-func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []string {
-	logging.Debug("Looking for updates for item", "item", itemName)
+func LookForUpdates(itemName string, catalogMap map[int]map[string]Item, installedItems []string) []string {
+	logging.Debug("Looking for updates for item", "item", itemName, "installedItems", len(installedItems))
+
+	// First check if the target item is actually installed
+	// update_for means "install this update IF the target is installed"
+	itemInstalled := false
+	for _, installed := range installedItems {
+		if installed == itemName {
+			itemInstalled = true
+			break
+		}
+	}
+
+	if !itemInstalled {
+		logging.Debug("Target item not installed, skipping update_for processing", "item", itemName)
+		return []string{}
+	}
 
 	var updateList []string
 
@@ -205,7 +220,7 @@ func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []strin
 	updateList = removeDuplicates(updateList)
 
 	if len(updateList) > 0 {
-		logging.Debug("Found updates", "count", len(updateList), "updates", updateList, "for", itemName)
+		logging.Debug("Found updates for installed item", "count", len(updateList), "updates", updateList, "for", itemName)
 	}
 
 	return updateList
@@ -213,12 +228,12 @@ func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []strin
 
 // LookForUpdatesForVersion searches for updates for a specific version of an item.
 // Since these can appear in manifests as item-version or item--version, we search for both.
-func LookForUpdatesForVersion(itemName, itemVersion string, catalogMap map[int]map[string]Item) []string {
+func LookForUpdatesForVersion(itemName, itemVersion string, catalogMap map[int]map[string]Item, installedItems []string) []string {
 	nameAndVersion := fmt.Sprintf("%s-%s", itemName, itemVersion)
 	altNameAndVersion := fmt.Sprintf("%s--%s", itemName, itemVersion)
 
-	updateList := LookForUpdates(nameAndVersion, catalogMap)
-	updateList = append(updateList, LookForUpdates(altNameAndVersion, catalogMap)...)
+	updateList := LookForUpdates(nameAndVersion, catalogMap, installedItems)
+	updateList = append(updateList, LookForUpdates(altNameAndVersion, catalogMap, installedItems)...)
 
 	// Remove duplicates
 	updateList = removeDuplicates(updateList)
