@@ -918,7 +918,8 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 	}
 
 	// Look for updates that should be applied after this install
-	updateList := catalog.LookForUpdates(itemName, catalogsMap)
+	// Only process if the target item is actually installed
+	updateList := catalog.LookForUpdates(itemName, catalogsMap, append(installedItems, itemName))
 	for _, updateItem := range updateList {
 		logging.Info("Installing update for item", "update", updateItem, "for", itemName)
 		if err := ProcessInstallWithDependencies(updateItem, catalogsMap,
@@ -971,7 +972,8 @@ func ProcessUninstallWithDependencies(itemName string, catalogsMap map[int]map[s
 	installerInstall(item, "uninstall", "", cachePath, checkOnly, cfg)
 
 	// Look for and remove any updates for this item
-	updateList := catalog.LookForUpdates(itemName, catalogsMap)
+	// Pass installedItems to check if the target item was installed before uninstall
+	updateList := catalog.LookForUpdates(itemName, catalogsMap, installedItems)
 	for _, updateItem := range updateList {
 		// Check if update item is installed
 		updateInstalled := false
@@ -1267,7 +1269,8 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	}
 
 	// Process 'update_for' items (items that are updates for this item)
-	updateList := catalog.LookForUpdates(itemName, catalogsMap)
+	// Only process if the target item is actually installed
+	updateList := catalog.LookForUpdates(itemName, catalogsMap, installedItems)
 	if len(updateList) > 0 {
 		logging.Debug("Processing update_for items", "item", itemName, "updates", updateList)
 		for _, updateItem := range updateList {
@@ -1443,7 +1446,8 @@ func findUpdateItemsInstalled(itemName string, catalogsMap map[int]map[string]ca
 	var updateItems []string
 
 	// Find all items in catalogs that declare they are updates for this item
-	allUpdates := catalog.LookForUpdates(itemName, catalogsMap)
+	// LookForUpdates now checks if itemName is installed before returning updates
+	allUpdates := catalog.LookForUpdates(itemName, catalogsMap, installedItems)
 
 	// Filter to only those that are actually installed
 	for _, updateItem := range allUpdates {
