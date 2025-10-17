@@ -2783,10 +2783,43 @@ func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[str
 // getInstalledItemNames returns a list of currently installed item names
 // This would typically check the registry or local state to determine what's installed
 func getInstalledItemNames() []string {
-	// TODO: Implement proper installed items detection
-	// For now, return empty slice - this should be enhanced to read from
-	// registry or local state to determine what packages are actually installed
-	return []string{}
+	// Use EXACT SAME LOGIC as determining if package needs installation
+	// This ensures dependency checking matches installation detection perfectly
+	
+	var installedItems []string
+	
+	// Get configuration for cache path
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		logging.Warn("Failed to load config for installed items detection", "error", err)
+		return installedItems
+	}
+	
+	// Get full catalog to check all packages
+	fullCatalogMap := catalog.AuthenticatedGet(*cfg)
+	
+	// For each package in the catalog, use CheckStatus to see if it's installed
+	// This is THE EXACT SAME CHECK used when determining if installation is needed
+	for _, versionMap := range fullCatalogMap {
+		for _, catalogItem := range versionMap {
+			// Use CheckStatus with "install" type - if it returns false, package is already installed
+			needsInstall, err := status.CheckStatus(catalogItem, "install", cfg.CachePath)
+			if err != nil {
+				// Skip packages we can't check
+				continue
+			}
+			
+			if !needsInstall {
+				// Package is installed (no installation needed)
+				installedItems = append(installedItems, catalogItem.Name)
+				logging.Debug("Package detected as installed via CheckStatus", "package", catalogItem.Name)
+			}
+		}
+	}
+	
+	logging.Debug("Detected installed packages using CheckStatus", "count", len(installedItems))
+	
+	return installedItems
 }
 
 // printPendingActions prints a summary of planned actions: installs, updates, and uninstalls.
