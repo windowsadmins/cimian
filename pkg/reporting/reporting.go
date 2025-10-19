@@ -2116,6 +2116,56 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to export items: %w", err)
 	}
 
+	// Copy the latest install.log to reports/run.log for ReportMate dashboard integration
+	if err := exp.CopyLatestRunLog(); err != nil {
+		// Log warning but don't fail the entire export
+		fmt.Printf("Warning: Failed to copy latest run log: %v\n", err)
+	}
+
+	return nil
+}
+
+// CopyLatestRunLog copies the most recent install.log to reports/run.log
+// This allows ReportMate to display the latest run log in the dashboard
+func (exp *DataExporter) CopyLatestRunLog() error {
+	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
+	
+	// Find the latest session directory
+	sessions, err := exp.getAllSessions()
+	if err != nil {
+		return fmt.Errorf("failed to get session directories: %w", err)
+	}
+	
+	if len(sessions) == 0 {
+		return fmt.Errorf("no session directories found")
+	}
+	
+	// Sort sessions by name (timestamp format ensures newest is last)
+	sort.Strings(sessions)
+	latestSession := sessions[len(sessions)-1]
+	
+	// Path to the install.log in the latest session
+	sourceLogPath := filepath.Join(exp.baseDir, latestSession, "install.log")
+	
+	// Check if the log file exists
+	if _, err := os.Stat(sourceLogPath); os.IsNotExist(err) {
+		return fmt.Errorf("install.log not found in latest session: %s", latestSession)
+	}
+	
+	// Copy to reports/run.log
+	destLogPath := filepath.Join(reportsDir, "run.log")
+	
+	// Read source file
+	sourceData, err := os.ReadFile(sourceLogPath)
+	if err != nil {
+		return fmt.Errorf("failed to read source log: %w", err)
+	}
+	
+	// Write to destination
+	if err := os.WriteFile(destLogPath, sourceData, 0644); err != nil {
+		return fmt.Errorf("failed to write destination log: %w", err)
+	}
+	
 	return nil
 }
 
@@ -2176,6 +2226,13 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 
 	if err := exp.writeJSONFile(filepath.Join(reportsDir, "items.json"), packages); err != nil {
 		return fmt.Errorf("failed to export progressive items: %w", err)
+	}
+
+	// Copy the latest install.log to reports/run.log during progressive reporting
+	// This allows ReportMate to display live updates
+	if err := exp.CopyLatestRunLog(); err != nil {
+		// Log warning but don't fail the progressive export
+		fmt.Printf("Warning: Failed to copy latest run log during progressive reporting: %v\n", err)
 	}
 
 	return nil
