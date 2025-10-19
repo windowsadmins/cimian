@@ -1005,6 +1005,7 @@ Cimian uses a modern structured logging system with timestamped session director
 | **Event Stream** | `C:\ProgramData\ManagedInstalls\logs\{session}\events.jsonl` | Detailed event tracking for troubleshooting |
 | **Summary Reports** | `C:\ProgramData\ManagedInstalls\reports\sessions.json` | Pre-computed session summaries for monitoring tools |
 | **Event Reports** | `C:\ProgramData\ManagedInstalls\reports\events.json` | Aggregated event data for analysis |
+| **Latest Run Log** | `C:\ProgramData\ManagedInstalls\reports\run.log` | Copy of most recent install.log for dashboard integration |
 | **CimianWatcher Service** | Windows Event Log (Application) | Service monitoring and bootstrap events |
 | **Status Runtime** | `C:\ProgramData\ManagedInstalls\LastRunTime.txt` | Last execution timestamp |
 
