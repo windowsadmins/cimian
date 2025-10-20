@@ -36,9 +36,11 @@ func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
 // InstallItem is for the "installs" array.
 type InstallItem struct {
 	Type        SingleQuotedString `yaml:"type"`
-	Path        SingleQuotedString `yaml:"path"`
+	Path        SingleQuotedString `yaml:"path,omitempty"`
 	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
 	Version     SingleQuotedString `yaml:"version,omitempty"`
+	ProductCode SingleQuotedString `yaml:"product_code,omitempty"`
+	UpgradeCode SingleQuotedString `yaml:"upgrade_code,omitempty"`
 }
 
 // Installer parallels cimiimport's Installer type.
@@ -74,15 +76,6 @@ func (i *Installer) MarshalYAML() (interface{}, error) {
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "hash"},
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Hash},
 	)
-	// Include product_code and upgrade_code only for MSI installers.
-	if strings.ToLower(i.Type) == "msi" {
-		content = append(content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "product_code"},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.ProductCode},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "upgrade_code"},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.UpgradeCode},
-		)
-	}
 	// Only output "arguments" if there is at least one argument.
 	if len(i.Arguments) > 0 {
 		content = append(content,
