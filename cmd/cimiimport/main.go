@@ -113,15 +113,6 @@ func (i *Installer) MarshalYAML() (interface{}, error) {
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "hash"},
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Hash},
 	)
-	// Include product_code and upgrade_code only if installer type is "msi"
-	if strings.ToLower(i.Type) == "msi" {
-		content = append(content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "product_code"},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.ProductCode},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "upgrade_code"},
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.UpgradeCode},
-		)
-	}
 	// Only include arguments if there are any
 	if len(i.Arguments) > 0 {
 		content = append(content,
@@ -156,9 +147,11 @@ func buildArgumentsNode(args []string) *yaml.Node {
 // InstallItem for the "installs" array.
 type InstallItem struct {
 	Type        SingleQuotedString `yaml:"type"`
-	Path        SingleQuotedString `yaml:"path"`
-	MD5Checksum SingleQuotedString `yaml:"md5checksum"`
+	Path        SingleQuotedString `yaml:"path,omitempty"`
+	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
 	Version     SingleQuotedString `yaml:"version,omitempty"`
+	ProductCode SingleQuotedString `yaml:"product_code,omitempty"`
+	UpgradeCode SingleQuotedString `yaml:"upgrade_code,omitempty"`
 }
 
 // SingleQuotedString ensures single quotes in YAML output.
@@ -1186,6 +1179,18 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.InstallerType = "msi"
 		metadata.ProductCode = prodCode
 		metadata.UpgradeCode = upgCode
+
+		// Create installs array with MSI product code and upgrade code for installation verification
+		if prodCode != "" {
+			installItem := InstallItem{
+				Type:        SingleQuotedString("msi"),
+				ProductCode: SingleQuotedString(prodCode),
+			}
+			if upgCode != "" {
+				installItem.UpgradeCode = SingleQuotedString(upgCode)
+			}
+			metadata.Installs = []InstallItem{installItem}
+		}
 
 	case ".appinstaller":
 		name, ver, dev, desc, packageFamilyName, uri := extract.AppInstallerMetadata(packagePath)
