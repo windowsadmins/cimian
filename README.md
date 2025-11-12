@@ -1,8 +1,10 @@
 # Cimian
 
-<img src="cimian.png" alt="Cimian" width="260" align="left" style="margin-right: 20px; margin-bottom: 10px;">
+<img src="cimian.png" alt="Cimian" width="240" align="left" style="margin-right: 20px; margin-bottom: 10px;">
 
-Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and other cloud-based management platforms. It leverages a YAML-based configuration system for easy management and customization, and includes a native WPF GUI application for real-time status monitoring.
+Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. 
+
+Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and other cloud-based management platforms. It leverages a YAML-based configuration system for easy management and customization, and includes a native WPF GUI application for real-time status monitoring.
 
 Cimian aims to allow Mac Admins that manage Windows with Munki to have a similar experience on Windows, while also providing Windows Admins with a powerful stand alone and flexible tool for software management or those looking to transition away from traditional imaging and towards modern management with Git and DevOps principles.
 
