@@ -3013,10 +3013,35 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 		logger.Info("----------------------------------------------------------------------")
 
 		for _, pkg := range packages {
-			version := pkg.Item.Version
-			if version == "" {
-				version = "Unknown"
+			// Look up the actual catalog version, not the manifest version
+			version := "Unknown"
+			itemNameLower := strings.ToLower(pkg.Item.Name)
+			
+			// Check in toUpdate queue first (most current version)
+			for _, updateItem := range toUpdate {
+				if strings.ToLower(updateItem.Name) == itemNameLower {
+					version = updateItem.Version
+					break
+				}
 			}
+			
+			// If not in update queue, check toInstall queue
+			if version == "Unknown" {
+				for _, installItem := range toInstall {
+					if strings.ToLower(installItem.Name) == itemNameLower {
+						version = installItem.Version
+						break
+					}
+				}
+			}
+			
+			// If not in any queue, look in local catalog
+			if version == "Unknown" {
+				if catItem, exists := localCatalogMap[itemNameLower]; exists {
+					version = catItem.Version
+				}
+			}
+			
 			logger.Info("%-27s | %-17s | %-15s",
 				truncateString(pkg.Item.Name, 25),
 				truncateString(version, 15),
@@ -3036,10 +3061,14 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 
 		for _, item := range optionalInstalls {
 			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
-			version := item.Version
-			if version == "" {
-				version = "Unknown"
+			
+			// Look up the actual catalog version
+			version := "Unknown"
+			itemNameLower := strings.ToLower(item.Name)
+			if catItem, exists := localCatalogMap[itemNameLower]; exists {
+				version = catItem.Version
 			}
+			
 			logger.Info("%-27s | %-17s | %-15s",
 				truncateString(item.Name, 25),
 				truncateString(version, 15),
@@ -3059,10 +3088,26 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 
 		for _, item := range managedUpdates {
 			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
-			version := item.Version
-			if version == "" {
-				version = "Unknown"
+			
+			// Look up the actual catalog version
+			version := "Unknown"
+			itemNameLower := strings.ToLower(item.Name)
+			
+			// Check in toUpdate queue first (most current version)
+			for _, updateItem := range toUpdate {
+				if strings.ToLower(updateItem.Name) == itemNameLower {
+					version = updateItem.Version
+					break
+				}
 			}
+			
+			// Fallback to local catalog
+			if version == "Unknown" {
+				if catItem, exists := localCatalogMap[itemNameLower]; exists {
+					version = catItem.Version
+				}
+			}
+			
 			logger.Info("%-27s | %-17s | %-15s",
 				truncateString(item.Name, 25),
 				truncateString(version, 15),
@@ -3082,10 +3127,14 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 
 		for _, item := range managedUninstalls {
 			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
-			version := item.Version
-			if version == "" {
-				version = "Unknown"
+			
+			// Look up the actual catalog version
+			version := "Unknown"
+			itemNameLower := strings.ToLower(item.Name)
+			if catItem, exists := localCatalogMap[itemNameLower]; exists {
+				version = catItem.Version
 			}
+			
 			logger.Info("%-27s | %-17s | %-15s",
 				truncateString(item.Name, 25),
 				truncateString(version, 15),
