@@ -163,10 +163,63 @@ func AuthenticatedGet(cfg config.Configuration) map[int]map[string]Item {
 		}
 
 		// Convert the slice into a map keyed by item.Name
+		// When duplicate items exist (same name), we must:
+		// 1. Filter by architecture - only keep items matching system architecture
+		// 2. Select highest version - when multiple arch-compatible items exist
 		indexedItems := make(map[string]Item)
+		sysArch := getSystemArch()
+		
 		for _, it := range wrapper.Items {
-			if it.Name != "" {
+			if it.Name == "" {
+				continue
+			}
+			
+			// Check if we already have an item with this name
+			existing, exists := indexedItems[it.Name]
+			if !exists {
+				// First item with this name - add it
 				indexedItems[it.Name] = it
+				logging.Debug("Added catalog item", "name", it.Name, "version", it.Version, 
+					"arch", it.SupportedArch, "installer", it.Installer.Location)
+				continue
+			}
+			
+			// Duplicate detected - apply selection logic
+			existingSupportsArch := supportsArch(existing, sysArch)
+			candidateSupportsArch := supportsArch(it, sysArch)
+			
+			// Priority 1: Prefer arch-compatible items over non-compatible
+			if candidateSupportsArch && !existingSupportsArch {
+				indexedItems[it.Name] = it
+				logging.Debug("Replaced catalog item (arch-compatible)", "name", it.Name,
+					"oldVersion", existing.Version, "oldArch", existing.SupportedArch,
+					"newVersion", it.Version, "newArch", it.SupportedArch, "sysArch", sysArch)
+				continue
+			}
+			
+			if !candidateSupportsArch && existingSupportsArch {
+				// Keep existing arch-compatible item
+				logging.Debug("Kept existing catalog item (arch-compatible)", "name", it.Name,
+					"keptVersion", existing.Version, "keptArch", existing.SupportedArch,
+					"rejectedVersion", it.Version, "rejectedArch", it.SupportedArch, "sysArch", sysArch)
+				continue
+			}
+			
+			// Priority 2: If both (or neither) support arch, select highest version
+			// Use version comparison to determine which is newer
+			existingNorm := normalizeVersionForComparison(existing.Version)
+			candidateNorm := normalizeVersionForComparison(it.Version)
+			
+			// Simple semantic version comparison
+			if isVersionNewer(candidateNorm, existingNorm) {
+				indexedItems[it.Name] = it
+				logging.Debug("Replaced catalog item (newer version)", "name", it.Name,
+					"oldVersion", existing.Version, "newVersion", it.Version,
+					"arch", it.SupportedArch, "sysArch", sysArch)
+			} else {
+				logging.Debug("Kept existing catalog item (newer or equal version)", "name", it.Name,
+					"keptVersion", existing.Version, "rejectedVersion", it.Version,
+					"arch", existing.SupportedArch, "sysArch", sysArch)
 			}
 		}
 		catalogMap[catalogCount] = indexedItems
@@ -630,5 +683,75 @@ func (item Item) IsUninstallable() bool {
 	}
 
 	// Default to not uninstallable if no clear uninstall method available
+	return false
+}
+
+// normalizeVersionForComparison removes leading zeros and trailing .0 segments
+// to prepare version strings for semantic comparison
+func normalizeVersionForComparison(version string) string {
+	if version == "" {
+		return "0"
+	}
+	
+	parts := strings.Split(version, ".")
+	
+	// Remove leading zeros from all segments
+	for i, part := range parts {
+		if part != "0" && len(part) > 1 {
+			newPart := strings.TrimLeft(part, "0")
+			if newPart == "" {
+				newPart = "0"
+			}
+			parts[i] = newPart
+		}
+	}
+	
+	// Remove trailing ".0" segments
+	for len(parts) > 1 && parts[len(parts)-1] == "0" {
+		parts = parts[:len(parts)-1]
+	}
+	
+	return strings.Join(parts, ".")
+}
+
+// isVersionNewer compares two normalized version strings and returns true if candidate > existing
+// Uses semantic version comparison logic
+func isVersionNewer(candidate, existing string) bool {
+	if candidate == existing {
+		return false
+	}
+	
+	candParts := strings.Split(candidate, ".")
+	existParts := strings.Split(existing, ".")
+	
+	// Compare each segment
+	maxLen := len(candParts)
+	if len(existParts) > maxLen {
+		maxLen = len(existParts)
+	}
+	
+	for i := 0; i < maxLen; i++ {
+		candVal := 0
+		existVal := 0
+		
+		if i < len(candParts) {
+			// Parse as integer, ignore errors (treat as 0)
+			fmt.Sscanf(candParts[i], "%d", &candVal)
+		}
+		
+		if i < len(existParts) {
+			fmt.Sscanf(existParts[i], "%d", &existVal)
+		}
+		
+		if candVal > existVal {
+			return true
+		}
+		if candVal < existVal {
+			return false
+		}
+		// Equal, continue to next segment
+	}
+	
+	// All segments equal
 	return false
 }
