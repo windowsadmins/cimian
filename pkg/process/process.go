@@ -253,12 +253,12 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 		
 		// Item truly not found in any catalog
 		if source, exists := GetItemSource(itemName); exists {
-			logging.Error("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
+			logging.Warn("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
 			return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
 		}
 
 		// If no source information is available, provide generic error
-		logging.Error("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing", "catalogs_searched", catalogList)
+		logging.Warn("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing", "catalogs_searched", catalogList)
 		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown, searched catalogs: %s)", itemName, catalogList)}
 	}
 
