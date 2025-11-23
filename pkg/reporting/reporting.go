@@ -2116,11 +2116,12 @@ func (exp *DataExporter) ExportToReportsDirectory(limitDays int) error {
 		return fmt.Errorf("failed to export items: %w", err)
 	}
 
-	// Copy the latest install.log to reports/run.log for ReportMate dashboard integration
-	if err := exp.CopyLatestRunLog(); err != nil {
-		// Log warning but don't fail the entire export
-		fmt.Printf("Warning: Failed to copy latest run log: %v\n", err)
-	}
+	// CopyLatestRunLog is disabled because logging.go now writes directly to run.log
+	// and overwriting it with install.log causes data loss and truncation.
+	// if err := exp.CopyLatestRunLog(); err != nil {
+	// 	// Log warning but don't fail the entire export
+	// 	fmt.Printf("Warning: Failed to copy latest run log: %v\n", err)
+	// }
 
 	return nil
 }
@@ -2228,12 +2229,12 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 		return fmt.Errorf("failed to export progressive items: %w", err)
 	}
 
-	// Copy the latest install.log to reports/run.log during progressive reporting
-	// This allows ReportMate to display live updates
-	if err := exp.CopyLatestRunLog(); err != nil {
-		// Log warning but don't fail the progressive export
-		fmt.Printf("Warning: Failed to copy latest run log during progressive reporting: %v\n", err)
-	}
+	// CopyLatestRunLog is disabled because logging.go now writes directly to run.log
+	// and overwriting it with install.log causes data loss and truncation.
+	// if err := exp.CopyLatestRunLog(); err != nil {
+	// 	// Log warning but don't fail the progressive export
+	// 	fmt.Printf("Warning: Failed to copy latest run log during progressive reporting: %v\n", err)
+	// }
 
 	return nil
 }
