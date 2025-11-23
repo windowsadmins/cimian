@@ -113,9 +113,14 @@ func NewStructuredLogger(baseDir string, config RetentionConfig) (*StructuredLog
 }
 
 // StartSession begins a new logging session with timestamped directory
-func (sl *StructuredLogger) StartSession(runType string, metadata map[string]interface{}) (string, error) {
+func (sl *StructuredLogger) StartSession(forcedSessionID, runType string, metadata map[string]interface{}) (string, error) {
 	now := time.Now()
-	sessionID := now.Format("2006-01-02-150405") // YYYY-MM-DD-HHMMss
+	var sessionID string
+	if forcedSessionID != "" {
+		sessionID = forcedSessionID
+	} else {
+		sessionID = now.Format("2006-01-02-150405") // YYYY-MM-DD-HHMMss
+	}
 
 	// Create session directory
 	sessionDir := filepath.Join(sl.baseDir, sessionID)
