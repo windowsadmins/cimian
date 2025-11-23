@@ -171,6 +171,8 @@ type LoggerConfig struct {
 	EnableStructured bool            // Enable structured JSON output
 	EnableJSON       bool            // Enable JSON output
 	EnableConsole    bool            // Enable console output
+	TruncateRunLog   bool            // Truncate run log file (true) or append (false)
+	ExistingLogDir   string          // Optional: Reuse existing log directory
 }
 
 // Logger encapsulates the enhanced logging functionality with timestamped directories.
@@ -180,6 +182,7 @@ type Logger struct {
 	logLevel     LogLevel
 	logFile      *os.File
 	jsonFile     *os.File
+	runLogFile   io.WriteCloser // Dedicated verbose log file (writes to multiple locations)
 	config       LoggerConfig
 	sessionStart time.Time
 	logDir       string // Current timestamped log directory
@@ -197,6 +200,43 @@ var (
 	once     sync.Once
 )
 
+// MultiWriteCloser combines multiple WriteClosers
+type MultiWriteCloser struct {
+	writers []io.WriteCloser
+}
+
+func (m *MultiWriteCloser) Write(p []byte) (n int, err error) {
+	for _, w := range m.writers {
+		n, err = w.Write(p)
+		if err != nil {
+			return n, err
+		}
+	}
+	return len(p), nil
+}
+
+func (m *MultiWriteCloser) Close() error {
+	var firstErr error
+	for _, w := range m.writers {
+		if err := w.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (m *MultiWriteCloser) Sync() error {
+	var firstErr error
+	for _, w := range m.writers {
+		if f, ok := w.(*os.File); ok {
+			if err := f.Sync(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
 // DefaultRetentionPolicy returns sensible defaults for log retention
 func DefaultRetentionPolicy() RetentionPolicy {
 	return RetentionPolicy{
@@ -211,7 +251,7 @@ func DefaultRetentionPolicy() RetentionPolicy {
 func Init(cfg *config.Configuration) error {
 	var initErr error
 	once.Do(func() {
-		instance, initErr = newLogger(cfg)
+		instance, initErr = newLogger(cfg, true, "", "") // Truncate run log on initial init
 	})
 	return initErr
 }
@@ -245,18 +285,25 @@ func createTimestampedLogDir(baseDir string, sessionStart time.Time) (string, er
 }
 
 // newLogger creates a new Logger instance based on the configuration.
-func newLogger(cfg *config.Configuration) (*Logger, error) {
+func newLogger(cfg *config.Configuration, truncateRunLog bool, existingLogDir, existingSessionID string) (*Logger, error) {
 	// Set up default logging config
+	sessionID := existingSessionID
+	if sessionID == "" {
+		sessionID = generateSessionID()
+	}
+
 	logCfg := LoggerConfig{
 		BaseDir:          filepath.Join(`C:\ProgramData\ManagedInstalls`, `logs`),
 		RunType:          "auto", // Default run type
-		SessionID:        generateSessionID(),
+		SessionID:        sessionID,
 		Component:        "cimian",
 		LogLevel:         parseLogLevel(cfg.LogLevel), // Parse log level from config
 		Retention:        DefaultRetentionPolicy(),
 		EnableStructured: true,
 		EnableJSON:       true,
 		EnableConsole:    true,
+		TruncateRunLog:   truncateRunLog,
+		ExistingLogDir:   existingLogDir,
 	}
 
 	// Override based on configuration flags
@@ -276,10 +323,22 @@ func newLoggerWithConfig(cfg LoggerConfig) (*Logger, error) {
 		return nil, fmt.Errorf("failed to create base log directory: %w", err)
 	}
 
-	// Create timestamped log directory
-	logDir, err := createTimestampedLogDir(cfg.BaseDir, sessionStart)
-	if err != nil {
-		return nil, err
+	var logDir string
+	var err error
+
+	if cfg.ExistingLogDir != "" {
+		// Reuse existing log directory
+		logDir = cfg.ExistingLogDir
+		// Ensure it exists
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to access existing log directory %s: %w", logDir, err)
+		}
+	} else {
+		// Create timestamped log directory
+		logDir, err = createTimestampedLogDir(cfg.BaseDir, sessionStart)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Get system information
@@ -349,6 +408,52 @@ func (l *Logger) initializeLogFiles() error {
 		if err != nil {
 			return fmt.Errorf("failed to open JSON log file: %w", err)
 		}
+	}
+
+	// Dedicated verbose run logs
+	// 1. Session run log: logs/<timestamp>/run.log
+	// 2. Report run log: reports/run.log (snapshot)
+	
+	var writers []io.WriteCloser
+
+	// 1. Session Run Log
+	sessionRunLogPath := filepath.Join(l.logDir, "run.log")
+	sessionRunLogFile, err := os.OpenFile(sessionRunLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("CRITICAL ERROR: Failed to open session run log file '%s': %v\n", sessionRunLogPath, err)
+	} else {
+		writers = append(writers, sessionRunLogFile)
+	}
+
+	// 2. Report Run Log
+	reportsDir := filepath.Join(filepath.Dir(l.config.BaseDir), "reports")
+	if err := os.MkdirAll(reportsDir, 0755); err != nil {
+		fmt.Printf("Failed to create reports directory: %v\n", err)
+	} else {
+		runLogPath := filepath.Join(reportsDir, "run.log")
+		
+		flags := os.O_CREATE | os.O_WRONLY
+		if l.config.TruncateRunLog {
+			// Attempt to remove the file first to ensure a clean start
+			// This helps if the file has weird permissions or attributes
+			if err := os.Remove(runLogPath); err != nil && !os.IsNotExist(err) {
+				fmt.Printf("Warning: Failed to remove existing run.log: %v\n", err)
+			}
+			flags |= os.O_TRUNC
+		} else {
+			flags |= os.O_APPEND
+		}
+
+		reportRunLogFile, err := os.OpenFile(runLogPath, flags, 0644)
+		if err != nil {
+			fmt.Printf("CRITICAL ERROR: Failed to open report run log file '%s': %v\n", runLogPath, err)
+		} else {
+			writers = append(writers, reportRunLogFile)
+		}
+	}
+
+	if len(writers) > 0 {
+		l.runLogFile = &MultiWriteCloser{writers: writers}
 	}
 
 	return nil
@@ -470,6 +575,14 @@ func CloseLogger() {
 		}
 		instance.jsonFile = nil
 	}
+
+	// Close run log file
+	if instance.runLogFile != nil {
+		if err := instance.runLogFile.Close(); err != nil {
+			fmt.Printf("Failed to close run log file: %v\n", err)
+		}
+		instance.runLogFile = nil
+	}
 }
 
 // logMessage is the core logging method that writes to all configured outputs
@@ -479,10 +592,6 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 
 	if l.logger == nil {
 		fmt.Printf("LOGGING NOT INITIALIZED: %s %s %v\n", level.String(), message, keyValues)
-		return
-	}
-
-	if level > l.logLevel {
 		return
 	}
 
@@ -498,6 +607,16 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 	// Create structured log entry
 	entry := l.createLogEntry(level, message, properties)
 
+	// Write to verbose run log (always captures everything)
+	if l.runLogFile != nil {
+		l.writeRunLog(entry, keyValues)
+	}
+
+	// Check verbosity level for standard logs
+	if level > l.logLevel {
+		return
+	}
+
 	// Write to main log file (backward compatible format)
 	l.writeMainLog(entry, keyValues)
 
@@ -508,6 +627,40 @@ func (l *Logger) logMessage(level LogLevel, message string, keyValues ...interfa
 
 	// Force sync all files
 	l.syncFiles()
+}
+
+// writeRunLog writes to the dedicated verbose run log
+func (l *Logger) writeRunLog(entry LogEntry, keyValues []interface{}) {
+	ts := time.Unix(entry.Time, 0).Format("2006-01-02 15:04:05")
+	baseLine := fmt.Sprintf("[%s] %-5s %s", ts, entry.Level, entry.Message)
+
+	// Append key-value pairs
+	if len(keyValues) > 0 {
+		if len(keyValues)/2 > 4 {
+			for i := 0; i < len(keyValues); i += 2 {
+				if i+1 < len(keyValues) {
+					key := fmt.Sprintf("%v", keyValues[i])
+					val := keyValues[i+1]
+					baseLine += fmt.Sprintf("\n        %s: %v", key, val)
+				}
+			}
+		} else {
+			for i := 0; i < len(keyValues); i += 2 {
+				if i+1 < len(keyValues) {
+					key := fmt.Sprintf("%v", keyValues[i])
+					val := keyValues[i+1]
+					baseLine += fmt.Sprintf(" %s: %v", key, val)
+				}
+			}
+		}
+	}
+
+	// Add error separator for errors
+	if entry.Level == "ERROR" {
+		baseLine = "\n----------------------------------------\n" + baseLine
+	}
+
+	fmt.Fprintln(l.runLogFile, baseLine)
 }
 
 // writeMainLog writes to the main install.log file in traditional format
@@ -581,6 +734,11 @@ func (l *Logger) syncFiles() {
 	}
 	if l.jsonFile != nil {
 		l.jsonFile.Sync()
+	}
+	if l.runLogFile != nil {
+		if syncer, ok := l.runLogFile.(interface{ Sync() error }); ok {
+			syncer.Sync()
+		}
 	}
 }
 
@@ -679,6 +837,11 @@ func Success(message string, keyValues ...interface{}) {
 		}
 	}
 
+	// Write to run log
+	if instance.runLogFile != nil {
+		fmt.Fprintln(instance.runLogFile, baseLine)
+	}
+
 	// Apply green color
 	coloredLine := fmt.Sprintf("%s%s%s", colorGreen, baseLine, colorReset)
 	if instance.logger != nil {
@@ -719,6 +882,26 @@ func (l *Logger) colorPrintf(color, format string, v ...interface{}) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, v...)
 	l.logger.Printf("%s[%s] %s%s", color, ts, msg, colorReset)
+
+	// Write to run log if available (either on this instance or the singleton)
+	// Map color to level
+	level := "INFO"
+	switch color {
+	case colorRed:
+		level = "ERROR"
+	case colorYellow:
+		level = "WARN"
+	case colorBlue:
+		level = "DEBUG"
+	case colorGreen:
+		level = "SUCCESS"
+	}
+
+	if l.runLogFile != nil {
+		fmt.Fprintf(l.runLogFile, "[%s] %-7s %s\n", ts, level, msg)
+	} else if instance != nil && instance.runLogFile != nil {
+		fmt.Fprintf(instance.runLogFile, "[%s] %-7s %s\n", ts, level, msg)
+	}
 }
 
 // Printf prints a regular message.
@@ -728,6 +911,13 @@ func (l *Logger) Printf(format string, v ...interface{}) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, v...)
 	l.logger.Printf("[%s] %s", ts, msg)
+
+	// Write to run log if available (either on this instance or the singleton)
+	if l.runLogFile != nil {
+		fmt.Fprintf(l.runLogFile, "[%s] INFO    %s\n", ts, msg)
+	} else if instance != nil && instance.runLogFile != nil {
+		fmt.Fprintf(instance.runLogFile, "[%s] INFO    %s\n", ts, msg)
+	}
 }
 
 // Info prints an informational message (instance method counterpart to the package-level Info).
@@ -769,6 +959,13 @@ func (l *Logger) DebugRaw(format string, v ...interface{}) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, v...)
 	l.logger.Printf("[%s] %s", ts, msg)
+
+	// Write to run log if available (either on this instance or the singleton)
+	if l.runLogFile != nil {
+		fmt.Fprintf(l.runLogFile, "[%s] DEBUG   %s\n", ts, msg)
+	} else if instance != nil && instance.runLogFile != nil {
+		fmt.Fprintf(instance.runLogFile, "[%s] DEBUG   %s\n", ts, msg)
+	}
 }
 
 // ReInit allows re-initializing the logger (e.g., after configuration reload).
@@ -781,6 +978,10 @@ func ReInit(cfg *config.Configuration) error {
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
 
+	// Capture existing state to preserve session continuity
+	existingLogDir := instance.logDir
+	existingSessionID := instance.config.SessionID
+
 	// Close all existing files
 	if instance.logFile != nil {
 		instance.logFile.Close()
@@ -790,9 +991,14 @@ func ReInit(cfg *config.Configuration) error {
 		instance.jsonFile.Close()
 		instance.jsonFile = nil
 	}
+	if instance.runLogFile != nil {
+		instance.runLogFile.Close()
+		instance.runLogFile = nil
+	}
 
-	// Create new logger
-	newLogger, err := newLogger(cfg)
+	// Create new logger, but append to run log instead of truncating
+	// AND reuse the existing log directory and session ID
+	newLogger, err := newLogger(cfg, false, existingLogDir, existingSessionID)
 	if err != nil {
 		return err
 	}
@@ -802,6 +1008,7 @@ func ReInit(cfg *config.Configuration) error {
 	instance.logLevel = newLogger.logLevel
 	instance.logFile = newLogger.logFile
 	instance.jsonFile = newLogger.jsonFile
+	instance.runLogFile = newLogger.runLogFile
 	instance.config = newLogger.config
 	instance.sessionStart = newLogger.sessionStart
 	instance.logDir = newLogger.logDir
@@ -975,12 +1182,16 @@ func (l *Logger) StartSession(runType string, metadata map[string]interface{}) e
 		return nil // Gracefully handle when structured logging is disabled
 	}
 
-	sessionID, err := l.structuredLogger.StartSession(runType, metadata)
+	// Use the existing log directory name as the session ID for structured logging
+	// This ensures both loggers write to the same directory
+	sessionID := filepath.Base(l.logDir)
+
+	actualSessionID, err := l.structuredLogger.StartSession(sessionID, runType, metadata)
 	if err != nil {
 		return fmt.Errorf("failed to start structured session: %w", err)
 	}
 
-	l.currentSessionID = sessionID
+	l.currentSessionID = actualSessionID
 	return nil
 }
 
