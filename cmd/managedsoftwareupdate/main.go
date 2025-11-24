@@ -2783,8 +2783,8 @@ func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[str
 // getInstalledItemNames returns a list of currently installed item names
 // This would typically check the registry or local state to determine what's installed
 func getInstalledItemNames() []string {
-	// Use EXACT SAME LOGIC as determining if package needs installation
-	// This ensures dependency checking matches installation detection perfectly
+	// Use GetInstalledVersion to check if ANY version is installed
+	// This ensures dependency checking works even if the installed version is older than the catalog version
 	
 	var installedItems []string
 	
@@ -2798,26 +2798,23 @@ func getInstalledItemNames() []string {
 	// Get full catalog to check all packages
 	fullCatalogMap := catalog.AuthenticatedGet(*cfg)
 	
-	// For each package in the catalog, use CheckStatus to see if it's installed
-	// This is THE EXACT SAME CHECK used when determining if installation is needed
+	// For each package in the catalog, check if it is installed
 	for _, versionMap := range fullCatalogMap {
 		for _, catalogItem := range versionMap {
-			// Use CheckStatus with "install" type - if it returns false, package is already installed
-			needsInstall, err := status.CheckStatus(catalogItem, "install", cfg.CachePath)
-			if err != nil {
-				// Skip packages we can't check
-				continue
-			}
-			
-			if !needsInstall {
-				// Package is installed (no installation needed)
-				installedItems = append(installedItems, catalogItem.Name)
-				logging.Debug("Package detected as installed via CheckStatus", "package", catalogItem.Name)
+			// Use GetInstalledVersion to check if ANY version is installed
+			installedVersion, err := status.GetInstalledVersion(catalogItem)
+			if err == nil && installedVersion != "" {
+				// Package is installed!
+				// Append "Name--Version" so CheckDependencies can verify version requirements
+				nameWithVersion := fmt.Sprintf("%s--%s", catalogItem.Name, installedVersion)
+				installedItems = append(installedItems, nameWithVersion)
+				
+				logging.Debug("Package detected as installed via GetInstalledVersion", "package", catalogItem.Name, "version", installedVersion)
 			}
 		}
 	}
 	
-	logging.Debug("Detected installed packages using CheckStatus", "count", len(installedItems))
+	logging.Debug("Detected installed packages using GetInstalledVersion", "count", len(installedItems))
 	
 	return installedItems
 }
