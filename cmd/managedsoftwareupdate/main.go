@@ -2296,19 +2296,40 @@ func identifyNewInstalls(manifestItems []manifest.Item, localCatalogMap map[stri
 			sourceManifest := mItem.SourceManifest
 			process.SetItemSource(mItem.Name, sourceManifest, "managed_installs")
 
+			// Convert manifest.InstallDetail to catalog.InstallItem
+			var installs []catalog.InstallItem
+			for _, inst := range mItem.Installs {
+				installs = append(installs, catalog.InstallItem{
+					Type:        inst.Type,
+					Path:        inst.Path,
+					MD5Checksum: inst.MD5Checksum,
+					Version:     inst.Version,
+				})
+			}
+
 			newCatItem := catalog.Item{
 				Name:    mItem.Name,
 				Version: mItem.Version,
 				Installer: catalog.InstallerItem{
 					Location: mItem.InstallerLocation,
-					Type:     "exe", // or "msi"/"nupkg" if determinable
+					Type:     mItem.InstallerType,
+					Hash:     mItem.InstallerHash,
 				},
 				SupportedArch: mItem.SupportedArch,
+				Installs:      installs,
+				// Copy other fields as needed
+				InstallCheckScript:   utils.LiteralString(mItem.InstallCheckScript),
+				UninstallCheckScript: utils.LiteralString(mItem.UninstallCheckScript),
+				PreScript:            utils.LiteralString(mItem.PreinstallScript),
+				PostScript:           utils.LiteralString(mItem.PreuninstallScript),
+				PreUninstallScript:   utils.LiteralString(mItem.PreuninstallScript),
+				OnDemand:             mItem.OnDemand,
 			}
 			
 			// Check architecture compatibility before adding to install queue
 			if !status.SupportsArchitecture(newCatItem, sysArch) {
-				logging.Warn("Architecture mismatch, skipping new install",
+				logging.Warn(fmt.Sprintf("Architecture mismatch for %s: system is %s, package supports %v", 
+					newCatItem.Name, sysArch, newCatItem.SupportedArch),
 					"item", newCatItem.Name,
 					"systemArch", sysArch,
 					"supportedArch", newCatItem.SupportedArch,
