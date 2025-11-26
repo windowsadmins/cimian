@@ -2291,13 +2291,15 @@ func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem s
 
 	reportsDir := filepath.Join(filepath.Dir(exp.baseDir), "reports")
 
-	// Generate full comprehensive items table with version info and status checks
-	packages, err := exp.GenerateItemsTable(limitDays)
+	// Generate current items table from session package info (preserves complete inventory)
+	// This uses GenerateCurrentItemsTable which reads from currentSessionPackagesInfo
+	// instead of GenerateItemsTable which calls populateFromCurrentManifests (only gets manifest packages)
+	packages, err := exp.GenerateCurrentItemsTable()
 	if err != nil {
-		return fmt.Errorf("failed to generate comprehensive items table: %w", err)
+		return fmt.Errorf("failed to generate current items table: %w", err)
 	}
 
-	// Update the items.json file
+	// Update the items.json file with full inventory
 	if err := exp.writeJSONFile(filepath.Join(reportsDir, "items.json"), packages); err != nil {
 		return fmt.Errorf("failed to export updated items: %w", err)
 	}
