@@ -24,6 +24,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// WarningError represents a warning-level error (not a hard failure)
+// Use this for any non-fatal issues that should be logged as warnings
+type WarningError struct {
+	Message string
+}
+
+func (e WarningError) Error() string {
+	return e.Message
+}
+
+// IsWarning checks if an error is a warning-level error
+func IsWarning(err error) bool {
+	_, ok := err.(WarningError)
+	return ok
+}
+
 // constructPackageURL creates a robust URL for package installers
 // This function ensures consistent URL construction across ALL functions in the codebase
 func constructPackageURL(location string, cfg *config.Configuration) string {
@@ -254,12 +270,12 @@ func firstItem(itemName string, catalogsMap map[int]map[string]catalog.Item, cfg
 		// Item truly not found in any catalog
 		if source, exists := GetItemSource(itemName); exists {
 			logging.Warn("Item not found in any catalog", "item", itemName, "source", source.GetSourceDescription(), "catalogs_searched", catalogList)
-			return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
+			return catalog.Item{}, WarningError{Message: fmt.Sprintf("item %s not found in any catalog (source: %s, searched catalogs: %s)", itemName, source.GetSourceDescription(), catalogList)}
 		}
 
 		// If no source information is available, provide generic error
 		logging.Warn("Item not found in any catalog", "item", itemName, "source", "unknown - not tracked through manifest processing", "catalogs_searched", catalogList)
-		return catalog.Item{}, download.NonRetryableError{Err: fmt.Errorf("item %s not found in any catalog (source: unknown, searched catalogs: %s)", itemName, catalogList)}
+		return catalog.Item{}, WarningError{Message: fmt.Sprintf("item %s not found in any catalog (source: unknown, searched catalogs: %s)", itemName, catalogList)}
 	}
 
 	// Filter by architecture compatibility
@@ -1053,28 +1069,37 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 		// PROGRESSIVE REPORTING: Update items.json after each item is processed
 		var itemStatus string
 		var errorMsg string
+		var warningMsg string
 		if err != nil {
-			itemStatus = "failed"
-			errorMsg = err.Error()
-			// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
-			failedItems = append(failedItems, itemName)
-			
-			// Check if this is an MSI service-related failure
-			if isMSIServiceFailure(err) {
-				msiFailedItems = append(msiFailedItems, itemName)
-				logging.Warn("MSI service failure detected for item", "item", itemName, "error", err)
+			// Check if this is a warning-level error (non-fatal issue)
+			if IsWarning(err) {
+				itemStatus = "Warning"
+				warningMsg = err.Error()
+				errorMsg = "" // This is a warning, not an error
+				// Don't add to failedItems since this is just a warning, not a hard failure
+			} else {
+				itemStatus = "failed"
+				errorMsg = err.Error()
+				// Error already logged by processInstallWithAdvancedLogic or firstItem, just track the failure
+				failedItems = append(failedItems, itemName)
 				
-				// If there are more items to process, attempt MSI service recovery
-				if i < len(itemNames)-1 {
-					logging.Info("Attempting MSI service recovery before next item", 
-						"failedItem", itemName, 
-						"remainingItems", len(itemNames)-i-1,
-						"nextItem", itemNames[i+1])
+				// Check if this is an MSI service-related failure
+				if isMSIServiceFailure(err) {
+					msiFailedItems = append(msiFailedItems, itemName)
+					logging.Warn("MSI service failure detected for item", "item", itemName, "error", err)
 					
-					if recoveryErr := recoverMSIServiceBetweenItems(cfg); recoveryErr != nil {
-						logging.Warn("MSI service recovery failed", "error", recoveryErr)
-					} else {
-						logging.Info("MSI service recovery completed successfully")
+					// If there are more items to process, attempt MSI service recovery
+					if i < len(itemNames)-1 {
+						logging.Info("Attempting MSI service recovery before next item", 
+							"failedItem", itemName, 
+							"remainingItems", len(itemNames)-i-1,
+							"nextItem", itemNames[i+1])
+						
+						if recoveryErr := recoverMSIServiceBetweenItems(cfg); recoveryErr != nil {
+							logging.Warn("MSI service recovery failed", "error", recoveryErr)
+						} else {
+							logging.Info("MSI service recovery completed successfully")
+						}
 					}
 				}
 			}
@@ -1086,7 +1111,14 @@ func InstallsWithAdvancedLogic(itemNames []string, catalogsMap map[int]map[strin
 
 		// PROGRESSIVE REPORTING: Export updated items.json after each item
 		if !checkOnly { // Only during actual installations
-			if exportErr := exporter.ExportItemProgressUpdate(3, itemName, itemStatus, errorMsg); exportErr != nil {
+			var exportErr error
+			if warningMsg != "" {
+				exportErr = exporter.ExportItemProgressUpdate(3, itemName, itemStatus, errorMsg, warningMsg)
+			} else {
+				exportErr = exporter.ExportItemProgressUpdate(3, itemName, itemStatus, errorMsg)
+			}
+			
+			if exportErr != nil {
 				logging.Debug("Failed to export progressive item update", "item", itemName, "error", exportErr)
 				// Don't fail the installation if reporting fails
 			} else {
