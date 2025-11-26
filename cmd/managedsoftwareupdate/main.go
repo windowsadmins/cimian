@@ -1526,6 +1526,21 @@ func main() {
 	}
 	dedupedManifestItems := status.DeduplicateManifestItems(manifestItems)
 
+	// Log the count of managed installs to match user expectations and verify data integrity
+	logging.Info("MANAGED INSTALLS (%d items)", len(dedupedManifestItems))
+
+	// Ensure the exporter has the authoritative list of packages for items.json
+	// This handles cases where the initial manifestItems list might differ from the final deduped list
+	// or if SetCurrentSessionPackagesInfo fails to populate for some reason.
+	var authoritativePackages []string
+	for _, item := range dedupedManifestItems {
+		if item.Name != "" {
+			authoritativePackages = append(authoritativePackages, item.Name)
+		}
+	}
+	exporter.SetCurrentSessionPackages(authoritativePackages)
+	logging.Info("Updated current session packages for items.json with deduped list", "count", len(authoritativePackages))
+
 	if verbosity >= 2 {
 		logging.Info("Preparing download items...")
 	}
