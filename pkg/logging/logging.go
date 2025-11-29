@@ -676,7 +676,7 @@ func (l *Logger) writeMainLog(entry LogEntry, keyValues []interface{}) {
 	case "WARN":
 		colorCode = colorYellow
 	case "DEBUG":
-		colorCode = colorBlue
+		colorCode = colorCyan
 	case "INFO":
 		colorCode = "" // No color for INFO
 	default:
@@ -747,7 +747,7 @@ const (
 	colorReset  = "\033[0m"
 	colorRed    = "\033[31m"
 	colorYellow = "\033[33m"
-	colorBlue   = "\033[34m"
+	colorCyan   = "\033[36m"
 	colorGreen  = "\033[32m"
 )
 
@@ -891,7 +891,7 @@ func (l *Logger) colorPrintf(color, format string, v ...interface{}) {
 		level = "ERROR"
 	case colorYellow:
 		level = "WARN"
-	case colorBlue:
+	case colorCyan:
 		level = "DEBUG"
 	case colorGreen:
 		level = "SUCCESS"
@@ -940,9 +940,9 @@ func (l *Logger) Warning(format string, v ...interface{}) {
 	l.colorPrintf(colorYellow, format, v...)
 }
 
-// Debug prints a debug message in blue.
+// Debug prints a debug message in cyan.
 func (l *Logger) Debug(format string, v ...interface{}) {
-	l.colorPrintf(colorBlue, format, v...)
+	l.colorPrintf(colorCyan, format, v...)
 }
 
 // Fatal prints an error message in red and exits.
@@ -951,7 +951,7 @@ func (l *Logger) Fatal(format string, v ...interface{}) {
 	os.Exit(1)
 }
 
-// DebugRaw prints a debug message without forcing a blue color.
+// DebugRaw prints a debug message without forcing a cyan color.
 // This preserves any ANSI escape codes already present in the message.
 func (l *Logger) DebugRaw(format string, v ...interface{}) {
 	l.mu.RLock()
