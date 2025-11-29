@@ -1529,6 +1529,69 @@ func main() {
 	// Log the count of managed installs to match user expectations and verify data integrity
 	logging.Info("MANAGED INSTALLS (%d items)", len(dedupedManifestItems))
 
+	// =====================================================================
+	// DEPENDENCY RESOLUTION: Resolve requires and update_for dependencies
+	// =====================================================================
+	if verbosity >= 2 {
+		logging.Info("Resolving dependencies (requires and update_for)...")
+	}
+	
+	// Extract item names from manifest for dependency resolution
+	var manifestItemNames []string
+	for _, item := range dedupedManifestItems {
+		if item.Name != "" && (item.Action == "install" || item.Action == "update" || item.Action == "") {
+			manifestItemNames = append(manifestItemNames, item.Name)
+		}
+	}
+	
+	// Get installed items for dependency checking
+	installedItemsForDeps := getInstalledItemNames()
+	
+	// Resolve all dependencies using the full catalog
+	resolvedItemNames := catalog.ResolveDependencies(manifestItemNames, fullCatalogMap, installedItemsForDeps)
+	
+	// Create a map of original manifest items by name for quick lookup
+	manifestItemsByName := make(map[string]manifest.Item)
+	for _, item := range dedupedManifestItems {
+		manifestItemsByName[strings.ToLower(item.Name)] = item
+	}
+	
+	// Add any new items from dependency resolution to the manifest items list
+	for _, resolvedName := range resolvedItemNames {
+		resolvedNameLower := strings.ToLower(resolvedName)
+		if _, exists := manifestItemsByName[resolvedNameLower]; !exists {
+			// This is a dependency that was added - create a manifest item for it
+			if catItem, found := localCatalogMap[resolvedNameLower]; found {
+				newManifestItem := manifest.Item{
+					Name:              catItem.Name,
+					Version:           catItem.Version,
+					InstallerLocation: catItem.Installer.Location,
+					InstallerType:     catItem.Installer.Type,
+					InstallerHash:     catItem.Installer.Hash,
+					SupportedArch:     catItem.SupportedArch,
+					Action:            "install",
+					SourceManifest:    "dependency",
+				}
+				dedupedManifestItems = append(dedupedManifestItems, newManifestItem)
+				manifestItemsByName[resolvedNameLower] = newManifestItem
+				logging.Info("Added dependency to manifest items", "dependency", catItem.Name)
+				
+				// Set source tracking for the dependency
+				process.SetItemSource(catItem.Name, "dependency", "requires")
+			} else {
+				logging.Debug("Dependency not found in local catalog", "dependency", resolvedName)
+			}
+		}
+	}
+	
+	if len(resolvedItemNames) > len(manifestItemNames) {
+		logging.Info("Dependencies resolved", 
+			"original", len(manifestItemNames), 
+			"afterResolution", len(resolvedItemNames),
+			"addedDependencies", len(resolvedItemNames)-len(manifestItemNames))
+	}
+	// =====================================================================
+	
 	// Ensure the exporter has the authoritative list of packages for items.json
 	// This handles cases where the initial manifestItems list might differ from the final deduped list
 	// or if SetCurrentSessionPackagesInfo fails to populate for some reason.

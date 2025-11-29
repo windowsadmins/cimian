@@ -360,6 +360,163 @@ func CheckDependencies(item Item, installedItems []string, scheduledItems []stri
 	return missingDeps
 }
 
+// ResolveDependencies takes a list of item names and returns a complete list including all dependencies.
+// This handles both 'requires' (dependencies that must be installed first) and 'update_for' 
+// (items that should be installed when their target is being installed).
+// The returned list is ordered with dependencies first, followed by the original items.
+func ResolveDependencies(itemNames []string, catalogMap map[int]map[string]Item, installedItems []string) []string {
+	logging.Debug("Resolving dependencies for items", "count", len(itemNames), "items", itemNames)
+	
+	// Track items already processed to avoid circular dependencies
+	processed := make(map[string]bool)
+	// Track items in the result list
+	resultSet := make(map[string]bool)
+	// Final ordered result - dependencies first, then original items
+	var dependencyList []string
+	var mainItemList []string
+	
+	// Helper function to get item from catalog (case-insensitive)
+	getItem := func(name string) (Item, bool) {
+		nameLower := strings.ToLower(name)
+		for _, cat := range catalogMap {
+			for key, item := range cat {
+				if strings.ToLower(key) == nameLower || strings.ToLower(item.Name) == nameLower {
+					return item, true
+				}
+			}
+		}
+		return Item{}, false
+	}
+	
+	// Recursive function to process an item and its dependencies
+	var processItem func(itemName string, isDirectRequest bool)
+	processItem = func(itemName string, isDirectRequest bool) {
+		nameLower := strings.ToLower(itemName)
+		
+		// Skip if already processed
+		if processed[nameLower] {
+			return
+		}
+		processed[nameLower] = true
+		
+		// Get the item from catalog
+		item, found := getItem(itemName)
+		if !found {
+			logging.Debug("Item not found in catalog during dependency resolution", "item", itemName)
+			// Still add to results if it was directly requested
+			if isDirectRequest && !resultSet[nameLower] {
+				resultSet[nameLower] = true
+				mainItemList = append(mainItemList, itemName)
+			}
+			return
+		}
+		
+		// Process 'requires' dependencies first
+		if len(item.Requires) > 0 {
+			logging.Debug("Processing requires dependencies", "item", itemName, "requires", item.Requires)
+			for _, reqItem := range item.Requires {
+				reqName, _ := SplitNameAndVersion(reqItem)
+				reqNameLower := strings.ToLower(reqName)
+				
+				// Check if dependency is already installed
+				isInstalled := false
+				for _, installed := range installedItems {
+					installedName, _ := SplitNameAndVersion(installed)
+					if strings.EqualFold(installedName, reqName) {
+						isInstalled = true
+						logging.Debug("Required dependency already installed", "dependency", reqName, "for", itemName)
+						break
+					}
+				}
+				
+				// If not installed and not in results, add it
+				if !isInstalled && !resultSet[reqNameLower] {
+					// Recursively process the dependency first (so its deps come before it)
+					processItem(reqName, false)
+					
+					// Add to dependency list if not already there
+					if !resultSet[reqNameLower] {
+						resultSet[reqNameLower] = true
+						dependencyList = append(dependencyList, reqName)
+						logging.Info("Adding required dependency to install list", "dependency", reqName, "requiredBy", itemName)
+					}
+				}
+			}
+		}
+		
+		// Add the item itself to results
+		if !resultSet[nameLower] {
+			resultSet[nameLower] = true
+			if isDirectRequest {
+				mainItemList = append(mainItemList, itemName)
+			} else {
+				dependencyList = append(dependencyList, itemName)
+			}
+		}
+	}
+	
+	// Process all requested items
+	for _, itemName := range itemNames {
+		processItem(itemName, true)
+	}
+	
+	// Now find update_for items - items that should be installed when their target is being installed
+	// These are items that have update_for pointing to items in our result set
+	logging.Debug("Looking for update_for items for the install list")
+	var updateForItems []string
+	
+	for _, cat := range catalogMap {
+		for _, catalogItem := range cat {
+			if len(catalogItem.UpdateFor) > 0 {
+				for _, updateForTarget := range catalogItem.UpdateFor {
+					targetName, _ := SplitNameAndVersion(updateForTarget)
+					targetNameLower := strings.ToLower(targetName)
+					
+					// Check if the target is in our result set (either as dependency or main item)
+					if resultSet[targetNameLower] {
+						itemNameLower := strings.ToLower(catalogItem.Name)
+						
+						// Check if the update item is already in results or installed
+						if resultSet[itemNameLower] {
+							continue
+						}
+						
+						isInstalled := false
+						for _, installed := range installedItems {
+							installedName, _ := SplitNameAndVersion(installed)
+							if strings.EqualFold(installedName, catalogItem.Name) {
+								isInstalled = true
+								break
+							}
+						}
+						
+						if !isInstalled {
+							resultSet[itemNameLower] = true
+							updateForItems = append(updateForItems, catalogItem.Name)
+							logging.Info("Adding update_for item to install list", "update", catalogItem.Name, "updateFor", updateForTarget)
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Build final result: dependencies first, then main items, then update_for items
+	result := append(dependencyList, mainItemList...)
+	result = append(result, updateForItems...)
+	
+	// Remove duplicates while preserving order
+	result = removeDuplicates(result)
+	
+	logging.Info("Dependency resolution complete", 
+		"originalCount", len(itemNames), 
+		"dependenciesAdded", len(dependencyList),
+		"updateForAdded", len(updateForItems),
+		"totalCount", len(result))
+	
+	return result
+}
+
 // FindItemsRequiring finds all items in catalogs that require the given item.
 // This is used during removal to determine what dependent items also need to be removed.
 func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []Item {
