@@ -1717,6 +1717,10 @@ func syncToCloud(conf *config.Configuration, source, destinationSubPath string) 
 }
 
 func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
+	// Save installs array for later - we'll append it as a commented-out section
+	savedInstalls := pkgsInfo.Installs
+	pkgsInfo.Installs = nil // Clear so it won't be encoded in the main YAML
+
 	// Encode pkgsInfo -> YAML (in memory)
 	var buf bytes.Buffer
 	encoder := yaml.NewEncoder(&buf)
@@ -1858,7 +1862,33 @@ func encodeWithSelectiveBlockScalars(pkgsInfo PkgsInfo) ([]byte, error) {
 	)
 	yamlStr = replacer.Replace(yamlStr)
 
-	// 3) Return the final bytes
+	// 4) Append commented-out installs array if we have any
+	if len(savedInstalls) > 0 {
+		yamlStr = strings.TrimSuffix(yamlStr, "\n")
+		yamlStr += "\n\n# installs array commented out by default as Cimian runs updates based on version alone\n"
+		yamlStr += "# MD5 hashes saved to pkginfo under the installs array for ease of use if required\n"
+
+		// Encode the installs array to YAML
+		installsStruct := struct {
+			Installs []InstallItem `yaml:"installs"`
+		}{Installs: savedInstalls}
+
+		var installsBuf bytes.Buffer
+		installsEncoder := yaml.NewEncoder(&installsBuf)
+		installsEncoder.SetIndent(2)
+		if err := installsEncoder.Encode(&installsStruct); err == nil {
+			installsEncoder.Close()
+			// Comment out each line of the installs YAML
+			installsYaml := installsBuf.String()
+			for _, line := range strings.Split(installsYaml, "\n") {
+				if strings.TrimSpace(line) != "" {
+					yamlStr += "# " + line + "\n"
+				}
+			}
+		}
+	}
+
+	// 5) Return the final bytes
 	return []byte(yamlStr), nil
 
 }
