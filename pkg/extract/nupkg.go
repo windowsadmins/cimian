@@ -13,10 +13,22 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// MaxInstallItems is the maximum number of install items to include in the installs array.
+// This prevents excessively large installs arrays for packages with many files.
+// We select the most recently modified files for better tracking.
+const MaxInstallItems = 3
+
+// zipFileInfo holds file metadata for sorting by modification time
+type zipFileInfo struct {
+	file     *zip.File
+	finalPath string
+}
 
 // SingleQuotedString ensures single quotes in YAML output.
 type SingleQuotedString string
@@ -121,7 +133,8 @@ func NupkgMetadata(nupkgPath string) (string, string, string, string, string) {
 //	C:\ProgramData\chocolatey\lib\<pkgId>\tools\<filename>
 //
 // Only the file extensions in extsWeCare get added.
-// BuildNupkgInstalls enumerates the contents of a .nupkg, computes MD5 checksums, etc.
+// To avoid excessive installs arrays, only the top MaxInstallItems most recently 
+// modified files are included.
 func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 	var results []InstallItem
 
@@ -137,6 +150,8 @@ func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 		".ps1": true, ".txt": true, ".json": true, ".config": true,
 	}
 
+	// Collect candidate files with their metadata
+	var candidates []zipFileInfo
 	for _, f := range zr.File {
 		// skip directories
 		if f.FileInfo().IsDir() {
@@ -151,6 +166,24 @@ func BuildNupkgInstalls(nupkgPath, pkgID, pkgVersion string) []InstallItem {
 		// guess final path => C:\ProgramData\chocolatey\lib\<pkgID>\tools\<filename>
 		filenameOnly := filepath.Base(f.Name)
 		finalPath := filepath.Join(`C:\ProgramData\chocolatey\lib`, pkgID, `tools`, filenameOnly)
+
+		candidates = append(candidates, zipFileInfo{file: f, finalPath: finalPath})
+	}
+
+	// Sort by modification time (most recent first)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].file.Modified.After(candidates[j].file.Modified)
+	})
+
+	// Take only the top MaxInstallItems
+	limit := MaxInstallItems
+	if len(candidates) < limit {
+		limit = len(candidates)
+	}
+
+	for i := 0; i < limit; i++ {
+		f := candidates[i].file
+		finalPath := candidates[i].finalPath
 
 		// compute MD5
 		md5Val, _ := computeMD5FromZipFile(f)
@@ -177,6 +210,7 @@ var reInstallLocation = regexp.MustCompile(`(?i)\$installLocation\s*=\s*["']([^"
 //  3. Enumerate only "payload/" subfolders, compute MD5, preserve subfolder structure
 //  4. Keep "version" in each item = rawVersion
 //  5. Skip .nuspec, [Content_Types].xml, _rels, "tools/" files
+//  6. Return only the top MaxInstallItems most recently modified files
 func BuildCimianPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem, error) {
 	var results []InstallItem
 
@@ -211,6 +245,9 @@ func BuildCimianPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem,
 		installLocation = filepath.Join(programFiles, truncatedName)
 	}
 
+	// Collect candidate files with their metadata
+	var candidates []zipFileInfo
+
 	// enumerate only payload/ subfolder
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
@@ -233,6 +270,24 @@ func BuildCimianPkgInstalls(nupkgPath, pkgID, rawVersion string) ([]InstallItem,
 		subPath := strings.TrimPrefix(f.Name, "payload/")
 		subPath = strings.TrimPrefix(subPath, `/`)
 		finalPath := filepath.Join(installLocation, subPath)
+
+		candidates = append(candidates, zipFileInfo{file: f, finalPath: finalPath})
+	}
+
+	// Sort by modification time (most recent first)
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].file.Modified.After(candidates[j].file.Modified)
+	})
+
+	// Take only the top MaxInstallItems
+	limit := MaxInstallItems
+	if len(candidates) < limit {
+		limit = len(candidates)
+	}
+
+	for i := 0; i < limit; i++ {
+		f := candidates[i].file
+		finalPath := candidates[i].finalPath
 
 		md5Val, _ := computeMD5FromZipFile(f)
 
