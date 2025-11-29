@@ -956,7 +956,47 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 				return true, nil
 			}
 		}
-		return false, nil
+		
+		// For non-MSI types (exe, nupkg, pkg, etc.) without installs array,
+		// fall back to checking Windows Uninstall registry for version comparison
+		logging.Debug("No installs array - checking Windows Uninstall registry for version",
+			"item", item.Name, "installerType", item.Installer.Type)
+		
+		installedVersion, err := getLocalInstalledVersion(item)
+		if err != nil {
+			logging.Debug("Error reading installed version from registry",
+				"item", item.Name, "error", err)
+		}
+		
+		if installedVersion != "" {
+			// Found in registry - compare versions
+			if installType == "uninstall" {
+				logging.Info("Package found in Windows Uninstall registry, uninstall may be needed",
+					"item", item.Name, "installedVersion", installedVersion)
+				return true, nil
+			}
+			
+			// For install/update, check if installed version meets requirement
+			if !IsOlderVersion(installedVersion, item.Version) {
+				logging.Info("Package already installed with sufficient version via Windows registry",
+					"item", item.Name, "installedVersion", installedVersion, "requiredVersion", item.Version)
+				return false, nil
+			}
+			logging.Info("Package version outdated via Windows registry, update needed",
+				"item", item.Name, "installedVersion", installedVersion, "requiredVersion", item.Version)
+			return true, nil
+		}
+		
+		// Not found in registry - for install, assume needed; for uninstall, assume not installed
+		if installType == "uninstall" {
+			logging.Debug("Package not found in Windows registry, assuming not installed",
+				"item", item.Name)
+			return false, nil
+		}
+		
+		logging.Info("Package not found in Windows registry, installation needed",
+			"item", item.Name)
+		return true, nil
 	}
 
 	for _, install := range item.Installs {
