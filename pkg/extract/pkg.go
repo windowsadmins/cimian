@@ -153,17 +153,9 @@ func ExtractPkgBuildInfo(pkgPath string) (*PkgBuildInfo, error) {
 	return &buildInfo, nil
 }
 
-// pkgFileInfo holds file metadata for sorting by modification time
-type pkgFileInfo struct {
-	file      *zip.File
-	finalPath string
-}
-
 // BuildPkgInstalls enumerates the payload contents of a .pkg package and returns
 // an array of InstallItem for Cimian's "installs" array. This maintains compatibility
 // with the existing installation tracking system.
-// To avoid excessive installs arrays, only the top MaxInstallItems (from nupkg.go)
-// most recently modified files are included.
 func BuildPkgInstalls(pkgPath, pkgID, pkgVersion string) ([]InstallItem, error) {
 	var results []InstallItem
 
@@ -184,7 +176,6 @@ func BuildPkgInstalls(pkgPath, pkgID, pkgVersion string) ([]InstallItem, error) 
 	if installLocation == "" {
 		// Installer-type package - files stay in extraction location
 		// For installer packages, we track the installer file itself
-		var candidates []pkgFileInfo
 		for _, f := range zipReader.File {
 			if f.FileInfo().IsDir() {
 				continue
@@ -200,38 +191,20 @@ func BuildPkgInstalls(pkgPath, pkgID, pkgVersion string) ([]InstallItem, error) 
 			if ext == ".msi" || ext == ".exe" || ext == ".msix" {
 				subPath := strings.TrimPrefix(f.Name, "payload/")
 				tempPath := filepath.Join(`C:\Temp\pkg_install`, subPath)
-				candidates = append(candidates, pkgFileInfo{file: f, finalPath: tempPath})
+
+				md5Val, _ := computeMD5FromZipFile(f)
+
+				item := InstallItem{
+					Type:        SingleQuotedString("installer"),
+					Path:        SingleQuotedString(tempPath),
+					MD5Checksum: SingleQuotedString(md5Val),
+					Version:     SingleQuotedString(pkgVersion),
+				}
+				results = append(results, item)
 			}
-		}
-
-		// Sort by modification time (most recent first)
-		sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].file.Modified.After(candidates[j].file.Modified)
-		})
-
-		// Take only the top MaxInstallItems
-		limit := MaxInstallItems
-		if len(candidates) < limit {
-			limit = len(candidates)
-		}
-
-		for i := 0; i < limit; i++ {
-			f := candidates[i].file
-			finalPath := candidates[i].finalPath
-
-			md5Val, _ := computeMD5FromZipFile(f)
-
-			item := InstallItem{
-				Type:        SingleQuotedString("installer"),
-				Path:        SingleQuotedString(finalPath),
-				MD5Checksum: SingleQuotedString(md5Val),
-				Version:     SingleQuotedString(pkgVersion),
-			}
-			results = append(results, item)
 		}
 	} else {
 		// Copy-type package - enumerate payload files with final paths
-		var candidates []pkgFileInfo
 		for _, f := range zipReader.File {
 			if f.FileInfo().IsDir() {
 				continue
@@ -246,24 +219,6 @@ func BuildPkgInstalls(pkgPath, pkgID, pkgVersion string) ([]InstallItem, error) 
 			subPath := strings.TrimPrefix(f.Name, "payload/")
 			subPath = strings.TrimPrefix(subPath, `/`)
 			finalPath := filepath.Join(installLocation, subPath)
-
-			candidates = append(candidates, pkgFileInfo{file: f, finalPath: finalPath})
-		}
-
-		// Sort by modification time (most recent first)
-		sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].file.Modified.After(candidates[j].file.Modified)
-		})
-
-		// Take only the top MaxInstallItems
-		limit := MaxInstallItems
-		if len(candidates) < limit {
-			limit = len(candidates)
-		}
-
-		for i := 0; i < limit; i++ {
-			f := candidates[i].file
-			finalPath := candidates[i].finalPath
 
 			md5Val, _ := computeMD5FromZipFile(f)
 
