@@ -67,7 +67,6 @@ func AuthenticatedGetEnhanced(cfg config.Configuration) map[int]map[string]Item 
 
 	// Ensure at least one catalog is defined
 	if len(cfg.Catalogs) < 1 {
-		logging.Error("Unable to continue, no catalogs assigned", "catalogs", cfg.Catalogs)
 		return catalogMap
 	}
 
