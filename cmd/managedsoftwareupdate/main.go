@@ -1412,19 +1412,28 @@ func main() {
 	}
 
 	// Special fallback for --manifest flag: if no catalogs were loaded from the manifest, use Production
+	// Try multiple common catalog name variations (Production, production, Prod, prod)
 	if *manifestTarget != "" && len(cfg.Catalogs) == 0 {
-		cfg.Catalogs = []string{"Production"}
-		logging.Info("No catalogs found in manifest when using --manifest flag, falling back to Production catalog")
+		catalogVariations := []string{"Production", "production", "Prod", "prod"}
+		var foundCatalog string
 		
-		// Download and process the Production catalog since it wasn't loaded automatically
-		statusReporter.Detail("Downloading Production catalog...")
-		catURL := fmt.Sprintf("%s/catalogs/Production.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"))
-		catLocal := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, "Production.yaml")
+		statusReporter.Detail("Searching for Production catalog...")
+		for _, catalogName := range catalogVariations {
+			catURL := fmt.Sprintf("%s/catalogs/%s.yaml", strings.TrimRight(cfg.SoftwareRepoURL, "/"), catalogName)
+			catLocal := filepath.Join(`C:\ProgramData\ManagedInstalls\catalogs`, catalogName+".yaml")
+			
+			if err := download.DownloadFile(catURL, catLocal, cfg, 0, statusReporter); err == nil {
+				foundCatalog = catalogName
+				logging.Info("Successfully downloaded catalog for --manifest mode", "catalog", catalogName)
+				break
+			}
+		}
 		
-		if err := download.DownloadFile(catURL, catLocal, cfg, 0, statusReporter); err != nil {
-			logging.Error("Failed to download Production catalog: %v", err)
+		if foundCatalog != "" {
+			cfg.Catalogs = []string{foundCatalog}
+			logging.Info("No catalogs found in manifest when using --manifest flag, falling back to catalog", "catalog", foundCatalog)
 		} else {
-			logging.Info("Successfully downloaded Production catalog for --manifest mode")
+			logging.Error("Failed to download any Production catalog variant (tried: %v)", catalogVariations)
 		}
 	}
 
@@ -1545,7 +1554,7 @@ func main() {
 	}
 	
 	// Get installed items for dependency checking
-	installedItemsForDeps := getInstalledItemNames()
+	installedItemsForDeps := getInstalledItemNames(cfg)
 	
 	// Resolve all dependencies using the full catalog
 	resolvedItemNames := catalog.ResolveDependencies(manifestItemNames, fullCatalogMap, installedItemsForDeps)
@@ -2847,7 +2856,7 @@ func downloadAndInstallPerItem(items []catalog.Item, cfg *config.Configuration, 
 func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration, statusReporter utils.Reporter, verbosity int, exporter *reporting.DataExporter) error {
 	// Get list of currently installed items for dependency checking
 	statusReporter.Detail("Checking currently installed items...")
-	installedItems := getInstalledItemNames()
+	installedItems := getInstalledItemNames(cfg)
 
 	// Convert catalog.Item slice to string slice for processing
 	var itemNames []string
@@ -2866,7 +2875,7 @@ func downloadAndInstallWithAdvancedLogic(items []catalog.Item, catalogMap map[in
 // uninstallWithAdvancedLogic handles uninstalling with advanced dependency logic
 func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[string]catalog.Item, cfg *config.Configuration, statusReporter utils.Reporter) error {
 	// Get list of currently installed items for dependency checking
-	installedItems := getInstalledItemNames()
+	installedItems := getInstalledItemNames(cfg)
 
 	// Convert catalog.Item slice to string slice for processing
 	var itemNames []string
@@ -2881,17 +2890,22 @@ func uninstallWithAdvancedLogic(items []catalog.Item, catalogMap map[int]map[str
 
 // getInstalledItemNames returns a list of currently installed item names
 // This would typically check the registry or local state to determine what's installed
-func getInstalledItemNames() []string {
+// Accepts a config pointer to use the already-loaded configuration with any runtime modifications
+// (e.g., --manifest flag fallback to Production catalog)
+func getInstalledItemNames(cfg *config.Configuration) []string {
 	// Use GetInstalledVersion to check if ANY version is installed
 	// This ensures dependency checking works even if the installed version is older than the catalog version
 	
 	var installedItems []string
 	
-	// Get configuration for cache path
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		logging.Warn("Failed to load config for installed items detection", "error", err)
-		return installedItems
+	// If no config provided, try to load one (fallback for any edge cases)
+	if cfg == nil {
+		loadedCfg, err := config.LoadConfig()
+		if err != nil {
+			logging.Warn("Failed to load config for installed items detection", "error", err)
+			return installedItems
+		}
+		cfg = loadedCfg
 	}
 	
 	// Get full catalog to check all packages
