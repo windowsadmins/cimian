@@ -200,16 +200,38 @@ Cimian.sln
 - [ ] Integrate with new extraction services
 - [ ] Modern CLI interface
 
-### Phase 5: Testing and Validation
-**Timeline**: 1-2 months
+### Phase 5: Testing and Validation (CRITICAL)
+**Timeline**: 2-3 months (Runs parallel with Phases 2-4)
 
-#### 5.1 Comprehensive Testing
-- [ ] Unit tests for all components
-- [ ] Integration tests
-- [ ] Performance benchmarks
-- [ ] Regression testing against Go implementation
+> ⚠️ **CRITICAL**: See [Migration Testing Strategy](./migration-testing-strategy.md) for the complete testing approach.
 
-#### 5.2 Documentation and Training
+Testing is not a final phase—it runs **continuously throughout migration**. The Go codebase contains years of battle-tested logic for complex decision trees. No Go code is retired until the C# equivalent produces identical outputs for all test scenarios.
+
+#### 5.1 Parity Testing Framework
+- [ ] **Golden File Tests**: Capture Go outputs as "golden files", validate C# matches exactly
+- [ ] **Side-by-Side Comparison**: Run Go and C# binaries with identical inputs, compare outputs
+- [ ] **Decision Tree Validation**: Comprehensive tests for all installation decision paths
+- [ ] **Conditional Items Tests**: Test all condition operators, nesting, and complex expressions
+
+#### 5.2 Unit Parity Tests
+- [ ] `pkg/predicates` → `Cimian.Core.Predicates`: 100% expression parsing parity
+- [ ] `pkg/status` → `Cimian.Core.Status`: 100% version comparison parity  
+- [ ] `pkg/version` → `Cimian.Core.Version`: 100% normalization parity
+- [ ] All core logic packages tested for behavioral equivalence
+
+#### 5.3 Integration Parity Tests
+- [ ] `managedsoftwareupdate --checkonly` output comparison
+- [ ] `cimiimport` package analysis output comparison
+- [ ] `makecatalogs` catalog generation comparison
+- [ ] Full workflow comparison across all tools
+
+#### 5.4 Production Validation
+- [ ] Shadow mode deployment (C# runs, logs, but Go executes)
+- [ ] 2-week parallel operation on 100+ test machines
+- [ ] Zero unexplained behavioral differences
+- [ ] Stakeholder sign-off before Go retirement
+
+#### 5.5 Documentation and Training
 - [ ] API documentation
 - [ ] Migration runbooks
 - [ ] Developer training materials
@@ -365,6 +387,25 @@ public class AuthenticatedHttpClient
 2. **Data Migration**: Careful handling of existing configurations and data
 3. **Deployment**: Gradual rollout with rollback capability
 4. **User Adoption**: Clear migration documentation and support
+
+### Logic Preservation Risks (CRITICAL)
+
+The Go codebase contains complex decision logic that has been battle-tested across 10,000+ machines. Losing this logic during migration is the highest-risk scenario.
+
+**High-Risk Logic Areas**:
+1. **Conditional Items Evaluation**: Complex expression parsing with OR/AND/NOT/ANY operators, nested conditions
+2. **Version Comparison**: Multiple version formats (semantic, Windows build, date-based, Chrome-style)
+3. **Installation Detection**: Multi-source detection (Registry, file system, install check scripts)
+4. **Dependency Resolution**: Topological ordering, circular dependency detection
+5. **Architecture Selection**: x64/arm64/x86 compatibility logic with emulation detection
+
+**Mitigation Strategy**:
+- **Golden File Testing**: Capture Go outputs for all test scenarios, validate C# produces identical results
+- **Side-by-Side Execution**: Run both implementations in parallel, compare every decision
+- **Shadow Mode Deployment**: C# runs and logs decisions, but Go performs actual installations
+- **Gradual Cutover**: Switch one tool at a time, only after 100% parity validation
+
+See [Migration Testing Strategy](./migration-testing-strategy.md) for complete testing approach.
 
 ### Mitigation Strategies
 - Maintain Go codebase until C# version is fully validated
