@@ -1,0 +1,63 @@
+# Simple Catalog - Basic test catalog with few items
+# Used for: Basic catalog parsing validation
+
+items:
+  - name: 7-Zip
+    version: "24.09"
+    display_name: "7-Zip File Archiver"
+    category: "Utilities"
+    description: "Free file archiver with high compression ratio"
+    developer: "Igor Pavlov"
+    installer:
+      location: "\\software\\7-Zip\\7-Zip-24.09-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+      - arm64
+    installs:
+      - path: "C:\\Program Files\\7-Zip\\7z.exe"
+        type: "file"
+    size: 1572864
+    hash: "d4e46e3b5c6e8f7a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a"
+
+  - name: Notepad++
+    version: "8.7.1"
+    display_name: "Notepad++"
+    category: "Development"
+    description: "Free source code editor"
+    developer: "Don Ho"
+    installer:
+      location: "\\software\\Notepad++\\npp.8.7.1.Installer.x64.exe"
+      type: "exe"
+      arguments:
+        - "/S"
+    supported_arch:
+      - x64
+    installs:
+      - path: "C:\\Program Files\\Notepad++\\notepad++.exe"
+        type: "file"
+    size: 4567890
+    hash: "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+
+  - name: VSCode
+    version: "1.95.3"
+    display_name: "Visual Studio Code"
+    category: "Development"
+    description: "Code editing. Redefined."
+    developer: "Microsoft"
+    installer:
+      location: "\\software\\VSCode\\VSCodeSetup-x64-1.95.3.exe"
+      type: "exe"
+      arguments:
+        - "/VERYSILENT"
+        - "/NORESTART"
+        - "/MERGETASKS=!runcode"
+    supported_arch:
+      - x64
+      - arm64
+    installs:
+      - path: "C:\\Users\\*\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
+        type: "file"
+    uninstall_name: "Microsoft Visual Studio Code"
+    size: 98765432
+    hash: "f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2"

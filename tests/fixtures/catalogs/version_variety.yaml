@@ -1,0 +1,118 @@
+# Version Variety Catalog - Multiple versions of same items
+# Used for: Version selection and deduplication testing
+
+items:
+  # Chrome - Multiple versions for version comparison testing
+  - name: Chrome
+    version: "139.0.7258.100"
+    display_name: "Google Chrome (139.0.7258.100)"
+    installer:
+      location: "\\software\\Chrome\\Chrome-139.0.7258.100-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+    installs:
+      - path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        type: "file"
+    
+  - name: Chrome
+    version: "139.0.7258.139"
+    display_name: "Google Chrome (139.0.7258.139)"
+    installer:
+      location: "\\software\\Chrome\\Chrome-139.0.7258.139-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+    installs:
+      - path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        type: "file"
+        
+  - name: Chrome
+    version: "140.0.0.1"
+    display_name: "Google Chrome (140.0.0.1)"
+    installer:
+      location: "\\software\\Chrome\\Chrome-140.0.0.1-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+    installs:
+      - path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        type: "file"
+        
+  # Firefox - Different version formats
+  - name: Firefox
+    version: "130.0"
+    installer:
+      location: "\\software\\Firefox\\Firefox-130.0-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+      - arm64
+      
+  - name: Firefox
+    version: "131.0.2"
+    installer:
+      location: "\\software\\Firefox\\Firefox-131.0.2-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+      - arm64
+      
+  - name: Firefox
+    version: "131.0.10"
+    installer:
+      location: "\\software\\Firefox\\Firefox-131.0.10-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+      - arm64
+      
+  # Office - Year-based versioning
+  - name: Office365
+    version: "2024.1.2.3"
+    installer:
+      location: "\\software\\Office\\Office365-2024.1.2.3.exe"
+      type: "exe"
+    supported_arch:
+      - x64
+      
+  - name: Office365
+    version: "2024.1.2.4"
+    installer:
+      location: "\\software\\Office\\Office365-2024.1.2.4.exe"
+      type: "exe"
+    supported_arch:
+      - x64
+      
+  - name: Office365
+    version: "2024.2.1.1"
+    installer:
+      location: "\\software\\Office\\Office365-2024.2.1.1.exe"
+      type: "exe"
+    supported_arch:
+      - x64
+      
+  # Test pre-release versions
+  - name: TestApp
+    version: "1.0.0-alpha"
+    installer:
+      location: "\\software\\TestApp\\TestApp-1.0.0-alpha.msi"
+      type: "msi"
+      
+  - name: TestApp
+    version: "1.0.0-beta"
+    installer:
+      location: "\\software\\TestApp\\TestApp-1.0.0-beta.msi"
+      type: "msi"
+      
+  - name: TestApp
+    version: "1.0.0"
+    installer:
+      location: "\\software\\TestApp\\TestApp-1.0.0.msi"
+      type: "msi"
+      
+  - name: TestApp
+    version: "1.0.1"
+    installer:
+      location: "\\software\\TestApp\\TestApp-1.0.1.msi"
+      type: "msi"

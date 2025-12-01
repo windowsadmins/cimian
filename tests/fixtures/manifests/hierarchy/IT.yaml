@@ -1,0 +1,37 @@
+# IT Manifest - Inherits from Assigned (which inherits from CoreManifest)
+# Used for: Manifest hierarchy testing
+
+name: "IT"
+catalogs:
+  - Testing
+  - Production
+
+included_manifests:
+  - Assigned
+
+# IT-specific tools
+managed_installs:
+  - RemoteDesktopManager
+  - PowerShell7
+  - VSCode
+  - GitClient
+  - WindowsTerminal
+  - SysInternals
+
+# IT has access to testing software
+optional_installs:
+  - VisualStudio
+  - DockerDesktop
+  - Postman
+  - Wireshark
+
+# Conditional items for IT
+conditional_items:
+  - condition: hostname CONTAINS "ADMIN-"
+    managed_installs:
+      - ActiveDirectoryTools
+      - GroupPolicyEditor
+      
+  - condition: arch == "arm64"
+    managed_installs:
+      - ARM64DevTools

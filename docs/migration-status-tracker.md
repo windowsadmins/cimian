@@ -201,25 +201,61 @@
 
 ---
 
+## Migration Testing Strategy (NEW)
+
+> **CRITICAL**: See [Migration Testing Strategy](./migration-testing-strategy.md) for complete details.
+
+### Parity Testing Infrastructure (ESTABLISHED)
+- [x] **Test fixtures directory structure** - Created comprehensive test data
+- [x] **Comparison framework** - PowerShell scripts for Go vs C# comparison
+- [x] **Golden file testing** - Capture Go outputs, validate C# matches
+- [x] **Test manifests** - Simple, complex conditional, nested, hierarchy tests
+- [x] **System facts fixtures** - Multiple device profiles for conditional testing
+
+### Test Categories
+| Category | Test Files | Status | Notes |
+|----------|------------|--------|-------|
+| Version Comparison | 20+ test cases | Ready | All version formats covered |
+| Conditional Items (Simple) | conditional_simple.yaml | Ready | Basic operators |
+| Conditional Items (Complex) | conditional_complex.yaml | Ready | OR/AND/NOT/ANY |
+| Conditional Items (Nested) | conditional_nested.yaml | Ready | 3-level nesting |
+| Manifest Hierarchy | hierarchy/*.yaml | Ready | 3-level inheritance |
+| Catalog Processing | 3 catalog files | Ready | Versions, architecture |
+
+### Validation Gates
+Before retiring any Go component:
+1. [ ] 100% golden file tests pass
+2. [ ] All version edge cases pass
+3. [ ] All conditional expressions evaluate identically
+4. [ ] Manifest hierarchy produces identical results
+5. [ ] Performance within 10% of Go
+
+---
+
 ## Current Sprint Status
 
-### Sprint: Foundation Setup (July 13 - July 27, 2025)
+### Sprint: Foundation Setup (November 2025)
 
 #### In Progress
+- **Testing Infrastructure**: Comparison framework established
 - **Status Application UI**: Completing modern Windows UI implementation
 - **TCP Communication**: Finalizing inter-process communication protocol
-- **Icon System**: High-resolution icon system completion
 
 #### Planned for Next Sprint
+- **Generate Golden Files**: Capture Go outputs for all test scenarios
+- **Core Library Tests**: Implement C# parity tests for version/predicates
 - **Build Pipeline**: MSBuild and GitHub Actions setup
-- **Dependency Injection**: Core DI container configuration
-- **Configuration Migration**: Begin `pkg/config` migration
 
 #### Completed This Sprint
+- [x] Migration testing strategy document
+- [x] Test fixtures directory structure
+- [x] Comparison test framework (PowerShell)
+- [x] Golden file test runner
+- [x] Test manifests (simple, complex, nested, hierarchy)
+- [x] System facts fixtures (6 profiles)
 - [x] Solution structure creation
 - [x] WPF project foundation
 - [x] Modern UI design implementation
-- [x] Multi-resolution icon system
 
 ---
 

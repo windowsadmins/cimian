@@ -1,0 +1,43 @@
+# Conditional Simple Manifest - Basic conditional items
+# Used for: Simple conditional evaluation testing
+
+name: "Conditional Simple Test"
+catalogs:
+  - Testing
+
+# Always installed
+managed_installs:
+  - BasePackage
+  - CoreTools
+
+# Simple conditional items
+conditional_items:
+  # Simple equality
+  - condition: "arch == x64"
+    managed_installs:
+      - x64OnlyApp
+      
+  - condition: "arch == arm64"
+    managed_installs:
+      - arm64OnlyApp
+      
+  # Simple CONTAINS
+  - condition: "hostname CONTAINS Server"
+    managed_installs:
+      - ServerTools
+      
+  # Simple DOES_NOT_CONTAIN
+  - condition: "hostname DOES_NOT_CONTAIN Kiosk"
+    managed_installs:
+      - StandardDesktopApps
+      
+  # Simple equality with quoted value
+  - condition: machine_type == "laptop"
+    managed_installs:
+      - BatteryOptimization
+      - MobileTools
+      
+  # Simple equality for desktop
+  - condition: machine_type == "desktop"
+    managed_installs:
+      - DesktopPerformanceTools
