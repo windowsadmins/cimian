@@ -4,7 +4,6 @@ package progress
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -622,35 +621,4 @@ func formatDuration(d time.Duration) string {
 	} else {
 		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 	}
-}
-
-// ProgressReader wraps an io.Reader to track download progress
-type ProgressReader struct {
-	reader   io.Reader
-	total    int64
-	read     int64
-	tracker  *ProgressTracker
-	itemName string
-}
-
-// NewProgressReader creates a new progress tracking reader
-func NewProgressReader(reader io.Reader, total int64, tracker *ProgressTracker, itemName string) *ProgressReader {
-	return &ProgressReader{
-		reader:   reader,
-		total:    total,
-		tracker:  tracker,
-		itemName: itemName,
-	}
-}
-
-// Read implements io.Reader interface with progress tracking
-func (pr *ProgressReader) Read(p []byte) (n int, err error) {
-	n, err = pr.reader.Read(p)
-	pr.read += int64(n)
-	
-	if pr.tracker != nil {
-		pr.tracker.UpdateDownloadProgress(pr.itemName, pr.read)
-	}
-	
-	return n, err
 }
