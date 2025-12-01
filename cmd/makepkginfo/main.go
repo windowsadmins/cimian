@@ -17,121 +17,19 @@ import (
 
 	"github.com/windowsadmins/cimian/pkg/extract"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/pkginfo"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
 )
 
-// SingleQuotedString forces single quotes in YAML output.
-type SingleQuotedString string
+// Type aliases to use shared types from pkginfo package
+type PkgsInfo = pkginfo.PkgsInfo
+type Installer = pkginfo.Installer
+type InstallItem = pkginfo.InstallItem
+type SingleQuotedString = pkginfo.SingleQuotedString
+type NoQuoteEmptyString = pkginfo.NoQuoteEmptyString
 
-func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
-	node := &yaml.Node{
-		Kind:  yaml.ScalarNode,
-		Style: yaml.SingleQuotedStyle,
-		Value: string(s),
-	}
-	return node, nil
-}
-
-// InstallItem is for the "installs" array.
-type InstallItem struct {
-	Type        SingleQuotedString `yaml:"type"`
-	Path        SingleQuotedString `yaml:"path,omitempty"`
-	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
-	Version     SingleQuotedString `yaml:"version,omitempty"`
-	ProductCode SingleQuotedString `yaml:"product_code,omitempty"`
-	UpgradeCode SingleQuotedString `yaml:"upgrade_code,omitempty"`
-}
-
-// Installer parallels cimiimport's Installer type.
-type Installer struct {
-	Location    string   `yaml:"location,omitempty"`
-	Hash        string   `yaml:"hash,omitempty"`
-	Type        string   `yaml:"type,omitempty"`
-	Size        int64    `yaml:"size,omitempty"`
-	Arguments   []string `yaml:"arguments,omitempty"`
-	ProductCode string   `yaml:"product_code,omitempty"`
-	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
-}
-
-// Custom YAML marshaler for Installer enforcing order:
-// type, size, location, hash, then (if type=="msi") product_code and upgrade_code,
-// then arguments (only if non-empty).
-func (i *Installer) MarshalYAML() (interface{}, error) {
-	var content []*yaml.Node
-
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Type},
-	)
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "size"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", i.Size)},
-	)
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "location"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Location},
-	)
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "hash"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Hash},
-	)
-	// Only output "arguments" if there is at least one argument.
-	if len(i.Arguments) > 0 {
-		content = append(content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "arguments"},
-			buildArgumentsNode(i.Arguments),
-		)
-	}
-	node := &yaml.Node{
-		Kind:    yaml.MappingNode,
-		Tag:     "!!map",
-		Content: content,
-	}
-	return node, nil
-}
-
-func buildArgumentsNode(args []string) *yaml.Node {
-	seq := &yaml.Node{
-		Kind: yaml.SequenceNode,
-		Tag:  "!!seq",
-	}
-	for _, a := range args {
-		seq.Content = append(seq.Content, &yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Tag:   "!!str",
-			Value: a,
-		})
-	}
-	return seq
-}
-
-// PkgsInfo matches the updated pkginfo schema.
-type PkgsInfo struct {
-	Name                 string        `yaml:"name"`
-	DisplayName          string        `yaml:"display_name,omitempty"`
-	Identifier           string        `yaml:"identifier,omitempty"` // .nupkg ID goes here
-	Version              string        `yaml:"version"`
-	Catalogs             []string      `yaml:"catalogs,omitempty"`
-	Category             string        `yaml:"category,omitempty"`
-	Description          string        `yaml:"description,omitempty"`
-	Developer            string        `yaml:"developer,omitempty"`
-	InstallerType        string        `yaml:"installer_type,omitempty"`
-	UnattendedInstall    bool          `yaml:"unattended_install,omitempty"`
-	MinOSVersion         string        `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
-	MaxOSVersion         string        `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
-	Installs             []InstallItem `yaml:"installs,omitempty"`
-	InstallCheckScript   string        `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript string        `yaml:"uninstallcheck_script,omitempty"`
-	PreinstallScript     string        `yaml:"preinstall_script,omitempty"`
-	PostinstallScript    string        `yaml:"postinstall_script,omitempty"`
-	OnDemand             bool          `yaml:"OnDemand,omitempty"`
-	ManagedProfiles      []string      `yaml:"managed_profiles,omitempty"` // Device Management Service configuration profiles
-	ManagedApps          []string      `yaml:"managed_apps,omitempty"`     // Device Management Service apps
-	Installer            *Installer    `yaml:"installer,omitempty"`
-}
-
-// NoQuoteString ensures empty strings appear without quotes.
+// NoQuoteString ensures empty strings appear without quotes (for wrapperPkgsInfo).
 type NoQuoteString string
 
 func (s NoQuoteString) MarshalYAML() (interface{}, error) {
@@ -522,9 +420,9 @@ func main() {
 		Identifier:        metaIdent,
 		Version:           finalVersion,
 		Catalogs:          strings.Split(catalogs, ","),
-		Category:          category,
-		Developer:         metaDeveloper,
-		Description:       metaDesc,
+		Category:          NoQuoteEmptyString(category),
+		Developer:         NoQuoteEmptyString(metaDeveloper),
+		Description:       NoQuoteEmptyString(metaDesc),
 		InstallerType:     installerType,
 		Installs:          autoInstalls,
 		UnattendedInstall: unattendedInstall,
