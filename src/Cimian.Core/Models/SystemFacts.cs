@@ -4,7 +4,7 @@ namespace Cimian.Core.Models;
 
 /// <summary>
 /// Represents system facts used for conditional evaluation
-/// Migrated from Go's system facts collection
+/// Migrated from Go pkg/predicates/predicates.go FactsCollector
 /// </summary>
 public class SystemFacts
 {
@@ -15,6 +15,7 @@ public class SystemFacts
 
     /// <summary>
     /// System architecture (x64, x86, arm64)
+    /// Maps to both 'arch' and 'architecture' fact keys for compatibility
     /// </summary>
     public string Architecture { get; set; } = string.Empty;
 
@@ -24,7 +25,7 @@ public class SystemFacts
     public string OperatingSystem { get; set; } = string.Empty;
 
     /// <summary>
-    /// Operating system version
+    /// Operating system version string (e.g., "10.0.22621")
     /// </summary>
     public string OperatingSystemVersion { get; set; } = string.Empty;
 
@@ -32,6 +33,24 @@ public class SystemFacts
     /// Operating system build number
     /// </summary>
     public string OperatingSystemBuild { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Major OS version number (e.g., 10 for Windows 10, 11 for Windows 11)
+    /// Maps to 'os_vers_major' fact key
+    /// </summary>
+    public int OSVersMajor { get; set; }
+
+    /// <summary>
+    /// Minor OS version number
+    /// Maps to 'os_vers_minor' fact key
+    /// </summary>
+    public int OSVersMinor { get; set; }
+
+    /// <summary>
+    /// OS build version number
+    /// Maps to 'os_build_number' fact key
+    /// </summary>
+    public int OSBuildNumber { get; set; }
 
     /// <summary>
     /// Active Directory domain name (if domain-joined)
@@ -52,6 +71,42 @@ public class SystemFacts
     /// Current logged-in username
     /// </summary>
     public string? Username { get; set; }
+
+    /// <summary>
+    /// Machine type: laptop, desktop, virtual, server
+    /// Maps to 'machine_type' fact key
+    /// </summary>
+    public string MachineType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Machine model (e.g., "Dell OptiPlex 7090", "ThinkPad X1 Carbon")
+    /// Maps to 'machine_model' fact key
+    /// </summary>
+    public string MachineModel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Domain join type: workgroup, domain, entra, hybrid
+    /// Maps to 'joined_type' fact key
+    /// </summary>
+    public string JoinedType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Battery state: connected, disconnected, unknown
+    /// Maps to 'battery_state' fact key
+    /// </summary>
+    public string BatteryState { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Current date in YYYY-MM-DD format
+    /// Maps to 'date' fact key
+    /// </summary>
+    public string Date { get; set; } = DateTime.Now.ToString("yyyy-MM-dd");
+
+    /// <summary>
+    /// List of catalog names this machine is assigned to
+    /// Maps to 'catalogs' fact key (used with ANY operator)
+    /// </summary>
+    public List<string> Catalogs { get; set; } = new();
 
     /// <summary>
     /// List of installed software (name-version pairs)
@@ -110,23 +165,39 @@ public class SystemFacts
 
     /// <summary>
     /// Gets a fact value by name with case-insensitive lookup
+    /// Matches Go implementation's GetAllFacts() mapping
     /// </summary>
     public object? GetFactValue(string factName)
     {
         return factName.ToLowerInvariant() switch
         {
+            // Core facts matching Go implementation
             "hostname" => Hostname,
+            "arch" => Architecture,
             "architecture" => Architecture,
+            "os_version" => OperatingSystemVersion,
+            "os_vers_major" => OSVersMajor,
+            "os_vers_minor" => OSVersMinor,
+            "os_build_number" => OSBuildNumber,
+            "domain" => Domain,
+            "username" => Username,
+            "machine_type" => MachineType,
+            "machine_model" => MachineModel,
+            "joined_type" => JoinedType,
+            "battery_state" => BatteryState,
+            "date" => Date,
+            "catalogs" => Catalogs,
+            
+            // Legacy mappings
             "operatingsystem" => OperatingSystem,
             "operatingsystemversion" => OperatingSystemVersion,
             "operatingsystembuild" => OperatingSystemBuild,
-            "domain" => Domain,
             "isdomainjoined" => IsDomainJoined,
             "isenrolled" => IsEnrolled,
-            "username" => Username,
             "uptimeseconds" => UptimeSeconds,
             "totalmemorybytes" => TotalMemoryBytes,
             "availablememorybytes" => AvailableMemoryBytes,
+            
             _ => CustomFacts.GetValueOrDefault(factName) ?? 
                  EnvironmentVariables.GetValueOrDefault(factName) ?? 
                  RegistryValues.GetValueOrDefault(factName)
