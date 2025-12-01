@@ -1,24 +1,258 @@
-using System;
-using System.Threading.Tasks;
+using System.CommandLine;
+using System.Reflection;
+using Cimian.CLI.Cimiimport.Models;
+using Cimian.CLI.Cimiimport.Services;
 
 namespace Cimian.CLI.Cimiimport;
 
-class Program
+/// <summary>
+/// Cimian installer import utility.
+/// </summary>
+public class Program
 {
-    static async Task<int> Main(string[] args)
+    public static async Task<int> Main(string[] args)
     {
-        Console.WriteLine("cimiimport - Placeholder implementation");
-        Console.WriteLine("This tool is part of the Cimian C# migration and will be implemented in future phases.");
-        
-        if (args.Length > 0 && (args[0] == "--help" || args[0] == "-h"))
+        var rootCommand = new RootCommand("Cimian installer import utility - Import installers into the Cimian repository");
+
+        // Arguments
+        var packagePathArg = new Argument<string?>("installerPath", () => null, 
+            "Path to the installer file to import");
+        rootCommand.AddArgument(packagePathArg);
+
+        // Options
+        var installsArrayOption = new Option<string[]>(
+            ["-i", "--installs-array"],
+            "Add a path to final 'installs' array (can be used multiple times)")
+        { AllowMultipleArgumentsPerToken = true };
+
+        var repoPathOption = new Option<string?>(
+            "--repo_path",
+            "Override the Cimian repo path");
+
+        var archOption = new Option<string?>(
+            "--arch",
+            "Override architecture (e.g. x64,arm64)");
+
+        var uninstallerOption = new Option<string?>(
+            "--uninstaller",
+            "Specify an optional uninstaller path");
+
+        var minOSVersionOption = new Option<string?>(
+            "--minimum_os_version",
+            "Minimum Windows version required (e.g. 10.0.19041)");
+
+        var maxOSVersionOption = new Option<string?>(
+            "--maximum_os_version",
+            "Maximum Windows version supported (e.g. 11.0.22000)");
+
+        var preinstallScriptOption = new Option<string?>(
+            "--preinstall-script",
+            "Path to preinstall script");
+
+        var postinstallScriptOption = new Option<string?>(
+            "--postinstall-script",
+            "Path to postinstall script");
+
+        var preuninstallScriptOption = new Option<string?>(
+            "--preuninstall-script",
+            "Path to preuninstall script");
+
+        var postuninstallScriptOption = new Option<string?>(
+            "--postuninstall-script",
+            "Path to postuninstall script");
+
+        var installCheckScriptOption = new Option<string?>(
+            "--install-check-script",
+            "Path to install check script");
+
+        var uninstallCheckScriptOption = new Option<string?>(
+            "--uninstall-check-script",
+            "Path to uninstall check script");
+
+        var configOption = new Option<bool>(
+            "--config",
+            "Run interactive configuration setup and exit");
+
+        var configAutoOption = new Option<bool>(
+            "--config-auto",
+            "Run non-interactive configuration with defaults and exit");
+
+        var versionOption = new Option<bool>(
+            "--version",
+            "Show version information");
+
+        rootCommand.AddOption(installsArrayOption);
+        rootCommand.AddOption(repoPathOption);
+        rootCommand.AddOption(archOption);
+        rootCommand.AddOption(uninstallerOption);
+        rootCommand.AddOption(minOSVersionOption);
+        rootCommand.AddOption(maxOSVersionOption);
+        rootCommand.AddOption(preinstallScriptOption);
+        rootCommand.AddOption(postinstallScriptOption);
+        rootCommand.AddOption(preuninstallScriptOption);
+        rootCommand.AddOption(postuninstallScriptOption);
+        rootCommand.AddOption(installCheckScriptOption);
+        rootCommand.AddOption(uninstallCheckScriptOption);
+        rootCommand.AddOption(configOption);
+        rootCommand.AddOption(configAutoOption);
+        rootCommand.AddOption(versionOption);
+
+        rootCommand.SetHandler(async (context) =>
         {
-            Console.WriteLine("Usage: cimiimport [options]");
-            Console.WriteLine("This is a placeholder implementation.");
-            return 0;
+            var packagePath = context.ParseResult.GetValueForArgument(packagePathArg);
+            var installsArray = context.ParseResult.GetValueForOption(installsArrayOption) ?? [];
+            var repoPath = context.ParseResult.GetValueForOption(repoPathOption);
+            var arch = context.ParseResult.GetValueForOption(archOption);
+            var uninstaller = context.ParseResult.GetValueForOption(uninstallerOption);
+            var minOSVersion = context.ParseResult.GetValueForOption(minOSVersionOption);
+            var maxOSVersion = context.ParseResult.GetValueForOption(maxOSVersionOption);
+            var preinstallScript = context.ParseResult.GetValueForOption(preinstallScriptOption);
+            var postinstallScript = context.ParseResult.GetValueForOption(postinstallScriptOption);
+            var preuninstallScript = context.ParseResult.GetValueForOption(preuninstallScriptOption);
+            var postuninstallScript = context.ParseResult.GetValueForOption(postuninstallScriptOption);
+            var installCheckScript = context.ParseResult.GetValueForOption(installCheckScriptOption);
+            var uninstallCheckScript = context.ParseResult.GetValueForOption(uninstallCheckScriptOption);
+            var configRequested = context.ParseResult.GetValueForOption(configOption);
+            var configAuto = context.ParseResult.GetValueForOption(configAutoOption);
+            var showVersion = context.ParseResult.GetValueForOption(versionOption);
+
+            // Handle --version
+            if (showVersion)
+            {
+                PrintVersion();
+                context.ExitCode = 0;
+                return;
+            }
+
+            var configService = new ConfigurationService();
+            var config = configService.LoadOrCreateConfig();
+
+            // Handle --config or --config-auto
+            if (configRequested || configAuto)
+            {
+                if (configAuto && !configRequested)
+                {
+                    configService.ConfigureNonInteractive(config);
+                }
+                else
+                {
+                    configService.ConfigureInteractive(config);
+                }
+                context.ExitCode = 0;
+                return;
+            }
+
+            // Prompt for package path if not provided
+            if (string.IsNullOrEmpty(packagePath))
+            {
+                Console.Write("Path to the installer file: ");
+                packagePath = Console.ReadLine()?.Trim();
+                if (string.IsNullOrEmpty(packagePath))
+                {
+                    Console.WriteLine("❌ No installer path provided; exiting.");
+                    context.ExitCode = 1;
+                    return;
+                }
+            }
+
+            // Apply command-line overrides
+            if (!string.IsNullOrEmpty(arch))
+            {
+                config.DefaultArch = arch;
+            }
+            if (!string.IsNullOrEmpty(repoPath))
+            {
+                config.RepoPath = repoPath;
+            }
+
+            // Build script paths
+            var scripts = new ScriptPaths
+            {
+                Preinstall = preinstallScript,
+                Postinstall = postinstallScript,
+                Preuninstall = preuninstallScript,
+                Postuninstall = postuninstallScript,
+                InstallCheck = installCheckScript,
+                UninstallCheck = uninstallCheckScript
+            };
+
+            // Check for git repo and pull
+            var importService = new ImportService();
+            if (ImportService.IsGitRepository(config.RepoPath))
+            {
+                Console.WriteLine("📁 Git repository detected, pulling latest changes...");
+                importService.RunGitPull(config.RepoPath);
+            }
+
+            // Run the import
+            try
+            {
+                var success = await importService.ImportAsync(
+                    packagePath,
+                    config,
+                    scripts,
+                    uninstaller,
+                    installsArray.ToList(),
+                    minOSVersion,
+                    maxOSVersion
+                );
+
+                if (success)
+                {
+                    // Run makecatalogs
+                    Console.WriteLine("📋 Running makecatalogs...");
+                    RunMakeCatalogs();
+
+                    Console.WriteLine("✅ Cimian import completed successfully.");
+                    context.ExitCode = 0;
+                }
+                else
+                {
+                    context.ExitCode = 0; // User canceled
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error in import: {ex.Message}");
+                context.ExitCode = 1;
+            }
+        });
+
+        return await rootCommand.InvokeAsync(args);
+    }
+
+    private static void PrintVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var version = assembly.GetName().Version ?? new Version(1, 0, 0);
+        Console.WriteLine($"cimiimport v{version.Major}.{version.Minor}.{version.Build}");
+    }
+
+    private static void RunMakeCatalogs()
+    {
+        try
+        {
+            var makeCatalogsBinary = @"C:\Program Files\Cimian\makecatalogs.exe";
+            if (!File.Exists(makeCatalogsBinary))
+            {
+                Console.WriteLine("⚠️ makecatalogs not found");
+                return;
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = makeCatalogsBinary,
+                Arguments = "-silent",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            process?.WaitForExit();
         }
-        
-        Console.WriteLine("Placeholder execution completed successfully.");
-        await Task.Delay(100); // Simulate async work
-        return 0;
+        catch (Exception ex)
+        {
+            Console.WriteLine($"⚠️ makecatalogs error: {ex.Message}");
+        }
     }
 }
