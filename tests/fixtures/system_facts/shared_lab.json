@@ -1,0 +1,17 @@
+{
+  "hostname": "LAB-DESKTOP-010",
+  "os_version": "10.0.22631",
+  "os_vers_major": 11,
+  "os_vers_minor": 0,
+  "architecture": "x64",
+  "arch": "x64",
+  "domain": "EDU",
+  "username": "labuser",
+  "machine_type": "desktop",
+  "machine_model": "HP ProDesk 400 G7",
+  "joined_type": "domain",
+  "catalogs": ["Production"],
+  "enrolled_usage": "Shared",
+  "enrolled_area": "Lab",
+  "serial_number": "LAB456GHI"
+}

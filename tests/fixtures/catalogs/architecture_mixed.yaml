@@ -1,0 +1,93 @@
+# Architecture Mixed Catalog - Items for different architectures
+# Used for: Architecture filtering and selection testing
+
+items:
+  # x64 only application
+  - name: x64OnlyApp
+    version: "1.0.0"
+    display_name: "x64 Only Application"
+    installer:
+      location: "\\software\\x64OnlyApp\\x64OnlyApp-1.0.0-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+    installs:
+      - path: "C:\\Program Files\\x64OnlyApp\\app.exe"
+        type: "file"
+
+  # arm64 only application
+  - name: arm64OnlyApp
+    version: "1.0.0"
+    display_name: "ARM64 Only Application"
+    installer:
+      location: "\\software\\arm64OnlyApp\\arm64OnlyApp-1.0.0-arm64.msi"
+      type: "msi"
+    supported_arch:
+      - arm64
+    installs:
+      - path: "C:\\Program Files\\arm64OnlyApp\\app.exe"
+        type: "file"
+
+  # Universal app (x64 + arm64)
+  - name: UniversalApp
+    version: "2.0.0"
+    display_name: "Universal Application"
+    installer:
+      location: "\\software\\UniversalApp\\UniversalApp-2.0.0.msix"
+      type: "msix"
+    supported_arch:
+      - x64
+      - arm64
+    installs:
+      - path: "C:\\Program Files\\WindowsApps\\UniversalApp*\\app.exe"
+        type: "file"
+
+  # Legacy x86 application
+  - name: LegacyApp
+    version: "3.0.0"
+    display_name: "Legacy 32-bit Application"
+    installer:
+      location: "\\software\\LegacyApp\\LegacyApp-3.0.0-x86.msi"
+      type: "msi"
+    supported_arch:
+      - x86
+    installs:
+      - path: "C:\\Program Files (x86)\\LegacyApp\\app.exe"
+        type: "file"
+
+  # Multi-arch with separate packages per architecture
+  - name: MultiArchApp-x64
+    version: "4.0.0"
+    display_name: "Multi-Arch Application (x64)"
+    installer:
+      location: "\\software\\MultiArchApp\\MultiArchApp-4.0.0-x64.msi"
+      type: "msi"
+    supported_arch:
+      - x64
+    installs:
+      - path: "C:\\Program Files\\MultiArchApp\\app.exe"
+        type: "file"
+
+  - name: MultiArchApp-arm64
+    version: "4.0.0"
+    display_name: "Multi-Arch Application (ARM64)"
+    installer:
+      location: "\\software\\MultiArchApp\\MultiArchApp-4.0.0-arm64.msi"
+      type: "msi"
+    supported_arch:
+      - arm64
+    installs:
+      - path: "C:\\Program Files\\MultiArchApp\\app.exe"
+        type: "file"
+
+  # No architecture specified (should match all)
+  - name: AnyArchApp
+    version: "5.0.0"
+    display_name: "Any Architecture Application"
+    installer:
+      location: "\\software\\AnyArchApp\\AnyArchApp-5.0.0.ps1"
+      type: "powershell"
+    # No supported_arch - should be available on all architectures
+    installs:
+      - path: "C:\\ProgramData\\AnyArchApp\\installed.txt"
+        type: "file"
