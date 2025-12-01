@@ -2,10 +2,20 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
     <AssemblyName>cimiimport</AssemblyName>
     <RootNamespace>Cimian.CLI.Cimiimport</RootNamespace>
+    <Description>Cimian installer import utility</Description>
+    <Authors>Cimian</Authors>
+    <Product>CimianTools</Product>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Cimian.Core\Cimian.Core.csproj" />
