@@ -1,0 +1,108 @@
+# Conditional Nested Manifest - Nested conditional_items
+# Used for: Hierarchical conditional evaluation testing
+# This is a CRITICAL test case for migration parity
+
+name: "Conditional Nested Test"
+catalogs:
+  - Production
+
+# Always installed
+managed_installs:
+  - BasePackage
+
+# Nested conditional items - hierarchical logic
+conditional_items:
+  # LEVEL 1: Main enrollment-based condition
+  - condition: enrolled_usage == "Shared"
+    # Items at this level apply to all Shared machines
+    managed_installs:
+      - SharedMachineConfiguration
+      - SecurityHardening
+      - UserSessionManager
+    
+    # LEVEL 2: Nested conditions within Shared
+    conditional_items:
+      # Classroom-specific (within Shared)
+      - condition: enrolled_area == "Classroom"
+        managed_installs:
+          - ClassroomDisplayManager
+          - AssessmentLockdown
+        
+        # LEVEL 3: Further nesting - architecture within Classroom
+        conditional_items:
+          - condition: arch == "arm64"
+            managed_installs:
+              - ARM64ClassroomOptimizations
+              
+      # Lab-specific (within Shared)
+      - condition: enrolled_area == "Lab"
+        managed_installs:
+          - LabReservationClient
+          - SoftwareRequestPortal
+          
+      # Kiosk-specific with additional checks
+      - condition: enrolled_area == "Kiosk"
+        managed_installs:
+          - KioskMode
+          - AutoLogon
+        
+        conditional_items:
+          - condition: hostname CONTAINS "Library"
+            managed_installs:
+              - LibraryCatalogAccess
+              
+          - condition: hostname CONTAINS "Lobby"
+            managed_installs:
+              - VisitorWayfinding
+              - BuildingDirectory
+              
+  # LEVEL 1: Corporate domain-based conditions
+  - condition: domain == "CORPORATE"
+    managed_installs:
+      - CorporateVPN
+      - EnterpriseAntivirus
+      - CorporateBranding
+    
+    conditional_items:
+      # Development team
+      - condition: hostname CONTAINS "DEV-" OR hostname CONTAINS "DEVELOPER-"
+        managed_installs:
+          - VisualStudio
+          - DockerDesktop
+          - GitClient
+        
+        conditional_items:
+          - condition: arch == "x64"
+            managed_installs:
+              - x64DevTools
+              - WSL2
+              
+      # QA/Testing team
+      - condition: hostname CONTAINS "QA-" OR hostname CONTAINS "TEST-"
+        managed_installs:
+          - TestingFrameworks
+          - BrowserStack
+          - PerformanceMonitoring
+          
+      # Production/Operations
+      - condition: hostname CONTAINS "PROD-" OR hostname CONTAINS "OPS-"
+        managed_installs:
+          - MonitoringAgents
+          - AlertingTools
+          - ComplianceAuditing
+          
+  # LEVEL 1: Machine type based
+  - condition: machine_type == "laptop"
+    managed_installs:
+      - BatteryOptimization
+      - OfflineSync
+    
+    conditional_items:
+      - condition: os_vers_major >= 11
+        managed_installs:
+          - Windows11LaptopFeatures
+          
+      - condition: joined_type == "entra"
+        managed_installs:
+          - DirectAccessVPN
+          - CloudConnectivity
