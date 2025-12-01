@@ -31,6 +31,7 @@
     <ProjectReference Include="..\Cimian.CLI.cimiwatcher\Cimian.CLI.cimiwatcher.csproj" />
     <ProjectReference Include="..\Cimian.CLI.makepkginfo\Cimian.CLI.makepkginfo.csproj" />
     <ProjectReference Include="..\Cimian.CLI.cimitrigger\Cimian.CLI.cimitrigger.csproj" />
+    <ProjectReference Include="..\Cimian.CLI.cimiimport\Cimian.CLI.cimiimport.csproj" />
   </ItemGroup>
 
 </Project>
