@@ -4,6 +4,60 @@
 
 This document outlines the comprehensive migration strategy for converting the Cimian codebase from Go to C#. The migration will modernize the architecture while maintaining backward compatibility and improving maintainability.
 
+## Recent Implementation Progress
+
+### Completed Components (as of current session)
+
+#### VersionService (`src/Cimian.Core/Version/VersionService.cs`)
+**Migrated from**: `pkg/version/version.go` and `pkg/status/version.go`
+**Status**: ✅ COMPLETE - 67 tests passing
+
+Key functionality:
+- `IsOlderVersion(current, installed)` - Compare versions for update detection
+- `CompareVersions(v1, v2)` - General version comparison returning -1, 0, 1
+- `Normalize(version)` - Standardize version format for comparison
+
+Handles:
+- Semantic versions (1.2.3)
+- Windows builds (10.0.22621.1234)
+- Chrome-style versions (126.0.6478.127)
+- Date-based versions (2025.01.15)
+- v-prefix handling (v1.2.3)
+- Pre-release suffixes (-beta, -rc1, -alpha.2)
+
+#### PredicateEngine (`src/Cimian.Engine/Predicates/PredicateEngine.cs`)
+**Migrated from**: `pkg/predicates/predicates.go` and `pkg/manifest/manifest.go`
+**Status**: ✅ COMPLETE - 76 tests passing
+
+Key functionality:
+- Recursive descent parser for NSPredicate-style expressions
+- Full operator support: OR, AND, NOT, ANY
+- Parentheses grouping for complex expressions
+- All comparison operators: ==, !=, CONTAINS, BEGINSWITH, ENDSWITH, LIKE, IN, >, <, >=, <=
+
+Expression examples:
+```
+hostname CONTAINS 'Design' OR hostname CONTAINS 'Studio'
+NOT hostname CONTAINS 'Kiosk' AND joined_type == 'domain'
+(hostname CONTAINS 'Studio' OR hostname CONTAINS 'Design') AND arch == 'x64'
+ANY catalogs == 'Design'
+```
+
+#### SystemFactsCollector (`src/Cimian.Infrastructure/System/SystemFactsCollector.cs`)
+**Migrated from**: `pkg/predicates/predicates.go` FactsCollector
+**Status**: ✅ COMPLETE
+
+Collects via WMI:
+- Hostname, Username, Domain
+- OS version (major, minor, build)
+- Architecture (x64, x86, ARM64)
+- Machine type (laptop, desktop, virtual, server)
+- Machine model (manufacturer + model)
+- Joined type (workgroup, domain, entra, hybrid)
+- Battery state, memory, processor info
+
+---
+
 ## Migration Principles
 
 ### Core Objectives
