@@ -26,6 +26,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/extract"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/manifest"
+	"github.com/windowsadmins/cimian/pkg/pkginfo"
 	"github.com/windowsadmins/cimian/pkg/retry"
 	"github.com/windowsadmins/cimian/pkg/selfservice"
 	"github.com/windowsadmins/cimian/pkg/status"
@@ -244,7 +245,7 @@ func installOrUpgradePkgWithSbin(item catalog.Item, packagePath, cachePath strin
 	}
 
 	// Generate installs array for tracking
-	installItems, err := extract.BuildPkgInstalls(packagePath, buildInfo.Product.Identifier, buildInfo.Product.Version)
+	installItems, err := pkginfo.BuildPkgInstalls(packagePath, buildInfo.Product.Identifier, buildInfo.Product.Version)
 	if err != nil {
 		logging.Warn("Failed to generate install items for tracking", "item", item.Name, "error", err)
 	} else {

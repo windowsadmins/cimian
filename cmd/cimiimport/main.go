@@ -23,9 +23,17 @@ import (
 	"github.com/windowsadmins/cimian/pkg/config"
 	"github.com/windowsadmins/cimian/pkg/extract"
 	"github.com/windowsadmins/cimian/pkg/logging"
+	"github.com/windowsadmins/cimian/pkg/pkginfo"
 	"github.com/windowsadmins/cimian/pkg/utils"
 	"github.com/windowsadmins/cimian/pkg/version"
 )
+
+// Type aliases to use shared types from pkginfo package
+type PkgsInfo = pkginfo.PkgsInfo
+type Installer = pkginfo.Installer
+type InstallItem = pkginfo.InstallItem
+type SingleQuotedString = pkginfo.SingleQuotedString
+type NoQuoteEmptyString = pkginfo.NoQuoteEmptyString
 
 var (
 	identifierFlag string
@@ -44,126 +52,6 @@ var (
 // This ensures version numbers are preserved exactly as provided in the source package.
 func parseVersion(versionStr string) string {
 	return versionStr
-}
-
-// PkgsInfo represents the structure of the pkginfo YAML file.
-type PkgsInfo struct {
-	Name                 string             `yaml:"name"`
-	DisplayName          string             `yaml:"display_name,omitempty"`
-	Identifier           string             `yaml:"identifier,omitempty"`
-	Version              string             `yaml:"version"`
-	Description          NoQuoteEmptyString `yaml:"description"`
-	Category             NoQuoteEmptyString `yaml:"category"`
-	Developer            NoQuoteEmptyString `yaml:"developer"`
-	Catalogs             []string           `yaml:"catalogs"`
-	Installs             []InstallItem      `yaml:"installs,omitempty"`
-	SupportedArch        []string           `yaml:"supported_architectures"`
-	UnattendedInstall    bool               `yaml:"unattended_install"`
-	UnattendedUninstall  bool               `yaml:"unattended_uninstall"`
-	Requires             []string           `yaml:"requires,omitempty"`
-	UpdateFor            []string           `yaml:"update_for,omitempty"`
-	MinOSVersion         string             `yaml:"minimum_os_version,omitempty"` // Minimum Windows version required
-	MaxOSVersion         string             `yaml:"maximum_os_version,omitempty"` // Maximum Windows version supported
-	InstallerType        string             `yaml:"installer_type,omitempty"`
-	Installer            *Installer         `yaml:"installer,omitempty"`
-	Uninstaller          *Installer         `yaml:"uninstaller,omitempty"`
-	PreinstallScript     string             `yaml:"preinstall_script,omitempty"`
-	PostinstallScript    string             `yaml:"postinstall_script,omitempty"`
-	PreuninstallScript   string             `yaml:"preuninstall_script,omitempty"`
-	PostuninstallScript  string             `yaml:"postuninstall_script,omitempty"`
-	InstallCheckScript   string             `yaml:"installcheck_script,omitempty"`
-	UninstallCheckScript string             `yaml:"uninstallcheck_script,omitempty"`
-	IconName             string             `yaml:"icon_name,omitempty"`
-}
-
-// Installer represents the installer/uninstaller details.
-type Installer struct {
-	Location    string   `yaml:"location"`
-	Hash        string   `yaml:"hash"`
-	Type        string   `yaml:"type"`
-	Size        int64    `yaml:"size,omitempty"`
-	Arguments   []string `yaml:"arguments,omitempty"`
-	ProductCode string   `yaml:"product_code,omitempty"`
-	UpgradeCode string   `yaml:"upgrade_code,omitempty"`
-}
-
-// MarshalYAML forces the output order as follows:
-// type, size, location, hash, then (if type=="msi") product_code and upgrade_code,
-// then arguments (only if non-empty).
-func (i *Installer) MarshalYAML() (interface{}, error) {
-	var content []*yaml.Node
-
-	// Always include "type"
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "type"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Type},
-	)
-	// Always include "size"
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "size"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", i.Size)},
-	)
-	// Always include "location"
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "location"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Location},
-	)
-	// Always include "hash"
-	content = append(content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "hash"},
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: i.Hash},
-	)
-	// Only include arguments if there are any
-	if len(i.Arguments) > 0 {
-		content = append(content,
-			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "arguments"},
-			buildArgumentsNode(i.Arguments),
-		)
-	}
-
-	node := &yaml.Node{
-		Kind:    yaml.MappingNode,
-		Tag:     "!!map",
-		Content: content,
-	}
-	return node, nil
-}
-
-func buildArgumentsNode(args []string) *yaml.Node {
-	seq := &yaml.Node{
-		Kind: yaml.SequenceNode,
-		Tag:  "!!seq",
-	}
-	for _, a := range args {
-		seq.Content = append(seq.Content, &yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Tag:   "!!str",
-			Value: a,
-		})
-	}
-	return seq
-}
-
-// InstallItem for the "installs" array.
-type InstallItem struct {
-	Type        SingleQuotedString `yaml:"type"`
-	Path        SingleQuotedString `yaml:"path,omitempty"`
-	MD5Checksum SingleQuotedString `yaml:"md5checksum,omitempty"`
-	Version     SingleQuotedString `yaml:"version,omitempty"`
-	ProductCode SingleQuotedString `yaml:"product_code,omitempty"`
-	UpgradeCode SingleQuotedString `yaml:"upgrade_code,omitempty"`
-}
-
-// SingleQuotedString ensures single quotes in YAML output.
-type SingleQuotedString string
-
-func (s SingleQuotedString) MarshalYAML() (interface{}, error) {
-	node := &yaml.Node{
-		Kind:  yaml.ScalarNode,
-		Style: yaml.SingleQuotedStyle,
-		Value: string(s),
-	}
-	return node, nil
 }
 
 // ScriptPaths captures paths for custom scripts.
@@ -196,26 +84,6 @@ type Metadata struct {
 	UnattendedUninstall bool
 	Requires            []string
 	UpdateFor           []string
-}
-
-// NoQuoteEmptyString ensures empty strings appear without quotes.
-type NoQuoteEmptyString string
-
-func (s NoQuoteEmptyString) MarshalYAML() (interface{}, error) {
-	if len(s) == 0 {
-		return &yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Tag:   "!!str",
-			Value: "",
-			Style: 0,
-		}, nil
-	}
-	return &yaml.Node{
-		Kind:  yaml.ScalarNode,
-		Tag:   "!!str",
-		Value: string(s),
-		Style: 0,
-	}, nil
 }
 
 // parseCustomArgs manually parses os.Args for:
@@ -731,7 +599,7 @@ func GuessInstallDirFromBat(batPath string) string {
 	return ""
 }
 
-func convertExtractItems(ei []extract.InstallItem) []InstallItem {
+func convertExtractItems(ei []pkginfo.InstallItem) []InstallItem {
 	var results []InstallItem
 	for _, item := range ei {
 		lowerPath := strings.ToLower(string(item.Path))
@@ -1154,7 +1022,7 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.InstallerType = "nupkg"
 
 		// Attempt to build Cimian-based paths
-		cimianItems, err := extract.BuildCimianPkgInstalls(packagePath, metadata.ID, metadata.Version)
+		cimianItems, err := pkginfo.BuildCimianPkgInstalls(packagePath, metadata.ID, metadata.Version)
 		if err != nil {
 			fmt.Printf("Warning: BuildCimianPkgInstalls failed: %v\n", err)
 		}
@@ -1164,7 +1032,7 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 			metadata.Installs = convertExtractItems(cimianItems)
 		} else {
 			// Fallback: standard Chocolatey style
-			chocoItems := extract.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
+			chocoItems := pkginfo.BuildNupkgInstalls(packagePath, metadata.ID, metadata.Version)
 			metadata.Installs = convertExtractItems(chocoItems)
 			fmt.Printf("No cimianpkg items found; using %d chocolatey items.\n", len(chocoItems))
 		}
@@ -1257,7 +1125,7 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.InstallerType = "pkg"
 
 		// Build installs array from payload contents
-		pkgItems, err := extract.BuildPkgInstalls(packagePath, metadata.ID, metadata.Version)
+		pkgItems, err := pkginfo.BuildPkgInstalls(packagePath, metadata.ID, metadata.Version)
 		if err != nil {
 			fmt.Printf("Warning: BuildPkgInstalls failed: %v\n", err)
 		} else {
@@ -1271,7 +1139,17 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.Version = "1.0.0"
 	}
 
-	// Ensure architecture is set
+	// First, check if the filename contains architecture hints (x64, arm64, etc.)
+	// This takes priority over the default configuration
+	detectedArch := detectArchFromFilename(filepath.Base(packagePath))
+	if detectedArch != "" {
+		metadata.Architecture = detectedArch
+		metadata.SupportedArch = []string{detectedArch}
+		logger.Printf("Detected architecture '%s' from filename", detectedArch)
+		return metadata, nil
+	}
+
+	// Ensure architecture is set from config default
 	if metadata.Architecture == "" {
 		metadata.Architecture = conf.DefaultArch
 	}
@@ -1295,6 +1173,31 @@ func extractInstallerMetadata(packagePath string, conf *config.Configuration) (M
 		metadata.SupportedArch = []string{metadata.Architecture}
 	}
 	return metadata, nil
+}
+
+// detectArchFromFilename checks if the filename contains architecture hints
+// like "x64", "arm64", "amd64", etc. and returns the detected architecture.
+// Returns empty string if no architecture hint is found.
+func detectArchFromFilename(filename string) string {
+	// Convert to lowercase for case-insensitive matching
+	lower := strings.ToLower(filename)
+	
+	// Check for arm64 first (more specific)
+	if strings.Contains(lower, "arm64") || strings.Contains(lower, "aarch64") {
+		return "arm64"
+	}
+	
+	// Check for x64/amd64/x86_64
+	if strings.Contains(lower, "x64") || strings.Contains(lower, "amd64") || strings.Contains(lower, "x86_64") || strings.Contains(lower, "x86-64") {
+		return "x64"
+	}
+	
+	// Check for x86/win32 (32-bit)
+	if strings.Contains(lower, "x86") || strings.Contains(lower, "win32") || strings.Contains(lower, "i386") || strings.Contains(lower, "i686") {
+		return "x86"
+	}
+	
+	return ""
 }
 
 // readLineWithDefault prints e.g. `prompt [defaultVal]: `, reads a full line,

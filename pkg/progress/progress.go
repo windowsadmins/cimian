@@ -152,24 +152,13 @@ func (pr *ProgressReader) displayWaterfallProgress(percentage int) {
 
 // InstallProgress tracks installation progress with emoji indicators and phase information
 type InstallProgress struct {
-	itemName     string
-	currentPhase string
-	phases       []string
-	phaseIndex   int32
-	completed    bool
-	failed       bool
-	err          error
-	verbosity    int
-	reporter     StatusReporter // Use our local interface instead of status.Reporter
-}
-type InstallProgress struct {
-	name        string
+	name          string
 	installerType string
-	verbosity   int
-	reporter    utils.Reporter
-	startTime   time.Time
-	phases      []string
-	currentPhase int
+	verbosity     int
+	reporter      utils.Reporter
+	startTime     time.Time
+	phases        []string
+	currentPhase  int
 }
 
 // NewInstallProgress creates a new installation progress tracker
