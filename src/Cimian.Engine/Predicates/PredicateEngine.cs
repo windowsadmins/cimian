@@ -7,7 +7,8 @@ namespace Cimian.Engine.Predicates;
 
 /// <summary>
 /// Implementation of the predicate evaluation engine
-/// Migrated from Go pkg/predicates/predicates.go
+/// Migrated from Go pkg/predicates/predicates.go and pkg/manifest/manifest.go
+/// Supports NSPredicate-style conditional evaluation with complex expressions
 /// </summary>
 public class PredicateEngine : IPredicateEngine
 {
@@ -122,16 +123,23 @@ public class PredicateEngine : IPredicateEngine
 
     private async Task<bool> EvaluateExpressionAsync(ParsedExpression expression, SystemFacts facts)
     {
-        // This is a simplified placeholder implementation
-        // The full implementation would handle all NSPredicate-style operators
-        
-        await Task.CompletedTask; // Placeholder for async operations
+        await Task.CompletedTask; // Placeholder for potential async operations
 
+        return EvaluateExpression(expression, facts);
+    }
+
+    /// <summary>
+    /// Recursively evaluates a parsed expression against system facts
+    /// </summary>
+    private bool EvaluateExpression(ParsedExpression expression, SystemFacts facts)
+    {
         return expression switch
         {
             LiteralExpression literal => Convert.ToBoolean(literal.Value),
             ComparisonExpression comparison => EvaluateComparison(comparison, facts),
             LogicalExpression logical => EvaluateLogical(logical, facts),
+            NotExpression not => !EvaluateExpression(not.Operand, facts),
+            AnyExpression any => EvaluateAny(any, facts),
             _ => throw new NotSupportedException($"Expression type {expression.GetType().Name} not supported")
         };
     }
@@ -143,30 +151,63 @@ public class PredicateEngine : IPredicateEngine
 
         return comparison.Operator.ToUpperInvariant() switch
         {
-            "==" or "EQUALS" => Equals(leftValue, rightValue),
-            "!=" or "NOT EQUALS" => !Equals(leftValue, rightValue),
-            "CONTAINS" => leftValue?.ToString()?.Contains(rightValue?.ToString() ?? "", StringComparison.OrdinalIgnoreCase) ?? false,
-            "BEGINSWITH" => leftValue?.ToString()?.StartsWith(rightValue?.ToString() ?? "", StringComparison.OrdinalIgnoreCase) ?? false,
-            "ENDSWITH" => leftValue?.ToString()?.EndsWith(rightValue?.ToString() ?? "", StringComparison.OrdinalIgnoreCase) ?? false,
+            "==" or "EQUALS" => CompareEquals(leftValue, rightValue),
+            "!=" or "NOT_EQUALS" => !CompareEquals(leftValue, rightValue),
+            "CONTAINS" => CompareContains(leftValue, rightValue),
+            "DOES_NOT_CONTAIN" => !CompareContains(leftValue, rightValue),
+            "BEGINSWITH" => CompareBeginsWith(leftValue, rightValue),
+            "ENDSWITH" => CompareEndsWith(leftValue, rightValue),
+            "LIKE" => CompareLike(leftValue, rightValue),
             "IN" => IsValueInCollection(leftValue, rightValue),
-            ">" => CompareNumeric(leftValue, rightValue) > 0,
-            "<" => CompareNumeric(leftValue, rightValue) < 0,
-            ">=" => CompareNumeric(leftValue, rightValue) >= 0,
-            "<=" => CompareNumeric(leftValue, rightValue) <= 0,
+            ">" or "GREATER_THAN" => CompareNumeric(leftValue, rightValue) > 0,
+            "<" or "LESS_THAN" => CompareNumeric(leftValue, rightValue) < 0,
+            ">=" or "GREATER_THAN_OR_EQUAL" => CompareNumeric(leftValue, rightValue) >= 0,
+            "<=" or "LESS_THAN_OR_EQUAL" => CompareNumeric(leftValue, rightValue) <= 0,
             _ => throw new NotSupportedException($"Operator {comparison.Operator} not supported")
         };
     }
 
     private bool EvaluateLogical(LogicalExpression logical, SystemFacts facts)
     {
-        // Simplified implementation - would need full recursive evaluation
         return logical.Operator.ToUpperInvariant() switch
         {
-            "AND" => true, // Placeholder
-            "OR" => true,  // Placeholder
-            "NOT" => false, // Placeholder
+            "AND" => logical.Operands.All(op => EvaluateExpression(op, facts)),
+            "OR" => logical.Operands.Any(op => EvaluateExpression(op, facts)),
             _ => throw new NotSupportedException($"Logical operator {logical.Operator} not supported")
         };
+    }
+
+    private bool EvaluateAny(AnyExpression any, SystemFacts facts)
+    {
+        // ANY is used with collection facts (e.g., "ANY catalogs != 'Testing'")
+        // Get the collection fact and check if any element matches the condition
+        var collectionValue = GetFactValue(any.CollectionKey, facts);
+        
+        if (collectionValue is IEnumerable<string> strings)
+        {
+            foreach (var item in strings)
+            {
+                var comparison = new ComparisonExpression
+                {
+                    Left = "_item",
+                    Operator = any.Operator,
+                    Right = any.Value
+                };
+                
+                // Create temporary facts with the current item
+                var itemResult = any.Operator.ToUpperInvariant() switch
+                {
+                    "==" or "EQUALS" => CompareEquals(item, any.Value),
+                    "!=" or "NOT_EQUALS" => !CompareEquals(item, any.Value),
+                    "CONTAINS" => CompareContains(item, any.Value),
+                    _ => false
+                };
+                
+                if (itemResult) return true;
+            }
+        }
+        
+        return false;
     }
 
     private object? GetFactValue(string factName, SystemFacts facts)
@@ -174,11 +215,57 @@ public class PredicateEngine : IPredicateEngine
         return facts.GetFactValue(factName);
     }
 
+    private bool CompareEquals(object? left, object? right)
+    {
+        var leftStr = left?.ToString() ?? "";
+        var rightStr = right?.ToString() ?? "";
+        return string.Equals(leftStr, rightStr, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool CompareContains(object? factValue, object? conditionValue)
+    {
+        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
+        var conditionStr = conditionValue?.ToString()?.ToLowerInvariant() ?? "";
+        return factStr.Contains(conditionStr);
+    }
+
+    private bool CompareBeginsWith(object? factValue, object? conditionValue)
+    {
+        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
+        var conditionStr = conditionValue?.ToString()?.ToLowerInvariant() ?? "";
+        return factStr.StartsWith(conditionStr);
+    }
+
+    private bool CompareEndsWith(object? factValue, object? conditionValue)
+    {
+        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
+        var conditionStr = conditionValue?.ToString()?.ToLowerInvariant() ?? "";
+        return factStr.EndsWith(conditionStr);
+    }
+
+    private bool CompareLike(object? factValue, object? conditionValue)
+    {
+        // Simple wildcard implementation - * matches any sequence
+        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
+        var pattern = conditionValue?.ToString()?.ToLowerInvariant() ?? "";
+        
+        // Remove wildcards and check if the pattern is contained
+        pattern = pattern.Replace("*", "");
+        return factStr.Contains(pattern);
+    }
+
     private bool IsValueInCollection(object? value, object? collection)
     {
+        var valueStr = value?.ToString() ?? "";
+        
+        if (collection is IEnumerable<string> items)
+        {
+            return items.Any(item => string.Equals(item, valueStr, StringComparison.OrdinalIgnoreCase));
+        }
+        
         if (collection is string str)
         {
-            return str.Split(',').Any(item => item.Trim().Equals(value?.ToString(), StringComparison.OrdinalIgnoreCase));
+            return str.Split(',').Any(item => item.Trim().Equals(valueStr, StringComparison.OrdinalIgnoreCase));
         }
         
         return false;
@@ -197,11 +284,26 @@ public class PredicateEngine : IPredicateEngine
 }
 
 /// <summary>
-/// Simple expression parser for NSPredicate-style conditions
-/// This is a simplified implementation - full version would be much more complex
+/// Recursive descent expression parser for NSPredicate-style conditions
+/// Migrated from Go pkg/manifest/manifest.go parseComplexCondition and parseSimpleCondition
+/// 
+/// Grammar:
+/// <code>
+///   expression    -&gt; orExpression
+///   orExpression  -&gt; andExpression ( "OR" andExpression )*
+///   andExpression -&gt; notExpression ( "AND" notExpression )*
+///   notExpression -&gt; "NOT" notExpression | primary
+///   primary       -&gt; comparison | "(" expression ")" | anyExpression
+///   anyExpression -&gt; "ANY" comparison
+///   comparison    -&gt; identifier operator value
+///   operator      -&gt; "==" | "!=" | "CONTAINS" | "BEGINSWITH" | "ENDSWITH" | "LIKE" | "IN" | "&gt;" | "&lt;" | "&gt;=" | "&lt;="
+/// </code>
 /// </summary>
 public class ExpressionParser
 {
+    private List<Token> _tokens = new();
+    private int _position;
+
     public ParsedExpression Parse(string expression)
     {
         if (string.IsNullOrWhiteSpace(expression))
@@ -209,30 +311,312 @@ public class ExpressionParser
             return new LiteralExpression { Value = true };
         }
 
-        // This is a very simplified parser - real implementation would be much more sophisticated
-        // Handle simple comparisons for now
-        var comparisonOperators = new[] { "==", "!=", "CONTAINS", "BEGINSWITH", "ENDSWITH", "IN", ">=", "<=", ">", "<" };
-        
-        foreach (var op in comparisonOperators)
+        _tokens = Tokenize(expression);
+        _position = 0;
+
+        return ParseOrExpression();
+    }
+
+    private ParsedExpression ParseOrExpression()
+    {
+        var left = ParseAndExpression();
+
+        while (MatchKeyword("OR"))
         {
-            if (expression.Contains(op, StringComparison.OrdinalIgnoreCase))
+            var right = ParseAndExpression();
+            var logicalExpr = left as LogicalExpression;
+            
+            if (logicalExpr?.Operator == "OR")
             {
-                var parts = expression.Split(new[] { op }, 2, StringSplitOptions.None);
-                if (parts.Length == 2)
+                logicalExpr.Operands.Add(right);
+            }
+            else
+            {
+                left = new LogicalExpression
                 {
-                    return new ComparisonExpression
-                    {
-                        Left = parts[0].Trim(),
-                        Operator = op,
-                        Right = parts[1].Trim().Trim('"', '\'')
-                    };
-                }
+                    Operator = "OR",
+                    Operands = new List<ParsedExpression> { left, right }
+                };
             }
         }
 
-        // Default to literal true for unparseable expressions
-        return new LiteralExpression { Value = true };
+        return left;
     }
+
+    private ParsedExpression ParseAndExpression()
+    {
+        var left = ParseNotExpression();
+
+        while (MatchKeyword("AND"))
+        {
+            var right = ParseNotExpression();
+            var logicalExpr = left as LogicalExpression;
+            
+            if (logicalExpr?.Operator == "AND")
+            {
+                logicalExpr.Operands.Add(right);
+            }
+            else
+            {
+                left = new LogicalExpression
+                {
+                    Operator = "AND",
+                    Operands = new List<ParsedExpression> { left, right }
+                };
+            }
+        }
+
+        return left;
+    }
+
+    private ParsedExpression ParseNotExpression()
+    {
+        if (MatchKeyword("NOT"))
+        {
+            var operand = ParseNotExpression();
+            return new NotExpression { Operand = operand };
+        }
+
+        return ParsePrimary();
+    }
+
+    private ParsedExpression ParsePrimary()
+    {
+        // Handle parentheses
+        if (Match(TokenType.LeftParen))
+        {
+            var expr = ParseOrExpression();
+            Consume(TokenType.RightParen, "Expected ')' after expression");
+            return expr;
+        }
+
+        // Handle ANY keyword
+        if (MatchKeyword("ANY"))
+        {
+            return ParseAnyExpression();
+        }
+
+        // Must be a comparison
+        return ParseComparison();
+    }
+
+    private ParsedExpression ParseAnyExpression()
+    {
+        // ANY collectionKey operator value
+        var collectionKey = ConsumeIdentifier("Expected collection key after ANY");
+        var op = ConsumeOperator();
+        var value = ConsumeValue();
+
+        return new AnyExpression
+        {
+            CollectionKey = collectionKey,
+            Operator = op,
+            Value = value
+        };
+    }
+
+    private ParsedExpression ParseComparison()
+    {
+        var left = ConsumeIdentifier("Expected identifier");
+        var op = ConsumeOperator();
+        var right = ConsumeValue();
+
+        return new ComparisonExpression
+        {
+            Left = left,
+            Operator = op,
+            Right = right
+        };
+    }
+
+    private bool Match(TokenType type)
+    {
+        if (_position >= _tokens.Count) return false;
+        if (_tokens[_position].Type != type) return false;
+        _position++;
+        return true;
+    }
+
+    private bool MatchKeyword(string keyword)
+    {
+        if (_position >= _tokens.Count) return false;
+        var token = _tokens[_position];
+        if (token.Type != TokenType.Keyword) return false;
+        if (!string.Equals(token.Value, keyword, StringComparison.OrdinalIgnoreCase)) return false;
+        _position++;
+        return true;
+    }
+
+    private void Consume(TokenType type, string errorMessage)
+    {
+        if (_position >= _tokens.Count || _tokens[_position].Type != type)
+        {
+            throw new ParseException(errorMessage);
+        }
+        _position++;
+    }
+
+    private string ConsumeIdentifier(string errorMessage)
+    {
+        if (_position >= _tokens.Count || _tokens[_position].Type != TokenType.Identifier)
+        {
+            throw new ParseException(errorMessage);
+        }
+        return _tokens[_position++].Value;
+    }
+
+    private string ConsumeOperator()
+    {
+        if (_position >= _tokens.Count || _tokens[_position].Type != TokenType.Operator)
+        {
+            throw new ParseException("Expected operator");
+        }
+        return _tokens[_position++].Value;
+    }
+
+    private string ConsumeValue()
+    {
+        if (_position >= _tokens.Count)
+        {
+            throw new ParseException("Expected value");
+        }
+
+        var token = _tokens[_position++];
+        if (token.Type == TokenType.String || token.Type == TokenType.Number || token.Type == TokenType.Identifier)
+        {
+            return token.Value;
+        }
+
+        throw new ParseException($"Expected value, got {token.Type}");
+    }
+
+    /// <summary>
+    /// Tokenizes the input expression into a list of tokens
+    /// Handles quoted strings, operators, keywords, and identifiers
+    /// </summary>
+    private List<Token> Tokenize(string expression)
+    {
+        var tokens = new List<Token>();
+        var i = 0;
+
+        while (i < expression.Length)
+        {
+            // Skip whitespace
+            if (char.IsWhiteSpace(expression[i]))
+            {
+                i++;
+                continue;
+            }
+
+            // Handle parentheses
+            if (expression[i] == '(')
+            {
+                tokens.Add(new Token(TokenType.LeftParen, "("));
+                i++;
+                continue;
+            }
+            if (expression[i] == ')')
+            {
+                tokens.Add(new Token(TokenType.RightParen, ")"));
+                i++;
+                continue;
+            }
+
+            // Handle quoted strings
+            if (expression[i] == '"' || expression[i] == '\'')
+            {
+                var quote = expression[i];
+                i++;
+                var start = i;
+                while (i < expression.Length && expression[i] != quote)
+                {
+                    i++;
+                }
+                var value = expression.Substring(start, i - start);
+                tokens.Add(new Token(TokenType.String, value));
+                if (i < expression.Length) i++; // Skip closing quote
+                continue;
+            }
+
+            // Handle multi-character operators
+            if (i + 1 < expression.Length)
+            {
+                var twoChar = expression.Substring(i, 2);
+                if (twoChar is "==" or "!=" or ">=" or "<=")
+                {
+                    tokens.Add(new Token(TokenType.Operator, twoChar));
+                    i += 2;
+                    continue;
+                }
+            }
+
+            // Handle single-character operators
+            if (expression[i] is '>' or '<')
+            {
+                tokens.Add(new Token(TokenType.Operator, expression[i].ToString()));
+                i++;
+                continue;
+            }
+
+            // Handle identifiers and keywords
+            if (char.IsLetterOrDigit(expression[i]) || expression[i] == '_')
+            {
+                var start = i;
+                while (i < expression.Length && (char.IsLetterOrDigit(expression[i]) || expression[i] == '_'))
+                {
+                    i++;
+                }
+                var value = expression.Substring(start, i - start);
+                var upperValue = value.ToUpperInvariant();
+
+                // Check if it's a keyword
+                if (upperValue is "AND" or "OR" or "NOT" or "ANY")
+                {
+                    tokens.Add(new Token(TokenType.Keyword, upperValue));
+                }
+                // Check if it's an operator
+                else if (upperValue is "CONTAINS" or "BEGINSWITH" or "ENDSWITH" or "LIKE" or "IN" 
+                         or "EQUALS" or "NOT_EQUALS" or "GREATER_THAN" or "LESS_THAN" 
+                         or "GREATER_THAN_OR_EQUAL" or "LESS_THAN_OR_EQUAL" or "DOES_NOT_CONTAIN")
+                {
+                    tokens.Add(new Token(TokenType.Operator, upperValue));
+                }
+                // Check if it's a number
+                else if (double.TryParse(value, out _))
+                {
+                    tokens.Add(new Token(TokenType.Number, value));
+                }
+                else
+                {
+                    tokens.Add(new Token(TokenType.Identifier, value));
+                }
+                continue;
+            }
+
+            // Skip unknown characters
+            i++;
+        }
+
+        return tokens;
+    }
+}
+
+public enum TokenType
+{
+    Identifier,
+    Operator,
+    Keyword,
+    String,
+    Number,
+    LeftParen,
+    RightParen
+}
+
+public record Token(TokenType Type, string Value);
+
+public class ParseException : Exception
+{
+    public ParseException(string message) : base(message) { }
 }
 
 /// <summary>
@@ -261,10 +645,29 @@ public class ComparisonExpression : ParsedExpression
 }
 
 /// <summary>
-/// Logical expression (AND, OR, NOT)
+/// Logical expression (AND, OR)
 /// </summary>
 public class LogicalExpression : ParsedExpression
 {
     public string Operator { get; set; } = string.Empty;
     public List<ParsedExpression> Operands { get; set; } = new();
+}
+
+/// <summary>
+/// NOT expression
+/// </summary>
+public class NotExpression : ParsedExpression
+{
+    public ParsedExpression Operand { get; set; } = null!;
+}
+
+/// <summary>
+/// ANY expression for collection matching
+/// e.g., "ANY catalogs != 'Testing'"
+/// </summary>
+public class AnyExpression : ParsedExpression
+{
+    public string CollectionKey { get; set; } = string.Empty;
+    public string Operator { get; set; } = string.Empty;
+    public object? Value { get; set; }
 }
