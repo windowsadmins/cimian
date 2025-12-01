@@ -29,6 +29,7 @@
     <ProjectReference Include="..\Cimian.CLI.manifestutil\Cimian.CLI.manifestutil.csproj" />
     <ProjectReference Include="..\Cimian.CLI.makecatalogs\Cimian.CLI.makecatalogs.csproj" />
     <ProjectReference Include="..\Cimian.CLI.cimiwatcher\Cimian.CLI.cimiwatcher.csproj" />
+    <ProjectReference Include="..\Cimian.CLI.makepkginfo\Cimian.CLI.makepkginfo.csproj" />
   </ItemGroup>
 
 </Project>
