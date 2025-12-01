@@ -5,7 +5,7 @@
 **Project Start Date**: July 13, 2025  
 **Target Completion**: July 13, 2026 (12 months)  
 **Current Phase**: Phase 1 - Foundation and Core Services  
-**Overall Progress**: 35%
+**Overall Progress**: 38%
 
 ---
 
@@ -13,10 +13,10 @@
 
 | Phase | Status | Start Date | Target Date | Completion | Notes |
 |-------|--------|------------|-------------|------------|-------|
-| Phase 1: Foundation | In Progress | 2025-07-13 | 2025-10-13 | 65% | Core services + cimipkg complete |
+| Phase 1: Foundation | In Progress | 2025-07-13 | 2025-10-13 | 70% | Core services + cimipkg + manifestutil complete |
 | Phase 2: Data Management | Not Started | 2025-10-01 | 2026-01-31 | 0% | |
 | Phase 3: Installation Engine | Not Started | 2026-01-15 | 2026-05-31 | 0% | |
-| Phase 4: Services | In Progress | 2026-05-01 | 2026-07-31 | 25% | cimipkg migrated |
+| Phase 4: Services | In Progress | 2026-05-01 | 2026-07-31 | 30% | cimipkg + manifestutil migrated |
 | Phase 5: Testing & Validation | Not Started | 2026-06-01 | 2026-07-31 | 0% | |
 
 ---
@@ -79,7 +79,20 @@
 **Tests**: 95/95 passing  
 **Location**: `src/Cimian.CLI.cimipkg/`  
 
-#### 1.6 Status Application (40% Complete)
+#### 1.7 Manifest Utility - manifestutil (100% Complete)
+- [x] **CLI Framework**: System.CommandLine with all options matching Go version
+- [x] **Manifest Service**: YAML-based manifest loading, saving, and modification
+- [x] **Self-Service Manifest**: User-requested package installation/removal
+- [x] **Section Management**: managed_installs, managed_uninstalls, managed_updates, optional_installs
+- [x] **Package Operations**: Add/remove packages from manifest sections
+- [x] **Config Loading**: Cimian configuration file parsing
+
+**Priority**: Medium  
+**Status**: COMPLETE  
+**Tests**: 44/44 passing  
+**Location**: `src/Cimian.CLI.manifestutil/`  
+
+#### 1.8 Status Application (40% Complete)
 - [x] **WPF Project**: Modern Windows UI framework setup
 - [x] **UI Design**: Contemporary Windows design with Aptos font
 - [x] **Icon System**: High-resolution multi-format icon support

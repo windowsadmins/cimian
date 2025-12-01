@@ -26,6 +26,7 @@
     <ProjectReference Include="..\Cimian.Engine\Cimian.Engine.csproj" />
     <ProjectReference Include="..\Cimian.Infrastructure\Cimian.Infrastructure.csproj" />
     <ProjectReference Include="..\Cimian.CLI.cimipkg\Cimian.CLI.cimipkg.csproj" />
+    <ProjectReference Include="..\Cimian.CLI.manifestutil\Cimian.CLI.manifestutil.csproj" />
   </ItemGroup>
 
 </Project>
