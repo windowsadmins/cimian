@@ -5,7 +5,7 @@
 **Project Start Date**: July 13, 2025  
 **Target Completion**: July 13, 2026 (12 months)  
 **Current Phase**: Phase 1 - Foundation and Core Services  
-**Overall Progress**: 38%
+**Overall Progress**: 40%
 
 ---
 
@@ -13,10 +13,10 @@
 
 | Phase | Status | Start Date | Target Date | Completion | Notes |
 |-------|--------|------------|-------------|------------|-------|
-| Phase 1: Foundation | In Progress | 2025-07-13 | 2025-10-13 | 70% | Core services + cimipkg + manifestutil complete |
+| Phase 1: Foundation | In Progress | 2025-07-13 | 2025-10-13 | 75% | Core services + cimipkg + manifestutil + makecatalogs complete |
 | Phase 2: Data Management | Not Started | 2025-10-01 | 2026-01-31 | 0% | |
 | Phase 3: Installation Engine | Not Started | 2026-01-15 | 2026-05-31 | 0% | |
-| Phase 4: Services | In Progress | 2026-05-01 | 2026-07-31 | 30% | cimipkg + manifestutil migrated |
+| Phase 4: Services | In Progress | 2026-05-01 | 2026-07-31 | 35% | cimipkg + manifestutil + makecatalogs migrated |
 | Phase 5: Testing & Validation | Not Started | 2026-06-01 | 2026-07-31 | 0% | |
 
 ---
@@ -92,7 +92,20 @@
 **Tests**: 44/44 passing  
 **Location**: `src/Cimian.CLI.manifestutil/`  
 
-#### 1.8 Status Application (40% Complete)
+#### 1.8 Catalog Builder - makecatalogs (100% Complete)
+- [x] **CLI Framework**: System.CommandLine with all options matching Go version
+- [x] **Catalog Builder Service**: Scan repo, build catalogs, write YAML files
+- [x] **Payload Verification**: Check for missing installer/uninstaller files
+- [x] **PkgsInfo Models**: Full package metadata structure
+- [x] **Stale Catalog Cleanup**: Remove obsolete catalog files
+- [x] **All Catalog**: Auto-generated catalog containing all packages
+
+**Priority**: Medium  
+**Status**: COMPLETE  
+**Tests**: 19/19 passing  
+**Location**: `src/Cimian.CLI.makecatalogs/`  
+
+#### 1.9 Status Application (40% Complete)
 - [x] **WPF Project**: Modern Windows UI framework setup
 - [x] **UI Design**: Contemporary Windows design with Aptos font
 - [x] **Icon System**: High-resolution multi-format icon support
