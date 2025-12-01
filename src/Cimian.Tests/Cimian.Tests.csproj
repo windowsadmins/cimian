@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
@@ -25,6 +25,7 @@
     <ProjectReference Include="..\Cimian.Core\Cimian.Core.csproj" />
     <ProjectReference Include="..\Cimian.Engine\Cimian.Engine.csproj" />
     <ProjectReference Include="..\Cimian.Infrastructure\Cimian.Infrastructure.csproj" />
+    <ProjectReference Include="..\Cimian.CLI.cimipkg\Cimian.CLI.cimipkg.csproj" />
   </ItemGroup>
 
 </Project>
