@@ -300,7 +300,24 @@ type ConditionalItem struct {
 
 // UnmarshalYAML implements custom YAML unmarshaling for ConditionalItem to handle complex condition strings
 func (ci *ConditionalItem) UnmarshalYAML(value *yaml.Node) error {
-	// First, try to unmarshal normally
+	// Check if value is a scalar (string) - this happens when the YAML has package names
+	// directly under conditional_items instead of proper conditional item structures.
+	// We treat these as unconditional managed_installs for backward compatibility.
+	if value.Kind == yaml.ScalarNode {
+		// A bare string in conditional_items is treated as an unconditional managed_install
+		// Log this at debug level since it might indicate a manifest structure issue
+		logging.Debug("Found bare string in conditional_items, treating as unconditional managed_install",
+			"package", value.Value, "line", value.Line)
+		ci.ManagedInstalls = []string{value.Value}
+		return nil
+	}
+
+	// For non-mapping nodes (other than scalar), return an error
+	if value.Kind != yaml.MappingNode {
+		return fmt.Errorf("conditional_items must contain either condition mappings or package names, got unexpected YAML node type at line %d", value.Line)
+	}
+
+	// Try to unmarshal normally
 	type conditionalItemAlias ConditionalItem
 	aux := (*conditionalItemAlias)(ci)
 	if err := value.Decode(aux); err != nil {
