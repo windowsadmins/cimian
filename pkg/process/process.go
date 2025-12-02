@@ -1248,18 +1248,22 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 	LogItemSource(itemName, "Installing item: "+itemName)
 
 	// Check if the item needs to be installed
-	// This is critical for dependencies that are forced to be verified even if installed
+	// ALWAYS call CheckStatus to determine if install is actually needed,
+	// regardless of whether the item appears in installedItems list.
+	// This ensures items with installcheck_script are properly evaluated
+	// even if they don't appear in registry-based detection.
+	needs, err := status.CheckStatus(item, "install", cachePath)
 	needsInstall := true
-	if isItemInList(itemName, installedItems) {
-		// Item is installed, verify if it needs update/reinstall
-		needs, err := status.CheckStatus(item, "install", cachePath)
-		if err != nil {
-			logging.Warn("Failed to check status for item, assuming install needed", "item", itemName, "error", err)
-		} else if !needs {
-			logging.Info("Item is already installed and up to date, skipping install", "item", itemName)
-			needsInstall = false
-		} else {
+	if err != nil {
+		logging.Warn("Failed to check status for item, assuming install needed", "item", itemName, "error", err)
+	} else if !needs {
+		logging.Info("Item is already installed and up to date, skipping install", "item", itemName)
+		needsInstall = false
+	} else {
+		if isItemInList(itemName, installedItems) {
 			logging.Info("Item is installed but needs update/repair", "item", itemName)
+		} else {
+			logging.Info("Item needs installation", "item", itemName)
 		}
 	}
 
