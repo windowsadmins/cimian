@@ -90,16 +90,21 @@ public class ElevationServiceTests
     }
 
     [Fact]
-    public async Task RunDirectUpdateAsync_ReturnsError_WhenExecutableNotFound()
+    public void RunDirectUpdateAsync_WouldRequireExecutable()
     {
-        // This test will likely return an error because the executable won't be found
-        // in the test environment
-        var result = await _service.RunDirectUpdateAsync(TriggerMode.Gui);
+        // NOTE: We do NOT call RunDirectUpdateAsync because it actually launches
+        // managedsoftwareupdate.exe if it exists on the system. This is unsafe
+        // for testing as it would trigger real package installations.
         
-        // Either succeeds (if Cimian is installed) or fails with specific error
-        if (!result.Success)
+        // Instead, verify that FindExecutable works correctly
+        var execPath = _service.FindExecutable();
+        
+        // If executable exists, it should be a valid path
+        if (execPath != null)
         {
-            Assert.Contains("managedsoftwareupdate.exe", result.Error ?? "");
+            Assert.True(File.Exists(execPath), "If path returned, file should exist");
+            Assert.EndsWith("managedsoftwareupdate.exe", execPath, StringComparison.OrdinalIgnoreCase);
         }
+        // If null, that's also valid - executable not installed
     }
 }
