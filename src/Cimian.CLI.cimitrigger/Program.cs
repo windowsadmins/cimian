@@ -86,20 +86,6 @@ public class Program
         }, forceModeArgument);
         rootCommand.AddCommand(forceCommand);
 
-        // Version option
-        var versionOption = new Option<bool>("--version", "Show version information");
-        rootCommand.AddGlobalOption(versionOption);
-        rootCommand.SetHandler((bool version) =>
-        {
-            if (version)
-            {
-                PrintVersion();
-                return Task.FromResult(0);
-            }
-            // If no command is provided and --version is not set, show help
-            return Task.FromResult(1);
-        }, versionOption);
-
         return await rootCommand.InvokeAsync(args);
     }
 
