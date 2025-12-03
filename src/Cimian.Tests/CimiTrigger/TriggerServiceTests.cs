@@ -134,11 +134,16 @@ public class TriggerServiceTests : IDisposable
     }
 
     [Fact]
-    public void EnsureGUIVisible_DoesNotThrow()
+    public void EnsureGUIVisible_MethodExists()
     {
-        // Just verify the method doesn't throw
-        // The actual behavior depends on the environment
-        var result = _service.EnsureGUIVisible();
-        Assert.True(result || !result);
+        // NOTE: We do NOT call EnsureGUIVisible because it launches cimistatus.exe
+        // on a machine with Cimian installed. This would spawn a GUI window during tests.
+        
+        // Instead, verify the method exists and is callable via reflection
+        var method = typeof(TriggerService).GetMethod("EnsureGUIVisible");
+        
+        Assert.NotNull(method);
+        Assert.Equal("EnsureGUIVisible", method.Name);
+        Assert.Equal(typeof(bool), method.ReturnType);
     }
 }
