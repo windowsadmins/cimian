@@ -77,10 +77,6 @@ public class Program
             "--config-auto",
             "Run non-interactive configuration with defaults and exit");
 
-        var versionOption = new Option<bool>(
-            "--version",
-            "Show version information");
-
         rootCommand.AddOption(installsArrayOption);
         rootCommand.AddOption(repoPathOption);
         rootCommand.AddOption(archOption);
@@ -95,7 +91,6 @@ public class Program
         rootCommand.AddOption(uninstallCheckScriptOption);
         rootCommand.AddOption(configOption);
         rootCommand.AddOption(configAutoOption);
-        rootCommand.AddOption(versionOption);
 
         rootCommand.SetHandler(async (context) =>
         {
@@ -114,15 +109,6 @@ public class Program
             var uninstallCheckScript = context.ParseResult.GetValueForOption(uninstallCheckScriptOption);
             var configRequested = context.ParseResult.GetValueForOption(configOption);
             var configAuto = context.ParseResult.GetValueForOption(configAutoOption);
-            var showVersion = context.ParseResult.GetValueForOption(versionOption);
-
-            // Handle --version
-            if (showVersion)
-            {
-                PrintVersion();
-                context.ExitCode = 0;
-                return;
-            }
 
             var configService = new ConfigurationService();
             var config = configService.LoadOrCreateConfig();
