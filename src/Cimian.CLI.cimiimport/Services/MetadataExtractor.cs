@@ -71,6 +71,14 @@ public partial class MetadataExtractor
     {
         metadata.InstallerType = "msi";
 
+        // Skip PowerShell extraction if file doesn't exist
+        if (!File.Exists(packagePath))
+        {
+            metadata.Title = ParsePackageName(Path.GetFileName(packagePath));
+            metadata.ID = metadata.Title;
+            return;
+        }
+
         try
         {
             var escapedPath = packagePath.Replace("'", "''");
@@ -112,20 +120,29 @@ function Get-MsiProperty($name) {
             using var process = Process.Start(psi);
             if (process != null)
             {
-                var output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit();
-
-                if (!string.IsNullOrEmpty(output))
+                // Use timeout to prevent hanging on problematic MSI files
+                if (process.WaitForExit(10000)) // 10 second timeout
                 {
-                    var json = System.Text.Json.JsonDocument.Parse(output);
-                    var root = json.RootElement;
+                    var output = process.StandardOutput.ReadToEnd();
 
-                    metadata.Title = root.TryGetProperty("ProductName", out var name) ? name.GetString() ?? "" : "";
-                    metadata.ID = metadata.Title;
-                    metadata.Version = ParseVersion(root.TryGetProperty("ProductVersion", out var ver) ? ver.GetString() ?? "" : "");
-                    metadata.Developer = root.TryGetProperty("Manufacturer", out var mfr) ? mfr.GetString() ?? "" : "";
-                    metadata.ProductCode = root.TryGetProperty("ProductCode", out var pc) ? pc.GetString() ?? "" : "";
-                    metadata.UpgradeCode = root.TryGetProperty("UpgradeCode", out var uc) ? uc.GetString() ?? "" : "";
+                    if (!string.IsNullOrEmpty(output))
+                    {
+                        var json = System.Text.Json.JsonDocument.Parse(output);
+                        var root = json.RootElement;
+
+                        metadata.Title = root.TryGetProperty("ProductName", out var name) ? name.GetString() ?? "" : "";
+                        metadata.ID = metadata.Title;
+                        metadata.Version = ParseVersion(root.TryGetProperty("ProductVersion", out var ver) ? ver.GetString() ?? "" : "");
+                        metadata.Developer = root.TryGetProperty("Manufacturer", out var mfr) ? mfr.GetString() ?? "" : "";
+                        metadata.ProductCode = root.TryGetProperty("ProductCode", out var pc) ? pc.GetString() ?? "" : "";
+                        metadata.UpgradeCode = root.TryGetProperty("UpgradeCode", out var uc) ? uc.GetString() ?? "" : "";
+                    }
+                }
+                else
+                {
+                    // Kill the process if it times out
+                    process.Kill();
+                    throw new TimeoutException("MSI metadata extraction timed out");
                 }
             }
         }
