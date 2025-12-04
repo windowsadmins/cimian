@@ -1,15 +1,17 @@
 <#
 .SYNOPSIS
-    Builds the Cimian C# project locally with enterprise code signing.
+    Builds the Cimian C# project with enterprise code signing and MSI packaging.
 .DESCRIPTION
     This script automates the build and packaging process for the C# migration of Cimian,
-    including building .NET binaries, signing them with enterprise certificates, and packaging artifacts.
+    including building .NET binaries, signing them with enterprise certificates, and creating MSI installers.
     
-    CRITICAL: Enterprise environments require signed binaries. Always use -Sign parameter.
+    DEFAULT BEHAVIOR: Running .\build.ps1 with no parameters builds everything (binaries + MSI) with signing.
+    
+    Version Format: YYYY.MM.DD.HHMM (e.g., 2025.12.04.1430)
+    MSI versions are automatically converted to compatible format (YY.MM.DDHH).
 #>
 param(
-    [switch]$Sign,
-    [switch]$NoSign,
+    [switch]$NoSign,     # Skip code signing (for development only)
     [string]$Thumbprint,
     [ValidateSet("build", "package", "all")]
     [string]$Task = "all",
@@ -183,16 +185,48 @@ function Install-Chocolatey {
     }
 }
 
+function Convert-ToMsiVersion {
+    <#
+    .SYNOPSIS
+        Converts YYYY.MM.DD.HHMM version to MSI-compatible format.
+    .DESCRIPTION
+        MSI requires versions with major < 256, minor < 256, build < 65536.
+        We convert YYYY.MM.DD.HHMM to YY.MM.DDHH format.
+    #>
+    param([string]$Version)
+    
+    # Parse YYYY.MM.DD.HHMM
+    if ($Version -match '^(\d{4})\.(\d{2})\.(\d{2})\.(\d{4})$') {
+        $year = [int]$matches[1] - 2000  # 2025 -> 25
+        $month = [int]$matches[2]
+        $day = [int]$matches[3]
+        $time = $matches[4]
+        $hour = [int]$time.Substring(0, 2)
+        
+        # Format: YY.MM.DDHH (e.g., 25.12.0414 for 2025.12.04.1430)
+        $msiVersion = "{0}.{1}.{2}{3:D2}" -f $year, $month, $day, $hour
+        return $msiVersion
+    }
+    
+    # Fallback - return as-is
+    return $Version
+}
+
 function Build-MSI {
     param(
         [string]$Architecture,
-        [string]$Version,
+        [string]$Version,          # Full version (YYYY.MM.DD.HHMM)
         [string]$BinDir,
         [switch]$Sign,
-        [string]$Thumbprint
+        [string]$Thumbprint,
+        [string]$CertStore = "CurrentUser"
     )
     
     Write-Log "Building MSI for $Architecture..." "INFO"
+    
+    # Convert version to MSI-compatible format
+    $msiVersion = Convert-ToMsiVersion -Version $Version
+    Write-Log "MSI version: $msiVersion (from $Version)" "INFO"
     
     # Check for WiX
     $wixInstalled = $null
@@ -211,10 +245,10 @@ function Build-MSI {
     $msiProjectPath = "build\msi\Cimian.wixproj"
     $outputPath = "release"
     
-    # Build the MSI
+    # Build the MSI with MSI-compatible version
     & dotnet build $msiProjectPath `
         -p:Platform=$Architecture `
-        -p:ProductVersion=$Version `
+        -p:ProductVersion=$msiVersion `
         -p:BinDir=$BinDir `
         -o $outputPath
         
@@ -222,15 +256,19 @@ function Build-MSI {
         throw "Failed to build MSI for $Architecture"
     }
     
-    $msiFile = Get-ChildItem -Path $outputPath -Filter "Cimian*.msi" | Select-Object -First 1
+    # Find the newly built MSI (exclude already-versioned files)
+    $msiFile = Get-ChildItem -Path $outputPath -Filter "Cimian*.msi" | 
+        Where-Object { $_.Name -notmatch '^\d{4}\.\d{2}\.\d{2}\.' -and $_.Name -eq "Cimian.msi" } | 
+        Select-Object -First 1
     if ($msiFile) {
+        # Use full version in filename for clarity
         $finalName = "Cimian-$Version-$Architecture.msi"
         $finalPath = Join-Path $outputPath $finalName
         Move-Item -Path $msiFile.FullName -Destination $finalPath -Force
         Write-Log "Created MSI: $finalName" "SUCCESS"
         
         if ($Sign -and $Thumbprint) {
-            Invoke-SignArtifact -Path $finalPath -Thumbprint $Thumbprint -Store "CurrentUser"
+            Invoke-SignArtifact -Path $finalPath -Thumbprint $Thumbprint -Store $CertStore
             Write-Log "Signed MSI: $finalName" "SUCCESS"
         }
         
@@ -328,7 +366,9 @@ class Program
 # Main execution starts here
 try {
     Write-Log "=== Cimian C# Build Script ===" "INFO"
-    Write-Log "Task: $Task, Sign: $Sign, NoSign: $NoSign" "INFO"
+    $signMode = if ($NoSign) { "Disabled" } else { "Enabled (default)" }
+    $buildMode = if ($Binaries) { "Binaries Only" } elseif ($Binary) { "Single Binary: $Binary" } else { "Full (Binaries + MSI)" }
+    Write-Log "Build Mode: $buildMode | Signing: $signMode" "INFO"
 
     # Validate binary parameter if specified
     if ($Binary) {
@@ -359,31 +399,29 @@ try {
         }
     }
 
-    # Handle signing configuration
-    $shouldSign = $false
+    # Handle signing configuration - DEFAULT is to sign unless -NoSign is specified
+    $shouldSign = -not $NoSign
     $actualThumbprint = ""
     $certStore = "CurrentUser"
 
     if ($Thumbprint) {
-        $shouldSign = $true
         $actualThumbprint = $Thumbprint
         Write-Log "Using provided certificate thumbprint" "INFO"
     }
-    elseif (-not $NoSign) {
+    elseif ($shouldSign) {
         $certInfo = Get-SigningCertThumbprint
         if ($certInfo) {
-            $shouldSign = $true
             $actualThumbprint = $certInfo.Thumbprint
             $certStore = $certInfo.Store
             Write-Log "Enterprise certificate auto-detected: $actualThumbprint" "SUCCESS"
         }
         else {
-            Write-Log "No enterprise certificate found. Build will be unsigned (NOT RECOMMENDED)." "WARNING"
+            Write-Log "No enterprise certificate found. Use -NoSign to build without signing." "ERROR"
+            throw "Signing is enabled by default but no valid certificate found. Use -NoSign for development builds."
         }
     }
-
-    if ($Sign -and -not $shouldSign) {
-        throw "Signing requested but no valid certificate found."
+    else {
+        Write-Log "Signing disabled (-NoSign). Build will be unsigned." "WARNING"
     }
 
     # Handle SignMSI mode early
@@ -535,23 +573,53 @@ try {
             }
         }
         else {
-            # Build the main CLI tool (managedsoftwareupdate)
-            $projectPath = "src\Cimian.CLI.managedsoftwareupdate\Cimian.CLI.managedsoftwareupdate.csproj"
-            $outputPath = "release\$arch"
-            
-            dotnet publish $projectPath `
-                --configuration Release `
-                --runtime $runtimeId `
-                --self-contained false `
-                --output $outputPath `
-                -p:PublishSingleFile=true `
-                -p:IncludeSourceRevisionInInformationalVersion=false
+            # Default: Build all available CLI tools (same as -Binaries)
+            foreach ($tool in $Global:CSharpTools.Keys) {
+                $projectName = $Global:CSharpTools[$tool]
+                $projectPath = "src\$projectName\$projectName.csproj"
                 
-            if ($LASTEXITCODE -ne 0) {
-                throw "Failed to build managedsoftwareupdate for $arch"
+                if (Test-Path $projectPath) {
+                    $outputPath = "release\$arch"
+                    
+                    # GUI needs self-contained build
+                    $isSelfContained = ($tool -eq "cimistatus")
+                    $selfContainedArg = if ($isSelfContained) { "true" } else { "false" }
+                    
+                    dotnet publish $projectPath `
+                        --configuration Release `
+                        --runtime $runtimeId `
+                        --self-contained $selfContainedArg `
+                        --output $outputPath `
+                        -p:PublishSingleFile=true `
+                        -p:IncludeSourceRevisionInInformationalVersion=false
+                        
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Failed to build $tool for $arch"
+                    }
+                    
+                    Write-Log "Successfully built $tool for $arch" "SUCCESS"
+                }
+                else {
+                    Write-Log "Project not found: $projectPath (skipping)" "WARNING"
+                }
             }
             
-            Write-Log "Successfully built managedsoftwareupdate for $arch" "SUCCESS"
+            # Copy MSI support scripts
+            $msiScripts = @(
+                "install-tasks.ps1",
+                "uninstall-tasks.ps1",
+                "manage-service.ps1",
+                "verify-installation.ps1",
+                "diagnose-cimianwatcher.ps1"
+            )
+            foreach ($script in $msiScripts) {
+                $srcPath = "build\msi\$script"
+                $dstPath = "release\$arch\$script"
+                if (Test-Path $srcPath) {
+                    Copy-Item -Path $srcPath -Destination $dstPath -Force
+                    Write-Log "Copied MSI script: $script to $arch" "INFO"
+                }
+            }
         }
     }
 
@@ -589,12 +657,36 @@ try {
         exit 0
     }
 
-    Write-Log "Build process completed successfully." "SUCCESS"
-    Write-Log "Built executables are available in release\x64\ and release\arm64\" "SUCCESS"
+    # Build MSI packages (default behavior unless -SkipMSI or -NupkgOnly)
+    if (-not $SkipMSI -and -not $NupkgOnly) {
+        Write-Log "Building MSI installers..." "INFO"
+        
+        foreach ($arch in $archs) {
+            $binDir = Join-Path (Get-Location) "release\$arch"
+            $msiPath = Build-MSI -Architecture $arch `
+                -Version $semanticVersion `
+                -BinDir $binDir `
+                -Sign:$shouldSign `
+                -Thumbprint $actualThumbprint `
+                -CertStore $certStore
+        }
+        
+        Write-Log "MSI installers created successfully." "SUCCESS"
+    }
+
+    # Summary
+    Write-Log "========================================" "SUCCESS"
+    Write-Log "BUILD COMPLETE - Version $semanticVersion" "SUCCESS"
+    Write-Log "========================================" "SUCCESS"
+    
+    Write-Log "Built artifacts:" "INFO"
+    Get-ChildItem -Path "release" -Recurse -Include "*.exe","*.msi" | ForEach-Object {
+        $size = [math]::Round($_.Length / 1MB, 1)
+        Write-Log "  $($_.Name) ($size MB)" "INFO"
+    }
 
     if ($Install) {
-        Write-Log "Install flag specified, but MSI packaging not yet implemented." "WARNING"
-        Write-Log "Built executables are available for manual testing." "INFO"
+        Write-Log "Install flag specified - MSI installers available for deployment." "INFO"
     }
 
 } catch {
