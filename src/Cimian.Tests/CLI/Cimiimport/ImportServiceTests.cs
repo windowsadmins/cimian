@@ -54,6 +54,10 @@ public class ImportServiceTests
     [InlineData("App_Setup_2.3.4.exe", "App", "2.3.4")]
     public void PackageDirectory_CanBeConstructed(string installerName, string name, string version)
     {
+        // Verify all parameters are valid
+        Assert.False(string.IsNullOrEmpty(installerName));
+        Assert.False(string.IsNullOrEmpty(version));
+        
         var pkgsDir = @"C:\repo\pkgs";
         var expectedDir = Path.Combine(pkgsDir, name);
         
