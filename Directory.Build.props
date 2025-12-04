@@ -45,7 +45,6 @@
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.EventLog" Version="4.0.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <PackageReference Include="System.Text.Json" Version="10.0.0-preview.*" />
   </ItemGroup>
 
   <!-- Development Dependencies - only for .NET 10.0 projects -->
