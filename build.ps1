@@ -66,7 +66,7 @@ $Global:CSharpTools = @{
     "cimitrigger" = "Cimian.CLI.cimitrigger"
     "manifestutil" = "Cimian.CLI.manifestutil"
     "repoclean" = "Cimian.CLI.repoclean"
-    "cimiwatcher" = "Cimian.Service.CimianWatcher"
+    "cimiwatcher" = "Cimian.CLI.cimiwatcher"
     "cimistatus" = "Cimian.GUI.CimianStatus"
 }
 
@@ -203,7 +203,7 @@ function New-PlaceholderProjects {
         @{ Name = "manifestutil"; Path = "src\Cimian.CLI.manifestutil\Cimian.CLI.manifestutil.csproj" }
         @{ Name = "repoclean"; Path = "src\Cimian.CLI.repoclean\Cimian.CLI.repoclean.csproj" }
         @{ Name = "cimistatus"; Path = "src\Cimian.GUI.CimianStatus\Cimian.GUI.CimianStatus.csproj" }
-        @{ Name = "cimiwatcher"; Path = "src\Cimian.Service.CimianWatcher\Cimian.Service.CimianWatcher.csproj" }
+        @{ Name = "cimiwatcher"; Path = "src\Cimian.CLI.cimiwatcher\Cimian.CLI.cimiwatcher.csproj" }
     )
     
     foreach ($project in $placeholderProjects) {
