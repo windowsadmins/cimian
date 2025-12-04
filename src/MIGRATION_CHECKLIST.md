@@ -1,7 +1,7 @@
 # Cimian C# Migration Implementation Checklist
 
 **Last Updated**: December 4, 2025  
-**Current Status**: 85% Complete - All CLI tools migrated, 586 tests passing
+**Current Status**: 95% Complete - All CLI tools migrated, 586 tests passing, 0 warnings
 
 This document provides a comprehensive checklist and validation framework for ensuring 100% feature parity during the Go to C# migration. Each item includes validation criteria and testing requirements.
 
@@ -12,10 +12,11 @@ This document provides a comprehensive checklist and validation framework for en
 | Category | Status | Details |
 |----------|--------|---------|
 | CLI Tools | ✅ 10/10 Complete | All tools build and run |
-| Unit Tests | ✅ 586 Passing | Comprehensive coverage |
+| Unit Tests | ✅ 586 Passing (~5s) | Comprehensive coverage |
 | Core Libraries | ✅ Complete | Cimian.Core, Engine, Infrastructure |
-| GUI Integration | 🔄 In Progress | WPF app needs integration |
-| Windows Service | 🔄 Placeholder | Needs host implementation |
+| GUI Integration | ✅ Complete | WPF app in src/Cimian.GUI.CimianStatus |
+| Windows Service | ✅ Complete | Built into cimiwatcher CLI |
+| Build System | ✅ Complete | 0 warnings, 0 errors, .NET 10 |
 
 ---
 
@@ -468,7 +469,7 @@ Get-ChildItem manifests\*.yaml | ForEach-Object {
 
 ---
 
-## Current Status Summary (Updated: December 2024)
+## Current Status Summary (Updated: December 4, 2025)
 
 ### Migration Progress: ~95% Complete
 
@@ -481,6 +482,14 @@ Get-ChildItem manifests\*.yaml | ForEach-Object {
 | Phase 5: Service & GUI | ✅ Complete | Service + WPF GUI migrated |
 | Phase 6: Testing & Validation | ✅ Substantially Complete | 586 tests, E2E pending |
 
+### Recent Accomplishments (December 4, 2025)
+- ✅ Removed redundant `System.Text.Json`, `System.Text.RegularExpressions`, `Microsoft.Win32.Registry` packages (built into .NET 10)
+- ✅ Fixed test hang caused by PowerShell MSI metadata extraction (added timeout + file check)
+- ✅ Consolidated build scripts - single `build.ps1` for all builds
+- ✅ Build produces **0 warnings, 0 errors**
+- ✅ Tests run in **~5 seconds** (down from 8+ minutes when hanging)
+- ✅ All projects target **.NET 10.0** (`net10.0-windows`)
+
 ### Remaining Work
 1. **End-to-End Testing** - Test against live Cimian repository
 2. **Production Deployment** - Build MSI installer package
@@ -490,10 +499,10 @@ Get-ChildItem manifests\*.yaml | ForEach-Object {
 - **Total Tests**: 586
 - **Passed**: 586 (100%)
 - **Failed**: 0
-- **Duration**: ~34-44 seconds
+- **Duration**: ~5 seconds
 
 ### Build Status
-All 10 CLI tools + 1 GUI build successfully:
+All 10 CLI tools + 1 GUI build successfully for **x64 and ARM64**:
 - managedsoftwareupdate ✅
 - cimipkg ✅
 - manifestutil ✅
@@ -502,9 +511,9 @@ All 10 CLI tools + 1 GUI build successfully:
 - cimiimport ✅
 - cimitrigger ✅
 - cimiwatcher ✅ (includes Windows Service support)
-- cimistatus ✅
+- cimistatus ✅ (CLI)
 - repoclean ✅
-- **cimistatus-gui** ✅ (WPF GUI)
+- **cimistatus-gui** ✅ (WPF GUI in Cimian.GUI.CimianStatus)
 
 ### Backward Compatibility Validation
 - [ ] **Existing Installations**: Upgrade path from Go to C# works
