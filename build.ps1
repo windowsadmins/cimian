@@ -183,6 +183,63 @@ function Install-Chocolatey {
     }
 }
 
+function Build-MSI {
+    param(
+        [string]$Architecture,
+        [string]$Version,
+        [string]$BinDir,
+        [switch]$Sign,
+        [string]$Thumbprint
+    )
+    
+    Write-Log "Building MSI for $Architecture..." "INFO"
+    
+    # Check for WiX
+    $wixInstalled = $null
+    try {
+        $wixInstalled = & dotnet tool list -g 2>&1 | Select-String "wix"
+    } catch {}
+    
+    if (-not $wixInstalled) {
+        Write-Log "WiX toolset not found. Installing..." "INFO"
+        & dotnet tool install --global wix 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to install WiX toolset"
+        }
+    }
+    
+    $msiProjectPath = "build\msi\Cimian.wixproj"
+    $outputPath = "release"
+    
+    # Build the MSI
+    & dotnet build $msiProjectPath `
+        -p:Platform=$Architecture `
+        -p:ProductVersion=$Version `
+        -p:BinDir=$BinDir `
+        -o $outputPath
+        
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to build MSI for $Architecture"
+    }
+    
+    $msiFile = Get-ChildItem -Path $outputPath -Filter "Cimian*.msi" | Select-Object -First 1
+    if ($msiFile) {
+        $finalName = "Cimian-$Version-$Architecture.msi"
+        $finalPath = Join-Path $outputPath $finalName
+        Move-Item -Path $msiFile.FullName -Destination $finalPath -Force
+        Write-Log "Created MSI: $finalName" "SUCCESS"
+        
+        if ($Sign -and $Thumbprint) {
+            Invoke-SignArtifact -Path $finalPath -Thumbprint $Thumbprint -Store "CurrentUser"
+            Write-Log "Signed MSI: $finalName" "SUCCESS"
+        }
+        
+        return $finalPath
+    }
+    
+    throw "MSI file not found after build"
+}
+
 function New-DirectoryIfNotExists {
     param ([string]$Path)
     if (-not (Test-Path $Path)) {
@@ -431,18 +488,20 @@ try {
         elseif ($Binaries) {
             # Build all available CLI tools
             foreach ($tool in $Global:CSharpTools.Keys) {
-                if ($tool -eq "cimistatus") { continue } # Skip GUI for binaries mode
-                
                 $projectName = $Global:CSharpTools[$tool]
                 $projectPath = "src\$projectName\$projectName.csproj"
                 
                 if (Test-Path $projectPath) {
                     $outputPath = "release\$arch"
                     
+                    # GUI needs self-contained build
+                    $isSelfContained = ($tool -eq "cimistatus")
+                    $selfContainedArg = if ($isSelfContained) { "true" } else { "false" }
+                    
                     dotnet publish $projectPath `
                         --configuration Release `
                         --runtime $runtimeId `
-                        --self-contained false `
+                        --self-contained $selfContainedArg `
                         --output $outputPath `
                         -p:PublishSingleFile=true `
                         -p:IncludeSourceRevisionInInformationalVersion=false
@@ -455,6 +514,23 @@ try {
                 }
                 else {
                     Write-Log "Project not found: $projectPath (skipping)" "WARNING"
+                }
+            }
+            
+            # Copy MSI support scripts
+            $msiScripts = @(
+                "install-tasks.ps1",
+                "uninstall-tasks.ps1",
+                "manage-service.ps1",
+                "verify-installation.ps1",
+                "diagnose-cimianwatcher.ps1"
+            )
+            foreach ($script in $msiScripts) {
+                $srcPath = "build\msi\$script"
+                $dstPath = "release\$arch\$script"
+                if (Test-Path $srcPath) {
+                    Copy-Item -Path $srcPath -Destination $dstPath -Force
+                    Write-Log "Copied MSI script: $script to $arch" "INFO"
                 }
             }
         }

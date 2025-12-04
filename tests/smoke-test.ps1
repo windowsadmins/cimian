@@ -75,6 +75,13 @@ function Test-BinaryExists {
 
 function Test-VersionOutput {
     param([string]$Name)
+    
+    # Skip GUI apps that don't have CLI version flags
+    if ($Name -eq "cimistatus") {
+        Test-Pass "Version output: $Name (GUI - skipped)"
+        return $true
+    }
+    
     try {
         $path = Join-Path $BinaryPath "$Name.exe"
         $output = & $path --version 2>&1
@@ -93,6 +100,13 @@ function Test-VersionOutput {
 
 function Test-HelpOutput {
     param([string]$Name)
+    
+    # Skip GUI apps that don't have CLI help flags
+    if ($Name -eq "cimistatus") {
+        Test-Pass "Help output: $Name (GUI - skipped)"
+        return $true
+    }
+    
     try {
         $path = Join-Path $BinaryPath "$Name.exe"
         $output = & $path --help 2>&1
@@ -185,7 +199,8 @@ $tools = @(
     "manifestutil",
     "repoclean",
     "cimitrigger",
-    "cimiwatcher"
+    "cimiwatcher",
+    "cimistatus"
 )
 
 # Test 1: Binary Existence
