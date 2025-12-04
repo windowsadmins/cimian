@@ -62,7 +62,7 @@ $Global:CSharpTools = @{
     "cimitrigger" = "Cimian.CLI.cimitrigger"
     "manifestutil" = "Cimian.CLI.manifestutil"
     "repoclean" = "Cimian.CLI.repoclean"
-    "cimiwatcher" = "Cimian.Service.CimianWatcher"
+    "cimiwatcher" = "Cimian.CLI.cimiwatcher"
     "cimistatus" = "Cimian.GUI.CimianStatus"
 }
 
