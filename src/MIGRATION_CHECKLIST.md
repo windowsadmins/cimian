@@ -315,15 +315,15 @@ This document provides a comprehensive checklist and validation framework for en
 - [x] **CimianStatus** - Status display CLI ✅
 - **Validation**: ✅ All 10 tools work identically to Go versions
 
-## Phase 5: Service and GUI Integration 🔄 IN PROGRESS
+## Phase 5: Service and GUI Integration ✅ COMPLETE
 
-### 5.1 CimianWatcher Service Migration 🔄
+### 5.1 CimianWatcher Service Migration ✅
 - [x] **Windows Service Framework**
   - [x] .NET service host implementation (Cimian.CLI.cimiwatcher)
-  - [x] Service installation and configuration (code complete)
-  - [x] Event logging integration
+  - [x] Service installation via `cimiwatcher install`
+  - [x] Event logging integration (Windows Event Log + file)
   - [x] Service recovery settings
-  - **Validation**: 🔄 Service behavior needs end-to-end testing
+  - **Validation**: ✅ Service installs and runs correctly
 
 - [x] **File Monitoring**
   - [x] FileSystemWatcher for trigger files
@@ -337,19 +337,22 @@ This document provides a comprehensive checklist and validation framework for en
   - [x] Process monitoring and cleanup
   - **Validation**: ✅ Process management identical to Go behavior
 
-- [ ] **Windows Service Wrapper**
-  - [ ] Formal Windows Service project (TopShelf or Worker Service)
-  - [ ] Service installer (MSI or NSSM integration)
-  - [ ] Production service deployment testing
-  - **Note**: CLI tool complete, formal service wrapper pending
+- [x] **Windows Service Commands**
+  - [x] `cimiwatcher install` - Install service
+  - [x] `cimiwatcher remove` - Remove service
+  - [x] `cimiwatcher start/stop/pause/continue` - Service control
+  - [x] `cimiwatcher status` - Check service status
+  - [x] `cimiwatcher debug` - Run in console mode for testing
+  - **Note**: Full Windows Service support built into CLI tool
 
-### 5.2 GUI Integration Enhancement 🔄
-- [ ] **WPF GUI Migration**
-  - [ ] Migrate cmd/cimistatus WPF app to src/Cimian.GUI.CimianStatus
-  - [ ] Integrate with C# backend services
-  - [ ] Progress reporting enhancement
-  - [ ] Error display improvements
-  - **Note**: WPF app exists in cmd/cimistatus, needs integration with new backend
+### 5.2 GUI Integration Enhancement ✅ COMPLETE
+- [x] **WPF GUI Migration**
+  - [x] Migrated cmd/cimistatus WPF app to src/Cimian.GUI.CimianStatus
+  - [x] Integrated with C# backend services
+  - [x] Progress reporting with ModernWPF UI
+  - [x] Live log viewer with auto-scroll
+  - [x] Light/dark theme support (follows system settings)
+  - **Note**: Full WPF GUI now in src/Cimian.GUI.CimianStatus
 
 ## Phase 6: Testing and Validation ✅ SUBSTANTIALLY COMPLETE
 
@@ -467,7 +470,7 @@ Get-ChildItem manifests\*.yaml | ForEach-Object {
 
 ## Current Status Summary (Updated: December 2024)
 
-### Migration Progress: ~90% Complete
+### Migration Progress: ~95% Complete
 
 | Phase | Status | Notes |
 |-------|--------|-------|
@@ -475,23 +478,22 @@ Get-ChildItem manifests\*.yaml | ForEach-Object {
 | Phase 2: Core Engine | ✅ Complete | All engines migrated |
 | Phase 3: Network Infrastructure | ✅ Complete | Downloads, S3, Azure done |
 | Phase 4: CLI Tools | ✅ Complete | 10/10 tools migrated |
-| Phase 5: Service & GUI | 🔄 In Progress | CLI complete, GUI pending |
+| Phase 5: Service & GUI | ✅ Complete | Service + WPF GUI migrated |
 | Phase 6: Testing & Validation | ✅ Substantially Complete | 586 tests, E2E pending |
 
 ### Remaining Work
-1. **GUI Integration** - Move WPF app from cmd/cimistatus to src/
-2. **Windows Service Wrapper** - Formal service project for cimiwatcher
-3. **End-to-End Testing** - Test against live Cimian repository
-4. **Production Deployment** - Build MSI installer package
+1. **End-to-End Testing** - Test against live Cimian repository
+2. **Production Deployment** - Build MSI installer package
+3. **Backward Compatibility Validation** - Verify upgrade path
 
 ### Test Results
 - **Total Tests**: 586
 - **Passed**: 586 (100%)
 - **Failed**: 0
-- **Duration**: ~34 seconds
+- **Duration**: ~34-44 seconds
 
 ### Build Status
-All 10 CLI tools build successfully:
+All 10 CLI tools + 1 GUI build successfully:
 - managedsoftwareupdate ✅
 - cimipkg ✅
 - manifestutil ✅
@@ -499,9 +501,10 @@ All 10 CLI tools build successfully:
 - makepkginfo ✅
 - cimiimport ✅
 - cimitrigger ✅
-- cimiwatcher ✅
+- cimiwatcher ✅ (includes Windows Service support)
 - cimistatus ✅
 - repoclean ✅
+- **cimistatus-gui** ✅ (WPF GUI)
 
 ### Backward Compatibility Validation
 - [ ] **Existing Installations**: Upgrade path from Go to C# works
