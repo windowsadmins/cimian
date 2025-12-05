@@ -136,6 +136,19 @@ function Install-CimianWatcherService {
         throw "Service executable not found: $ExePath"
     }
     
+    # Clean up any existing EventLog registry entries that might cause issues during upgrade
+    $eventLogRegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\CimianWatcher"
+    if (Test-Path $eventLogRegPath) {
+        Write-ServiceLog "Removing existing EventLog registry entry for CimianWatcher..."
+        try {
+            Remove-Item -Path $eventLogRegPath -Recurse -Force -ErrorAction Stop
+            Start-Sleep -Seconds 1
+            Write-ServiceLog "EventLog registry entry removed successfully"
+        } catch {
+            Write-ServiceLog "Warning: Could not remove EventLog registry entry: $_" "WARNING"
+        }
+    }
+    
     # Install the service
     & $ExePath install
     if ($LASTEXITCODE -ne 0) {
