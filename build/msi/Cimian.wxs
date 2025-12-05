@@ -154,31 +154,31 @@
                   Execute="deferred"
                   Impersonate="no"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\install-tasks.ps1' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }&quot;"
-                  Return="check" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]install-tasks.ps1&quot; -InstallPath &quot;[INSTALLDIR]&quot;"
+                  Return="ignore" />
 
     <!-- Uninstall scheduled tasks -->
     <CustomAction Id="UninstallScheduledTasks"
                   Execute="deferred"
                   Impersonate="no"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\uninstall-tasks.ps1' -ErrorAction Stop } catch { }&quot;"
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]uninstall-tasks.ps1&quot;"
                   Return="ignore" />
 
     <!-- Install and start the CimianWatcher service using robust PowerShell script -->
     <CustomAction Id="InstallCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="check"
+                  Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'install' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }&quot;" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]manage-service.ps1&quot; -Action install -InstallPath &quot;[INSTALLDIR]&quot;" />
 
     <CustomAction Id="StartCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="check"
+                  Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'start' -InstallPath '[INSTALLDIR]' -ErrorAction Stop; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }&quot;" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]manage-service.ps1&quot; -Action start -InstallPath &quot;[INSTALLDIR]&quot;" />
 
     <!-- Forcefully stop any existing CimianWatcher service and processes -->
     <CustomAction Id="StopExistingCimianWatcher"
@@ -217,14 +217,14 @@
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'stop' -InstallPath '[INSTALLDIR]' -ErrorAction Stop } catch { }&quot;" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]manage-service.ps1&quot; -Action stop -InstallPath &quot;[INSTALLDIR]&quot;" />
 
     <CustomAction Id="RemoveCimianWatcherService"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore"
                   Directory="INSTALLDIR"
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -Command &quot;try { &amp;'.\manage-service.ps1' -Action 'remove' -InstallPath '[INSTALLDIR]' -ErrorAction Stop } catch { }&quot;" />
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]manage-service.ps1&quot; -Action remove -InstallPath &quot;[INSTALLDIR]&quot;" />
 
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
