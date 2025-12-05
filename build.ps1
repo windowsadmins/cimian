@@ -113,25 +113,64 @@ function Get-SigningCertThumbprint {
     return $null
 }
 
-function Test-SignTool {
-    $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
-    if ($c) { return }
+# Global signtool path (discovered once)
+$Global:SignToolPath = $null
+
+function Get-SignToolPath {
+    # Return cached path if available
+    if ($Global:SignToolPath -and (Test-Path $Global:SignToolPath)) {
+        return $Global:SignToolPath
+    }
     
-    $roots = @("$env:ProgramFiles(x86)\Windows Kits\10\bin") | Where-Object { Test-Path $_ }
-
-    try {
-        $kitsRoot = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -Name KitsRoot10 -ErrorAction SilentlyContinue
-        if ($kitsRoot) { $roots += (Join-Path $kitsRoot.KitsRoot10 'bin') }
-    } catch {}
-
-    foreach ($root in $roots) {
-        $candidates = Get-ChildItem -Path $root -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue
-        if ($candidates) {
-            $env:PATH += ";$($candidates[0].Directory.FullName)"
-            return
+    # Check if it's in PATH (prefer x64)
+    $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($c -and $c.Source -match '\\x64\\') { 
+        $Global:SignToolPath = $c.Source
+        return $Global:SignToolPath
+    }
+    
+    # Build search roots - use proper syntax for Program Files (x86)
+    $programFilesx86 = [Environment]::GetFolderPath('ProgramFilesX86')
+    $searchRoot = Join-Path $programFilesx86 "Windows Kits\10\bin"
+    
+    if (Test-Path $searchRoot) {
+        # Find all x64 signtool.exe files and pick the newest SDK version
+        $candidates = Get-ChildItem -Path $searchRoot -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object { $_.Directory.Parent.Name } -Descending
+        
+        if ($candidates -and $candidates.Count -gt 0) {
+            $Global:SignToolPath = $candidates[0].FullName
+            return $Global:SignToolPath
         }
     }
-    throw "signtool.exe not found. Install Windows 10/11 SDK."
+    
+    # Also check via registry
+    try {
+        $kitsRoot = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -Name KitsRoot10 -ErrorAction SilentlyContinue
+        if ($kitsRoot) { 
+            $regRoot = Join-Path $kitsRoot.KitsRoot10 'bin'
+            if (Test-Path $regRoot) {
+                $candidates = Get-ChildItem -Path $regRoot -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match '\\x64\\' } |
+                    Sort-Object { $_.Directory.Parent.Name } -Descending
+                
+                if ($candidates -and $candidates.Count -gt 0) {
+                    $Global:SignToolPath = $candidates[0].FullName
+                    return $Global:SignToolPath
+                }
+            }
+        }
+    } catch {}
+    
+    return $null
+}
+
+function Test-SignTool {
+    $path = Get-SignToolPath
+    if (-not $path) {
+        throw "signtool.exe not found. Install Windows 10/11 SDK."
+    }
 }
 
 function Invoke-SignArtifact {
@@ -143,6 +182,12 @@ function Invoke-SignArtifact {
 
     if (-not (Test-Path -LiteralPath $Path)) { 
         throw "File not found: $Path" 
+    }
+    
+    # Get the signtool path
+    $signToolExe = Get-SignToolPath
+    if (-not $signToolExe) {
+        throw "signtool.exe not found. Install Windows 10/11 SDK."
     }
 
     $storeParam = if ($Store -eq "CurrentUser") { "/s", "My" } else { "/s", "My", "/sm" }
@@ -158,11 +203,25 @@ function Invoke-SignArtifact {
             "/fd", "sha256"
         ) + $storeParam + @($Path)
         
-        & signtool.exe @signArgs
-        if ($LASTEXITCODE -eq 0) {
+        # Use Start-Process with full path
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $signToolExe
+        $psi.Arguments = $signArgs -join ' '
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+        
+        $process = [System.Diagnostics.Process]::Start($psi)
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        
+        if ($process.ExitCode -eq 0) {
             Write-Log "Successfully signed: $Path" "SUCCESS"
         } else {
-            throw "Signing failed with exit code $LASTEXITCODE"
+            $errorMsg = if ($stderr) { $stderr } else { $stdout }
+            throw "Signing failed with exit code $($process.ExitCode): $errorMsg"
         }
     }
     catch {
