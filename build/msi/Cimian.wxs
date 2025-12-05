@@ -100,6 +100,11 @@
           <File Id="BinaryFile9" Source="$(var.BIN_DIR)\cimitrigger.exe" />
         </Component>
 
+        <!-- RepoClean CLI for repository cleanup -->
+        <Component Id="Binary10" Guid="1F855CDE-1234-5678-9ABC-26091DE9B840">
+          <File Id="BinaryFile10" Source="$(var.BIN_DIR)\repoclean.exe" />
+        </Component>
+
         <!-- Scheduled Task Scripts -->
         <Component Id="ScheduledTaskScripts" Guid="EF855CDE-1234-5678-9ABC-26091DE9B83F">
           <File Id="TaskInstallScript" Source="$(var.BIN_DIR)\install-tasks.ps1" />
@@ -264,6 +269,7 @@
       <ComponentRef Id="Binary7" />
       <ComponentRef Id="Binary8" />
       <ComponentRef Id="Binary9" />
+      <ComponentRef Id="Binary10" />
       <ComponentRef Id="ScheduledTaskScripts" />
       <ComponentRef Id="ServiceManagementScript" />
       <ComponentRef Id="DiagnosticScripts" />
