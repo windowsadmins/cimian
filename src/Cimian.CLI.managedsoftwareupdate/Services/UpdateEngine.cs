@@ -314,61 +314,61 @@ public class UpdateEngine
 
         if (total == 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("================================================================================");
-            Console.WriteLine("All software is up to date");
-            Console.WriteLine("================================================================================");
-            Console.WriteLine();
+            Log();
+            Log("================================================================================");
+            Log("All software is up to date");
+            Log("================================================================================");
+            Log();
             return;
         }
 
-        Console.WriteLine();
-        Console.WriteLine("================================================================================");
-        Console.WriteLine("PENDING ACTIONS");
-        Console.WriteLine("================================================================================");
+        Log();
+        Log("================================================================================");
+        Log("PENDING ACTIONS");
+        Log("================================================================================");
 
         if (toInstall.Count > 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("NEW INSTALLS:");
-            Console.WriteLine("----------------------------------------------------------------------");
-            Console.WriteLine($"{"Package Name",-30} | {"Version",-15} | {"Type",-10}");
-            Console.WriteLine("----------------------------------------------------------------------");
+            Log();
+            Log("NEW INSTALLS:");
+            Log("----------------------------------------------------------------------");
+            Log($"{"Package Name",-30} | {"Version",-15} | {"Type",-10}");
+            Log("----------------------------------------------------------------------");
             foreach (var item in toInstall)
             {
-                Console.WriteLine($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15} | {item.Installer.Type,-10}");
+                Log($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15} | {item.Installer.Type,-10}");
             }
         }
 
         if (toUpdate.Count > 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("UPDATES:");
-            Console.WriteLine("----------------------------------------------------------------------");
-            Console.WriteLine($"{"Package Name",-30} | {"Version",-15} | {"Type",-10}");
-            Console.WriteLine("----------------------------------------------------------------------");
+            Log();
+            Log("UPDATES:");
+            Log("----------------------------------------------------------------------");
+            Log($"{"Package Name",-30} | {"Version",-15} | {"Type",-10}");
+            Log("----------------------------------------------------------------------");
             foreach (var item in toUpdate)
             {
-                Console.WriteLine($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15} | {item.Installer.Type,-10}");
+                Log($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15} | {item.Installer.Type,-10}");
             }
         }
 
         if (toUninstall.Count > 0)
         {
-            Console.WriteLine();
-            Console.WriteLine("REMOVALS:");
-            Console.WriteLine("----------------------------------------------------------------------");
-            Console.WriteLine($"{"Package Name",-30} | {"Version",-15}");
-            Console.WriteLine("----------------------------------------------------------------------");
+            Log();
+            Log("REMOVALS:");
+            Log("----------------------------------------------------------------------");
+            Log($"{"Package Name",-30} | {"Version",-15}");
+            Log("----------------------------------------------------------------------");
             foreach (var item in toUninstall)
             {
-                Console.WriteLine($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15}");
+                Log($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15}");
             }
         }
 
-        Console.WriteLine();
-        Console.WriteLine($"Total: {total} actions ({toInstall.Count} installs, {toUpdate.Count} updates, {toUninstall.Count} removals)");
-        Console.WriteLine();
+        Log();
+        Log($"Total: {total} actions ({toInstall.Count} installs, {toUpdate.Count} updates, {toUninstall.Count} removals)");
+        Log();
     }
 
     private async Task<bool> PerformInstallationsAsync(
@@ -502,6 +502,14 @@ public class UpdateEngine
 
     private static string Timestamp() => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
+    /// <summary>
+    /// Log a line with timestamp prefix (no log level) - for verbose output like Go
+    /// </summary>
+    private void Log(string message = "")
+    {
+        Console.WriteLine($"[{Timestamp()}] {message}");
+    }
+
     private void LogInfo(string message)
     {
         if (_verbosity >= 1)
@@ -539,13 +547,13 @@ public class UpdateEngine
     {
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "Unknown";
         
-        Console.WriteLine($"Cimian version is {version}");
-        Console.WriteLine();
-        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
-        Console.WriteLine($"[{Timestamp()}] INFO  CIMIAN MANAGED SOFTWARE UPDATE - VERBOSE MODE");
-        Console.WriteLine($"[{Timestamp()}] INFO  Version: {version}");
-        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
-        Console.WriteLine();
+        Log($"Cimian version is {version}");
+        Log();
+        LogInfo("================================================================================");
+        LogInfo("CIMIAN MANAGED SOFTWARE UPDATE - VERBOSE MODE");
+        LogInfo($"Version: {version}");
+        LogInfo("================================================================================");
+        Log();
     }
     
     /// <summary>
@@ -553,18 +561,18 @@ public class UpdateEngine
     /// </summary>
     private void PrintSystemConfiguration()
     {
-        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
-        Console.WriteLine($"[{Timestamp()}] INFO  SYSTEM CONFIGURATION");
-        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
-        Console.WriteLine($"[{Timestamp()}] INFO  Verbosity Level: {_verbosity}");
-        Console.WriteLine($"[{Timestamp()}] INFO  Log Level: {(_verbosity >= 2 ? "DEBUG" : "INFO")}");
-        Console.WriteLine($"[{Timestamp()}] INFO  Working Directory: {Environment.CurrentDirectory}");
-        Console.WriteLine($"[{Timestamp()}] INFO  Config Path: {CimianConfig.ConfigPath}");
-        Console.WriteLine($"[{Timestamp()}] INFO  Cache Path: {_config.CachePath}");
-        Console.WriteLine($"[{Timestamp()}] INFO  Software Repo URL: {_config.SoftwareRepoURL}");
-        Console.WriteLine($"[{Timestamp()}] INFO  Client Identifier: {_config.ClientIdentifier}");
-        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
-        Console.WriteLine();
+        LogInfo("================================================================================");
+        LogInfo("SYSTEM CONFIGURATION");
+        LogInfo("================================================================================");
+        LogInfo($"Verbosity Level: {_verbosity}");
+        LogInfo($"Log Level: {(_verbosity >= 2 ? "DEBUG" : "INFO")}");
+        LogInfo($"Working Directory: {Environment.CurrentDirectory}");
+        LogInfo($"Config Path: {CimianConfig.ConfigPath}");
+        LogInfo($"Cache Path: {_config.CachePath}");
+        LogInfo($"Software Repo URL: {_config.SoftwareRepoURL}");
+        LogInfo($"Client Identifier: {_config.ClientIdentifier}");
+        LogInfo("================================================================================");
+        Log();
     }
     
     /// <summary>
@@ -593,15 +601,15 @@ public class UpdateEngine
             manifestCounts[source]++;
         }
         
-        Console.WriteLine("----------------------------------------------------------------------");
-        Console.WriteLine("MANIFEST HIERARCHY");
-        Console.WriteLine("----------------------------------------------------------------------");
+        Log("----------------------------------------------------------------------");
+        Log("MANIFEST HIERARCHY");
+        Log("----------------------------------------------------------------------");
         
         // Build hierarchy tree
         var tree = BuildManifestHierarchy(manifestCounts, manifestPackages);
         PrintManifestTree(tree, "", true, manifestPackages);
         
-        Console.WriteLine();
+        Log();
     }
     
     private class ManifestNode
@@ -689,7 +697,7 @@ public class UpdateEngine
             itemCount = pkgs.Count + node.Children.Count;
         }
         
-        Console.WriteLine($"{prefix}{connector} {node.Name} [{itemCount} items]");
+        Log($"{prefix}{connector} {node.Name} [{itemCount} items]");
         
         // Print packages for this manifest
         if (packages.TryGetValue(node.Name, out var manifestPkgs) && manifestPkgs.Count > 0)
@@ -698,7 +706,7 @@ public class UpdateEngine
             {
                 var isLastPkg = i == manifestPkgs.Count - 1 && node.Children.Count == 0;
                 var pkgConnector = isLastPkg ? "└─" : "├─";
-                Console.WriteLine($"{childPrefix}{pkgConnector} {Truncate(manifestPkgs[i].Name, 30)}");
+                Log($"{childPrefix}{pkgConnector} {Truncate(manifestPkgs[i].Name, 30)}");
             }
         }
         
@@ -769,29 +777,29 @@ public class UpdateEngine
             .ThenBy(p => p.Name)
             .ToList();
         
-        Console.WriteLine("----------------------------------------------------------------------");
-        Console.WriteLine($"MANAGED INSTALLS ({managedInstalls.Count} items)");
-        Console.WriteLine("----------------------------------------------------------------------");
-        Console.WriteLine($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
-        Console.WriteLine("----------------------------------------------------------------------");
+        Log("----------------------------------------------------------------------");
+        Log($"MANAGED INSTALLS ({managedInstalls.Count} items)");
+        Log("----------------------------------------------------------------------");
+        Log($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
+        Log("----------------------------------------------------------------------");
         
         foreach (var (name, version, status) in packageStatuses)
         {
-            Console.WriteLine($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
+            Log($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
         }
         
-        Console.WriteLine("----------------------------------------------------------------------");
-        Console.WriteLine();
+        Log("----------------------------------------------------------------------");
+        Log();
         
         // Print inventory summary
         var installedCount = packageStatuses.Count(p => p.Status == "Installed");
         var pendingInstallCount = packageStatuses.Count(p => p.Status == "Pending Install");
         var pendingUpdateCount = packageStatuses.Count(p => p.Status == "Pending Update");
         
-        Console.WriteLine("INVENTORY SUMMARY");
-        Console.WriteLine($"   Total managed items: {managedInstalls.Count}");
-        Console.WriteLine($"   Installed: {installedCount} | Pending Install: {pendingInstallCount} | Pending Update: {pendingUpdateCount}");
-        Console.WriteLine();
+        Log("INVENTORY SUMMARY");
+        Log($"   Total managed items: {managedInstalls.Count}");
+        Log($"   Installed: {installedCount} | Pending Install: {pendingInstallCount} | Pending Update: {pendingUpdateCount}");
+        Log();
     }
     
     #endregion
