@@ -15,6 +15,9 @@ public class Program
     private const string MutexName = "Global\\CimianManagedSoftwareUpdate_v2";
     private static Mutex? _singleInstanceMutex;
 
+    // Track verbosity level from command line preprocessing
+    private static int _verbosityLevel = 0;
+
     public static async Task<int> Main(string[] args)
     {
         // Handle --version flag early
@@ -27,12 +30,52 @@ public class Program
         // Enable ANSI console colors
         EnableAnsiConsole();
 
+        // Preprocess args to handle -vvv (multiple v's) or multiple -v flags
+        var (processedArgs, verbosityLevel) = PreprocessVerbosity(args);
+        _verbosityLevel = verbosityLevel;
+
         // Parse command line arguments
-        var parseResult = Parser.Default.ParseArguments<Options>(args);
+        var parseResult = Parser.Default.ParseArguments<Options>(processedArgs);
         
         return await parseResult.MapResult(
             async (Options opts) => await RunAsync(opts),
             errors => Task.FromResult(1));
+    }
+
+    /// <summary>
+    /// Preprocess arguments to handle Go-style verbosity flags.
+    /// Supports: -v, -vv, -vvv, -v -v -v, etc.
+    /// Returns cleaned args (without -v flags) and the verbosity count.
+    /// </summary>
+    private static (string[] args, int verbosity) PreprocessVerbosity(string[] args)
+    {
+        var result = new List<string>();
+        int verbosity = 0;
+
+        foreach (var arg in args)
+        {
+            // Handle combined verbose flags like -vvv
+            if (arg.StartsWith("-v") && !arg.StartsWith("--") && !arg.Contains("="))
+            {
+                // Count consecutive 'v' characters after the dash
+                var vCount = arg.Skip(1).TakeWhile(c => c == 'v').Count();
+                if (vCount == arg.Length - 1) // All remaining chars are 'v'
+                {
+                    verbosity += vCount;
+                    continue; // Don't add to result
+                }
+            }
+            // Handle --verbose flag
+            else if (arg == "--verbose")
+            {
+                verbosity++;
+                continue; // Don't add to result
+            }
+            
+            result.Add(arg);
+        }
+
+        return (result.ToArray(), verbosity);
     }
 
     private static async Task<int> RunAsync(Options options)
@@ -72,6 +115,11 @@ public class Program
             return ShowSelfUpdateStatus();
         }
 
+        if (options.PerformSelfUpdate)
+        {
+            return PerformSelfUpdate();
+        }
+
         // Check for single instance
         if (!TryAcquireSingleInstance())
         {
@@ -85,14 +133,16 @@ public class Program
             var configService = new ConfigurationService();
             var config = configService.LoadConfig(options.ConfigPath ?? CimianConfig.ConfigPath);
 
-            // Apply verbosity from command line
-            if (options.Verbose)
+            // Apply verbosity from command line (use preprocessed _verbosityLevel)
+            var effectiveVerbosity = _verbosityLevel > 0 ? _verbosityLevel : (options.Verbose ? 1 : 0);
+            
+            if (effectiveVerbosity >= 1)
             {
                 config.Verbose = true;
                 config.LogLevel = "INFO";
             }
 
-            if (options.VerbosityLevel >= 3)
+            if (effectiveVerbosity >= 3)
             {
                 config.Debug = true;
                 config.LogLevel = "DEBUG";
@@ -106,7 +156,7 @@ public class Program
                 installOnly: options.InstallOnly,
                 auto: options.Auto,
                 bootstrap: options.Bootstrap,
-                verbosity: options.VerbosityLevel,
+                verbosity: effectiveVerbosity,
                 manifestTarget: options.ManifestTarget,
                 localManifest: options.LocalOnlyManifest,
                 skipPreflight: options.NoPreflight,
@@ -133,13 +183,20 @@ public class Program
         Console.WriteLine($"  CachePath: {config.CachePath}");
         Console.WriteLine($"  CatalogsPath: {config.CatalogsPath}");
         Console.WriteLine($"  ManifestsPath: {config.ManifestsPath}");
+        Console.WriteLine($"  Catalogs: [{string.Join(", ", config.Catalogs)}]");
         Console.WriteLine($"  LogLevel: {config.LogLevel}");
+        Console.WriteLine($"  Verbose: {config.Verbose}");
+        Console.WriteLine($"  Debug: {config.Debug}");
+        Console.WriteLine($"  CheckOnly: {config.CheckOnly}");
         Console.WriteLine($"  InstallerTimeout: {config.InstallerTimeout}s");
-        Console.WriteLine($"  Catalogs: {string.Join(", ", config.Catalogs)}");
         Console.WriteLine($"  NoPreflight: {config.NoPreflight}");
         Console.WriteLine($"  NoPostflight: {config.NoPostflight}");
         Console.WriteLine($"  PreflightFailureAction: {config.PreflightFailureAction}");
         Console.WriteLine($"  PostflightFailureAction: {config.PostflightFailureAction}");
+        Console.WriteLine($"  LocalOnlyManifest: {config.LocalOnlyManifest ?? "(not set)"}");
+        Console.WriteLine($"  SkipSelfService: {config.SkipSelfService}");
+        Console.WriteLine($"  AuthUser: {(string.IsNullOrEmpty(config.AuthUser) ? "(not set)" : "***")}");
+        Console.WriteLine($"  AuthToken: {(string.IsNullOrEmpty(config.AuthToken) ? "(not set)" : "***")}");
 
         return 0;
     }
@@ -152,11 +209,15 @@ public class Program
 
         var (fileCount, totalSize, corruptCount) = downloadService.GetCacheStatus();
 
+        // Get oldest file info
+        var oldestFileAge = GetOldestFileAge(config.CachePath);
+
         Console.WriteLine("Cimian Cache Status");
         Console.WriteLine("═══════════════════════");
         Console.WriteLine($"Cache Path: {config.CachePath}");
         Console.WriteLine($"Total Files: {fileCount}");
-        Console.WriteLine($"Total Size: {totalSize / (1024.0 * 1024.0):F2} MB");
+        Console.WriteLine($"Total Size: {totalSize / (1024.0 * 1024.0 * 1024.0):F2} GB");
+        Console.WriteLine($"Oldest File: {FormatTimeAgo(oldestFileAge)}");
 
         if (corruptCount > 0)
         {
@@ -168,7 +229,50 @@ public class Program
             Console.WriteLine("No corruption detected");
         }
 
+        // Cache configuration section (matches Go output)
+        Console.WriteLine();
+        Console.WriteLine("Cache Configuration:");
+        Console.WriteLine($"  Use Cache: {config.UseCache}");
+        Console.WriteLine($"  Retention: {config.CacheRetentionDays} days");
+
         return 0;
+    }
+
+    private static TimeSpan GetOldestFileAge(string cachePath)
+    {
+        if (!Directory.Exists(cachePath))
+            return TimeSpan.Zero;
+
+        try
+        {
+            var oldestFile = Directory.EnumerateFiles(cachePath, "*", SearchOption.AllDirectories)
+                .Select(f => new FileInfo(f))
+                .OrderBy(f => f.LastWriteTimeUtc)
+                .FirstOrDefault();
+
+            if (oldestFile == null)
+                return TimeSpan.Zero;
+
+            return DateTime.UtcNow - oldestFile.LastWriteTimeUtc;
+        }
+        catch
+        {
+            return TimeSpan.Zero;
+        }
+    }
+
+    private static string FormatTimeAgo(TimeSpan age)
+    {
+        if (age == TimeSpan.Zero)
+            return "0s ago";
+
+        if (age.TotalDays >= 1)
+            return $"{(int)age.TotalDays}d ago";
+        if (age.TotalHours >= 1)
+            return $"{(int)age.TotalHours}h ago";
+        if (age.TotalMinutes >= 1)
+            return $"{(int)age.TotalMinutes}m ago";
+        return $"{(int)age.TotalSeconds}s ago";
     }
 
     private static int ValidateCache()
@@ -209,6 +313,77 @@ public class Program
         return 0;
     }
 
+    private static int PerformSelfUpdate()
+    {
+        // This is an internal flag used by the self-update mechanism
+        // When a new version of Cimian is downloaded, it may re-launch itself with this flag
+        // to complete the update process
+        Console.WriteLine("[INFO] Performing self-update...");
+
+        try
+        {
+            // Check for pending self-update flag
+            var flagPath = @"C:\ProgramData\ManagedInstalls\.selfupdate_pending";
+            
+            if (!File.Exists(flagPath))
+            {
+                Console.WriteLine("[INFO] No self-update pending. Nothing to do.");
+                return 0;
+            }
+
+            // Read the self-update metadata
+            var flagData = File.ReadAllText(flagPath);
+            Console.WriteLine("[INFO] Self-update metadata found:");
+            
+            // Parse and display metadata
+            var lines = flagData.Split('\n');
+            string? localFile = null;
+            string? itemName = null;
+            string? version = null;
+            string? installerType = null;
+
+            foreach (var line in lines)
+            {
+                if (line.Contains(':') && !line.TrimStart().StartsWith("#"))
+                {
+                    var parts = line.Split(':', 2);
+                    if (parts.Length == 2)
+                    {
+                        var key = parts[0].Trim();
+                        var value = parts[1].Trim();
+                        Console.WriteLine($"   {key}: {value}");
+
+                        switch (key)
+                        {
+                            case "LocalFile": localFile = value; break;
+                            case "Item": itemName = value; break;
+                            case "Version": version = value; break;
+                            case "InstallerType": installerType = value; break;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrEmpty(localFile))
+            {
+                Console.WriteLine("[ERROR] Self-update metadata missing LocalFile information");
+                return 1;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine($"[INFO] Would execute: {installerType} installer at {localFile}");
+            Console.WriteLine("[WARNING] Full self-update execution is not yet implemented in C# version.");
+            Console.WriteLine("[INFO] For now, please run the Go version or manually install the update.");
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] Self-update failed: {ex.Message}");
+            return 1;
+        }
+    }
+
     private static bool TryAcquireSingleInstance()
     {
         try
@@ -224,7 +399,21 @@ public class Program
 
     private static void ReleaseSingleInstance()
     {
-        _singleInstanceMutex?.ReleaseMutex();
+        // Note: In async code, the continuation may run on a different thread than the one
+        // that acquired the mutex. ReleaseMutex() is thread-affine and will throw
+        // ApplicationException if called from a different thread.
+        // 
+        // Disposing the mutex is sufficient to release the kernel handle - we don't need
+        // to explicitly call ReleaseMutex(). The OS will clean up when the handle is closed.
+        try
+        {
+            _singleInstanceMutex?.ReleaseMutex();
+        }
+        catch (ApplicationException)
+        {
+            // Expected when async continuation runs on different thread - ignore
+        }
+        
         _singleInstanceMutex?.Dispose();
         _singleInstanceMutex = null;
     }
@@ -319,6 +508,9 @@ public class Options
     [Option("check-selfupdate", Required = false, HelpText = "Check if self-update is pending")]
     public bool CheckSelfUpdate { get; set; }
 
+    [Option("perform-selfupdate", Required = false, HelpText = "Perform pending self-update (internal use)")]
+    public bool PerformSelfUpdate { get; set; }
+
     [Option("selfupdate-status", Required = false, HelpText = "Show self-update status and exit")]
     public bool SelfUpdateStatus { get; set; }
 
@@ -363,15 +555,14 @@ public class Options
     [Option("show-status", Required = false, HelpText = "Show status window during operations")]
     public bool ShowStatus { get; set; }
 
-    // Verbosity options
-    [Option('v', "verbose", Required = false, HelpText = "Enable verbose logging")]
-    public bool Verbose { get; set; }
-
+    // Verbosity options (note: -v, -vv, -vvv handled by preprocessing)
+    // Keep the Option for help text purposes but it won't be used for parsing
     [Option('q', "quiet", Required = false, HelpText = "Suppress output")]
     public bool Quiet { get; set; }
 
-    // Count of -v flags for verbosity level
-    public int VerbosityLevel => Verbose ? 1 : 0;
+    // Legacy: kept for compatibility but verbosity now handled via preprocessing
+    [Value(999, Hidden = true)] // Hidden from help, won't match anything
+    public bool Verbose { get; set; }
 
     // Configuration paths
     [Option("config", Required = false, HelpText = "Path to configuration file")]

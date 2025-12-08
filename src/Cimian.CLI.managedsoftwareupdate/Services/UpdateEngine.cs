@@ -1,3 +1,4 @@
+using System.Reflection;
 using Cimian.CLI.managedsoftwareupdate.Models;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -9,12 +10,12 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// </summary>
 public class UpdateEngine
 {
-    private readonly CimianConfig _config;
+    private CimianConfig _config;
     private readonly ConfigurationService _configService;
-    private readonly ManifestService _manifestService;
-    private readonly CatalogService _catalogService;
-    private readonly DownloadService _downloadService;
-    private readonly InstallerService _installerService;
+    private ManifestService _manifestService;
+    private CatalogService _catalogService;
+    private DownloadService _downloadService;
+    private InstallerService _installerService;
     private readonly StatusService _statusService;
     private readonly ScriptService _scriptService;
 
@@ -23,6 +24,10 @@ public class UpdateEngine
     private bool _checkOnly;
     private bool _installOnly;
     private bool _auto;
+    
+    // Store for managed items tracking (for status table)
+    private List<ManifestItem> _allManifestItems = new();
+    private Dictionary<string, CatalogItem> _catalogMap = new();
 
     public UpdateEngine(CimianConfig config)
     {
@@ -59,6 +64,12 @@ public class UpdateEngine
 
         try
         {
+            // Print verbose header if enabled
+            if (_verbosity >= 1)
+            {
+                PrintVerboseHeader();
+            }
+
             // Check admin privileges
             if (!StatusService.IsAdministrator())
             {
@@ -76,13 +87,47 @@ public class UpdateEngine
             if (!skipPreflight && !_config.NoPreflight)
             {
                 var (preflightSuccess, preflightOutput) = await _scriptService.RunPreflightAsync(cancellationToken);
+                
+                // Print preflight output in verbose mode
+                if (_verbosity >= 1 && !string.IsNullOrWhiteSpace(preflightOutput))
+                {
+                    Console.WriteLine(preflightOutput);
+                }
+                
                 if (!preflightSuccess)
                 {
                     HandlePreflightFailure(preflightOutput);
                 }
+
+                // Reload configuration after preflight - preflight script may have updated config
+                // This is critical: preflight sets SoftwareRepoURL, ClientIdentifier, etc.
+                _config = _configService.LoadConfig();
+                
+                // Apply verbosity settings again after reload
+                if (verbosity >= 1)
+                {
+                    _config.Verbose = true;
+                    _config.LogLevel = "INFO";
+                }
+                if (verbosity >= 3)
+                {
+                    _config.Debug = true;
+                    _config.LogLevel = "DEBUG";
+                }
+                
+                // Recreate services with updated config
+                _manifestService = new ManifestService(_config);
+                _catalogService = new CatalogService(_config);
+                _downloadService = new DownloadService(_config);
+                _installerService = new InstallerService(_config);
             }
 
             // Get manifest items
+            if (_verbosity >= 1)
+            {
+                PrintSystemConfiguration();
+            }
+            
             LogInfo("Retrieving manifests...");
             List<ManifestItem> manifestItems;
 
@@ -100,10 +145,12 @@ public class UpdateEngine
             }
 
             LogInfo($"Retrieved {manifestItems.Count} manifest items");
+            _allManifestItems = manifestItems;
 
             // Download and load catalogs
             LogInfo("Loading catalogs...");
             var catalogMap = await _catalogService.LoadCatalogsAsync();
+            _catalogMap = catalogMap;
             LogInfo($"Loaded {catalogMap.Count} catalog items");
 
             // Validate cache
@@ -111,6 +158,13 @@ public class UpdateEngine
 
             // Identify actions needed
             var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
+
+            // Print hierarchy and tables in checkonly mode (matches Go behavior - always shows this)
+            if (_checkOnly)
+            {
+                PrintManifestHierarchy(manifestItems);
+                PrintManagedInstallsTable(manifestItems, toInstall, toUpdate, catalogMap);
+            }
 
             // Print summary
             PrintActionSummary(toInstall, toUpdate, toUninstall);
@@ -192,6 +246,9 @@ public class UpdateEngine
 
         var sysArch = StatusService.GetSystemArchitecture();
 
+        // Log manifest and catalog stats for debugging
+        LogDebug($"IdentifyActions: {manifestItems.Count} manifest items, {catalogMap.Count} catalog items");
+
         foreach (var item in manifestItems)
         {
             if (string.IsNullOrEmpty(item.Name)) continue;
@@ -200,39 +257,33 @@ public class UpdateEngine
             
             if (!catalogMap.TryGetValue(key, out var catalogItem))
             {
-                LogDebug($"Item not in catalog: {item.Name}");
+                // Go behavior: items not in catalog with action=install are new installs
+                // But we need the catalog item for installation - log this discrepancy
+                LogDebug($"Item not in catalog: {item.Name} (action: {item.Action})");
                 continue;
             }
 
             // Check architecture compatibility
             if (!CatalogService.SupportsArchitecture(catalogItem, sysArch))
             {
-                LogInfo($"Skipping {item.Name}: architecture mismatch (system: {sysArch})");
+                LogInfo($"Skipping {item.Name}: architecture mismatch (system: {sysArch}, item version: {catalogItem.Version}, item arch: [{string.Join(",", catalogItem.SupportedArch)}])");
                 continue;
             }
 
             switch (item.Action.ToLowerInvariant())
             {
                 case "install":
-                    var status = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
+                case "update":
+                    // Go treats both install and update actions the same - calls CheckStatus
+                    var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
+                    LogDebug($"CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}");
+                    
                     if (status.NeedsAction)
                     {
-                        if (status.Reason?.Contains("Update") == true)
-                        {
-                            toUpdate.Add(catalogItem);
-                        }
-                        else
-                        {
-                            toInstall.Add(catalogItem);
-                        }
-                    }
-                    break;
-
-                case "update":
-                    var updateStatus = _statusService.CheckStatus(catalogItem, "update", _config.CachePath);
-                    if (updateStatus.NeedsAction)
-                    {
+                        // Go doesn't distinguish - all items needing action go to toUpdate
+                        // unless they are truly new (not in catalog, which we already handled)
                         toUpdate.Add(catalogItem);
+                        LogDebug($"  -> Adding to toUpdate");
                     }
                     break;
 
@@ -476,4 +527,270 @@ public class UpdateEngine
         if (value.Length <= maxLength) return value;
         return value[..(maxLength - 3)] + "...";
     }
+
+    #region Verbose Output Methods (Go Parity)
+    
+    /// <summary>
+    /// Prints the verbose header banner - matches Go output
+    /// </summary>
+    private void PrintVerboseHeader()
+    {
+        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "Unknown";
+        
+        Console.WriteLine($"Cimian version is {version}");
+        Console.WriteLine();
+        Console.WriteLine("================================================================================");
+        Console.WriteLine("CIMIAN MANAGED SOFTWARE UPDATE - VERBOSE MODE");
+        Console.WriteLine($"Version: {version}");
+        Console.WriteLine("================================================================================");
+        Console.WriteLine();
+    }
+    
+    /// <summary>
+    /// Prints the system configuration block - matches Go output
+    /// </summary>
+    private void PrintSystemConfiguration()
+    {
+        Console.WriteLine("================================================================================");
+        Console.WriteLine("SYSTEM CONFIGURATION");
+        Console.WriteLine("================================================================================");
+        Console.WriteLine($"Verbosity Level: {_verbosity}");
+        Console.WriteLine($"Log Level: {(_verbosity >= 2 ? "DEBUG" : "INFO")}");
+        Console.WriteLine($"Working Directory: {Environment.CurrentDirectory}");
+        Console.WriteLine($"Config Path: {CimianConfig.ConfigPath}");
+        Console.WriteLine($"Cache Path: {_config.CachePath}");
+        Console.WriteLine($"Software Repo URL: {_config.SoftwareRepoURL}");
+        Console.WriteLine($"Client Identifier: {_config.ClientIdentifier}");
+        Console.WriteLine("================================================================================");
+        Console.WriteLine();
+    }
+    
+    /// <summary>
+    /// Prints the manifest hierarchy tree - matches Go output
+    /// </summary>
+    private void PrintManifestHierarchy(List<ManifestItem> manifestItems)
+    {
+        // Group items by source manifest
+        var manifestCounts = new Dictionary<string, int>();
+        var manifestPackages = new Dictionary<string, List<ManifestItem>>();
+        
+        foreach (var item in manifestItems)
+        {
+            var source = string.IsNullOrEmpty(item.SourceManifest) ? "Unknown" : item.SourceManifest;
+            
+            if (!manifestCounts.ContainsKey(source))
+            {
+                manifestCounts[source] = 0;
+                manifestPackages[source] = new List<ManifestItem>();
+            }
+            
+            if (item.Action?.ToLowerInvariant() == "install")
+            {
+                manifestPackages[source].Add(item);
+            }
+            manifestCounts[source]++;
+        }
+        
+        Console.WriteLine("----------------------------------------------------------------------");
+        Console.WriteLine("MANIFEST HIERARCHY");
+        Console.WriteLine("----------------------------------------------------------------------");
+        
+        // Build hierarchy tree
+        var tree = BuildManifestHierarchy(manifestCounts, manifestPackages);
+        PrintManifestTree(tree, "", true, manifestPackages);
+        
+        Console.WriteLine();
+    }
+    
+    private class ManifestNode
+    {
+        public string Name { get; set; } = "";
+        public int Count { get; set; }
+        public Dictionary<string, ManifestNode> Children { get; set; } = new();
+    }
+    
+    private ManifestNode BuildManifestHierarchy(Dictionary<string, int> counts, Dictionary<string, List<ManifestItem>> packages)
+    {
+        var root = new ManifestNode { Name = "root" };
+        
+        // Core manifests first (not part of client identifier hierarchy)
+        var coreManifests = new[] { "ManagementTools", "ManagementPrefs", "CoreApps", "CoreDrivers" };
+        
+        foreach (var manifest in coreManifests)
+        {
+            if (counts.ContainsKey(manifest) || packages.ContainsKey(manifest))
+            {
+                var packageCount = packages.TryGetValue(manifest, out var pkgs) ? pkgs.Count : 0;
+                root.Children[manifest] = new ManifestNode 
+                { 
+                    Name = manifest, 
+                    Count = packageCount
+                };
+            }
+        }
+        
+        // Build client identifier hierarchy (e.g., Assigned/Staff/IT/B1115/Desktop)
+        var clientId = _config.ClientIdentifier;
+        if (!string.IsNullOrEmpty(clientId))
+        {
+            var parts = clientId.Split('/');
+            var current = root;
+            
+            // Add to last core manifest's children (CoreManifest)
+            if (root.Children.TryGetValue("ManagementTools", out var managementNode))
+            {
+                var coreManifestNode = new ManifestNode { Name = "CoreManifest", Count = 1 };
+                managementNode.Children["CoreManifest"] = coreManifestNode;
+                current = coreManifestNode;
+            }
+            
+            foreach (var part in parts)
+            {
+                if (string.IsNullOrEmpty(part)) continue;
+                
+                var packageCount = packages.TryGetValue(part, out var pkgs) ? pkgs.Count : 0;
+                
+                if (!current.Children.ContainsKey(part))
+                {
+                    current.Children[part] = new ManifestNode 
+                    { 
+                        Name = part, 
+                        Count = packageCount
+                    };
+                }
+                current = current.Children[part];
+            }
+        }
+        
+        return root;
+    }
+    
+    private void PrintManifestTree(ManifestNode node, string prefix, bool isLast, Dictionary<string, List<ManifestItem>> packages)
+    {
+        if (node.Name == "root")
+        {
+            var names = node.Children.Keys.ToList();
+            for (int i = 0; i < names.Count; i++)
+            {
+                PrintManifestTree(node.Children[names[i]], "", i == names.Count - 1, packages);
+            }
+            return;
+        }
+        
+        var connector = isLast ? "└─" : "├─";
+        var childPrefix = prefix + (isLast ? "   " : "│  ");
+        
+        // Calculate items count
+        var itemCount = node.Count + node.Children.Count;
+        if (packages.TryGetValue(node.Name, out var pkgs))
+        {
+            itemCount = pkgs.Count + node.Children.Count;
+        }
+        
+        Console.WriteLine($"{prefix}{connector} {node.Name} [{itemCount} items]");
+        
+        // Print packages for this manifest
+        if (packages.TryGetValue(node.Name, out var manifestPkgs) && manifestPkgs.Count > 0)
+        {
+            for (int i = 0; i < manifestPkgs.Count; i++)
+            {
+                var isLastPkg = i == manifestPkgs.Count - 1 && node.Children.Count == 0;
+                var pkgConnector = isLastPkg ? "└─" : "├─";
+                Console.WriteLine($"{childPrefix}{pkgConnector} {Truncate(manifestPkgs[i].Name, 30)}");
+            }
+        }
+        
+        // Print children
+        var childNames = node.Children.Keys.ToList();
+        for (int i = 0; i < childNames.Count; i++)
+        {
+            PrintManifestTree(node.Children[childNames[i]], childPrefix, i == childNames.Count - 1, packages);
+        }
+    }
+    
+    /// <summary>
+    /// Prints the managed installs status table - matches Go output
+    /// </summary>
+    private void PrintManagedInstallsTable(
+        List<ManifestItem> manifestItems, 
+        List<CatalogItem> toInstall, 
+        List<CatalogItem> toUpdate,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        // Filter to install actions only
+        var managedInstalls = manifestItems
+            .Where(m => m.Action?.ToLowerInvariant() == "install")
+            .ToList();
+        
+        if (managedInstalls.Count == 0) return;
+        
+        // Build status for each item
+        var packageStatuses = new List<(string Name, string Version, string Status)>();
+        var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+        var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+        
+        foreach (var item in managedInstalls)
+        {
+            var name = item.Name;
+            var version = "Unknown";
+            var status = "Installed";
+            
+            // Get catalog version
+            if (catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem))
+            {
+                version = catalogItem.Version;
+            }
+            
+            // Determine status
+            if (toInstallNames.Contains(name.ToLowerInvariant()))
+            {
+                status = "Pending Install";
+            }
+            else if (toUpdateNames.Contains(name.ToLowerInvariant()))
+            {
+                status = "Pending Update";
+            }
+            
+            packageStatuses.Add((name, version, status));
+        }
+        
+        // Sort: Installed first, then Pending Install, then Pending Update
+        var statusPriority = new Dictionary<string, int>
+        {
+            { "Installed", 1 },
+            { "Pending Install", 2 },
+            { "Pending Update", 3 }
+        };
+        
+        packageStatuses = packageStatuses
+            .OrderBy(p => statusPriority.TryGetValue(p.Status, out var priority) ? priority : 99)
+            .ThenBy(p => p.Name)
+            .ToList();
+        
+        Console.WriteLine("----------------------------------------------------------------------");
+        Console.WriteLine($"MANAGED INSTALLS ({managedInstalls.Count} items)");
+        Console.WriteLine("----------------------------------------------------------------------");
+        Console.WriteLine($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
+        Console.WriteLine("----------------------------------------------------------------------");
+        
+        foreach (var (name, version, status) in packageStatuses)
+        {
+            Console.WriteLine($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
+        }
+        
+        Console.WriteLine("----------------------------------------------------------------------");
+        Console.WriteLine();
+        
+        // Print inventory summary
+        var installedCount = packageStatuses.Count(p => p.Status == "Installed");
+        var pendingInstallCount = packageStatuses.Count(p => p.Status == "Pending Install");
+        var pendingUpdateCount = packageStatuses.Count(p => p.Status == "Pending Update");
+        
+        Console.WriteLine("INVENTORY SUMMARY");
+        Console.WriteLine($"   Total managed items: {managedInstalls.Count}");
+        Console.WriteLine($"   Installed: {installedCount} | Pending Install: {pendingInstallCount} | Pending Update: {pendingUpdateCount}");
+        Console.WriteLine();
+    }
+    
+    #endregion
 }
