@@ -27,6 +27,9 @@ public class PkgsInfo
     [YamlMember(Alias = "category")]
     public string Category { get; set; } = "";
 
+    [YamlMember(Alias = "icon_name")]
+    public string? IconName { get; set; }
+
     [YamlMember(Alias = "developer")]
     public string Developer { get; set; } = "";
 

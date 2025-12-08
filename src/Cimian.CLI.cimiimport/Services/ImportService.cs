@@ -41,17 +41,20 @@ public class ImportService
         string? uninstallerPath,
         List<string> installsPaths,
         string? minOSVersion,
-        string? maxOSVersion)
+        string? maxOSVersion,
+        bool extractIcon = false,
+        string? iconOutputPath = null,
+        bool noInteractive = false)
     {
         // Step 1: Check file exists
         if (!File.Exists(packagePath))
         {
-            Console.WriteLine($"❌ Package '{packagePath}' does not exist");
+            Console.WriteLine($"[ERROR] Package '{packagePath}' does not exist");
             return false;
         }
 
         // Step 2: Extract metadata
-        Console.WriteLine("📦 Extracting metadata...");
+        Console.WriteLine("[INFO] Extracting metadata...");
         var metadata = _metadataExtractor.ExtractMetadata(packagePath, config);
         if (string.IsNullOrEmpty(metadata.ID))
         {
@@ -62,21 +65,32 @@ public class ImportService
         var (existingPkg, found) = FindMatchingItemInAllCatalog(config.RepoPath, metadata.ID);
         if (found && existingPkg != null)
         {
-            Console.WriteLine("📋 This item has the same Name as an existing item in the repo:");
+            Console.WriteLine("[INFO] This item has the same Name as an existing item in the repo:");
             Console.WriteLine($"    Name: {existingPkg.Name}");
             Console.WriteLine($"    Version: {existingPkg.Version}");
             Console.WriteLine($"    Description: {existingPkg.Description}");
 
-            Console.Write("Use existing item as a template? [Y/n]: ");
-            var ans = Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(ans) || ans.Equals("y", StringComparison.OrdinalIgnoreCase))
+            if (noInteractive)
             {
+                // Auto-apply template in non-interactive mode
                 ApplyTemplate(metadata, existingPkg, scripts);
+            }
+            else
+            {
+                Console.Write("Use existing item as a template? [Y/n]: ");
+                var ans = Console.ReadLine()?.Trim();
+                if (string.IsNullOrEmpty(ans) || ans.Equals("y", StringComparison.OrdinalIgnoreCase))
+                {
+                    ApplyTemplate(metadata, existingPkg, scripts);
+                }
             }
         }
 
-        // Step 4: Let user override fields
-        metadata = PromptForMetadata(packagePath, metadata, config);
+        // Step 4: Let user override fields (skip in non-interactive mode)
+        if (!noInteractive)
+        {
+            metadata = PromptForMetadata(packagePath, metadata, config);
+        }
 
         // Step 5: Gather script contents
         var preinstallScript = LoadScriptContent(scripts.Preinstall, existingPkg, "preinstall");
@@ -94,7 +108,7 @@ public class ImportService
         }
 
         // Step 7: Calculate file hash and size
-        Console.WriteLine("🔐 Calculating file hash...");
+        Console.WriteLine("[INFO] Calculating file hash...");
         var fileHash = MetadataExtractor.CalculateSHA256(packagePath);
         var fileInfo = new FileInfo(packagePath);
         var fileSizeKB = fileInfo.Length / 1024;
@@ -142,8 +156,8 @@ public class ImportService
             ? $"-{pkgsInfo.SupportedArch[0].ToLowerInvariant()}-" 
             : "-";
 
-        // Step 9: Prompt for repo subdirectory
-        var repoSubPath = PromptInstallerPath(metadata.RepoPath);
+        // Step 9: Prompt for repo subdirectory (use default in non-interactive mode)
+        var repoSubPath = PromptInstallerPath(metadata.RepoPath, noInteractive);
 
         // Step 10: Build installs array
         List<InstallItem> finalInstalls;
@@ -190,16 +204,45 @@ public class ImportService
         Console.WriteLine($"     Installer Type: {pkgsInfo.Installer?.Type}");
         Console.WriteLine();
 
-        Console.Write("Import this item? (y/n) [n]: ");
-        var confirm = Console.ReadLine()?.Trim();
-        if (!confirm?.Equals("y", StringComparison.OrdinalIgnoreCase) ?? true)
+        // Confirm import (auto-yes in non-interactive mode)
+        if (!noInteractive)
         {
-            Console.WriteLine("Import canceled.");
-            return false;
+            Console.Write("Import this item? (y/n) [n]: ");
+            var confirm = Console.ReadLine()?.Trim();
+            if (!confirm?.Equals("y", StringComparison.OrdinalIgnoreCase) ?? true)
+            {
+                Console.WriteLine("Import canceled.");
+                return false;
+            }
         }
 
+        // Step 12a: Extract icon if requested
+        string? iconName = null;
+        if (extractIcon)
+        {
+            Console.WriteLine("[INFO] Extracting icon (EXPERIMENTAL)...");
+            try
+            {
+                var iconExtractor = new IconExtractor();
+                var iconResult = iconExtractor.ExtractIconToPng(packagePath, config.RepoPath, sanitizedName, iconOutputPath);
+                if (iconResult != null)
+                {
+                    iconName = iconResult;
+                    pkgsInfo.IconName = iconName;
+                    Console.WriteLine($"[OK] Icon extracted: {iconName}");
+                }
+                else
+                {
+                    Console.WriteLine("[WARN] Could not extract icon from this installer type");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WARN] Icon extraction failed: {ex.Message}");
+            }
+        }
         // Step 12: Copy installer to pkgs subdir
-        Console.WriteLine("📂 Copying installer to repo...");
+        Console.WriteLine("[INFO] Copying installer to repo...");
         repoSubPath = repoSubPath.TrimStart('\\');
         var installerFolderPath = Path.Combine(config.RepoPath, "pkgs", repoSubPath);
         Directory.CreateDirectory(installerFolderPath);
@@ -212,7 +255,7 @@ public class ImportService
         pkgsInfo.Installer!.Location = MetadataExtractor.NormalizeWindowsPath(subpathAndFile);
 
         // Step 13: Write pkginfo YAML
-        Console.WriteLine("📝 Writing pkginfo file...");
+        Console.WriteLine("[INFO] Writing pkginfo file...");
         var pkginfoFolderPath = Path.Combine(config.RepoPath, "pkgsinfo", repoSubPath);
         Directory.CreateDirectory(pkginfoFolderPath);
 
@@ -222,7 +265,7 @@ public class ImportService
         var yaml = _serializer.Serialize(pkgsInfo);
         await File.WriteAllTextAsync(pkginfoPath, yaml);
 
-        Console.WriteLine($"✅ Pkginfo created at: {pkginfoPath}");
+        Console.WriteLine($"[OK] Pkginfo created at: {pkginfoPath}");
 
         // Open in editor if configured
         if (config.OpenImportedYaml)
@@ -230,7 +273,7 @@ public class ImportService
             TryOpenFile(pkginfoPath);
         }
 
-        Console.WriteLine("✅ Installer imported successfully!");
+        Console.WriteLine("[OK] Installer imported successfully!");
         return true;
     }
 
@@ -359,9 +402,21 @@ public class ImportService
     /// <summary>
     /// Prompts for installer location in repo.
     /// </summary>
-    private string PromptInstallerPath(string? defaultPath)
+    private string PromptInstallerPath(string? defaultPath, bool noInteractive = false)
     {
         defaultPath ??= @"\mgmt";
+        
+        if (noInteractive)
+        {
+            // Use default path without prompting
+            var result = defaultPath;
+            if (!result.StartsWith('\\'))
+            {
+                result = "\\" + result;
+            }
+            return result.TrimEnd('\\');
+        }
+        
         Console.Write($"Location in repo [{defaultPath}]: ");
         var path = Console.ReadLine()?.Trim();
         if (string.IsNullOrEmpty(path))
@@ -414,7 +469,7 @@ public class ImportService
     {
         if (!File.Exists(uninstallerPath))
         {
-            Console.WriteLine($"⚠️ Uninstaller '{uninstallerPath}' does not exist");
+            Console.WriteLine($"[WARN] Uninstaller '{uninstallerPath}' does not exist");
             return null;
         }
 
@@ -434,7 +489,7 @@ public class ImportService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ Failed to process uninstaller: {ex.Message}");
+            Console.WriteLine($"[WARN] Failed to process uninstaller: {ex.Message}");
             return null;
         }
     }
@@ -617,7 +672,7 @@ public class ImportService
     {
         try
         {
-            Console.WriteLine($"📥 Running git pull in: {repoPath}");
+            Console.WriteLine($"[INFO] Running git pull in: {repoPath}");
             var psi = new ProcessStartInfo
             {
                 FileName = "git",
@@ -635,17 +690,17 @@ public class ImportService
                 process.WaitForExit();
                 if (process.ExitCode == 0)
                 {
-                    Console.WriteLine("✅ Git pull completed successfully");
+                    Console.WriteLine("[OK] Git pull completed successfully");
                 }
                 else
                 {
-                    Console.WriteLine("⚠️ Git pull may have had issues");
+                    Console.WriteLine("[WARN] Git pull may have had issues");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ Git pull failed: {ex.Message}");
+            Console.WriteLine($"[WARN] Git pull failed: {ex.Message}");
         }
     }
 }
