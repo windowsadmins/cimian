@@ -75,7 +75,7 @@ public class CatalogBuilder
     /// Verifies that installer/uninstaller payloads exist
     /// Returns warnings for missing files
     /// </summary>
-    public List<string> VerifyPayloads(string repoPath, List<PkgsInfo> items)
+    public List<string> VerifyPayloads(string repoPath, List<PkgsInfo> items, bool hashCheck = false)
     {
         var warnings = new List<string>();
         var pkgsDir = Path.Combine(repoPath, "pkgs");
@@ -101,6 +101,27 @@ public class CatalogBuilder
                 {
                     warnings.Add($"{pkg.FilePath} has missing installer => {relativePath}");
                 }
+                else if (hashCheck)
+                {
+                    // Hash and size validation when --hash_check is enabled
+                    var fullPath = Path.Combine(repoPath, relativePath.Replace('/', '\\'));
+                    if (File.Exists(fullPath))
+                    {
+                        var fileInfo = new FileInfo(fullPath);
+                        if (pkg.Installer.Size.HasValue && fileInfo.Length != pkg.Installer.Size.Value)
+                        {
+                            warnings.Add($"{pkg.FilePath} installer size mismatch: expected {pkg.Installer.Size}, actual {fileInfo.Length}");
+                        }
+                        if (!string.IsNullOrEmpty(pkg.Installer.Hash))
+                        {
+                            var actualHash = ComputeMd5Hash(fullPath);
+                            if (!string.Equals(actualHash, pkg.Installer.Hash, StringComparison.OrdinalIgnoreCase))
+                            {
+                                warnings.Add($"{pkg.FilePath} installer hash mismatch: expected {pkg.Installer.Hash}, actual {actualHash}");
+                            }
+                        }
+                    }
+                }
             }
 
             if (pkg.Uninstaller?.Location != null)
@@ -110,10 +131,39 @@ public class CatalogBuilder
                 {
                     warnings.Add($"{pkg.FilePath} has missing uninstaller => {relativePath}");
                 }
+                else if (hashCheck)
+                {
+                    // Hash and size validation when --hash_check is enabled
+                    var fullPath = Path.Combine(repoPath, relativePath.Replace('/', '\\'));
+                    if (File.Exists(fullPath))
+                    {
+                        var fileInfo = new FileInfo(fullPath);
+                        if (pkg.Uninstaller.Size.HasValue && fileInfo.Length != pkg.Uninstaller.Size.Value)
+                        {
+                            warnings.Add($"{pkg.FilePath} uninstaller size mismatch: expected {pkg.Uninstaller.Size}, actual {fileInfo.Length}");
+                        }
+                        if (!string.IsNullOrEmpty(pkg.Uninstaller.Hash))
+                        {
+                            var actualHash = ComputeMd5Hash(fullPath);
+                            if (!string.Equals(actualHash, pkg.Uninstaller.Hash, StringComparison.OrdinalIgnoreCase))
+                            {
+                                warnings.Add($"{pkg.FilePath} uninstaller hash mismatch: expected {pkg.Uninstaller.Hash}, actual {actualHash}");
+                            }
+                        }
+                    }
+                }
             }
         }
 
         return warnings;
+    }
+
+    private static string ComputeMd5Hash(string filePath)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        using var stream = File.OpenRead(filePath);
+        var hash = md5.ComputeHash(stream);
+        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
     }
 
     /// <summary>
@@ -198,11 +248,15 @@ public class CatalogBuilder
     /// <summary>
     /// Runs the complete catalog building process
     /// </summary>
-    public int Run(string repoPath, bool skipPayloadCheck = false, bool silent = false)
+    public int Run(string repoPath, bool skipPayloadCheck = false, bool hashCheck = false, bool silent = false)
     {
         if (!silent)
         {
             _log($"Scanning {repoPath} for .yaml pkginfo...");
+            if (hashCheck)
+            {
+                _log("Hash validation enabled (this may be slow for large repos)");
+            }
         }
 
         try
@@ -214,7 +268,7 @@ public class CatalogBuilder
             List<string> warnings = new();
             if (!skipPayloadCheck)
             {
-                warnings = VerifyPayloads(repoPath, items);
+                warnings = VerifyPayloads(repoPath, items, hashCheck);
             }
 
             // Build catalogs
