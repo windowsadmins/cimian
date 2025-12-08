@@ -77,10 +77,12 @@ namespace Cimian.Status
 
             var host = hostBuilder.Build();
 
-            // Create and run WPF application
+            // Create WPF application and initialize resources FIRST
+            // This must happen before creating any Window, otherwise XAML resources won't be available
             var app = new App();
+            app.InitializeComponent();
             
-            // Set the main window from DI container
+            // Now set the main window from DI container (after App.xaml resources are loaded)
             app.MainWindow = host.Services.GetRequiredService<MainWindow>();
             app.MainWindow.Show();
             
