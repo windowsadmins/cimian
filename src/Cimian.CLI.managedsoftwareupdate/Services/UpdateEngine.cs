@@ -500,11 +500,13 @@ public class UpdateEngine
         }
     }
 
+    private static string Timestamp() => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
     private void LogInfo(string message)
     {
         if (_verbosity >= 1)
         {
-            Console.WriteLine($"[INFO] {message}");
+            Console.WriteLine($"[{Timestamp()}] INFO  {message}");
         }
     }
 
@@ -512,13 +514,13 @@ public class UpdateEngine
     {
         if (_verbosity >= 2)
         {
-            Console.WriteLine($"[DEBUG] {message}");
+            Console.WriteLine($"[{Timestamp()}] DEBUG {message}");
         }
     }
 
     private void LogSuccess(string message)
     {
-        Console.WriteLine($"[SUCCESS] {message}");
+        Console.WriteLine($"[{Timestamp()}] SUCCESS {message}");
     }
 
     private static string Truncate(string value, int maxLength)
@@ -531,7 +533,7 @@ public class UpdateEngine
     #region Verbose Output Methods (Go Parity)
     
     /// <summary>
-    /// Prints the verbose header banner - matches Go output
+    /// Prints the verbose header banner - matches Go output with timestamps
     /// </summary>
     private void PrintVerboseHeader()
     {
@@ -539,29 +541,29 @@ public class UpdateEngine
         
         Console.WriteLine($"Cimian version is {version}");
         Console.WriteLine();
-        Console.WriteLine("================================================================================");
-        Console.WriteLine("CIMIAN MANAGED SOFTWARE UPDATE - VERBOSE MODE");
-        Console.WriteLine($"Version: {version}");
-        Console.WriteLine("================================================================================");
+        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
+        Console.WriteLine($"[{Timestamp()}] INFO  CIMIAN MANAGED SOFTWARE UPDATE - VERBOSE MODE");
+        Console.WriteLine($"[{Timestamp()}] INFO  Version: {version}");
+        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
         Console.WriteLine();
     }
     
     /// <summary>
-    /// Prints the system configuration block - matches Go output
+    /// Prints the system configuration block - matches Go output with timestamps
     /// </summary>
     private void PrintSystemConfiguration()
     {
-        Console.WriteLine("================================================================================");
-        Console.WriteLine("SYSTEM CONFIGURATION");
-        Console.WriteLine("================================================================================");
-        Console.WriteLine($"Verbosity Level: {_verbosity}");
-        Console.WriteLine($"Log Level: {(_verbosity >= 2 ? "DEBUG" : "INFO")}");
-        Console.WriteLine($"Working Directory: {Environment.CurrentDirectory}");
-        Console.WriteLine($"Config Path: {CimianConfig.ConfigPath}");
-        Console.WriteLine($"Cache Path: {_config.CachePath}");
-        Console.WriteLine($"Software Repo URL: {_config.SoftwareRepoURL}");
-        Console.WriteLine($"Client Identifier: {_config.ClientIdentifier}");
-        Console.WriteLine("================================================================================");
+        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
+        Console.WriteLine($"[{Timestamp()}] INFO  SYSTEM CONFIGURATION");
+        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
+        Console.WriteLine($"[{Timestamp()}] INFO  Verbosity Level: {_verbosity}");
+        Console.WriteLine($"[{Timestamp()}] INFO  Log Level: {(_verbosity >= 2 ? "DEBUG" : "INFO")}");
+        Console.WriteLine($"[{Timestamp()}] INFO  Working Directory: {Environment.CurrentDirectory}");
+        Console.WriteLine($"[{Timestamp()}] INFO  Config Path: {CimianConfig.ConfigPath}");
+        Console.WriteLine($"[{Timestamp()}] INFO  Cache Path: {_config.CachePath}");
+        Console.WriteLine($"[{Timestamp()}] INFO  Software Repo URL: {_config.SoftwareRepoURL}");
+        Console.WriteLine($"[{Timestamp()}] INFO  Client Identifier: {_config.ClientIdentifier}");
+        Console.WriteLine($"[{Timestamp()}] INFO  ================================================================================");
         Console.WriteLine();
     }
     
