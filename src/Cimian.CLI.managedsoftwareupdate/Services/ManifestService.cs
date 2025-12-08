@@ -34,8 +34,15 @@ public class ManifestService
             Timeout = TimeSpan.FromSeconds(60)
         };
 
-        // Add authentication if configured
-        if (!string.IsNullOrEmpty(config.AuthToken))
+        // First try to get auth from registry (DPAPI encrypted)
+        var authHeader = AuthService.GetAuthHeader();
+        if (!string.IsNullOrEmpty(authHeader))
+        {
+            client.DefaultRequestHeaders.Authorization = 
+                new AuthenticationHeaderValue("Basic", authHeader);
+        }
+        // Fall back to config file auth if registry not available
+        else if (!string.IsNullOrEmpty(config.AuthToken))
         {
             client.DefaultRequestHeaders.Authorization = 
                 new AuthenticationHeaderValue("Bearer", config.AuthToken);
@@ -137,18 +144,21 @@ public class ManifestService
                 if (manifest != null)
                 {
                     // Process included manifests first (Munki-like behavior)
-                    foreach (var include in manifest.IncludedManifests)
+                    if (manifest.IncludedManifests != null)
                     {
-                        var includeName = include.Replace(".yaml", "").Replace("\\", "/");
-                        if (includeName.Contains('/'))
+                        foreach (var include in manifest.IncludedManifests)
                         {
-                            includeName = Path.GetFileName(includeName);
+                            // Clean up the include path - normalize slashes and remove .yaml extension
+                            var includeName = include.Replace(".yaml", "").Replace("\\", "/");
+                            
+                            // Include paths are relative or absolute manifest references
+                            // They should be passed as-is to ProcessManifestAsync
+                            await ProcessManifestAsync(includeName, items, processedManifests);
                         }
-                        await ProcessManifestAsync(includeName, items, processedManifests);
                     }
 
                     // Add catalogs to config if specified
-                    if (manifest.Catalogs.Count > 0)
+                    if (manifest.Catalogs != null && manifest.Catalogs.Count > 0)
                     {
                         foreach (var catalog in manifest.Catalogs)
                         {
@@ -180,73 +190,91 @@ public class ManifestService
         var items = new List<ManifestItem>();
 
         // Add managed_installs
-        foreach (var name in manifest.ManagedInstalls)
+        if (manifest.ManagedInstalls != null)
         {
-            items.Add(new ManifestItem
+            foreach (var name in manifest.ManagedInstalls)
             {
-                Name = name,
-                Action = "install",
-                SourceManifest = sourceManifest
-            });
-            SetItemSource(name, sourceManifest, "managed_installs");
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "install",
+                    SourceManifest = sourceManifest
+                });
+                SetItemSource(name, sourceManifest, "managed_installs");
+            }
         }
 
         // Add managed_updates
-        foreach (var name in manifest.ManagedUpdates)
+        if (manifest.ManagedUpdates != null)
         {
-            items.Add(new ManifestItem
+            foreach (var name in manifest.ManagedUpdates)
             {
-                Name = name,
-                Action = "update",
-                SourceManifest = sourceManifest
-            });
-            SetItemSource(name, sourceManifest, "managed_updates");
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "update",
+                    SourceManifest = sourceManifest
+                });
+                SetItemSource(name, sourceManifest, "managed_updates");
+            }
         }
 
         // Add managed_uninstalls
-        foreach (var name in manifest.ManagedUninstalls)
+        if (manifest.ManagedUninstalls != null)
         {
-            items.Add(new ManifestItem
+            foreach (var name in manifest.ManagedUninstalls)
             {
-                Name = name,
-                Action = "uninstall",
-                SourceManifest = sourceManifest
-            });
-            SetItemSource(name, sourceManifest, "managed_uninstalls");
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "uninstall",
+                    SourceManifest = sourceManifest
+                });
+                SetItemSource(name, sourceManifest, "managed_uninstalls");
+            }
         }
 
         // Add optional_installs
-        foreach (var name in manifest.OptionalInstalls)
+        if (manifest.OptionalInstalls != null)
         {
-            items.Add(new ManifestItem
+            foreach (var name in manifest.OptionalInstalls)
             {
-                Name = name,
-                Action = "optional",
-                SourceManifest = sourceManifest
-            });
-            SetItemSource(name, sourceManifest, "optional_installs");
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "optional",
+                    SourceManifest = sourceManifest
+                });
+                SetItemSource(name, sourceManifest, "optional_installs");
+            }
         }
 
         // Add managed_profiles
-        foreach (var name in manifest.ManagedProfiles)
+        if (manifest.ManagedProfiles != null)
         {
-            items.Add(new ManifestItem
+            foreach (var name in manifest.ManagedProfiles)
             {
-                Name = name,
-                Action = "profile",
-                SourceManifest = sourceManifest
-            });
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "profile",
+                    SourceManifest = sourceManifest
+                });
+            }
         }
 
         // Add managed_apps
-        foreach (var name in manifest.ManagedApps)
+        if (manifest.ManagedApps != null)
         {
-            items.Add(new ManifestItem
+            foreach (var name in manifest.ManagedApps)
             {
-                Name = name,
-                Action = "app",
-                SourceManifest = sourceManifest
-            });
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "app",
+                    SourceManifest = sourceManifest
+                });
+            }
         }
 
         return items;
