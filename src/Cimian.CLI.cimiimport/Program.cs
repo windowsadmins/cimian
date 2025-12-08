@@ -75,7 +75,23 @@ public class Program
 
         var configAutoOption = new Option<bool>(
             "--config-auto",
-            "Run non-interactive configuration with defaults and exit");
+            "Auto-configure with defaults and exit");
+
+        var noInteractiveOption = new Option<bool>(
+            "--nointeractive",
+            "Run with no prompts (use defaults or fail)");
+
+        var extractIconOption = new Option<bool>(
+            "--extract-icon",
+            "Enable icon extraction from installer (EXPERIMENTAL)");
+
+        var iconOutputOption = new Option<string?>(
+            "--icon",
+            "Custom icon output path when extraction is enabled");
+
+        var skipIconOption = new Option<bool>(
+            "--skip-icon",
+            "Deprecated: icon extraction is now disabled by default");
 
         rootCommand.AddOption(installsArrayOption);
         rootCommand.AddOption(repoPathOption);
@@ -91,6 +107,10 @@ public class Program
         rootCommand.AddOption(uninstallCheckScriptOption);
         rootCommand.AddOption(configOption);
         rootCommand.AddOption(configAutoOption);
+        rootCommand.AddOption(noInteractiveOption);
+        rootCommand.AddOption(extractIconOption);
+        rootCommand.AddOption(iconOutputOption);
+        rootCommand.AddOption(skipIconOption);
 
         rootCommand.SetHandler(async (context) =>
         {
@@ -109,6 +129,16 @@ public class Program
             var uninstallCheckScript = context.ParseResult.GetValueForOption(uninstallCheckScriptOption);
             var configRequested = context.ParseResult.GetValueForOption(configOption);
             var configAuto = context.ParseResult.GetValueForOption(configAutoOption);
+            var noInteractive = context.ParseResult.GetValueForOption(noInteractiveOption);
+            var extractIcon = context.ParseResult.GetValueForOption(extractIconOption);
+            var iconOutput = context.ParseResult.GetValueForOption(iconOutputOption);
+            var skipIcon = context.ParseResult.GetValueForOption(skipIconOption);
+
+            // Handle deprecated --skip-icon (warn but ignore)
+            if (skipIcon)
+            {
+                Console.WriteLine("⚠️ --skip-icon is deprecated: icon extraction is now disabled by default. Use --extract-icon to enable.");
+            }
 
             var configService = new ConfigurationService();
             var config = configService.LoadOrCreateConfig();
@@ -166,7 +196,7 @@ public class Program
             var importService = new ImportService();
             if (ImportService.IsGitRepository(config.RepoPath))
             {
-                Console.WriteLine("📁 Git repository detected, pulling latest changes...");
+                Console.WriteLine("[INFO] Git repository detected, pulling latest changes...");
                 importService.RunGitPull(config.RepoPath);
             }
 
@@ -180,16 +210,19 @@ public class Program
                     uninstaller,
                     installsArray.ToList(),
                     minOSVersion,
-                    maxOSVersion
+                    maxOSVersion,
+                    extractIcon,
+                    iconOutput,
+                    noInteractive
                 );
 
                 if (success)
                 {
                     // Run makecatalogs
-                    Console.WriteLine("📋 Running makecatalogs...");
+                    Console.WriteLine("[INFO] Running makecatalogs...");
                     RunMakeCatalogs();
 
-                    Console.WriteLine("✅ Cimian import completed successfully.");
+                    Console.WriteLine("[OK] Cimian import completed successfully.");
                     context.ExitCode = 0;
                 }
                 else
@@ -199,7 +232,7 @@ public class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error in import: {ex.Message}");
+                Console.WriteLine($"[ERROR] Error in import: {ex.Message}");
                 context.ExitCode = 1;
             }
         });
