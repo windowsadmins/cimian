@@ -122,7 +122,8 @@ $props | ConvertTo-Json -Compress
     }
 
     /// <summary>
-    /// Extracts file version from an EXE file using FileVersionInfo
+    /// Extracts file version from an EXE file using FileVersionInfo.
+    /// Uses numeric version parts (Major.Minor.Build.Revision) to match Go behavior.
     /// </summary>
     public string? ExtractExeVersion(string exePath)
     {
@@ -135,22 +136,32 @@ $props | ConvertTo-Json -Compress
         {
             var versionInfo = FileVersionInfo.GetVersionInfo(exePath);
             
-            // Try FileVersion first
+            // Use numeric parts first (matches Go behavior with FileVersionMS/LS)
+            // This produces clean versions like "6.2.26100.5074" instead of strings like
+            // "10.0.26100.1 (WinBuild.160101.0800)"
+            if (versionInfo.FileMajorPart > 0 || versionInfo.FileMinorPart > 0 || 
+                versionInfo.FileBuildPart > 0 || versionInfo.FilePrivatePart > 0)
+            {
+                return $"{versionInfo.FileMajorPart}.{versionInfo.FileMinorPart}.{versionInfo.FileBuildPart}.{versionInfo.FilePrivatePart}";
+            }
+
+            // Fall back to FileVersion string if numeric parts are all zero
             if (!string.IsNullOrEmpty(versionInfo.FileVersion))
             {
-                return versionInfo.FileVersion;
+                // Try to clean up the version string (remove trailing info in parentheses)
+                var version = versionInfo.FileVersion;
+                var parenIndex = version.IndexOf('(');
+                if (parenIndex > 0)
+                {
+                    version = version[..parenIndex].Trim();
+                }
+                return version;
             }
             
-            // Fall back to ProductVersion
+            // Last resort: ProductVersion
             if (!string.IsNullOrEmpty(versionInfo.ProductVersion))
             {
                 return versionInfo.ProductVersion;
-            }
-
-            // Try constructing from parts
-            if (versionInfo.FileMajorPart > 0 || versionInfo.FileMinorPart > 0)
-            {
-                return $"{versionInfo.FileMajorPart}.{versionInfo.FileMinorPart}.{versionInfo.FileBuildPart}.{versionInfo.FilePrivatePart}";
             }
 
             return null;

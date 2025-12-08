@@ -25,6 +25,10 @@ class Program
             aliases: ["--skip_payload_check", "-s"],
             description: "Disable checking for installer/uninstaller files");
 
+        var hashCheckOption = new Option<bool>(
+            aliases: ["--hash_check"],
+            description: "Enable hash and size validation (slow - use when needed)");
+
         var silentOption = new Option<bool>(
             aliases: ["--silent", "-q"],
             description: "Minimize output");
@@ -35,6 +39,7 @@ class Program
 
         rootCommand.AddOption(repoPathOption);
         rootCommand.AddOption(skipPayloadCheckOption);
+        rootCommand.AddOption(hashCheckOption);
         rootCommand.AddOption(silentOption);
         rootCommand.AddOption(versionOption);
 
@@ -42,12 +47,13 @@ class Program
         {
             var repoPath = context.ParseResult.GetValueForOption(repoPathOption);
             var skipPayloadCheck = context.ParseResult.GetValueForOption(skipPayloadCheckOption);
+            var hashCheck = context.ParseResult.GetValueForOption(hashCheckOption);
             var silent = context.ParseResult.GetValueForOption(silentOption);
             var showVersion = context.ParseResult.GetValueForOption(versionOption);
 
             try
             {
-                context.ExitCode = Run(repoPath, skipPayloadCheck, silent, showVersion);
+                context.ExitCode = Run(repoPath, skipPayloadCheck, hashCheck, silent, showVersion);
             }
             catch (Exception ex)
             {
@@ -59,7 +65,7 @@ class Program
         return await rootCommand.InvokeAsync(args);
     }
 
-    private static int Run(string? repoPath, bool skipPayloadCheck, bool silent, bool showVersion)
+    private static int Run(string? repoPath, bool skipPayloadCheck, bool hashCheck, bool silent, bool showVersion)
     {
         if (showVersion)
         {
@@ -85,7 +91,7 @@ class Program
             success: msg => Console.WriteLine(msg)
         );
 
-        return builder.Run(repoPath, skipPayloadCheck, silent);
+        return builder.Run(repoPath, skipPayloadCheck, hashCheck, silent);
     }
 
     private static string? LoadRepoPathFromConfig()

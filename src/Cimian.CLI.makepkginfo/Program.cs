@@ -32,6 +32,18 @@ class Program
             "--postinstall_script",
             "Path to postinstall script");
 
+        var preuninstallScriptOption = new Option<string?>(
+            "--preuninstall_script",
+            "Path to preuninstall script");
+
+        var postuninstallScriptOption = new Option<string?>(
+            "--postuninstall_script",
+            "Path to postuninstall script");
+
+        var uninstallerOption = new Option<string?>(
+            "--uninstaller",
+            "Path to uninstaller executable");
+
         var catalogsOption = new Option<string>(
             "--catalogs",
             getDefaultValue: () => "Development",
@@ -108,6 +120,9 @@ class Program
         rootCommand.AddOption(uninstallCheckScriptOption);
         rootCommand.AddOption(preinstallScriptOption);
         rootCommand.AddOption(postinstallScriptOption);
+        rootCommand.AddOption(preuninstallScriptOption);
+        rootCommand.AddOption(postuninstallScriptOption);
+        rootCommand.AddOption(uninstallerOption);
         rootCommand.AddOption(catalogsOption);
         rootCommand.AddOption(categoryOption);
         rootCommand.AddOption(developerOption);
@@ -131,6 +146,9 @@ class Program
             var uninstallCheckScript = context.ParseResult.GetValueForOption(uninstallCheckScriptOption);
             var preinstallScript = context.ParseResult.GetValueForOption(preinstallScriptOption);
             var postinstallScript = context.ParseResult.GetValueForOption(postinstallScriptOption);
+            var preuninstallScript = context.ParseResult.GetValueForOption(preuninstallScriptOption);
+            var postuninstallScript = context.ParseResult.GetValueForOption(postuninstallScriptOption);
+            var uninstaller = context.ParseResult.GetValueForOption(uninstallerOption);
             var catalogs = context.ParseResult.GetValueForOption(catalogsOption)!;
             var category = context.ParseResult.GetValueForOption(categoryOption);
             var developer = context.ParseResult.GetValueForOption(developerOption);
@@ -170,7 +188,20 @@ class Program
                         return;
                     }
 
-                    var pkgsinfoPath = Path.Combine(config.RepoPath!, "pkgsinfo", installerPath + ".yaml");
+                    if (string.IsNullOrEmpty(config.RepoPath))
+                    {
+                        Console.Error.WriteLine("Error: RepoPath not configured. Set 'RepoPath' in Config.yaml or use a repo directory.");
+                        context.ExitCode = 1;
+                        return;
+                    }
+
+                    var pkgsinfoDir = Path.Combine(config.RepoPath, "pkgsinfo");
+                    if (!Directory.Exists(pkgsinfoDir))
+                    {
+                        Directory.CreateDirectory(pkgsinfoDir);
+                    }
+
+                    var pkgsinfoPath = Path.Combine(pkgsinfoDir, installerPath + ".yaml");
                     builder.CreateNewPkgsInfo(pkgsinfoPath, installerPath);
                     Console.WriteLine($"New pkgsinfo created: {pkgsinfoPath}");
                     return;
@@ -203,6 +234,9 @@ class Program
                     UninstallCheckScriptPath = uninstallCheckScript,
                     PreinstallScriptPath = preinstallScript,
                     PostinstallScriptPath = postinstallScript,
+                    PreuninstallScriptPath = preuninstallScript,
+                    PostuninstallScriptPath = postuninstallScript,
+                    UninstallerPath = uninstaller,
                     AdditionalFiles = additionalFiles?.ToList()
                 };
 
