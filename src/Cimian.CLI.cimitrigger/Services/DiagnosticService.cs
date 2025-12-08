@@ -44,6 +44,10 @@ public class DiagnosticService
         // 2. Check CimianWatcher service status
         Console.WriteLine("\n2. Checking CimianWatcher service...");
         result.ServiceRunning = CheckServiceStatus();
+        if (!result.ServiceRunning)
+        {
+            result.Issues.Add("CimianWatcher service not found or not running");
+        }
 
         // 3. Check directory access
         Console.WriteLine("\n3. Checking directory access...");

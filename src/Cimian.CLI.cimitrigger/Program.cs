@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Reflection;
+using System.Text;
 using CimianTools.CimiTrigger.Models;
 using CimianTools.CimiTrigger.Services;
 
@@ -12,6 +13,9 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // Ensure UTF-8 output for emoji support
+        Console.OutputEncoding = Encoding.UTF8;
+
         var rootCommand = new RootCommand("Cimian software update trigger utility");
 
         // GUI command
