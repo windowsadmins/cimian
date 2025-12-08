@@ -214,6 +214,19 @@ public class PkgInfoBuilder
         {
             pkgsinfo.PostinstallScript = ReadFileOrEmpty(options.PostinstallScriptPath);
         }
+        if (!string.IsNullOrEmpty(options.PreuninstallScriptPath))
+        {
+            pkgsinfo.PreuninstallScript = ReadFileOrEmpty(options.PreuninstallScriptPath);
+        }
+        if (!string.IsNullOrEmpty(options.PostuninstallScriptPath))
+        {
+            pkgsinfo.PostuninstallScript = ReadFileOrEmpty(options.PostuninstallScriptPath);
+        }
+        if (!string.IsNullOrEmpty(options.UninstallerPath))
+        {
+            // Store the uninstaller path - typically used for EXE installers
+            pkgsinfo.UninstallerPath = options.UninstallerPath;
+        }
 
         // Process additional -f file paths
         if (options.AdditionalFiles?.Count > 0)
@@ -382,5 +395,8 @@ public class PkgsInfoOptions
     public string? UninstallCheckScriptPath { get; set; }
     public string? PreinstallScriptPath { get; set; }
     public string? PostinstallScriptPath { get; set; }
+    public string? PreuninstallScriptPath { get; set; }
+    public string? PostuninstallScriptPath { get; set; }
+    public string? UninstallerPath { get; set; }
     public List<string>? AdditionalFiles { get; set; }
 }
