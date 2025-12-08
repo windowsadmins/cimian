@@ -67,6 +67,12 @@ public class CimianConfig
     [YamlMember(Alias = "InstallerTimeout")]
     public int InstallerTimeout { get; set; } = 900; // 15 minutes default
 
+    [YamlMember(Alias = "UseCache")]
+    public bool UseCache { get; set; } = true;
+
+    [YamlMember(Alias = "CacheRetentionDays")]
+    public int CacheRetentionDays { get; set; } = 30;
+
     public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
 }
 
@@ -177,7 +183,7 @@ public class CatalogItem
     [YamlMember(Alias = "uninstaller")]
     public List<UninstallerInfo> Uninstaller { get; set; } = new();
 
-    [YamlMember(Alias = "supported_arch")]
+    [YamlMember(Alias = "supported_architectures")]
     public List<string> SupportedArch { get; set; } = new();
 
     [YamlMember(Alias = "requires")]
@@ -197,6 +203,9 @@ public class CatalogItem
 
     [YamlMember(Alias = "check")]
     public CheckInfo Check { get; set; } = new();
+
+    [YamlMember(Alias = "installcheck_script")]
+    public string? InstallcheckScript { get; set; }
 
     [YamlMember(Alias = "preinstall_script")]
     public string? PreinstallScript { get; set; }
@@ -219,7 +228,34 @@ public class CatalogItem
     [YamlMember(Alias = "uninstallable")]
     public bool Uninstallable { get; set; } = true;
 
+    [YamlMember(Alias = "installs")]
+    public List<InstallCheckItem> Installs { get; set; } = new();
+
     public bool IsUninstallable() => Uninstallable && (Uninstaller.Count > 0 || Check.Registry.Name != null);
+}
+
+/// <summary>
+/// Install check item - used to verify installation by checking files, MSI product codes, or directories
+/// </summary>
+public class InstallCheckItem
+{
+    [YamlMember(Alias = "type")]
+    public string Type { get; set; } = string.Empty; // "file", "msi", "directory"
+
+    [YamlMember(Alias = "path")]
+    public string? Path { get; set; }
+
+    [YamlMember(Alias = "md5checksum")]
+    public string? Md5Checksum { get; set; }
+
+    [YamlMember(Alias = "version")]
+    public string? Version { get; set; }
+
+    [YamlMember(Alias = "product_code")]
+    public string? ProductCode { get; set; }
+
+    [YamlMember(Alias = "upgrade_code")]
+    public string? UpgradeCode { get; set; }
 }
 
 /// <summary>
@@ -340,5 +376,10 @@ public class StatusCheckResult
     public string Status { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
     public bool NeedsAction { get; set; }
+    /// <summary>
+    /// True if the item is already installed but needs an update (version mismatch, etc.)
+    /// False if the item is not installed at all (new install)
+    /// </summary>
+    public bool IsUpdate { get; set; }
     public Exception? Error { get; set; }
 }
