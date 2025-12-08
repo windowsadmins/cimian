@@ -33,7 +33,15 @@ public class CatalogService
             Timeout = TimeSpan.FromSeconds(60)
         };
 
-        if (!string.IsNullOrEmpty(config.AuthToken))
+        // First try to get auth from registry (DPAPI encrypted)
+        var authHeader = AuthService.GetAuthHeader();
+        if (!string.IsNullOrEmpty(authHeader))
+        {
+            client.DefaultRequestHeaders.Authorization = 
+                new AuthenticationHeaderValue("Basic", authHeader);
+        }
+        // Fall back to config file auth if registry not available
+        else if (!string.IsNullOrEmpty(config.AuthToken))
         {
             client.DefaultRequestHeaders.Authorization = 
                 new AuthenticationHeaderValue("Bearer", config.AuthToken);
@@ -58,12 +66,19 @@ public class CatalogService
     {
         var items = new Dictionary<string, CatalogItem>(StringComparer.OrdinalIgnoreCase);
         var catalogs = _config.Catalogs.Count > 0 ? _config.Catalogs : new List<string> { "Production" };
+        var sysArch = GetSystemArchitecture();
 
         foreach (var catalogName in catalogs)
         {
             var catalogItems = await DownloadCatalogAsync(catalogName);
             foreach (var item in catalogItems)
             {
+                // Filter by architecture first (Go parity)
+                if (!SupportsArchitecture(item, sysArch))
+                {
+                    continue;
+                }
+                
                 var key = item.Name.ToLowerInvariant();
                 // Keep highest version if duplicate
                 if (!items.ContainsKey(key) || 
@@ -169,7 +184,7 @@ public class CatalogService
                 }
 
                 var key = item.Name.ToLowerInvariant();
-                // Keep highest version if duplicate
+                // Go parity: Keep highest version (Go uses DeduplicateCatalogItems which picks highest version)
                 if (!items.ContainsKey(key) || 
                     CompareVersions(item.Version, items[key].Version) > 0)
                 {
