@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Cimian.CLI.managedsoftwareupdate.Models;
@@ -14,6 +15,72 @@ public class StatusService
     private const string BootstrapFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
 
     /// <summary>
+    /// Checks if the item is the Cimian/CimianTools self-update package
+    /// </summary>
+    private static bool IsCimianPackage(CatalogItem item)
+    {
+        var itemName = item.Name.ToLowerInvariant();
+        
+        // Only check for the main Cimian installation packages
+        var cimianMainPackages = new[] { "cimian", "cimiantools" };
+        
+        // Check for exact matches
+        foreach (var packageName in cimianMainPackages)
+        {
+            if (itemName == packageName)
+                return true;
+                
+            // Check with common suffixes
+            var suffixes = new[] { "-msi", "-nupkg", "-tools", ".msi", ".nupkg" };
+            foreach (var suffix in suffixes)
+            {
+                if (itemName == packageName + suffix)
+                    return true;
+            }
+        }
+        
+        // Check installer location for main Cimian packages
+        var installerLocation = item.Installer.Location?.ToLowerInvariant() ?? "";
+        if (installerLocation.Contains("/cimian-") ||
+            installerLocation.Contains("/cimiantools-") ||
+            (installerLocation.Contains("/cimian.") && 
+             (installerLocation.EndsWith(".msi") || installerLocation.EndsWith(".nupkg"))))
+        {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /// <summary>
+    /// Gets the running version of the managedsoftwareupdate binary
+    /// </summary>
+    private static string GetRunningVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(informationalVersion))
+        {
+            var plusIndex = informationalVersion.IndexOf('+');
+            if (plusIndex >= 0)
+            {
+                return informationalVersion[..plusIndex];
+            }
+            return informationalVersion;
+        }
+        
+        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+        if (!string.IsNullOrEmpty(fileVersion))
+        {
+            return fileVersion;
+        }
+        
+        var version = assembly.GetName().Version;
+        return version?.ToString() ?? "UNKNOWN";
+    }
+
+    /// <summary>
     /// Checks if the item needs to be installed/updated
     /// </summary>
     public StatusCheckResult CheckStatus(CatalogItem item, string action, string cachePath)
@@ -26,6 +93,26 @@ public class StatusService
 
         try
         {
+            // CRITICAL: For CimianTools (self-update), check running version first
+            // This prevents attempting to "downgrade" to older catalog versions
+            if (IsCimianPackage(item))
+            {
+                var runningVersion = GetRunningVersion();
+                var catalogVersion = item.Version;
+                
+                // Compare versions: only update if catalog version > running version
+                var comparison = CatalogService.CompareVersions(catalogVersion, runningVersion);
+                
+                if (comparison <= 0)
+                {
+                    // Running version is same or newer than catalog - no update needed
+                    result.Status = "installed";
+                    result.Reason = $"Running version {runningVersion} >= catalog version {catalogVersion}";
+                    return result;
+                }
+                // Otherwise fall through to normal checks
+            }
+
             // Priority 1: Check installcheck_script if defined (Go parity - runs before anything else)
             if (!string.IsNullOrEmpty(item.InstallcheckScript))
             {
