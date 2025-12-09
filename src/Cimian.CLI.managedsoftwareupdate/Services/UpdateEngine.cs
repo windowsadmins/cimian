@@ -576,8 +576,8 @@ public class UpdateEngine
     {
         if (_verbosity >= 2)
         {
-            // DEBUG is blue in Go
-            Console.WriteLine($"{ColorBlue}[{Timestamp()}] DEBUG {message}{ColorReset}");
+            // DEBUG is cyan in Go (easier to read on dark backgrounds)
+            Console.WriteLine($"{ColorCyan}[{Timestamp()}] DEBUG {message}{ColorReset}");
         }
     }
 
