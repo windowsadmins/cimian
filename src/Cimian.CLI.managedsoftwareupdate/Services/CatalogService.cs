@@ -323,4 +323,240 @@ public class CatalogService
 
         return result;
     }
+
+    #region Dependency Processing (Go parity: pkg/catalog/catalog.go)
+
+    /// <summary>
+    /// Searches for items that declare they are updates for the given item name.
+    /// This handles updates that aren't simply later versions of the same item.
+    /// For example, AdobeCameraRaw is an update for Adobe Photoshop.
+    /// Migrated from Go: catalog.LookForUpdates() - catalog.go lines 181-207
+    /// </summary>
+    /// <param name="itemName">The item name to find updates for</param>
+    /// <param name="catalog">The loaded catalog dictionary</param>
+    /// <returns>List of catalog item names that are updates for the given item</returns>
+    public static List<string> LookForUpdates(string itemName, Dictionary<string, CatalogItem> catalog)
+    {
+        var updateList = new List<string>();
+
+        foreach (var kvp in catalog)
+        {
+            var catalogItem = kvp.Value;
+            if (catalogItem.UpdateFor != null && catalogItem.UpdateFor.Count > 0)
+            {
+                foreach (var updateForItem in catalogItem.UpdateFor)
+                {
+                    if (string.Equals(updateForItem, itemName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!updateList.Contains(catalogItem.Name, StringComparer.OrdinalIgnoreCase))
+                        {
+                            updateList.Add(catalogItem.Name);
+                        }
+                    }
+                }
+            }
+        }
+
+        return updateList;
+    }
+
+    /// <summary>
+    /// Searches for updates for a specific version of an item.
+    /// Since these can appear in manifests as item-version or item--version, we search for both.
+    /// Migrated from Go: catalog.LookForUpdatesForVersion() - catalog.go lines 209-222
+    /// </summary>
+    public static List<string> LookForUpdatesForVersion(string itemName, string itemVersion, Dictionary<string, CatalogItem> catalog)
+    {
+        var nameAndVersion = $"{itemName}-{itemVersion}";
+        var altNameAndVersion = $"{itemName}--{itemVersion}";
+
+        var updateList = LookForUpdates(nameAndVersion, catalog);
+        updateList.AddRange(LookForUpdates(altNameAndVersion, catalog));
+
+        // Remove duplicates
+        return updateList.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Checks if all required dependencies for an item are installed or scheduled for install.
+    /// Migrated from Go: catalog.CheckDependencies() - catalog.go lines 224-290
+    /// </summary>
+    /// <param name="item">The catalog item to check dependencies for</param>
+    /// <param name="installedItems">List of currently installed item names</param>
+    /// <param name="scheduledItems">List of items scheduled for installation</param>
+    /// <returns>List of missing dependencies that need to be installed</returns>
+    public static List<string> CheckDependencies(CatalogItem item, List<string> installedItems, List<string> scheduledItems)
+    {
+        if (item.Requires == null || item.Requires.Count == 0)
+        {
+            return new List<string>();
+        }
+
+        var missingDeps = new List<string>();
+        var allAvailableItems = installedItems.Concat(scheduledItems).ToList();
+
+        foreach (var reqItem in item.Requires)
+        {
+            var (reqName, reqVersion) = SplitNameAndVersion(reqItem);
+
+            var satisfied = false;
+            foreach (var availableItem in allAvailableItems)
+            {
+                var (availableName, availableVersion) = SplitNameAndVersion(availableItem);
+
+                // Check if names match (case-insensitive)
+                if (string.Equals(availableName, reqName, StringComparison.OrdinalIgnoreCase))
+                {
+                    // If no specific version required, any version satisfies
+                    if (string.IsNullOrEmpty(reqVersion))
+                    {
+                        satisfied = true;
+                        break;
+                    }
+
+                    // If specific version required, check if it matches
+                    if (!string.IsNullOrEmpty(reqVersion) && !string.IsNullOrEmpty(availableVersion))
+                    {
+                        // Simple exact version match for now
+                        if (string.Equals(availableVersion, reqVersion, StringComparison.OrdinalIgnoreCase))
+                        {
+                            satisfied = true;
+                            break;
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(reqVersion) && string.IsNullOrEmpty(availableVersion))
+                    {
+                        // Required version specified but available item has no version
+                        // Assume satisfied if name matches (Go parity)
+                        satisfied = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!satisfied)
+            {
+                missingDeps.Add(reqItem);
+            }
+        }
+
+        return missingDeps;
+    }
+
+    /// <summary>
+    /// Finds all items in the catalog that require the given item.
+    /// This is used during removal to determine what dependent items also need to be removed.
+    /// Migrated from Go: catalog.FindItemsRequiring() - catalog.go lines 292-320
+    /// </summary>
+    /// <param name="itemName">The item name to find dependents for</param>
+    /// <param name="catalog">The loaded catalog dictionary</param>
+    /// <returns>List of catalog items that require the given item</returns>
+    public static List<CatalogItem> FindItemsRequiring(string itemName, Dictionary<string, CatalogItem> catalog)
+    {
+        var dependentItems = new List<CatalogItem>();
+
+        foreach (var kvp in catalog)
+        {
+            var catalogItem = kvp.Value;
+            if (catalogItem.Requires != null && catalogItem.Requires.Count > 0)
+            {
+                foreach (var reqItem in catalogItem.Requires)
+                {
+                    var (reqName, _) = SplitNameAndVersion(reqItem);
+
+                    if (string.Equals(reqName, itemName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        dependentItems.Add(catalogItem);
+                        break; // No need to check more requires for this item
+                    }
+                }
+            }
+        }
+
+        return dependentItems;
+    }
+
+    /// <summary>
+    /// Splits an item name that may contain a version suffix.
+    /// Handles formats like "itemname-1.0.0" or "itemname--1.0.0"
+    /// Migrated from Go: catalog.SplitNameAndVersion() - catalog.go lines 393-424
+    /// </summary>
+    /// <param name="nameWithVersion">The combined name and version string</param>
+    /// <returns>Tuple of (name, version) - version may be empty if not found</returns>
+    public static (string name, string version) SplitNameAndVersion(string nameWithVersion)
+    {
+        if (string.IsNullOrEmpty(nameWithVersion))
+        {
+            return (string.Empty, string.Empty);
+        }
+
+        // Handle the double dash format first (itemname--version)
+        if (nameWithVersion.Contains("--"))
+        {
+            var parts = nameWithVersion.Split(new[] { "--" }, 2, StringSplitOptions.None);
+            if (parts.Length == 2)
+            {
+                return (parts[0], parts[1]);
+            }
+        }
+
+        // Handle single dash format (itemname-version)
+        // Need to be careful: some item names contain dashes
+        // Look for the last dash followed by a digit (likely version)
+        var lastDashIndex = nameWithVersion.LastIndexOf('-');
+        if (lastDashIndex > 0 && lastDashIndex < nameWithVersion.Length - 1)
+        {
+            var afterDash = nameWithVersion[(lastDashIndex + 1)..];
+            // Check if what follows looks like a version (starts with digit)
+            if (char.IsDigit(afterDash[0]))
+            {
+                return (nameWithVersion[..lastDashIndex], afterDash);
+            }
+        }
+
+        // No version found, return just the name
+        return (nameWithVersion, string.Empty);
+    }
+
+    /// <summary>
+    /// Checks if an item is installed by comparing against a list of installed items
+    /// Migrated from Go: catalog.IsItemInstalled() - catalog.go lines 349-358
+    /// </summary>
+    public static bool IsItemInstalled(string itemName, List<string> installedItems)
+    {
+        var (checkName, _) = SplitNameAndVersion(itemName);
+
+        foreach (var installed in installedItems)
+        {
+            var (installedName, _) = SplitNameAndVersion(installed);
+            if (string.Equals(installedName, checkName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Gets the version of an installed item, if available
+    /// Migrated from Go: catalog.GetVersionFromInstalledItems() - catalog.go lines 375-389
+    /// </summary>
+    public static string GetVersionFromInstalledItems(string itemName, List<string> installedItems)
+    {
+        var (checkName, _) = SplitNameAndVersion(itemName);
+
+        foreach (var installed in installedItems)
+        {
+            var (installedName, installedVersion) = SplitNameAndVersion(installed);
+            if (string.Equals(installedName, checkName, StringComparison.OrdinalIgnoreCase))
+            {
+                return installedVersion;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    #endregion
 }
