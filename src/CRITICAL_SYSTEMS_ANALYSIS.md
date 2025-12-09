@@ -9,6 +9,7 @@
 > - `Cimian.Core/Models/` - Package Metadata Models
 > - `Cimian.Engine/Manifest/` - Manifest Processing Pipeline
 > - `Cimian.Infrastructure/Logging/` - Session-Based Logging
+> - `Cimian.CLI.managedsoftwareupdate/Services/` - Dependency Processing
 
 This document provides deep technical analysis of the most complex and critical systems in Cimian that require careful migration from Go to C#. These systems contain the most refined logic and present the highest risk during migration.
 
@@ -19,6 +20,7 @@ This document provides deep technical analysis of the most complex and critical 
 4. [Package Metadata Processing](#package-metadata-processing)
 5. [Manifest Processing Pipeline](#manifest-processing-pipeline)
 6. [Session-Based Logging System](#session-based-logging-system)
+7. [Dependency Processing System](#dependency-processing-system)
 
 ## Conditional Items Evaluation Engine
 
@@ -928,3 +930,250 @@ The key to successful migration is:
 5. **Incremental Validation**: Validate each component before proceeding to the next
 
 The migration plan provides a systematic approach to converting these complex systems while maintaining the reliability and performance that make Cimian effective for enterprise software deployment.
+
+---
+
+## Dependency Processing System
+
+> **STATUS: [x] IMPLEMENTED (December 2024)**  
+> The `requires` and `update_for` dependency processing has been migrated to C#.
+> - `Cimian.CLI.managedsoftwareupdate/Services/CatalogService.cs` - Dependency query methods
+> - `Cimian.CLI.managedsoftwareupdate/Services/UpdateEngine.cs` - Dependency-aware install/uninstall
+
+### Overview
+
+The dependency processing system ensures that package dependencies are installed in the correct order and that updates for installed packages are automatically applied. This is critical for packages that rely on other packages (e.g., Maya requires MayaEnvVariable) and for update packages that target specific products (e.g., FortiClientPrefs is an update_for FortiClient).
+
+### Go Implementation Analysis
+
+#### Core Components (pkg/catalog/catalog.go, pkg/process/process.go)
+
+**1. Dependency Query Functions (catalog.go)**
+
+```go
+// LookForUpdates - Find items that declare they are updates for this item
+func LookForUpdates(itemName string, catalogMap map[int]map[string]Item) []string
+
+// CheckDependencies - Check if all requires dependencies are satisfied
+func CheckDependencies(item Item, installedItems []string, scheduledItems []string) []string
+
+// FindItemsRequiring - Find items that depend on this item (for uninstall cascade)
+func FindItemsRequiring(itemName string, catalogMap map[int]map[string]Item) []Item
+
+// SplitNameAndVersion - Parse "itemname-1.0.0" or "itemname--1.0.0" format
+func SplitNameAndVersion(nameWithVersion string) (string, string)
+```
+
+**2. Dependency-Aware Installation (process.go)**
+
+```go
+func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[string]catalog.Item,
+    installedItems []string, scheduledItems []string, cachePath string, checkOnly bool, cfg *config.Configuration) error {
+    
+    // 1. Get item from catalogs
+    item, err := firstItem(itemName, catalogsMap, cfg)
+    
+    // 2. Check architecture support
+    if !supportsArchitecture(item, systemArch) { ... }
+    
+    // 3. Process requires dependencies first
+    if item.Requires != nil {
+        missingDeps := catalog.CheckDependencies(item, installedItems, scheduledItems)
+        for _, dep := range missingDeps {
+            // Recursively install dependency
+            ProcessInstallWithDependencies(dep, ...)
+            scheduledItems = append(scheduledItems, dep)
+        }
+    }
+    
+    // 4. Handle legacy dependencies field
+    if len(item.Dependencies) > 0 { ... }
+    
+    // 5. Install the main item
+    installerInstall(item, "install", localFile, ...)
+    
+    // 6. Look for and install update_for items
+    updateList := catalog.LookForUpdates(itemName, catalogsMap)
+    for _, updateItem := range updateList {
+        ProcessInstallWithDependencies(updateItem, ...)
+    }
+}
+```
+
+### C# Implementation
+
+#### CatalogService.cs - Dependency Query Methods
+
+```csharp
+#region Dependency Processing (Go parity: pkg/catalog/catalog.go)
+
+/// <summary>
+/// Searches for items that declare they are updates for the given item name.
+/// Migrated from Go: catalog.LookForUpdates() - catalog.go lines 181-207
+/// </summary>
+public static List<string> LookForUpdates(string itemName, Dictionary<string, CatalogItem> catalog)
+{
+    var updateList = new List<string>();
+    foreach (var kvp in catalog)
+    {
+        var catalogItem = kvp.Value;
+        if (catalogItem.UpdateFor != null && catalogItem.UpdateFor.Count > 0)
+        {
+            foreach (var updateForItem in catalogItem.UpdateFor)
+            {
+                if (string.Equals(updateForItem, itemName, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!updateList.Contains(catalogItem.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        updateList.Add(catalogItem.Name);
+                    }
+                }
+            }
+        }
+    }
+    return updateList;
+}
+
+/// <summary>
+/// Checks if all required dependencies for an item are installed or scheduled.
+/// Migrated from Go: catalog.CheckDependencies() - catalog.go lines 224-290
+/// </summary>
+public static List<string> CheckDependencies(CatalogItem item, List<string> installedItems, List<string> scheduledItems)
+
+/// <summary>
+/// Finds all items that require the given item (for cascade uninstall).
+/// Migrated from Go: catalog.FindItemsRequiring() - catalog.go lines 292-320
+/// </summary>
+public static List<CatalogItem> FindItemsRequiring(string itemName, Dictionary<string, CatalogItem> catalog)
+
+/// <summary>
+/// Splits an item name that may contain a version suffix.
+/// Migrated from Go: catalog.SplitNameAndVersion() - catalog.go lines 393-424
+/// </summary>
+public static (string name, string version) SplitNameAndVersion(string nameWithVersion)
+
+#endregion
+```
+
+#### UpdateEngine.cs - Dependency-Aware Processing
+
+```csharp
+#region Dependency-Aware Installation (Go parity: pkg/process/process.go)
+
+/// <summary>
+/// Process installation with full dependency handling.
+/// Migrated from Go: ProcessInstallWithDependencies() - process.go lines 490-610
+/// </summary>
+private async Task<bool> ProcessInstallWithDependenciesAsync(
+    string itemName,
+    List<string> installedItems,
+    List<string> scheduledItems,
+    Dictionary<string, string> downloadedPaths,
+    CancellationToken cancellationToken)
+{
+    // 1. Get item from catalog
+    if (!_catalogMap.TryGetValue(key, out var item)) { ... }
+    
+    // 2. Check architecture support
+    if (!CatalogService.SupportsArchitecture(item, systemArch)) { ... }
+    
+    // 3. Process requires dependencies first
+    if (item.Requires.Count > 0)
+    {
+        var missingDeps = CatalogService.CheckDependencies(item, installedItems, scheduledItems);
+        foreach (var dep in missingDeps)
+        {
+            // Recursively process dependency
+            await ProcessInstallWithDependenciesAsync(dep, ...);
+            scheduledItems.Add(dep);
+        }
+    }
+    
+    // 4. Install the main item
+    await _installerService.InstallAsync(item, localFile, cancellationToken);
+    installedItems.Add(item.Name);
+    
+    // 5. Process update_for items
+    var updateList = CatalogService.LookForUpdates(item.Name, _catalogMap);
+    foreach (var updateItemName in updateList)
+    {
+        // Check if update needs action, then process it
+        await ProcessInstallWithDependenciesAsync(updateItemName, ...);
+    }
+    
+    return true;
+}
+
+/// <summary>
+/// Process uninstallation with cascade dependency removal.
+/// Migrated from Go: ProcessUninstallWithDependencies() - process.go lines 642-690
+/// </summary>
+private async Task<bool> ProcessUninstallWithDependenciesAsync(
+    string itemName,
+    List<string> installedItems,
+    CancellationToken cancellationToken)
+{
+    // 1. Find items that require this item
+    var dependentItems = CatalogService.FindItemsRequiring(itemName, _catalogMap);
+    
+    // 2. Remove dependent items first (cascade)
+    foreach (var depItem in dependentItems)
+    {
+        if (CatalogService.IsItemInstalled(depItem.Name, installedItems))
+        {
+            await ProcessUninstallWithDependenciesAsync(depItem.Name, ...);
+        }
+    }
+    
+    // 3. Uninstall the main item
+    await _installerService.UninstallAsync(item, cancellationToken);
+}
+
+#endregion
+```
+
+### Processing Flow Diagrams
+
+**Installation with Dependencies:**
+```
+PerformInstallationsAsync(items)
+    ├── For each item:
+    │   └── ProcessInstallWithDependenciesAsync(itemName)
+    │       ├── Check architecture
+    │       ├── For each missing dependency:
+    │       │   └── ProcessInstallWithDependenciesAsync(dep) [RECURSIVE]
+    │       ├── InstallAsync(mainItem)
+    │       └── For each update_for item:
+    │           └── ProcessInstallWithDependenciesAsync(update) [RECURSIVE]
+```
+
+**Uninstallation with Cascade:**
+```
+PerformUninstallsAsync(items)
+    ├── For each item:
+    │   └── ProcessUninstallWithDependenciesAsync(itemName)
+    │       ├── Find items that require this item
+    │       ├── For each dependent item (if installed):
+    │       │   └── ProcessUninstallWithDependenciesAsync(dep) [RECURSIVE]
+    │       └── UninstallAsync(mainItem)
+```
+
+### Migration Validation
+
+**Test Cases:**
+1. Package with no dependencies → Direct install
+2. Package with single dependency → Dependency installed first
+3. Package with multiple dependencies → All dependencies installed before main
+4. Dependency chain (A requires B, B requires C) → C → B → A order
+5. Package with update_for → Updates processed after main install
+6. Uninstall package with dependents → Dependents removed first
+
+**Parity Verification:**
+| Feature | Go | C# | Status |
+|---------|----|----|--------|
+| `requires` dependency resolution | ✅ | ✅ | PARITY |
+| Recursive dependency handling | ✅ | ✅ | PARITY |
+| `update_for` processing | ✅ | ✅ | PARITY |
+| Cascade uninstall | ✅ | ✅ | PARITY |
+| Version-aware dependencies | ✅ | ✅ | PARITY |
+| Architecture filtering | ✅ | ✅ | PARITY |

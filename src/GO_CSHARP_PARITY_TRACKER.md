@@ -289,7 +289,109 @@ The C# implementation now has feature parity with Go SOURCE code for ALL CLI opt
 - Short aliases added for convenience
 - Extra features added (preuninstall, postuninstall, uninstaller, config, quiet)
 - Icon extraction (experimental)
+- **[2025-12-09] `requires` and `update_for` processing implemented in C#**
 
 ### Future Enhancement
 1. [ ] Port full SelfUpdateManager implementation from Go to C# (for `--perform-selfupdate`)
 2. [ ] Rebuild MSI to deploy latest source code
+
+---
+
+## Requires and UpdateFor Processing (2025-12-09)
+
+### Testing Summary
+
+During Docker-based parity testing of the `managedsoftwareupdate` binary, we discovered that while `--checkonly` mode output was **PERFECT PARITY** between Go and C#, the `requires` and `update_for` fields were NOT being processed during actual installation.
+
+**Test Items Used:**
+- `Maya` - has `requires: [MayaEnvVariable]`
+- `FortiClientPrefs` - has `update_for: [FortiClient]`
+
+**Key Finding:** Both Go and C# showed identical output in `--checkonly` mode (which just lists pending installs), but during actual installation:
+- **Go**: Processes `requires` dependencies first, installs main item, then processes `update_for` items
+- **C# (before fix)**: Did a simple loop over items, ignoring `requires` and `update_for`
+
+### Gap Analysis
+
+| Feature | Go Implementation | C# Implementation (Before) | Status After Fix |
+|---------|-------------------|---------------------------|------------------|
+| `requires` field model | `catalog.Item.Requires []string` | `CatalogItem.Requires List<string>` | ✅ PARITY |
+| `update_for` field model | `catalog.Item.UpdateFor []string` | `CatalogItem.UpdateFor List<string>` | ✅ PARITY |
+| `LookForUpdates()` | `catalog.go:181-207` | **MISSING** → Now in CatalogService | ✅ IMPLEMENTED |
+| `CheckDependencies()` | `catalog.go:224-290` | **MISSING** → Now in CatalogService | ✅ IMPLEMENTED |
+| `FindItemsRequiring()` | `catalog.go:292-320` | **MISSING** → Now in CatalogService | ✅ IMPLEMENTED |
+| `SplitNameAndVersion()` | `catalog.go:393-424` | **MISSING** → Now in CatalogService | ✅ IMPLEMENTED |
+| `ProcessInstallWithDependencies()` | `process.go:490-610` | **MISSING** → Now in UpdateEngine | ✅ IMPLEMENTED |
+| `ProcessUninstallWithDependencies()` | `process.go:642-690` | **MISSING** → Now in UpdateEngine | ✅ IMPLEMENTED |
+
+### Implementation Details
+
+#### CatalogService.cs Additions
+```csharp
+// Migrated from Go pkg/catalog/catalog.go
+public static List<string> LookForUpdates(string itemName, Dictionary<string, CatalogItem> catalog)
+public static List<string> LookForUpdatesForVersion(string itemName, string itemVersion, Dictionary<string, CatalogItem> catalog)
+public static List<string> CheckDependencies(CatalogItem item, List<string> installedItems, List<string> scheduledItems)
+public static List<CatalogItem> FindItemsRequiring(string itemName, Dictionary<string, CatalogItem> catalog)
+public static (string name, string version) SplitNameAndVersion(string nameWithVersion)
+public static bool IsItemInstalled(string itemName, List<string> installedItems)
+public static string GetVersionFromInstalledItems(string itemName, List<string> installedItems)
+```
+
+#### UpdateEngine.cs Additions
+```csharp
+// Migrated from Go pkg/process/process.go
+private async Task<bool> ProcessInstallWithDependenciesAsync(
+    string itemName,
+    List<string> installedItems,
+    List<string> scheduledItems,
+    Dictionary<string, string> downloadedPaths,
+    CancellationToken cancellationToken)
+
+private async Task<bool> ProcessUninstallWithDependenciesAsync(
+    string itemName,
+    List<string> installedItems,
+    CancellationToken cancellationToken)
+```
+
+### Processing Flow (Go and C# now match)
+
+**Installation Flow:**
+1. Get item from catalog
+2. Check architecture compatibility
+3. Process `requires` dependencies:
+   - Call `CheckDependencies()` to find missing deps
+   - Recursively call `ProcessInstallWithDependencies()` for each missing dep
+   - Track scheduled items to avoid duplicate processing
+4. Install the main item
+5. Process `update_for` items:
+   - Call `LookForUpdates()` to find items that declare they are updates for this item
+   - Recursively call `ProcessInstallWithDependencies()` for each update item that needs action
+
+**Uninstallation Flow:**
+1. Find dependent items with `FindItemsRequiring()`
+2. Recursively remove dependent items first
+3. Uninstall the main item
+
+### Code Reference Mapping
+
+| Go Function | Go File:Lines | C# Method | C# File |
+|-------------|---------------|-----------|---------|
+| `LookForUpdates` | catalog.go:181-207 | `CatalogService.LookForUpdates` | CatalogService.cs |
+| `LookForUpdatesForVersion` | catalog.go:209-222 | `CatalogService.LookForUpdatesForVersion` | CatalogService.cs |
+| `CheckDependencies` | catalog.go:224-290 | `CatalogService.CheckDependencies` | CatalogService.cs |
+| `FindItemsRequiring` | catalog.go:292-320 | `CatalogService.FindItemsRequiring` | CatalogService.cs |
+| `SplitNameAndVersion` | catalog.go:393-424 | `CatalogService.SplitNameAndVersion` | CatalogService.cs |
+| `IsItemInstalled` | catalog.go:349-358 | `CatalogService.IsItemInstalled` | CatalogService.cs |
+| `GetVersionFromInstalledItems` | catalog.go:375-389 | `CatalogService.GetVersionFromInstalledItems` | CatalogService.cs |
+| `ProcessInstallWithDependencies` | process.go:490-610 | `UpdateEngine.ProcessInstallWithDependenciesAsync` | UpdateEngine.cs |
+| `ProcessUninstallWithDependencies` | process.go:642-690 | `UpdateEngine.ProcessUninstallWithDependenciesAsync` | UpdateEngine.cs |
+
+### Testing Recommendation
+
+To verify the fix:
+1. Create a test package `TestParent` with `requires: [TestDependency]`
+2. Create `TestDependency` package
+3. Run `managedsoftwareupdate --installonly` against `TestParent`
+4. Verify `TestDependency` is installed first, then `TestParent`
+5. Verify items with `update_for` are processed after the main item installs
