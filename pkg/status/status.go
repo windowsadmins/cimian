@@ -146,11 +146,72 @@ func normalizeArch(arch string) string {
 	return arch
 }
 
+
+// isCimianPackage checks if the given item name is a Cimian self-update package
+func isCimianPackage(itemName string) bool {
+nameLower := strings.ToLower(itemName)
+cimianMainPackages := []string{"cimian", "cimiantools"}
+
+// Check for exact matches
+for _, packageName := range cimianMainPackages {
+if nameLower == packageName {
+return true
+}
+// Check with common suffixes
+suffixes := []string{"-msi", "-nupkg", "-tools", ".msi", ".nupkg"}
+for _, suffix := range suffixes {
+if nameLower == packageName+suffix {
+return true
+}
+}
+}
+return false
+}
 // CheckStatus determines if `catalogItem` requires an install, update, or uninstall.
 //
 // Returns (bool, error) => bool means “true => perform action,” or “false => skip.”
 func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool, error) {
 	logging.Debug("CheckStatus starting", "item", catalogItem.Name, "installType", installType, "OnDemand", catalogItem.OnDemand)
+
+// CRITICAL: For CimianTools (self-update), check running version first
+// This prevents attempting to "downgrade" to older catalog versions
+if isCimianPackage(catalogItem.Name) && (installType == "install" || installType == "update") {
+runningVersion := cimiversion.Version().Version
+catalogVersion := catalogItem.Version
+
+// If running version is same or newer than catalog, skip update
+if !IsOlderVersion(runningVersion, catalogVersion) {
+logging.Info("CimianTools self-update check: running version >= catalog version, skipping",
+"item", catalogItem.Name,
+"runningVersion", runningVersion,
+"catalogVersion", catalogVersion)
+return false, nil
+}
+logging.Info("CimianTools self-update check: catalog has newer version",
+"item", catalogItem.Name,
+"runningVersion", runningVersion,
+"catalogVersion", catalogVersion)
+}
+
+// CRITICAL: For CimianTools (self-update), check running version first
+// This prevents attempting to "downgrade" to older catalog versions
+if isCimianPackage(catalogItem.Name) && (installType == "install" || installType == "update") {
+runningVersion := cimiversion.Version().Version
+catalogVersion := catalogItem.Version
+
+// If running version is same or newer than catalog, skip update
+if !IsOlderVersion(runningVersion, catalogVersion) {
+logging.Info("CimianTools self-update check: running version >= catalog version, skipping",
+"item", catalogItem.Name,
+"runningVersion", runningVersion,
+"catalogVersion", catalogVersion)
+return false, nil
+}
+logging.Info("CimianTools self-update check: catalog has newer version",
+"item", catalogItem.Name,
+"runningVersion", runningVersion,
+"catalogVersion", catalogVersion)
+}
 
 	// OnDemand items should always be available for installation/execution
 	// They are never considered "installed" so they can be run repeatedly
