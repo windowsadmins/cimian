@@ -22,8 +22,10 @@ public class StatusServiceTests
     #region CheckStatus Tests
 
     [Fact]
-    public void CheckStatus_NewItem_NeedsAction()
+    public void CheckStatus_NewItem_WithNoChecks_AssumesInstalled()
     {
+        // Go parity: Items without any verification methods are assumed installed
+        // because there's no way to verify their installation status
         var item = new CatalogItem
         {
             Name = "NonExistentPackage12345",
@@ -32,7 +34,9 @@ public class StatusServiceTests
 
         var result = _service.CheckStatus(item, "install", _testDir);
 
-        Assert.True(result.NeedsAction);
+        // No checks defined = assume installed (Go parity)
+        Assert.False(result.NeedsAction);
+        Assert.Equal("installed", result.Status);
     }
 
     [Fact]
