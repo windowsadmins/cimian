@@ -428,39 +428,47 @@ public class UpdateEngine
         List<CatalogItem> items,
         CancellationToken cancellationToken)
     {
-        LogInfo($"Installing/updating {items.Count} items...");
+        LogInfo($"Installing/updating {items.Count} items with dependency processing...");
 
         var successCount = 0;
         var failCount = 0;
 
-        // Download all items first
+        // Download all items first (including potential dependencies)
+        // Note: Dependencies not in this list will be downloaded on-demand during processing
         var downloadedPaths = await _downloadService.DownloadItemsAsync(items, null, cancellationToken);
 
+        // Track installed and scheduled items for dependency checking
+        // Start with items that are already confirmed installed (from status checks)
+        var installedItems = new List<string>();
+        var scheduledItems = items.Select(i => i.Name).ToList();
+
+        // Process each item with full dependency handling
+        // This is Go parity: ProcessInstallWithDependencies from process.go
         foreach (var item in items)
         {
             if (cancellationToken.IsCancellationRequested) break;
 
-            // Check for blocking apps
-            if (_installerService.CheckBlockingApps(item, out var runningApps))
+            // Skip if already processed (may have been installed as a dependency)
+            if (installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
             {
-                Console.Error.WriteLine($"[WARNING] Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
-                failCount++;
+                LogDebug($"Skipping {item.Name}: already installed as dependency");
+                successCount++;
                 continue;
             }
 
-            // Get downloaded file path (may be null for script-only items)
-            downloadedPaths.TryGetValue(item.Name, out var localFile);
-
-            var (success, output) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
+            var success = await ProcessInstallWithDependenciesAsync(
+                item.Name,
+                installedItems,
+                scheduledItems,
+                downloadedPaths,
+                cancellationToken);
 
             if (success)
             {
-                LogSuccess($"Installed: {item.Name} v{item.Version}");
                 successCount++;
             }
             else
             {
-                Console.Error.WriteLine($"[ERROR] Failed to install {item.Name}: {output}");
                 failCount++;
             }
         }
@@ -469,37 +477,276 @@ public class UpdateEngine
         return failCount == 0;
     }
 
+    #region Dependency-Aware Installation (Go parity: pkg/process/process.go)
+
+    /// <summary>
+    /// Process installation of an item with full dependency handling.
+    /// This handles: requires dependencies, legacy dependencies, and update_for items.
+    /// Migrated from Go: ProcessInstallWithDependencies() - process.go lines 490-610
+    /// </summary>
+    /// <param name="itemName">The name of the item to install</param>
+    /// <param name="installedItems">List of currently installed items (for dependency checking)</param>
+    /// <param name="scheduledItems">List of items scheduled for installation (mutable, grows as dependencies are processed)</param>
+    /// <param name="downloadedPaths">Dictionary of already downloaded file paths</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if installation succeeded (including all dependencies), false otherwise</returns>
+    private async Task<bool> ProcessInstallWithDependenciesAsync(
+        string itemName,
+        List<string> installedItems,
+        List<string> scheduledItems,
+        Dictionary<string, string> downloadedPaths,
+        CancellationToken cancellationToken)
+    {
+        LogDebug($"ProcessInstallWithDependencies: {itemName}");
+
+        // Get the item from catalog
+        var key = itemName.ToLowerInvariant();
+        if (!_catalogMap.TryGetValue(key, out var item))
+        {
+            Console.Error.WriteLine($"[ERROR] Item not found in catalog: {itemName}");
+            return false;
+        }
+
+        var systemArch = StatusService.GetSystemArchitecture();
+
+        // Check architecture support
+        if (!CatalogService.SupportsArchitecture(item, systemArch))
+        {
+            LogInfo($"Skipping {item.Name}: architecture mismatch (system: {systemArch})");
+            return true; // Not an error, just skipped
+        }
+
+        // Check and install requires dependencies first
+        if (item.Requires.Count > 0)
+        {
+            LogDebug($"Processing requires dependencies for {itemName}: {string.Join(", ", item.Requires)}");
+            var missingDeps = CatalogService.CheckDependencies(item, installedItems, scheduledItems);
+
+            if (missingDeps.Count > 0)
+            {
+                LogInfo($"Found {missingDeps.Count} missing dependencies for {itemName}: {string.Join(", ", missingDeps)}");
+            }
+
+            foreach (var dep in missingDeps)
+            {
+                LogInfo($"Installing required dependency: {dep} (for {itemName})");
+
+                // Parse dependency name (may have version)
+                var (depName, _) = CatalogService.SplitNameAndVersion(dep);
+
+                // Check if dependency exists in catalog
+                var depKey = depName.ToLowerInvariant();
+                if (!_catalogMap.TryGetValue(depKey, out var depItem))
+                {
+                    Console.Error.WriteLine($"[ERROR] Required dependency not found in catalog: {depName} (for {itemName})");
+                    return false;
+                }
+
+                // Download the dependency if not already downloaded
+                if (!downloadedPaths.ContainsKey(depItem.Name))
+                {
+                    var depDownloads = await _downloadService.DownloadItemsAsync(new List<CatalogItem> { depItem }, null, cancellationToken);
+                    foreach (var kvp in depDownloads)
+                    {
+                        downloadedPaths[kvp.Key] = kvp.Value;
+                    }
+                }
+
+                // Recursively process the dependency
+                var newScheduled = new List<string>(scheduledItems) { dep };
+                if (!await ProcessInstallWithDependenciesAsync(dep, installedItems, newScheduled, downloadedPaths, cancellationToken))
+                {
+                    Console.Error.WriteLine($"[ERROR] Failed to install required dependency: {dep}");
+                    return false;
+                }
+
+                // Add to scheduled items for future dependency checks
+                if (!scheduledItems.Contains(dep, StringComparer.OrdinalIgnoreCase))
+                {
+                    scheduledItems.Add(dep);
+                }
+
+                LogDebug($"Successfully processed dependency: {dep} (for {itemName})");
+            }
+        }
+
+        // Install the main item
+        LogInfo($"Installing: {item.Name} v{item.Version}");
+
+        // Check for blocking apps
+        if (_installerService.CheckBlockingApps(item, out var runningApps))
+        {
+            Console.Error.WriteLine($"[WARNING] Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
+            return false;
+        }
+
+        // Get downloaded file path (may be null for script-only items)
+        downloadedPaths.TryGetValue(item.Name, out var localFile);
+
+        var (success, output) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
+
+        if (success)
+        {
+            LogSuccess($"Installed: {item.Name} v{item.Version}");
+
+            // Add to installed items
+            if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                installedItems.Add(item.Name);
+            }
+        }
+        else
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to install {item.Name}: {output}");
+            return false;
+        }
+
+        // Look for updates that should be applied after this install
+        var updateList = CatalogService.LookForUpdates(item.Name, _catalogMap);
+        if (updateList.Count > 0)
+        {
+            LogDebug($"Found {updateList.Count} update_for items for {item.Name}: {string.Join(", ", updateList)}");
+        }
+
+        foreach (var updateItemName in updateList)
+        {
+            LogInfo($"Installing update for {item.Name}: {updateItemName}");
+
+            // Check if update item needs action
+            var updateKey = updateItemName.ToLowerInvariant();
+            if (_catalogMap.TryGetValue(updateKey, out var updateItem))
+            {
+                var status = _statusService.CheckStatus(updateItem, "install", _config.CachePath);
+                if (status.NeedsAction)
+                {
+                    // Download the update item if not already downloaded
+                    if (!downloadedPaths.ContainsKey(updateItem.Name))
+                    {
+                        var updateDownloads = await _downloadService.DownloadItemsAsync(new List<CatalogItem> { updateItem }, null, cancellationToken);
+                        foreach (var kvp in updateDownloads)
+                        {
+                            downloadedPaths[kvp.Key] = kvp.Value;
+                        }
+                    }
+
+                    // Process the update item (which may have its own dependencies)
+                    if (!await ProcessInstallWithDependenciesAsync(updateItemName, installedItems, scheduledItems, downloadedPaths, cancellationToken))
+                    {
+                        LogInfo($"[WARNING] Failed to install update item: {updateItemName} (continuing)");
+                        // Don't fail the main install just because an update_for item failed
+                    }
+                }
+                else
+                {
+                    LogDebug($"Update item {updateItemName} doesn't need action: {status.Reason}");
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Process uninstallation of an item with dependency checking.
+    /// This handles: finding dependent items and removing them first.
+    /// Migrated from Go: ProcessUninstallWithDependencies() - process.go lines 642-690
+    /// </summary>
+    private async Task<bool> ProcessUninstallWithDependenciesAsync(
+        string itemName,
+        List<string> installedItems,
+        CancellationToken cancellationToken)
+    {
+        LogDebug($"ProcessUninstallWithDependencies: {itemName}");
+
+        // Find items that require this item
+        var dependentItems = CatalogService.FindItemsRequiring(itemName, _catalogMap);
+
+        // Remove dependent items first
+        foreach (var depItem in dependentItems)
+        {
+            // Check if dependent item is actually installed
+            if (CatalogService.IsItemInstalled(depItem.Name, installedItems))
+            {
+                LogInfo($"Removing dependent item first: {depItem.Name} (requires {itemName})");
+                if (!await ProcessUninstallWithDependenciesAsync(depItem.Name, installedItems, cancellationToken))
+                {
+                    Console.Error.WriteLine($"[ERROR] Failed to remove dependent item: {depItem.Name}");
+                    return false;
+                }
+            }
+        }
+
+        // Get the main item and uninstall it
+        var key = itemName.ToLowerInvariant();
+        if (!_catalogMap.TryGetValue(key, out var item))
+        {
+            Console.Error.WriteLine($"[ERROR] Item not found in catalog: {itemName}");
+            return false;
+        }
+
+        // Check for blocking apps
+        if (_installerService.CheckBlockingApps(item, out var runningApps))
+        {
+            Console.Error.WriteLine($"[WARNING] Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
+            return false;
+        }
+
+        LogInfo($"Removing: {item.Name}");
+        var (success, output) = await _installerService.UninstallAsync(item, cancellationToken);
+
+        if (success)
+        {
+            LogSuccess($"Removed: {item.Name}");
+            installedItems.RemoveAll(i => string.Equals(i, item.Name, StringComparison.OrdinalIgnoreCase));
+            return true;
+        }
+        else
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to remove {item.Name}: {output}");
+            return false;
+        }
+    }
+
+    #endregion
+
     private async Task<bool> PerformUninstallsAsync(
         List<CatalogItem> items,
         CancellationToken cancellationToken)
     {
-        LogInfo($"Removing {items.Count} items...");
+        LogInfo($"Removing {items.Count} items with dependency processing...");
 
         var successCount = 0;
         var failCount = 0;
 
+        // Track installed items - start with what we're about to remove
+        // (In a real scenario, we'd have a better way to track currently installed items)
+        var installedItems = items.Select(i => i.Name).ToList();
+
+        // Process each uninstall with dependency checking
+        // This is Go parity: ProcessUninstallWithDependencies from process.go
         foreach (var item in items)
         {
             if (cancellationToken.IsCancellationRequested) break;
 
-            // Check for blocking apps
-            if (_installerService.CheckBlockingApps(item, out var runningApps))
+            // Skip if already removed (may have been removed as a dependent)
+            if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
             {
-                Console.Error.WriteLine($"[WARNING] Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
-                failCount++;
+                LogDebug($"Skipping {item.Name}: already removed as dependent");
+                successCount++;
                 continue;
             }
 
-            var (success, output) = await _installerService.UninstallAsync(item, cancellationToken);
+            var success = await ProcessUninstallWithDependenciesAsync(
+                item.Name,
+                installedItems,
+                cancellationToken);
 
             if (success)
             {
-                LogSuccess($"Removed: {item.Name}");
                 successCount++;
             }
             else
             {
-                Console.Error.WriteLine($"[ERROR] Failed to remove {item.Name}: {output}");
                 failCount++;
             }
         }
