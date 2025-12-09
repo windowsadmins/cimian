@@ -166,12 +166,52 @@ func normalizeArch(arch string) string {
 	return arch
 }
 
+// isCimianPackage checks if the given item name is a Cimian self-update package
+func isCimianPackage(itemName string) bool {
+	nameLower := strings.ToLower(itemName)
+	cimianMainPackages := []string{"cimian", "cimiantools"}
+
+	// Check for exact matches
+	for _, packageName := range cimianMainPackages {
+		if nameLower == packageName {
+			return true
+		}
+		// Check with common suffixes
+		suffixes := []string{"-msi", "-nupkg", "-tools", ".msi", ".nupkg"}
+		for _, suffix := range suffixes {
+			if nameLower == packageName+suffix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // CheckStatus determines if `catalogItem` requires an install, update, or uninstall.
 //
-// Returns (bool, error) => bool means “true => perform action,” or “false => skip.”
+// Returns (bool, error) => bool means "true => perform action," or "false => skip."
 func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool, error) {
 	logging.Debug("CheckStatus starting", "item", catalogItem.Name, "installType", installType, "OnDemand", catalogItem.OnDemand)
 
+	// CRITICAL: For CimianTools (self-update), check running version first
+	// This prevents attempting to "downgrade" to older catalog versions
+	if isCimianPackage(catalogItem.Name) && (installType == "install" || installType == "update") {
+		runningVersion := cimiversion.Version().Version
+		catalogVersion := catalogItem.Version
+
+		// If running version is same or newer than catalog, skip update
+		if !IsOlderVersion(runningVersion, catalogVersion) {
+			logging.Info("CimianTools self-update check: running version >= catalog version, skipping",
+				"item", catalogItem.Name,
+				"runningVersion", runningVersion,
+				"catalogVersion", catalogVersion)
+			return false, nil
+		}
+		logging.Info("CimianTools self-update check: catalog has newer version",
+			"item", catalogItem.Name,
+			"runningVersion", runningVersion,
+			"catalogVersion", catalogVersion)
+	}
 	// OnDemand items should always be available for installation/execution
 	// They are never considered "installed" so they can be run repeatedly
 	if catalogItem.OnDemand && (installType == "install" || installType == "update") {
@@ -262,7 +302,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 					"item", catalogItem.Name, "installerType", catalogItem.Installer.Type)
 			}
 		}
-		
+
 		needed, err := checkInstalls(catalogItem, installType)
 		if err != nil {
 			logging.Warn("Error in file/install checks, assuming update needed",
@@ -327,7 +367,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 		registryInstalled := registryVersion != ""
 		logging.Debug("Uninstall decision based on file presence checks (registry is cosmetic)",
 			"item", catalogItem.Name, "registryInstalled", registryInstalled)
-		
+
 		// Use actual file presence rather than registry for uninstall decisions
 		if len(catalogItem.Installs) > 0 {
 			// Check if any tracked files exist
@@ -340,7 +380,7 @@ func CheckStatus(catalogItem catalog.Item, installType, cachePath string) (bool,
 			logging.Debug("No tracked files found for uninstall", "item", catalogItem.Name)
 			return false, nil
 		}
-		
+
 		// If no installs array, use registry as fallback (but note it's cosmetic)
 		return registryInstalled, nil
 
@@ -626,7 +666,7 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 
 		// Uninstall logic based on file presence, not registry
 		registryInstalled := registryVersion != ""
-		
+
 		// Use actual file presence rather than registry for uninstall decisions
 		if len(catalogItem.Installs) > 0 {
 			// Check if any tracked files exist
@@ -655,7 +695,7 @@ func CheckStatusWithResultQuiet(catalogItem catalog.Item, installType, cachePath
 				Error:       nil,
 			}
 		}
-		
+
 		// If no installs array, use registry as fallback (but note it's cosmetic)
 		status := "removed"
 		reason := "Not installed"
@@ -910,9 +950,9 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 		if strings.ToLower(item.Installer.Type) == "msi" && item.Installer.ProductCode != "" {
 			logging.Debug("No installs array - checking MSI installer product_code directly",
 				"item", item.Name, "productCode", item.Installer.ProductCode)
-			
+
 			installed, versionMatch := checkMsiProductCode(item.Installer.ProductCode, item.Version)
-			
+
 			if installType == "uninstall" {
 				if installed {
 					logging.Info("MSI product present via installer.product_code, uninstall required",
@@ -943,7 +983,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 			// MSI with no product code - this is a configuration issue
 			logging.Warn("MSI installer type detected but no product_code specified - installation will be attempted",
 				"item", item.Name, "installerType", item.Installer.Type)
-			
+
 			// For MSI installers without product codes, we cannot reliably detect installation
 			// Default to attempting installation (safer than assuming it's installed)
 			if installType == "uninstall" {
@@ -1072,25 +1112,25 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 			if productCode == "" && install.UpgradeCode != "" {
 				// If no product_code but upgrade_code is available, use it
 				// Note: upgrade_code verification would need additional registry logic
-				logging.Debug("Using upgrade_code for MSI verification", 
+				logging.Debug("Using upgrade_code for MSI verification",
 					"item", item.Name, "upgradeCode", install.UpgradeCode)
 				productCode = install.UpgradeCode
 			}
-			
+
 			if productCode != "" {
 				installed, versionMatch := false, false
 				installedVersion := findMsiVersion(productCode)
-				
+
 				if installedVersion != "" {
 					installed = true
 					logging.Debug("MSI product found in registry",
 						"item", item.Name, "productCode", productCode, "installedVersion", installedVersion)
-					
+
 					// Check version if required
 					if install.Version != "" {
 						versionMatch = !IsOlderVersion(installedVersion, install.Version)
 						logging.Debug("MSI version comparison",
-							"item", item.Name, "installedVersion", installedVersion, 
+							"item", item.Name, "installedVersion", installedVersion,
 							"requiredVersion", install.Version, "versionMatch", versionMatch)
 					} else {
 						// No version requirement, just presence is enough
@@ -1100,7 +1140,7 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					logging.Debug("MSI product not found in registry",
 						"item", item.Name, "productCode", productCode)
 				}
-				
+
 				// Apply MSI verification logic based on install type
 				if installType == "uninstall" {
 					if installed {
@@ -1289,29 +1329,29 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 			if productCode == "" && install.UpgradeCode != "" {
 				// If no product_code but upgrade_code is available, use it
 				if !quiet {
-					logging.Debug("Using upgrade_code for MSI verification", 
+					logging.Debug("Using upgrade_code for MSI verification",
 						"item", item.Name, "upgradeCode", install.UpgradeCode)
 				}
 				productCode = install.UpgradeCode
 			}
-			
+
 			if productCode != "" {
 				installed, versionMatch := false, false
 				installedVersion := findMsiVersion(productCode)
-				
+
 				if installedVersion != "" {
 					installed = true
 					if !quiet {
 						logging.Debug("MSI product found in registry",
 							"item", item.Name, "productCode", productCode, "installedVersion", installedVersion)
 					}
-					
+
 					// Check version if required
 					if install.Version != "" {
 						versionMatch = !IsOlderVersion(installedVersion, install.Version)
 						if !quiet {
 							logging.Debug("MSI version comparison",
-								"item", item.Name, "installedVersion", installedVersion, 
+								"item", item.Name, "installedVersion", installedVersion,
 								"requiredVersion", install.Version, "versionMatch", versionMatch)
 						}
 					} else {
@@ -1324,7 +1364,7 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 							"item", item.Name, "productCode", productCode)
 					}
 				}
-				
+
 				// Apply MSI verification logic based on install type
 				if installType == "uninstall" {
 					if installed {
@@ -1446,7 +1486,7 @@ func verifyMD5WithHash(filePath, expected string) (bool, string, error) {
 
 	// Detect hash type by length and compute appropriate hash
 	expectedLen := len(expected)
-	
+
 	var computed string
 	switch expectedLen {
 	case 32: // MD5
@@ -1497,7 +1537,7 @@ func getFileVersionQuiet(filePath string, quiet bool) (string, error) {
 func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
 	logging.Debug("Checking MSI product code in registry",
 		"productCode", productCode, "requiredVersion", checkVersion)
-		
+
 	installedVersionStr := findMsiVersion(productCode)
 	if installedVersionStr == "" {
 		logging.Debug("MSI product code not found in registry (checked both 64-bit and 32-bit paths)",
@@ -1536,7 +1576,7 @@ func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
 	}
 
 	versionMatch := !installedVersion.LessThan(checkVer)
-	
+
 	logging.Debug("MSI version comparison complete",
 		"productCode", productCode,
 		"installedVersion", installedVersionStr,
@@ -1544,7 +1584,7 @@ func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
 		"versionMatch", versionMatch,
 		"installedVersionParsed", installedVersion.String(),
 		"requiredVersionParsed", checkVer.String())
-		
+
 	return true, versionMatch
 }
 
@@ -1559,16 +1599,16 @@ func findMsiVersion(productCode string) string {
 			"productCode", productCode, "registryPath", regPath64, "version", versionStr)
 		return versionStr
 	}
-	
+
 	// If not found in 64-bit, check 32-bit registry location
 	regPath32 := fmt.Sprintf("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\%s", productCode)
 	versionStr, err = getRegistryValue(regPath32, "DisplayVersion")
 	if err == nil && versionStr != "" {
-		logging.Debug("Found MSI product in 32-bit registry", 
+		logging.Debug("Found MSI product in 32-bit registry",
 			"productCode", productCode, "registryPath", regPath32, "version", versionStr)
 		return versionStr
 	}
-	
+
 	logging.Debug("MSI product not found in either registry location",
 		"productCode", productCode, "checkedPaths", []string{regPath64, regPath32})
 	return ""
@@ -2066,14 +2106,14 @@ func GetWindowsVersion() (string, error) {
 	// For Windows, gopsutil returns kernel version which maps to Windows version
 	// However, Windows 11 still reports kernel version 10.0.x but can be distinguished by build number
 	kernelVersion := info.KernelVersion
-	
+
 	// Parse the kernel version to extract build number
 	versionParts := strings.Split(kernelVersion, ".")
 	if len(versionParts) >= 3 {
 		major := versionParts[0]
-		minor := versionParts[1] 
+		minor := versionParts[1]
 		buildStr := versionParts[2]
-		
+
 		// Convert build number to integer for comparison
 		if buildNum, err := strconv.Atoi(buildStr); err == nil {
 			// Windows 11 logic: kernel 10.0 with build >= 22000 is Windows 11
@@ -2083,7 +2123,7 @@ func GetWindowsVersion() (string, error) {
 			}
 		}
 	}
-	
+
 	// For all other cases (Windows 10, older versions), return the original kernel version
 	return kernelVersion, nil
 }
@@ -2210,7 +2250,7 @@ func normalizeWindowsVersionForComparison(version string) (string, error) {
 	if len(versionParts) >= 2 {
 		major := versionParts[0]
 		minor := versionParts[1]
-		
+
 		// If someone specifies "11.0" (or "11.0.x"), convert to Windows 11 threshold
 		if major == "11" && minor == "0" {
 			if len(versionParts) == 2 {
@@ -2221,7 +2261,7 @@ func normalizeWindowsVersionForComparison(version string) (string, error) {
 				return version, nil
 			}
 		}
-		
+
 		// If someone specifies "10.0" and it's a high build number >= 22000, treat as Windows 11
 		if major == "10" && minor == "0" && len(versionParts) >= 3 {
 			buildStr := versionParts[2]
@@ -2231,7 +2271,7 @@ func normalizeWindowsVersionForComparison(version string) (string, error) {
 			}
 		}
 	}
-	
+
 	// For all other cases, return the version as-is
 	return version, nil
 }
@@ -2245,12 +2285,12 @@ func isVersionCompatible(current, required, checkType string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("failed to normalize current OS version %s: %v", current, err)
 	}
-	
+
 	requiredNormalized, err := normalizeWindowsVersionForComparison(required)
 	if err != nil {
 		return false, fmt.Errorf("failed to normalize required OS version %s: %v", required, err)
 	}
-	
+
 	// Apply Cimian's version normalization (removes trailing .0s)
 	currentVersionNormalized := cimiversion.Normalize(currentNormalized)
 	requiredVersionNormalized := cimiversion.Normalize(requiredNormalized)
@@ -2279,13 +2319,13 @@ func isVersionCompatible(current, required, checkType string) (bool, error) {
 // DeduplicateCatalogItems iterates all catalog items and returns the one with the highest version.
 func DeduplicateCatalogItems(items []catalog.Item) catalog.Item {
 	best := items[0]
-	
+
 	for _, candidate := range items[1:] {
 		if IsOlderVersion(best.Version, candidate.Version) {
 			best = candidate
 		}
 	}
-	
+
 	return best
 }
 
@@ -2295,7 +2335,7 @@ func DeduplicateManifestItems(manifestItems []manifest.Item) []manifest.Item {
 	dedup := make(map[string]manifest.Item)
 	// Track order of first appearance to preserve manifest order
 	var orderedKeys []string
-	
+
 	for _, m := range manifestItems {
 		if m.Name == "" {
 			continue
@@ -2312,7 +2352,7 @@ func DeduplicateManifestItems(manifestItems []manifest.Item) []manifest.Item {
 			dedup[key] = m
 		}
 	}
-	
+
 	// Build result in the original order items were first encountered
 	var result []manifest.Item
 	for _, key := range orderedKeys {
