@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Cimian.CLI.managedsoftwareupdate.Models;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -10,6 +11,14 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// </summary>
 public class UpdateEngine
 {
+    // ANSI color codes (matching Go logging colors)
+    private const string ColorReset = "\x1b[0m";
+    private const string ColorRed = "\x1b[31m";
+    private const string ColorGreen = "\x1b[32m";
+    private const string ColorYellow = "\x1b[33m";
+    private const string ColorBlue = "\x1b[34m";
+    private const string ColorCyan = "\x1b[36m";
+
     private CimianConfig _config;
     private readonly ConfigurationService _configService;
     private ManifestService _manifestService;
@@ -39,7 +48,51 @@ public class UpdateEngine
         _installerService = new InstallerService(config);
         _statusService = new StatusService();
         _scriptService = new ScriptService();
+
+        // Enable ANSI color support on Windows console
+        EnableAnsiColors();
     }
+
+    /// <summary>
+    /// Enable ANSI escape codes for colored output on Windows console
+    /// </summary>
+    private static void EnableAnsiColors()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return;
+
+        try
+        {
+            // Enable virtual terminal processing for stdout
+            var handle = GetStdHandle(-11); // STD_OUTPUT_HANDLE
+            if (handle != IntPtr.Zero && GetConsoleMode(handle, out uint mode))
+            {
+                mode |= 0x0004; // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                SetConsoleMode(handle, mode);
+            }
+
+            // Enable virtual terminal processing for stderr
+            handle = GetStdHandle(-12); // STD_ERROR_HANDLE
+            if (handle != IntPtr.Zero && GetConsoleMode(handle, out mode))
+            {
+                mode |= 0x0004;
+                SetConsoleMode(handle, mode);
+            }
+        }
+        catch
+        {
+            // Ignore errors - colors just won't work
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
 
     /// <summary>
     /// Runs the update process with the specified options
@@ -514,6 +567,7 @@ public class UpdateEngine
     {
         if (_verbosity >= 1)
         {
+            // INFO has no color in Go (default terminal color)
             Console.WriteLine($"[{Timestamp()}] INFO  {message}");
         }
     }
@@ -522,13 +576,27 @@ public class UpdateEngine
     {
         if (_verbosity >= 2)
         {
-            Console.WriteLine($"[{Timestamp()}] DEBUG {message}");
+            // DEBUG is blue in Go
+            Console.WriteLine($"{ColorBlue}[{Timestamp()}] DEBUG {message}{ColorReset}");
         }
     }
 
     private void LogSuccess(string message)
     {
-        Console.WriteLine($"[{Timestamp()}] SUCCESS {message}");
+        // SUCCESS is green in Go
+        Console.WriteLine($"{ColorGreen}[{Timestamp()}] SUCCESS {message}{ColorReset}");
+    }
+
+    private void LogWarn(string message)
+    {
+        // WARN is yellow in Go
+        Console.WriteLine($"{ColorYellow}[{Timestamp()}] WARN  {message}{ColorReset}");
+    }
+
+    private void LogError(string message)
+    {
+        // ERROR is red in Go
+        Console.Error.WriteLine($"{ColorRed}[{Timestamp()}] ERROR {message}{ColorReset}");
     }
 
     private static string Truncate(string value, int maxLength)

@@ -120,6 +120,18 @@ public class Program
             return PerformSelfUpdate();
         }
 
+        // Handle preflight-only: run preflight and exit
+        if (options.PreflightOnly)
+        {
+            return await RunPreflightOnlyAsync(options);
+        }
+
+        // Handle postflight-only: run postflight and exit
+        if (options.PostflightOnly)
+        {
+            return await RunPostflightOnlyAsync(options);
+        }
+
         // Check for single instance
         if (!TryAcquireSingleInstance())
         {
@@ -199,6 +211,74 @@ public class Program
         Console.WriteLine($"  AuthToken: {(string.IsNullOrEmpty(config.AuthToken) ? "(not set)" : "***")}");
 
         return 0;
+    }
+
+    private static async Task<int> RunPreflightOnlyAsync(Options options)
+    {
+        var configService = new ConfigurationService();
+        var config = configService.LoadConfig(options.ConfigPath ?? CimianConfig.ConfigPath);
+
+        // Apply verbosity
+        var effectiveVerbosity = _verbosityLevel > 0 ? _verbosityLevel : (options.Verbose ? 1 : 0);
+        if (effectiveVerbosity >= 1)
+        {
+            config.Verbose = true;
+            config.LogLevel = "INFO";
+        }
+
+        var scriptService = new ScriptService();
+        var (success, output) = await scriptService.RunPreflightAsync(CancellationToken.None);
+
+        // Print preflight output
+        if (!string.IsNullOrWhiteSpace(output))
+        {
+            Console.WriteLine(output);
+        }
+
+        if (success)
+        {
+            Console.WriteLine("[SUCCESS] Preflight completed successfully");
+            return 0;
+        }
+        else
+        {
+            Console.WriteLine("[ERROR] Preflight script failed");
+            return 1;
+        }
+    }
+
+    private static async Task<int> RunPostflightOnlyAsync(Options options)
+    {
+        var configService = new ConfigurationService();
+        var config = configService.LoadConfig(options.ConfigPath ?? CimianConfig.ConfigPath);
+
+        // Apply verbosity
+        var effectiveVerbosity = _verbosityLevel > 0 ? _verbosityLevel : (options.Verbose ? 1 : 0);
+        if (effectiveVerbosity >= 1)
+        {
+            config.Verbose = true;
+            config.LogLevel = "INFO";
+        }
+
+        var scriptService = new ScriptService();
+        var (success, output) = await scriptService.RunPostflightAsync(CancellationToken.None);
+
+        // Print postflight output
+        if (!string.IsNullOrWhiteSpace(output))
+        {
+            Console.WriteLine(output);
+        }
+
+        if (success)
+        {
+            Console.WriteLine("[SUCCESS] Postflight completed successfully");
+            return 0;
+        }
+        else
+        {
+            Console.WriteLine("[ERROR] Postflight script failed");
+            return 1;
+        }
     }
 
     private static int ShowCacheStatus()
