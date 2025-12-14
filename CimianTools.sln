@@ -21,6 +21,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.Infrastructure", "sr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.GUI.CimianStatus", "src\Cimian.GUI.CimianStatus\Cimian.GUI.CimianStatus.csproj", "{AF7076FC-75D4-4375-BCAA-A241CF742653}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.GUI.SoftwareCenter", "src\Cimian.GUI.SoftwareCenter\Cimian.GUI.SoftwareCenter.csproj", "{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -115,6 +117,18 @@ Global
 		{AF7076FC-75D4-4375-BCAA-A241CF742653}.Release|x64.Build.0 = Release|Any CPU
 		{AF7076FC-75D4-4375-BCAA-A241CF742653}.Release|x86.ActiveCfg = Release|Any CPU
 		{AF7076FC-75D4-4375-BCAA-A241CF742653}.Release|x86.Build.0 = Release|Any CPU
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Debug|Any CPU.Build.0 = Debug|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Debug|x64.ActiveCfg = Debug|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Debug|x64.Build.0 = Debug|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Debug|x86.ActiveCfg = Debug|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Debug|x86.Build.0 = Debug|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Release|Any CPU.ActiveCfg = Release|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Release|Any CPU.Build.0 = Release|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Release|x64.ActiveCfg = Release|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Release|x64.Build.0 = Release|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Release|x86.ActiveCfg = Release|x64
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1}.Release|x86.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -127,6 +141,7 @@ Global
 		{9B0FA4D9-4175-4747-A660-95A1758CE6D8} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{AC731511-5CC0-46B6-82A4-0802CEEA1F1C} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{AF7076FC-75D4-4375-BCAA-A241CF742653} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{860A2C81-F861-43F5-AA9B-C1B99E4ADFF1} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C1DA630C-44C8-4E63-A16F-E78752027F1A}
