@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Cimian.GUI.SoftwareCenter.Views.SoftwarePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.modernwpf.com/2019">
+
+    <Page.Resources>
+        <!-- Category Button Style (pill-shaped like Microsoft Store) -->
+        <Style x:Key="CategoryPillButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="16,8" />
+            <Setter Property="Margin" Value="4,0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="16"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Selected Category Button Style -->
+        <Style x:Key="CategoryPillButtonSelected" TargetType="Button" BasedOn="{StaticResource CategoryPillButton}">
+            <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+    </Page.Resources>
+
+    <ScrollViewer x:Name="MainScrollViewer"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Hero Banner / Carousel (like Microsoft Store) -->
+            <Grid Grid.Row="0" Height="220" Margin="24,16,24,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="160" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Main banner with image carousel -->
+                <Border x:Name="HeroBanner"
+                        Grid.Column="0"
+                        CornerRadius="12"
+                        ClipToBounds="True"
+                        Margin="0,0,12,0">
+                    <Grid>
+                        <!-- Gradient background (fallback when no image) -->
+                        <Border CornerRadius="12">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#1a5fb4" Offset="0"/>
+                                    <GradientStop Color="#613583" Offset="1"/>
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+                        
+                        <!-- Carousel images container -->
+                        <Grid x:Name="CarouselContainer" ClipToBounds="True">
+                            <Image x:Name="BannerImage1" Stretch="UniformToFill" Opacity="1" />
+                            <Image x:Name="BannerImage2" Stretch="UniformToFill" Opacity="0" />
+                            <Image x:Name="BannerImage3" Stretch="UniformToFill" Opacity="0" />
+                        </Grid>
+                        
+                        <!-- Banner content overlay -->
+                        <StackPanel VerticalAlignment="Center" 
+                                    HorizontalAlignment="Left"
+                                    Margin="40,0,0,0">
+                            <TextBlock Text="Managed Software Center" 
+                                       FontSize="36" 
+                                       FontWeight="SemiBold"
+                                       Foreground="White" />
+                        </StackPanel>
+                        
+                        <!-- Carousel indicators -->
+                        <StackPanel x:Name="CarouselIndicators"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Bottom"
+                                    Margin="0,0,0,16">
+                            <Ellipse x:Name="Indicator1" Width="8" Height="8" Fill="White" Margin="4,0" Opacity="1" />
+                            <Ellipse x:Name="Indicator2" Width="8" Height="8" Fill="White" Margin="4,0" Opacity="0.5" />
+                            <Ellipse x:Name="Indicator3" Width="8" Height="8" Fill="White" Margin="4,0" Opacity="0.5" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Secondary promotional tiles (like Microsoft Store) -->
+                <StackPanel Grid.Column="1" Margin="0,0,0,0">
+                    <Border CornerRadius="8" Height="102" ClipToBounds="True"
+                            Cursor="Hand"
+                            MouseLeftButtonUp="FeaturedButton_Click">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#26a269" Offset="0"/>
+                                <GradientStop Color="#1c71d8" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <StackPanel VerticalAlignment="Center" Margin="16">
+                            <TextBlock Text="Featured" FontSize="14" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock Text="Check out new apps" FontSize="11" Foreground="#B0FFFFFF" />
+                        </StackPanel>
+                    </Border>
+                    <Border CornerRadius="8" Height="102" Margin="0,16,0,0" ClipToBounds="True"
+                            Cursor="Hand"
+                            MouseLeftButtonUp="UpdatesButton_Click">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#e66100" Offset="0"/>
+                                <GradientStop Color="#c64600" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <StackPanel VerticalAlignment="Center" Margin="16">
+                            <TextBlock Text="Updates" FontSize="14" FontWeight="SemiBold" Foreground="White" />
+                            <TextBlock x:Name="UpdatesPromoText" Text="Keep apps current" FontSize="11" Foreground="#B0FFFFFF" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+
+            <!-- Category Pills (like Microsoft Store) -->
+            <ScrollViewer Grid.Row="1" 
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Disabled"
+                          Margin="24,20,24,0">
+                <StackPanel x:Name="CategoryPillsPanel" Orientation="Horizontal" />
+            </ScrollViewer>
+
+            <!-- Search Bar -->
+            <Grid Grid.Row="2" Margin="24,16,24,0">
+                <ui:AutoSuggestBox x:Name="SearchBox"
+                                   PlaceholderText="Search apps..."
+                                   QueryIcon="Find"
+                                   TextChanged="SearchBox_TextChanged"
+                                   HorizontalAlignment="Left"
+                                   Width="350" />
+            </Grid>
+
+            <!-- Section header -->
+            <StackPanel Grid.Row="3" Margin="24,24,24,12" Orientation="Horizontal">
+                <TextBlock x:Name="SectionHeader"
+                           Text="All apps" 
+                           FontSize="20"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                <TextBlock Text="›" 
+                           FontSize="20"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Margin="8,0,0,0"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Loading indicator -->
+            <ui:ProgressRing x:Name="LoadingIndicator"
+                          Grid.Row="4"
+                          IsActive="False"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Center" />
+
+            <!-- Empty state -->
+            <StackPanel x:Name="EmptyState"
+                        Grid.Row="4"
+                        Visibility="Collapsed"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Margin="0,60,0,0">
+                <ui:FontIcon Glyph="&#xE7B8;" FontSize="64" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <TextBlock x:Name="EmptyMessageText"
+                           Text="No apps available"
+                           FontSize="16"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           HorizontalAlignment="Center"
+                           Margin="0,16,0,0" />
+            </StackPanel>
+
+            <!-- Software grid (Microsoft Store style tiles) -->
+            <ItemsControl x:Name="SoftwareGrid"
+                          Grid.Row="4"
+                          ItemsSource="{Binding Items}"
+                          Margin="20,0,20,24"
+                          MinHeight="200"
+                          VerticalAlignment="Top">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <!-- Microsoft Store style app tile -->
+                        <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Width="200" Height="90"
+                                Padding="12"
+                                Margin="4"
+                                Cursor="Hand"
+                                MouseLeftButtonUp="OnItemClick">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- App Icon -->
+                                <Border Grid.Column="0" 
+                                        Width="56" Height="56"
+                                        CornerRadius="8"
+                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        Margin="0,0,12,0">
+                                    <ui:FontIcon Glyph="&#xE74C;" FontSize="28" 
+                                              Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                                </Border>
+
+                                <!-- App Info -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding DisplayName, FallbackValue='App Name'}" 
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="110" />
+                                    <TextBlock Text="{Binding Developer, FallbackValue=''}" 
+                                               FontSize="11"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="110"
+                                               Margin="0,2,0,0" />
+                                    <!-- Status indicator -->
+                                    <TextBlock Text="{Binding StatusText, FallbackValue=''}"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
+                                               Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </Grid>
+    </ScrollViewer>
+</Page>
