@@ -4,8 +4,30 @@ using System.CommandLine.Invocation;
 using System.IO;
 using Cimian.CLI.Cimipkg.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Console;
 
 namespace Cimian.CLI.Cimipkg;
+
+/// <summary>
+/// Custom console formatter that outputs clean messages like Go binaries.
+/// </summary>
+public sealed class CleanConsoleFormatter : ConsoleFormatter
+{
+    public CleanConsoleFormatter() : base("clean") { }
+
+    public override void Write<TState>(
+        in LogEntry<TState> logEntry,
+        IExternalScopeProvider? scopeProvider,
+        TextWriter textWriter)
+    {
+        var message = logEntry.Formatter?.Invoke(logEntry.State, logEntry.Exception);
+        if (string.IsNullOrEmpty(message))
+            return;
+
+        textWriter.WriteLine(message);
+    }
+}
 
 class Program
 {
@@ -87,14 +109,15 @@ class Program
             var resignCert = context.ParseResult.GetValueForOption(resignCertOption);
             var resignThumbprint = context.ParseResult.GetValueForOption(resignThumbprintOption);
 
-            // Set up logging
+            // Set up logging with clean output (like Go binaries)
             var logLevel = verbose ? LogLevel.Debug : LogLevel.Information;
             using var loggerFactory = LoggerFactory.Create(builder =>
             {
                 builder.SetMinimumLevel(logLevel);
+                builder.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
                 builder.AddConsole(options =>
                 {
-                    options.FormatterName = "simple";
+                    options.FormatterName = "clean";
                 });
             });
 
