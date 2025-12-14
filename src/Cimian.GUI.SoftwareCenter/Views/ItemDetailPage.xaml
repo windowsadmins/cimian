@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ItemDetailPage.xaml - Software Item Detail View (WPF/ModernWpf) -->
+<Page
+    x:Class="Cimian.GUI.SoftwareCenter.Views.ItemDetailPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.modernwpf.com/2019">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header with Back Button -->
+        <Grid Grid.Row="0" Margin="24,16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Button 
+                Grid.Column="0"
+                Click="OnBackClick"
+                VerticalAlignment="Center"
+                Padding="8">
+                <ui:FontIcon Glyph="&#xE72B;" FontSize="16"/>
+            </Button>
+
+            <TextBlock 
+                x:Name="TitleText"
+                Grid.Column="1"
+                Text="Software Details"
+                Style="{StaticResource TitleTextBlockStyle}"
+                VerticalAlignment="Center"
+                Margin="16,0,0,0"/>
+        </Grid>
+
+        <!-- Main Content -->
+        <ScrollViewer Grid.Row="1" Padding="24">
+            <Grid MaxWidth="800">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Hero Section: Icon + Title + Action -->
+                <Grid Grid.Row="0" Margin="0,0,0,24">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="96"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Icon -->
+                    <Border 
+                        Grid.Column="0" 
+                        Width="80" Height="80" 
+                        CornerRadius="16"
+                        Background="{DynamicResource AccentFillColorDefaultBrush}">
+                        <ui:FontIcon 
+                            Glyph="&#xE74C;" 
+                            FontSize="40"
+                            Foreground="White"/>
+                    </Border>
+
+                    <!-- Title & Meta -->
+                    <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                        <TextBlock 
+                            x:Name="DisplayNameText"
+                            Style="{StaticResource TitleTextBlockStyle}"/>
+                        <TextBlock 
+                            x:Name="DeveloperText"
+                            Style="{StaticResource BodyTextBlockStyle}"
+                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:FontIcon Glyph="&#xE7C3;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock 
+                                    x:Name="VersionText"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Margin="4,0,0,0"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
+                                <ui:FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock 
+                                    x:Name="SizeText"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Margin="4,0,0,0"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
+                                <ui:FontIcon Glyph="&#xE8EC;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock 
+                                    x:Name="CategoryText"
+                                    Style="{StaticResource CaptionTextBlockStyle}"
+                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Margin="4,0,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Action Buttons -->
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                        <!-- Install Button -->
+                        <Button 
+                            x:Name="InstallButton"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Click="Install_Click"
+                            Visibility="Collapsed"
+                            MinWidth="120"
+                            Padding="16,8">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:FontIcon Glyph="&#xE896;" FontSize="14"/>
+                                <TextBlock Text="Install" Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Remove Button -->
+                        <Button 
+                            x:Name="RemoveButton"
+                            Click="Remove_Click"
+                            Visibility="Collapsed"
+                            MinWidth="120"
+                            Padding="16,8"
+                            Margin="0,8,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:FontIcon Glyph="&#xE74D;" FontSize="14"/>
+                                <TextBlock Text="Remove" Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Cancel Button -->
+                        <Button 
+                            x:Name="CancelButton"
+                            Click="Cancel_Click"
+                            Visibility="Collapsed"
+                            MinWidth="120"
+                            Padding="16,8"
+                            Margin="0,8,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:FontIcon Glyph="&#xE711;" FontSize="14"/>
+                                <TextBlock Text="Cancel" Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Status Badge -->
+                        <Border 
+                            x:Name="StatusBadge"
+                            CornerRadius="4"
+                            Padding="12,6"
+                            HorizontalAlignment="Center"
+                            Visibility="Collapsed"
+                            Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                            Margin="0,8,0,0">
+                            <TextBlock 
+                                x:Name="StatusText"
+                                Style="{StaticResource CaptionTextBlockStyle}"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Description -->
+                <StackPanel Grid.Row="1" Margin="0,0,0,24">
+                    <TextBlock 
+                        Text="Description" 
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        Margin="0,0,0,8"/>
+                    <TextBlock 
+                        x:Name="DescriptionText"
+                        Style="{StaticResource BodyTextBlockStyle}"
+                        TextWrapping="Wrap"
+                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+
+                <!-- What's New -->
+                <StackPanel 
+                    x:Name="WhatsNewPanel"
+                    Grid.Row="2" 
+                    Margin="0,0,0,24"
+                    Visibility="Collapsed">
+                    <TextBlock 
+                        Text="What's New" 
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        Margin="0,0,0,8"/>
+                    <Border 
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        CornerRadius="8"
+                        Padding="16">
+                        <TextBlock 
+                            x:Name="ReleaseNotesText"
+                            Style="{StaticResource BodyTextBlockStyle}"
+                            TextWrapping="Wrap"/>
+                    </Border>
+                </StackPanel>
+
+                <!-- Additional Information -->
+                <StackPanel Grid.Row="3" Margin="0,0,0,24">
+                    <TextBlock 
+                        Text="Information" 
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Version -->
+                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,12">
+                            <TextBlock Text="Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        </StackPanel>
+
+                        <!-- Category -->
+                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
+                            <TextBlock Text="Category" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoCategoryText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        </StackPanel>
+
+                        <!-- Installed Version -->
+                        <StackPanel 
+                            x:Name="InstalledVersionPanel"
+                            Grid.Row="1" Grid.Column="0" 
+                            Margin="0,0,0,12"
+                            Visibility="Collapsed">
+                            <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InstalledVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        </StackPanel>
+
+                        <!-- Size -->
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,12">
+                            <TextBlock Text="Download Size" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoSizeText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        </StackPanel>
+
+                        <!-- Developer -->
+                        <StackPanel 
+                            x:Name="DeveloperPanel"
+                            Grid.Row="2" Grid.Column="0" 
+                            Margin="0,0,0,12"
+                            Visibility="Collapsed">
+                            <TextBlock Text="Developer" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoDeveloperText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        </StackPanel>
+
+                        <!-- Restart Required -->
+                        <StackPanel 
+                            x:Name="RestartPanel"
+                            Grid.Row="2" Grid.Column="1" 
+                            Margin="0,0,0,12"
+                            Visibility="Collapsed">
+                            <TextBlock Text="Restart Required" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:FontIcon Glyph="&#xE777;" FontSize="14" Foreground="{DynamicResource SystemFillColorCautionBrush}"/>
+                                <TextBlock Text="Yes" Style="{StaticResource BodyTextBlockStyle}" Margin="4,0,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+
+        <!-- Loading -->
+        <ui:ProgressRing 
+            x:Name="LoadingIndicator"
+            Grid.RowSpan="2"
+            IsActive="False"
+            Width="48" Height="48"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"/>
+    </Grid>
+</Page>
