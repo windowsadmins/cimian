@@ -58,13 +58,15 @@ public class PackageBuilder
     public string Build(string projectDir, PackageBuildOptions options)
     {
         projectDir = Path.GetFullPath(projectDir);
-        _logger.LogInformation("Building package from: {ProjectDir}", projectDir);
+        _logger.LogInformation("Using project directory: {ProjectDir}", projectDir);
 
         // Verify project structure
         VerifyProjectStructure(projectDir);
+        _logger.LogInformation("Project structure verified. Proceeding with package creation...");
 
         // Clean build directory
         CleanBuildDirectory(projectDir);
+        _logger.LogInformation("Build directory cleaned successfully.");
 
         // Read build-info.yaml
         var buildInfo = ReadBuildInfo(projectDir);
@@ -94,8 +96,8 @@ public class PackageBuilder
         var packageFormat = options.BuildNupkg ? "nupkg" : "pkg";
         var versionResult = VersionParser.Parse(buildInfo.Product.Version, packageFormat);
 
-        _logger.LogDebug("Original version: {Original}, Normalized: {Normalized}",
-            versionResult.OriginalVersion, versionResult.NormalizedVersion);
+        _logger.LogInformation("Original version from YAML: {Original}", versionResult.OriginalVersion);
+        _logger.LogDebug("Normalized version: {Normalized}", versionResult.NormalizedVersion);
 
         // Update buildInfo with normalized version for .nuspec compatibility
         buildInfo.Product.Version = versionResult.NormalizedVersion;
@@ -126,7 +128,8 @@ public class PackageBuilder
             }
         }
 
-        _logger.LogInformation("Package created: {PackagePath}", packagePath);
+        _logger.LogInformation("Package created successfully: {PackagePath}", packagePath);
+        _logger.LogInformation("Done.");
         return packagePath;
     }
 
@@ -297,7 +300,7 @@ install_location: C:\
             {
                 var payloadDst = Path.Combine(tempDir, "payload");
                 CopyDirectory(payloadSrc, payloadDst);
-                _logger.LogDebug("Copied payload directory");
+                _logger.LogInformation("Copied payload directory to temp package structure");
             }
 
             // Copy and process scripts directory
@@ -306,7 +309,7 @@ install_location: C:\
             {
                 var scriptsDst = Path.Combine(tempDir, "scripts");
                 _scriptProcessor.ProcessScriptsDirectory(scriptsSrc, scriptsDst, envVars, injectHeaders: true);
-                _logger.LogDebug("Processed scripts directory");
+                _logger.LogInformation("Copied and processed scripts directory to temp package structure");
 
                 // Sign PowerShell scripts if certificate specified
                 if (!string.IsNullOrEmpty(buildInfo.SigningCertificate) ||
@@ -326,6 +329,7 @@ install_location: C:\
             if (envVars.Count > 0)
             {
                 buildInfoContent = _scriptProcessor.ReplacePlaceholdersYaml(buildInfoContent, envVars);
+                _logger.LogInformation("Applied placeholder replacement to build-info.yaml");
             }
 
             var buildInfoForSigning = _yamlDeserializer.Deserialize<BuildInfo>(buildInfoContent);
@@ -343,11 +347,16 @@ install_location: C:\
                     _logger.LogInformation("Package signature metadata embedded");
                 }
             }
+            else
+            {
+                _logger.LogInformation("No signing certificate specified - package will be created without signature metadata");
+            }
 
             // Write updated build-info.yaml
             var buildInfoDst = Path.Combine(tempDir, "build-info.yaml");
             var updatedBuildInfo = _yamlSerializer.Serialize(buildInfoForSigning);
             File.WriteAllText(buildInfoDst, updatedBuildInfo);
+            _logger.LogInformation("Copied build-info.yaml to temp package structure with signature metadata");
 
             // Create the .pkg archive
             _zipHelper.CreateArchive(tempDir, pkgPath);
@@ -357,8 +366,12 @@ install_location: C:\
             {
                 _codeSigner.SignNuGetPackage(pkgPath, buildInfo.SigningCertificate);
             }
+            else
+            {
+                _logger.LogInformation("No signing certificate provided. Skipping signing.");
+            }
 
-            _logger.LogInformation(".pkg package created: {PkgPath}", pkgPath);
+            _logger.LogInformation(".pkg package created successfully: {PkgPath}", pkgPath);
             return pkgPath;
         }
         finally
@@ -616,7 +629,6 @@ exit $LASTEXITCODE
             Directory.Delete(buildDir, recursive: true);
         }
         Directory.CreateDirectory(buildDir);
-        _logger.LogDebug("Build directory cleaned");
     }
 
     private BuildInfo ReadBuildInfo(string projectDir)
