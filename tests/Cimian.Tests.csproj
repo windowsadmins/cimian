@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="coverlet.collector" Version="6.0.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="FluentAssertions" Version="6.12.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\shared\core\Cimian.Core.csproj" />
+    <ProjectReference Include="..\shared\engine\Cimian.Engine.csproj" />
+    <ProjectReference Include="..\shared\infrastructure\Cimian.Infrastructure.csproj" />
+    <ProjectReference Include="..\cli\cimipkg\Cimian.CLI.cimipkg.csproj" />
+    <ProjectReference Include="..\cli\manifestutil\Cimian.CLI.manifestutil.csproj" />
+    <ProjectReference Include="..\cli\makecatalogs\Cimian.CLI.makecatalogs.csproj" />
+    <ProjectReference Include="..\cli\cimiwatcher\Cimian.CLI.cimiwatcher.csproj" />
+    <ProjectReference Include="..\cli\makepkginfo\Cimian.CLI.makepkginfo.csproj" />
+    <ProjectReference Include="..\cli\cimitrigger\Cimian.CLI.cimitrigger.csproj" />
+    <ProjectReference Include="..\cli\cimiimport\Cimian.CLI.cimiimport.csproj" />
+    <ProjectReference Include="..\cli\managedsoftwareupdate\Cimian.CLI.managedsoftwareupdate.csproj" />
+  </ItemGroup>
+
+</Project>
