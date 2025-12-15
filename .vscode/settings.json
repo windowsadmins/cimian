@@ -1,0 +1,12 @@
+{
+    "gopls": {
+        "buildFlags": ["-tags", "windows"],
+        "env": {
+            "GOOS": "windows"
+        }
+    },
+    "go.buildTags": "windows",
+    "go.toolsEnvVars": {
+        "GOOS": "windows"
+    }
+}

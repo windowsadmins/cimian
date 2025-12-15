@@ -1,0 +1,17 @@
+{
+  "hostname": "IT-LAPTOP-ARM-001",
+  "os_version": "10.0.22631",
+  "os_vers_major": 11,
+  "os_vers_minor": 0,
+  "architecture": "arm64",
+  "arch": "arm64",
+  "domain": "CORPORATE",
+  "username": "mjones",
+  "machine_type": "laptop",
+  "machine_model": "Microsoft Surface Pro X",
+  "joined_type": "entra",
+  "catalogs": ["Production"],
+  "enrolled_usage": "Assigned",
+  "enrolled_area": "Mobile",
+  "serial_number": "SRF789DEF"
+}

@@ -1,0 +1,17 @@
+{
+  "hostname": "Kiosk-Library-001",
+  "os_version": "10.0.22631",
+  "os_vers_major": 11,
+  "os_vers_minor": 0,
+  "architecture": "x64",
+  "arch": "x64",
+  "domain": "EDU",
+  "username": "kioskuser",
+  "machine_type": "desktop",
+  "machine_model": "Dell Optiplex 3080 Micro",
+  "joined_type": "domain",
+  "catalogs": ["Production"],
+  "enrolled_usage": "Shared",
+  "enrolled_area": "Kiosk",
+  "serial_number": "KSK789JKL"
+}

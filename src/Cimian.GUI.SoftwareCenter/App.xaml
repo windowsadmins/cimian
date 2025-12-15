@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="Cimian.GUI.SoftwareCenter.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.modernwpf.com/2019"
+    StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ThemeResources />
+                <ui:XamlControlsResources />
+            </ResourceDictionary.MergedDictionaries>
+            
+            <!-- App-wide resources -->
+            <system:String x:Key="AppName" xmlns:system="clr-namespace:System;assembly=mscorlib">Cimian Software Center</system:String>
+            
+            <!-- Status colors -->
+            <SolidColorBrush x:Key="StatusAvailableBrush" Color="#107C10" />
+            <SolidColorBrush x:Key="StatusInstalledBrush" Color="#0078D4" />
+            <SolidColorBrush x:Key="StatusRequestedBrush" Color="#CA5010" />
+            <SolidColorBrush x:Key="StatusUpdateBrush" Color="#8764B8" />
+            <SolidColorBrush x:Key="StatusErrorBrush" Color="#D13438" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
+

@@ -1,0 +1,17 @@
+{
+  "hostname": "HOME-PC-001",
+  "os_version": "10.0.19045",
+  "os_vers_major": 10,
+  "os_vers_minor": 0,
+  "architecture": "x64",
+  "arch": "x64",
+  "domain": "",
+  "username": "homeuser",
+  "machine_type": "desktop",
+  "machine_model": "Custom Build",
+  "joined_type": "workgroup",
+  "catalogs": ["Production"],
+  "enrolled_usage": "Personal",
+  "enrolled_area": "",
+  "serial_number": "CUSTOM123"
+}

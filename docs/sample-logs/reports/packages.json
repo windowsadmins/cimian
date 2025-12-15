@@ -1,0 +1,57 @@
+[
+  {
+    "package_name": "Firefox",
+    "latest_version": "119.0.1",
+    "last_install_time": "2025-01-12T14:30:58Z",
+    "last_update_time": "2025-01-08T09:15:22Z",
+    "install_count": 3,
+    "update_count": 8,
+    "removal_count": 0,
+    "last_install_status": "success",
+    "total_sessions": 15
+  },
+  {
+    "package_name": "Chrome",
+    "latest_version": "120.0.6099.129",
+    "last_install_time": "2025-01-12T14:31:15Z",
+    "last_update_time": "2025-01-10T14:22:10Z",
+    "install_count": 1,
+    "update_count": 12,
+    "removal_count": 1,
+    "last_install_status": "failed",
+    "total_sessions": 8
+  },
+  {
+    "package_name": "Microsoft Office",
+    "latest_version": "16.0.17531.20140",
+    "last_install_time": "2024-12-15T10:30:45Z",
+    "last_update_time": "2025-01-12T12:13:40Z",
+    "install_count": 1,
+    "update_count": 24,
+    "removal_count": 0,
+    "last_install_status": "success",
+    "total_sessions": 32
+  },
+  {
+    "package_name": "Adobe Reader",
+    "latest_version": "23.006.20320",
+    "last_install_time": "2024-11-20T15:45:30Z",
+    "last_update_time": "2025-01-05T11:20:15Z",
+    "install_count": 2,
+    "update_count": 6,
+    "removal_count": 0,
+    "last_install_status": "success",
+    "total_sessions": 18
+  },
+  {
+    "package_name": "VLC Media Player",
+    "latest_version": "3.0.20",
+    "last_install_time": "2024-10-12T08:15:22Z",
+    "last_update_time": "2024-12-20T16:30:45Z",
+    "install_count": 1,
+    "update_count": 3,
+    "removal_count": 0,
+    "last_install_status": "success",
+    "total_sessions": 8
+  }
+]

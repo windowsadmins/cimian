@@ -1,0 +1,17 @@
+{
+  "hostname": "Design-Workstation-001",
+  "os_version": "10.0.22631",
+  "os_vers_major": 11,
+  "os_vers_minor": 0,
+  "architecture": "x64",
+  "arch": "x64",
+  "domain": "CORPORATE",
+  "username": "designer",
+  "machine_type": "desktop",
+  "machine_model": "Apple Mac Studio (Parallels)",
+  "joined_type": "hybrid",
+  "catalogs": ["Production", "Creative"],
+  "enrolled_usage": "Assigned",
+  "enrolled_area": "Creative",
+  "serial_number": "DSN456MNO"
+}

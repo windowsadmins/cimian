@@ -1,0 +1,18 @@
+# Core Manifest - Base of manifest hierarchy
+# Used for: Manifest hierarchy testing
+
+name: "CoreManifest"
+catalogs:
+  - Production
+
+# Core items installed on ALL machines
+managed_installs:
+  - CimianClient
+  - BaseSecurityPolicy
+  - CorporateRootCertificates
+  - WindowsUpdateConfiguration
+
+# Core managed uninstalls
+managed_uninstalls:
+  - Bloatware
+  - PreinstalledGames

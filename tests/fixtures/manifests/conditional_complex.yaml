@@ -1,0 +1,86 @@
+# Conditional Complex Manifest - Complex expressions with OR/AND/NOT
+# Used for: Complex conditional evaluation testing
+# This is a CRITICAL test case for migration parity
+
+name: "Conditional Complex Test"
+catalogs:
+  - Production
+  - Testing
+
+# Always installed
+managed_installs:
+  - BasePackage
+
+# Complex conditional items
+conditional_items:
+  # TEST: OR operator with multiple hostnames
+  - condition: hostname CONTAINS "Design-" OR hostname CONTAINS "Studio-" OR hostname CONTAINS "Edit-"
+    managed_installs:
+      - CreativeApplications
+      - AdobeCreativeCloud
+      
+  # TEST: AND operator combining multiple facts
+  - condition: os_vers_major >= 11 AND arch == "x64"
+    managed_installs:
+      - Windows11OnlyTools
+      - ModernApplications
+      
+  # TEST: NOT operator
+  - condition: NOT hostname CONTAINS "Kiosk"
+    managed_installs:
+      - StandardUserApps
+      
+  # TEST: Complex mixed AND/OR with parentheses
+  - condition: NOT hostname CONTAINS "Kiosk" AND (domain == "CORP" OR domain == "EDU")
+    managed_installs:
+      - EnterpriseApplications
+      - ComplianceTools
+      
+  # TEST: ANY operator for array checking
+  - condition: ANY catalogs != "Testing"
+    managed_installs:
+      - ProductionOnlySoftware
+      
+  # TEST: Version comparison operators
+  - condition: os_vers_major >= 10 AND os_vers_major < 12
+    managed_installs:
+      - Windows10And11Compatible
+      
+  # TEST: BEGINSWITH and ENDSWITH
+  - condition: hostname BEGINSWITH "LAB-"
+    managed_installs:
+      - LabSoftware
+      
+  - condition: hostname ENDSWITH "-TEST"
+    managed_installs:
+      - TestEnvironmentTools
+      
+  # TEST: IN operator
+  - condition: domain IN ["CORP", "EDU", "RESEARCH"]
+    managed_installs:
+      - DomainJoinedTools
+      
+  # TEST: Enrollment facts (custom facts)
+  - condition: enrolled_usage == "Shared"
+    managed_installs:
+      - SharedMachineConfiguration
+      
+  - condition: enrolled_area == "Classroom"
+    managed_installs:
+      - ClassroomManagement
+      - StudentTools
+      
+  # TEST: Machine model matching
+  - condition: machine_model CONTAINS "Surface"
+    managed_installs:
+      - SurfaceOptimizations
+      
+  # TEST: Domain join type
+  - condition: joined_type == "entra"
+    managed_installs:
+      - EntraJoinedConfiguration
+      - CloudTools
+      
+  - condition: joined_type == "hybrid"
+    managed_installs:
+      - HybridJoinedConfiguration

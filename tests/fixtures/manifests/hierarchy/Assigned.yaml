@@ -1,0 +1,20 @@
+# Assigned Manifest - Inherits from CoreManifest
+# Used for: Manifest hierarchy testing
+
+name: "Assigned"
+catalogs:
+  - Production
+
+included_manifests:
+  - CoreManifest
+
+# Staff-wide items
+managed_installs:
+  - MicrosoftOffice
+  - CorporateEmail
+  - TeamsCommunication
+
+# Optional software available to all staff
+optional_installs:
+  - PersonalOneDrive
+  - Slack
