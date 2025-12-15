@@ -4,13 +4,14 @@
 
 Cimian is an open-source software deployment solution designed specifically for managing and automating software installations on Windows systems. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and other cloud-based management platforms.
 
-Cimian is developed in C# using DotNetSdk v9, ensuring compatibility with the latest Windows versions and features. It leverages a YAML-based configuration system for easy management and customization, and includes a native WPF GUI application for real-time status monitoring.
+Cimian is developed in C# using .NET 8/10, ensuring compatibility with the latest Windows versions and features. It leverages a YAML-based configuration system for easy management and customization, and includes native WPF GUI applications for real-time status monitoring and end-user self-service.
 
 Cimian aims to allow Mac Admins that manage Windows with Munki to have a similar experience on Windows, while also providing Windows Admins with a powerful and flexible tool for software management or those looking to transition away from traditional imaging and towards modern management with Git and DevOps principles.
 
 Cimian is ideal for organizations of all sizes looking to streamline their Windows software deployment processes. It can be used in small environments with just a few machines, or scaled up to manage thousands of systems across multiple locations.
 
-> **Note**: The codebase is currently written primarily in Go, originating from a nascent yet abandoned project called Gorilla. Through over 1,200 commits between September 2024 and September 2025, it evolved into what I consider a v1.0 release that has parity with Munki for Windows for all core functionality. Going forward, Cimian will be fully rewritten in C# to create a truly native Windows solution, retiring all Go code in the process.  
+> **Note**: The `csharp` branch is now 100% C#/.NET with all Go code removed.
+> The migration from Go to C# is complete as of December 2024.  
 > **The 'C' in Cimian stands for C# after all!**
 
 ## Key Features
