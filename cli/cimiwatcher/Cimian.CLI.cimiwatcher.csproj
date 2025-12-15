@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>cimiwatcher</AssemblyName>
+    <RootNamespace>Cimian.CLI.Cimiwatcher</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0-preview.*" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0-preview.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
+    <ProjectReference Include="..\..\shared\engine\Cimian.Engine.csproj" />
+    <ProjectReference Include="..\..\shared\infrastructure\Cimian.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
