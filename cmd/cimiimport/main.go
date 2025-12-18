@@ -1002,6 +1002,10 @@ func cimianImport(
 func extractInstallerMetadata(packagePath string, conf *config.Configuration) (Metadata, error) {
 	ext := strings.ToLower(filepath.Ext(packagePath))
 	var metadata Metadata
+	
+	// Default to unattended installs and uninstalls
+	metadata.UnattendedInstall = true
+	metadata.UnattendedUninstall = true
 
 	switch ext {
 	case ".nupkg":
