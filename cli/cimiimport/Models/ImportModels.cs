@@ -162,8 +162,8 @@ public class InstallerMetadata
     public List<InstallItem> Installs { get; set; } = [];
     public List<string> Catalogs { get; set; } = [];
     public string RepoPath { get; set; } = "";
-    public bool UnattendedInstall { get; set; }
-    public bool UnattendedUninstall { get; set; }
+    public bool UnattendedInstall { get; set; } = true;
+    public bool UnattendedUninstall { get; set; } = true;
     public List<string>? Requires { get; set; }
     public List<string>? UpdateFor { get; set; }
 }
