@@ -15,6 +15,35 @@ public class BuildInfo
     public ProductInfo Product { get; set; } = new();
 
     /// <summary>
+    /// Processes dynamic version placeholders in the version field.
+    /// Supports ${TIMESTAMP}, ${DATE}, and ${DATETIME} placeholders.
+    /// </summary>
+    public void DoSubstitutions()
+    {
+        if (Product == null || string.IsNullOrEmpty(Product.Version))
+            return;
+
+        // Process dynamic version placeholders in the version field
+        // ${TIMESTAMP} -> YYYY.MM.DD.HHMM (e.g., 2025.12.09.1455)
+        if (Product.Version.Contains("${TIMESTAMP}"))
+        {
+            Product.Version = Product.Version.Replace("${TIMESTAMP}", DynamicVersion.Timestamp);
+        }
+
+        // ${DATE} -> YYYY.MM.DD (e.g., 2025.12.09)
+        if (Product.Version.Contains("${DATE}"))
+        {
+            Product.Version = Product.Version.Replace("${DATE}", DynamicVersion.Date);
+        }
+
+        // ${DATETIME} -> YYYY.MM.DD.HHMMSS (e.g., 2025.12.09.145530)
+        if (Product.Version.Contains("${DATETIME}"))
+        {
+            Product.Version = Product.Version.Replace("${DATETIME}", DynamicVersion.DateTimeStamp);
+        }
+    }
+
+    /// <summary>
     /// Installation location for payload files.
     /// Required when payload exists and not an installer package.
     /// </summary>
@@ -260,4 +289,25 @@ public class CertificateInfo
     /// </summary>
     [YamlMember(Alias = "not_after")]
     public string NotAfter { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Generates dynamic date/time based version strings.
+/// </summary>
+public static class DynamicVersion
+{
+    /// <summary>
+    /// Current date/time formatted as YYYY.MM.DD.HHMM (e.g., 2025.12.09.1455).
+    /// </summary>
+    public static string Timestamp => System.DateTime.Now.ToString("yyyy.MM.dd.HHmm");
+
+    /// <summary>
+    /// Current date formatted as YYYY.MM.DD (e.g., 2025.12.09).
+    /// </summary>
+    public static string Date => System.DateTime.Now.ToString("yyyy.MM.dd");
+
+    /// <summary>
+    /// Current date/time formatted as YYYY.MM.DD.HHMMSS (e.g., 2025.12.09.145530).
+    /// </summary>
+    public static string DateTimeStamp => System.DateTime.Now.ToString("yyyy.MM.dd.HHmmss");
 }
