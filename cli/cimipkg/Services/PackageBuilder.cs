@@ -71,6 +71,9 @@ public class PackageBuilder
         // Read build-info.yaml
         var buildInfo = ReadBuildInfo(projectDir);
 
+        // Process dynamic version placeholders (${TIMESTAMP}, ${DATE}, ${DATETIME})
+        buildInfo.DoSubstitutions();
+
         // Load environment variables
         var envVars = LoadEnvironmentVariables(projectDir, options.EnvFilePath);
         if (envVars.Count > 0)
