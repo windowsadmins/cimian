@@ -1973,8 +1973,10 @@ if (-not $MsiOnly -and -not $NupkgOnly) {
             }
             
             # Create build-info.yaml from template
+            # Use RELEASE_VERSION (YYYY.MM.DD.HHMM format) for build-info.yaml
+            # This ensures cimiimport extracts the correct version when importing to the repo
             $buildInfoTemplate = Get-Content "build\pkg\build-info.yaml" -Raw
-            $buildInfoContent = $buildInfoTemplate -replace '\{\{VERSION\}\}', $env:SEMANTIC_VERSION
+            $buildInfoContent = $buildInfoTemplate -replace '\{\{VERSION\}\}', $env:RELEASE_VERSION
             $buildInfoContent = $buildInfoContent -replace '\{\{ARCHITECTURE\}\}', $arch
             $buildInfoPath = Join-Path $pkgTempDir "build-info.yaml"
             $buildInfoContent | Set-Content $buildInfoPath -Encoding UTF8
