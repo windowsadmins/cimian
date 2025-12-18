@@ -292,6 +292,33 @@ The project uses a comprehensive PowerShell build system (`build.ps1`) that:
 .\build.ps1 -PackageOnly
 ```
 
+### Environment Configuration
+
+The build system uses environment variables for sensitive configuration data such as code signing certificates.
+
+#### Setup
+
+1. Copy `.env.example` to `.env`:
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. Edit `.env` with your organization's certificate information:
+   ```
+   CIMIAN_CERT_CN=YourOrganization Enterprise Certificate
+   CIMIAN_CERT_SUBJECT=YourOrganization
+   ```
+
+#### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `CIMIAN_CERT_CN` | Full certificate common name | `"Contoso Enterprise Certificate"` |
+| `CIMIAN_CERT_SUBJECT` | Certificate subject pattern for auto-detection | `"Contoso"` |
+| `CIMIAN_CERT_THUMBPRINT` | (Optional) Override certificate thumbprint | `"1234567890ABCDEF..."` |
+| `CIMIAN_CERT_STORE` | (Optional) Certificate store location | `"CurrentUser"` or `"LocalMachine"` |
+
+> **Security Note**: The `.env` file is automatically ignored by git and should never be committed. Always use `.env.example` as a template for new environments.
 
 ## Configuration
 
