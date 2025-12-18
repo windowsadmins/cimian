@@ -10,7 +10,7 @@
 #  Thumbprint XX  override auto-detection
 #  Task XX        run specific task: build, package, all (default: all)
 #  Binaries       build and sign only the .exe binaries, skip all packaging
-#  Binary XX      build and sign only a specific binary (e.g., cimistatus)
+#  Binary XX      build and sign only a specific binary (e.g., managedsoftwareupdate)
 #  Install        after building, install the .pkg package (requires elevation)
 #  IntuneWin      create .intunewin packages (adds build time, only needed for deployment)
 #  Dev            development mode: stops services, faster iteration
@@ -24,7 +24,7 @@
 # Usage examples:
 #   .\build.ps1                      # Full build with auto-signing (no .intunewin)
 #   .\build.ps1 -Binaries -Sign      # Build only binaries with signing
-#   .\build.ps1 -Binary cimistatus -Sign # Build and sign only cimistatus binary
+#   .\build.ps1 -Binary managedsoftwareupdate -Sign # Build and sign only specific binary
 #   .\build.ps1 -Sign -Thumbprint XX # Force sign with specific certificate
 #   .\build.ps1 -Install             # Build and install the .pkg package
 #   .\build.ps1 -IntuneWin           # Full build including .intunewin packages
@@ -346,7 +346,7 @@ if ($Dev) {
         }
     }
     # Kill any running Cimian processes that might lock files
-    $processes = @("cimistatus", "cimiwatcher", "managedsoftwareupdate")
+    $processes = @("cimiwatcher", "managedsoftwareupdate")
     foreach ($processName in $processes) {
         try {
             Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -822,118 +822,10 @@ if ($Binaries -or $Binary) {
             # Generate Windows version information for this binary
             New-VersionInfo -BinaryName $binaryName -BinaryPath $dir.FullName -Version $env:RELEASE_VERSION -SemanticVersion $env:SEMANTIC_VERSION
             
-            # Check if this is a C# project
-            $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
-            $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
-            $csharpRepoCleanProject = Join-Path $dir.FullName "RepoClean.csproj"  # Special case for repoclean
-            $csharpCimiRepoCleanProject = Join-Path $dir.FullName "CimiRepoClean.csproj"  # Alternative for repoclean
+            # Check if this is a Go project
             $submoduleGoMod = Join-Path $dir.FullName "go.mod"
             $outputPath = "release\$arch\$binaryName.exe"
-            if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject) -or (Test-Path $csharpRepoCleanProject) -or (Test-Path $csharpCimiRepoCleanProject)) {
-                # This is a C# project - build with dotnet
-                Write-Log "Detected C# project for $binaryName" "INFO"
-                # Determine which project file to use
-                $projectFile = $null
-                if (Test-Path $csharpAltProject) { 
-                    $projectFile = $csharpAltProject 
-                } elseif (Test-Path $csharpRepoCleanProject) { 
-                    $projectFile = $csharpRepoCleanProject 
-                } elseif (Test-Path $csharpCimiRepoCleanProject) { 
-                    $projectFile = $csharpCimiRepoCleanProject 
-                } else { 
-                    $projectFile = $csharpProject 
-                }
-                # Map architecture for .NET runtime identifiers
-                $dotnetRid = switch ($arch) {
-                    "x64" { "win-x64" }
-                    "arm64" { "win-arm64" }
-                }
-                Push-Location $dir.FullName
-                try {
-                    # Detect target framework from project file
-                    $projectContent = Get-Content $projectFile -Raw
-                    $targetFrameworkMatch = [regex]::Match($projectContent, '<TargetFramework>(.*?)</TargetFramework>')
-                    $targetFramework = if ($targetFrameworkMatch.Success) { $targetFrameworkMatch.Groups[1].Value } else { "net8.0-windows" }
-                    Write-Log "Detected target framework: $targetFramework for $binaryName" "INFO"
-                    
-                    # Publish the C# project for specific architecture (self-contained single file) using hardcoded system dotnet path
-                    $dotnetPath = "C:\Program Files\dotnet\dotnet.exe"
-                    if (-not (Test-Path $dotnetPath)) {
-                        # Fallback to PATH-based dotnet if system path doesn't exist
-                        $dotnetPath = "dotnet"
-                    }
-                    & $dotnetPath publish $projectFile --configuration Release --runtime $dotnetRid --self-contained true --output "bin\Release\$targetFramework\$dotnetRid" -p:PublishSingleFile=false -p:PublishTrimmed=false -p:IncludeNativeLibrariesForSelfExtract=true --verbosity minimal
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Publish failed for C# project $binaryName ($arch) with exit code $LASTEXITCODE."
-                    }
-                    # Find the built executable - look for the binary name first, then fallback
-                    $builtExePath = "bin\Release\$targetFramework\$dotnetRid\$binaryName.exe"
-                    if (-not (Test-Path $builtExePath)) {
-                        # Fallback: look for cimistatus.exe for the special case
-                        $builtExePath = "bin\Release\$targetFramework\$dotnetRid\cimistatus.exe"
-                    }
-                    if (-not (Test-Path $builtExePath)) {
-                        # Final fallback: look for any .exe in the output directory
-                        $builtExePath = Get-ChildItem "bin\Release\$targetFramework\$dotnetRid\*.exe" | Select-Object -First 1 -ExpandProperty FullName
-                    }
-                    $builtExe = Get-ChildItem $builtExePath | Select-Object -First 1
-                    if (-not $builtExe) {
-                        throw "Could not find built executable for $binaryName ($arch)"
-                    }
-                    # Copy to the expected output location with retry mechanism for file locking issues
-                    # For C# projects, we need to copy ALL files from the output directory, not just the .exe
-                    $sourceDir = Split-Path $builtExe.FullName
-                    $destDir = Split-Path "..\..\$outputPath"
-                    
-                    $copySuccess = $false
-                    $maxRetries = 5
-                    $retryDelay = 2
-                    for ($retry = 1; $retry -le $maxRetries; $retry++) {
-                        try {
-                            # Force garbage collection to release any file handles
-                            [System.GC]::Collect()
-                            [System.GC]::WaitForPendingFinalizers()
-                            
-                            # Use robocopy to copy the entire directory for C# projects
-                            # /MIR would mirror (delete extra files), /E just copies subdirectories
-                            # /XD excludes subdirectories we don't need (language packs)
-                            & robocopy $sourceDir $destDir /E /R:3 /W:1 /NP /NDL /NJH /NJS /XD "af-ZA" "am-ET" "ar-SA" "az-Latn-AZ" "be-BY" "bg-BG" "bn-BD" "bs-Latn-BA" "ca-ES" "cs" "cs-CZ" "da-DK" "de" "de-DE" "el-GR" "en-GB" "es" "es-ES" "es-MX" "et-EE" "eu-ES" "fa-IR" "fi-FI" "fil-PH" "fr" "fr-CA" "fr-FR" "gl-ES" "he-IL" "hi-IN" "hr-HR" "hu-HU" "id-ID" "is-IS" "it" "it-IT" "ja" "ja-JP" "ka-GE" "kk-KZ" "km-KH" "kn-IN" "ko" "ko-KR" "lo-LA" "lt-LT" "lv-LV" "mk-MK" "ml-IN" "ms-MY" "nb-NO" "nl-NL" "nn-NO" "pl" "pl-PL" "pt-BR" "pt-PT" "ro-RO" "ru" "ru-RU" "sk-SK" "sl-SI" "sq-AL" "sr-Latn-RS" "sv-SE" "sw-KE" "ta-IN" "te-IN" "th-TH" "tr" "tr-TR" "uk-UA" "uz-Latn-UZ" "vi-VN" "zh-Hans" "zh-Hant" | Out-Null
-                            
-                            # Robocopy exit codes 0-7 are success, 8+ are errors
-                            if ($LASTEXITCODE -le 7 -and (Test-Path "..\..\$outputPath")) {
-                                $copySuccess = $true
-                                Write-Log "Successfully copied $binaryName ($arch) with all dependencies on attempt $retry" "SUCCESS"
-                                break
-                            } else {
-                                throw "Robocopy succeeded but file not found at destination"
-                            }
-                        } catch {
-                            if ($retry -lt $maxRetries) {
-                                Write-Log "Copy attempt $retry failed for $binaryName ($arch): $_. Retrying in $retryDelay seconds..." "WARNING"
-                                Start-Sleep -Seconds $retryDelay
-                                $retryDelay += 1  # Exponential backoff
-                            } else {
-                                Write-Log "All copy attempts failed for $binaryName ($arch). Falling back to standard copy..." "WARNING"
-                                try {
-                                    # Fallback: Copy entire directory
-                                    Copy-Item -Path "$sourceDir\*" -Destination $destDir -Recurse -Force
-                                    $copySuccess = $true
-                                } catch {
-                                    throw "Final fallback copy also failed: $_"
-                                }
-                            }
-                        }
-                    }
-                    if (-not $copySuccess) {
-                        throw "Failed to copy built executable after all retry attempts"
-                    }
-                } catch {
-                    Write-Log "Failed to build C# project $binaryName ($arch). Error: $_" "ERROR"
-                    Pop-Location
-                    exit 1
-                }
-                Pop-Location
-            } elseif (Test-Path $submoduleGoMod) {
+            if (Test-Path $submoduleGoMod) {
                 # This is a Go submodule project
                 Write-Log "Detected Go submodule for $binaryName" "INFO"
                 # Get build info for Go projects
@@ -960,13 +852,7 @@ if ($Binaries -or $Binary) {
                 try {
                     go mod tidy
                     go mod download
-                    if ($binaryName -eq "cimistatus") {
-                        $env:CGO_ENABLED = "1"
-                        go build -v -o "..\..\$outputPath" -ldflags="$ldflags -H windowsgui" .
-                        $env:CGO_ENABLED = "0"
-                    } else {
-                        go build -v -o "..\..\$outputPath" -ldflags="$ldflags" .
-                    }
+                    go build -v -o "..\..\$outputPath" -ldflags="$ldflags" .
                     if ($LASTEXITCODE -ne 0) {
                         throw "Build failed for Go submodule $binaryName ($arch) with exit code $LASTEXITCODE."
                     }
@@ -1374,16 +1260,12 @@ foreach ($arch in $archs) {
         # Generate Windows version information for this binary
         New-VersionInfo -BinaryName $binaryName -BinaryPath $dir.FullName -Version $env:RELEASE_VERSION -SemanticVersion $env:SEMANTIC_VERSION
         
-        # Check if this is a C# project
-        $csharpProject = Join-Path $dir.FullName "$binaryName.csproj"
-        $csharpAltProject = Join-Path $dir.FullName "CimianStatus.csproj"  # Special case for cimistatus
-        $csharpRepoCleanProject = Join-Path $dir.FullName "RepoClean.csproj"  # Special case for repoclean
-        $csharpCimiRepoCleanProject = Join-Path $dir.FullName "CimiRepoClean.csproj"  # Alternative for repoclean
+        # Check if this is a Go project
         $submoduleGoMod = Join-Path $dir.FullName "go.mod"
         $outputPath = "release\$arch\$binaryName.exe"
-        if ((Test-Path $csharpProject) -or (Test-Path $csharpAltProject) -or (Test-Path $csharpRepoCleanProject) -or (Test-Path $csharpCimiRepoCleanProject)) {
-            # This is a C# project - build with dotnet
-            Write-Log "Detected C# project for $binaryName" "INFO"
+        if (Test-Path $submoduleGoMod) {
+            # This is a Go submodule project
+            Write-Log "Detected Go submodule for $binaryName (go.mod found). Building from submodule..." "INFO"
             # Determine which project file to use
             $projectFile = $null
             if (Test-Path $csharpAltProject) { 
