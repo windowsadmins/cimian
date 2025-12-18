@@ -72,7 +72,6 @@ type SessionSummary struct {
 	PackagesFailed       int     `json:"packages_failed"`
 	CacheSizeMB          float64 `json:"cache_size_mb,omitempty"`
 
-	// ENHANCEMENT 4: Failed package details for ReportMate
 	FailedPackages []FailedPackageInfo `json:"failed_packages,omitempty"`
 }
 
@@ -247,6 +246,7 @@ type DataExporter struct {
 	currentSessionPackages     []string             // Actual packages processed in the current session (for items.json) - DEPRECATED
 	currentSessionPackagesInfo []SessionPackageInfo // Rich package information for the current session (for items.json)
 	currentItemErrors          map[string]string    // Map of item names to their current error messages
+	processedItemResults       map[string]string    // Map of item names to their final status (completed/failed/warning) for session stats
 }
 
 // NewDataExporter creates a new data exporter
@@ -256,6 +256,7 @@ func NewDataExporter(baseDir string) *DataExporter {
 		manifestPackageCache:       make(map[string]int),
 		currentItemErrors:          make(map[string]string),
 		currentSessionPackagesInfo: make([]SessionPackageInfo, 0),
+		processedItemResults:       make(map[string]string),
 	}
 }
 
@@ -488,7 +489,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				CacheSizeMB:          cacheSize,
 			}
 
-			// ENHANCEMENT 4: Add failed package details to sessions
+			// Add failed package details to sessions
 			if record.Failures > 0 {
 				summary.FailedPackages = exp.getFailedPackagesForSession(sessionDir)
 			}
@@ -1273,6 +1274,45 @@ func (exp *DataExporter) SetCurrentSessionPackagesInfo(packagesInfo []SessionPac
 			"first_status", packagesInfo[0].Status,
 			"first_version", packagesInfo[0].Version)
 	}
+}
+
+// SessionStats holds statistics about session installation results
+type SessionStats struct {
+	SuccessCount int
+	FailureCount int
+	WarningCount int
+	TotalCount   int
+}
+
+// GetSessionStats returns success/failure/warning counts from PROCESSED items in this session
+// This provides accurate per-item counting based on progressive status updates
+// Only counts items that were actually processed (attempted to install/update/remove)
+func (exp *DataExporter) GetSessionStats() SessionStats {
+	stats := SessionStats{
+		TotalCount: len(exp.processedItemResults),
+	}
+
+	// Count results from items that were actually processed
+	for _, status := range exp.processedItemResults {
+		statusLower := strings.ToLower(status)
+		switch {
+		case statusLower == "completed" || statusLower == "success":
+			stats.SuccessCount++
+		case statusLower == "failed" || statusLower == "error":
+			stats.FailureCount++
+		case statusLower == "warning":
+			stats.WarningCount++
+		// Other statuses don't count as success or failure
+		}
+	}
+
+	logging.Debug("Session stats calculated from processed items",
+		"success", stats.SuccessCount,
+		"failure", stats.FailureCount,
+		"warning", stats.WarningCount,
+		"total_processed", stats.TotalCount)
+
+	return stats
 }
 
 // GenerateCurrentItemsFromPackagesInfo creates ItemRecord entries from rich session package information
@@ -2243,6 +2283,9 @@ func (exp *DataExporter) ExportProgressiveReports(limitDays int, phase string) e
 // This gives ReportMate real-time visibility into installation progress
 func (exp *DataExporter) ExportItemProgressUpdate(limitDays int, completedItem string, status string, errorMsg string, warningMsg ...string) error {
 	// CRITICAL: Update SessionPackageInfo with current error/warning messages for real-time reporting
+
+	// Track this item as processed with its final status for session stats
+	exp.processedItemResults[completedItem] = status
 
 	// Extract warning message from variadic parameter
 	var warning string

@@ -2030,17 +2030,23 @@ func main() {
 	statusReporter.Stop()
 
 	// End structured logging session with comprehensive summary
-	successCount := 0
-	failureCount := 0
-	if installSuccess {
-		successCount += len(toInstall) + len(toUpdate)
-	} else {
-		failureCount += len(toInstall) + len(toUpdate)
-	}
-	if uninstallSuccess {
-		successCount += len(toUninstall)
-	} else {
-		failureCount += len(toUninstall)
+	// Use the exporter's session stats for accurate per-item counting based on progressive updates
+	sessionStats := exporter.GetSessionStats()
+	successCount := sessionStats.SuccessCount
+	failureCount := sessionStats.FailureCount
+
+	// Fallback to boolean-based counting if no progressive stats available (e.g., no items processed)
+	if sessionStats.TotalCount == 0 {
+		if installSuccess {
+			successCount = len(toInstall) + len(toUpdate)
+		} else {
+			failureCount = len(toInstall) + len(toUpdate)
+		}
+		if uninstallSuccess {
+			successCount += len(toUninstall)
+		} else {
+			failureCount += len(toUninstall)
+		}
 	}
 
 	summary := logging.SessionSummary{
