@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- WiX v6 Installer XML for Cimian Application -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <?ifndef ProductVersion?>
+    <?define ProductVersion = "0.0.0"?>
+  <?endif?>
+
+  <!-- Product Definition with fixed Product ID for proper upgrade behavior -->
+  <Package Name="Cimian"
+           Version="$(var.ProductVersion)"
+           Manufacturer="Cimian"
+           UpgradeCode="d61005bf-a182-4583-810d-8c33b056b8be"
+           Language="1033"
+           InstallerVersion="500"
+           Compressed="yes"
+           Scope="perMachine">
+
+    <!-- Disable Windows Restart Manager to prevent service restart dialogs -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    
+    <!-- Additional properties to control restart behavior -->
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <Property Id="MSIRMSHUTDOWN" Value="2" />
+    <Property Id="MSIDISABLERMRESTART" Value="1" />
+    <Property Id="DISABLEADVTSHORTCUTS" Value="1" />
+    <Property Id="MSIRESTARTMANAGERDISABLED" Value="1" />
+    <Property Id="MSISHUTDOWNTIMEOUT" Value="0" />
+    <Property Id="MSIFORCERESTART" Value="0" />
+
+    <!-- Search for existing CimianWatcher service via registry -->
+    <Property Id="CIMIANWATCHER_SERVICE_EXISTS">
+      <RegistrySearch Id="CimianWatcherServiceSearch" 
+                      Root="HKLM" 
+                      Key="SYSTEM\CurrentControlSet\Services\CimianWatcher" 
+                      Name="ImagePath" 
+                      Type="raw" />
+    </Property>
+
+    <!-- Search for the config file -->
+    <Property Id="CONFIGFILE">
+      <DirectorySearch Id="ManagedInstallsDirSearch" Path="[CommonAppDataFolder]ManagedInstalls">
+        <FileSearch Id="ConfigFileSearch" Name="Config.yaml" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Major Upgrade Settings - Handle version upgrades and force reinstallation -->
+    <MajorUpgrade AllowSameVersionUpgrades="no" 
+                  AllowDowngrades="no"
+                  MigrateFeatures="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  Schedule="afterInstallInitialize" />
+
+    <!-- Media Definition -->
+    <Media Id="1"
+           Cabinet="product.cab"
+           EmbedCab="yes" />
+
+    <!-- Directory Structure -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="Cimian">
+
+        <!-- Components and Files -->
+        <Component Id="Binary1" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
+          <File Id="BinaryFile1" Source="$(var.BIN_DIR)\cimiimport.exe" />
+        </Component>
+        <Component Id="Binary2" Guid="67855CDD-8EAB-564C-B795-26091FE9B83A">
+          <File Id="BinaryFile2" Source="$(var.BIN_DIR)\makecatalogs.exe" />
+        </Component>
+        <Component Id="Binary3" Guid="77855CDE-9FAB-464D-C795-26091DE8B83A">
+          <File Id="BinaryFile3" Source="$(var.BIN_DIR)\makepkginfo.exe" />
+        </Component>
+        <Component Id="Binary4" Guid="87855CDE-AFAB-564D-D795-26091FE9B83A">
+          <File Id="BinaryFile4" Source="$(var.BIN_DIR)\managedsoftwareupdate.exe" />
+        </Component>
+        <Component Id="Binary5" Guid="97855CDE-BFAB-664D-E795-26091DE8B83A">
+          <File Id="BinaryFile5" Source="$(var.BIN_DIR)\manifestutil.exe" />
+        </Component>
+        <Component Id="Binary6" Guid="AF855CDE-1234-5678-9ABC-26091DE9B83B">
+          <File Id="BinaryFile6" Source="$(var.BIN_DIR)\cimipkg.exe" />
+        </Component>
+
+        <!-- CimianStatus GUI for bootstrap progress -->
+        <Component Id="Binary7" Guid="BF855CDE-1234-5678-9ABC-26091DE9B83C">
+          <File Id="BinaryFile7" Source="$(var.BIN_DIR)\cimistatus.exe" />
+        </Component>
+
+        <!-- CimianWatcher service for responsive bootstrap monitoring -->
+        <Component Id="Binary8" Guid="CF855CDE-1234-5678-9ABC-26091DE9B83D">
+          <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimiwatcher.exe" />
+          
+          <!-- Note: Service configuration removed to prevent issues on fresh installs -->
+          <!-- Service management is handled through custom actions instead -->
+        </Component>
+
+        <!-- CimiTrigger CLI for manual update triggering -->
+        <Component Id="Binary9" Guid="DF855CDE-1234-5678-9ABC-26091DE9B83E">
+          <File Id="BinaryFile9" Source="$(var.BIN_DIR)\cimitrigger.exe" />
+        </Component>
+
+        <!-- RepoClean CLI for repository maintenance -->
+        <Component Id="Binary10" Guid="1F855CDE-1234-5678-9ABC-26091DE9B840">
+          <File Id="BinaryFile10" Source="$(var.BIN_DIR)\repoclean.exe" />
+        </Component>
+
+        <!-- ManagedSoftwareCenter GUI application -->
+        <Component Id="Binary11" Guid="2F855CDE-1234-5678-9ABC-26091DE9B841">
+          <File Id="BinaryFile11" Source="$(var.BIN_DIR)\ManagedSoftwareCenter.exe" />
+        </Component>
+
+        <!-- Scheduled Task Scripts -->
+        <Component Id="ScheduledTaskScripts" Guid="EF855CDE-1234-5678-9ABC-26091DE9B83F">
+          <File Id="TaskInstallScript" Source="$(var.BIN_DIR)\install-tasks.ps1" />
+          <File Id="TaskUninstallScript" Source="$(var.BIN_DIR)\uninstall-tasks.ps1" />
+        </Component>
+
+        <!-- Service Management Script -->
+        <Component Id="ServiceManagementScript" Guid="AF855CDE-1234-5678-9ABC-26091DE9B85F">
+          <File Id="ServiceManagementScript" Source="$(var.BIN_DIR)\manage-service.ps1" />
+        </Component>
+
+        <!-- Diagnostic and Verification Scripts -->
+        <Component Id="DiagnosticScripts" Guid="FF855CDE-1234-5678-9ABC-26091DE9B84F">
+          <File Id="VerifyInstallScript" Source="$(var.BIN_DIR)\verify-installation.ps1" />
+          <File Id="DiagnoseCimianWatcherScript" Source="$(var.BIN_DIR)\diagnose-cimianwatcher.ps1" />
+        </Component>
+
+        <!-- Component to Modify PATH Environment Variable -->
+        <Component Id="SetPathComponent" Guid="A5F2C571-89DF-4C71-967F-EC9D3EF4CDD0">
+          <RegistryValue Root="HKLM" Key="Software\Cimian" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
+          <RegistryValue Root="HKLM" Key="Software\Cimian" Name="Version" Value="$(var.ProductVersion)" Type="string" />
+          <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
+        </Component>
+
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Common Application Data Directory -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ManagedInstalls" Name="ManagedInstalls">
+
+        <!-- Component for Configuration File (config.yaml) - Only install if it doesn't exist -->
+        <Component Id="Component_Config" Guid="D4E5F6A7-B8C9-0D1E-2F3A-4B5C6D7E8F9A" Condition="NOT CONFIGFILE">
+          <File Id="File_Config" Source="config.yaml" />
+        </Component>
+
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Custom Actions using reliable process termination -->
+    <!-- Force stop CimianWatcher processes (most reliable approach) -->
+    <CustomAction Id="ForceStopCimianWatcher"
+                  Execute="immediate"
+                  Impersonate="no"
+                  Return="ignore"
+                  Property="System64Folder"
+                  ExeCommand="cmd.exe /c &quot;taskkill /f /im cimiwatcher.exe 2&gt;nul &amp;&amp; timeout /t 2 /nobreak &gt;nul 2&gt;&amp;1 || exit 0&quot;" />
+
+    <!-- Force stop ManagedSoftwareUpdate processes -->
+    <CustomAction Id="ForceStopManagedSoftwareUpdate"  
+                  Execute="immediate"
+                  Impersonate="no"
+                  Return="ignore"
+                  Property="System64Folder"
+                  ExeCommand="cmd.exe /c &quot;taskkill /f /im managedsoftwareupdate.exe 2&gt;nul &amp;&amp; timeout /t 1 /nobreak &gt;nul 2&gt;&amp;1 || exit 0&quot;" />
+
+    <!-- Run initial configuration import using direct executable call -->
+    <CustomAction Id="RunCimiImport"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]cimiimport.exe&quot; --config-auto" />
+
+    <!-- Schedule the Custom Actions -->
+    <InstallExecuteSequence>
+      <!-- Force stop processes before file operations (new reliable approach) -->
+      <Custom Action="ForceStopCimianWatcher" After="LaunchConditions" Condition="NOT REMOVE" />
+      <Custom Action="ForceStopManagedSoftwareUpdate" After="ForceStopCimianWatcher" Condition="NOT REMOVE" />
+
+      <!-- Run configuration import for new installations -->
+      <Custom Action="RunCimiImport" After="InstallFiles" Condition="NOT CONFIGFILE" />
+    </InstallExecuteSequence>
+
+    <!-- Feature Definition -->
+    <Feature Id="DefaultFeature" Level="1">
+      <ComponentRef Id="Binary1" />
+      <ComponentRef Id="Binary2" />
+      <ComponentRef Id="Binary3" />
+      <ComponentRef Id="Binary4" />
+      <ComponentRef Id="Binary5" />
+      <ComponentRef Id="Binary6" />
+      <ComponentRef Id="Binary7" />
+      <ComponentRef Id="Binary8" />
+      <ComponentRef Id="Binary9" />
+      <ComponentRef Id="Binary10" />
+      <ComponentRef Id="Binary11" />
+      <ComponentRef Id="ScheduledTaskScripts" />
+      <ComponentRef Id="ServiceManagementScript" />
+      <ComponentRef Id="DiagnosticScripts" />
+      <ComponentRef Id="SetPathComponent" />
+      <ComponentRef Id="Component_Config" />
+    </Feature>
+
+  </Package>
+
+</Wix>
