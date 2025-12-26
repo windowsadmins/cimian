@@ -1,0 +1,7 @@
+product:
+  name: CimianTools
+  version: {{VERSION}}
+  identifier: com.github.windowsadmin.cimian
+  developer: Windows Admins Open Source
+  description: Cimian is a DevOps Software Deployment System for Windows that can install MSI(X), EXE, NUPKG, and run PWSH scripts.
+install_location: C:\Program Files\Cimian
