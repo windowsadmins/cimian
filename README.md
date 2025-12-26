@@ -10,10 +10,6 @@ Cimian aims to allow Mac Admins that manage Windows with Munki to have a similar
 
 Cimian is ideal for organizations of all sizes looking to streamline their Windows software deployment processes. It can be used in small environments with just a few machines, or scaled up to manage thousands of systems across multiple locations.
 
-> **Note**: The `csharp` branch is now 100% C#/.NET with all Go code removed.
-> The migration from Go to C# is complete as of December 2024.  
-> **The 'C' in Cimian stands for C# after all!**
-
 ## Key Features
 
 - **Automated Package Management**: Streamline software packaging, metadata management, and distribution
