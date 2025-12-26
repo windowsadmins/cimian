@@ -95,8 +95,9 @@ public class CatalogBuilder
         {
             if (pkg.Installer?.Location != null)
             {
-                // Normalize path separators for comparison
-                var relativePath = "pkgs/" + pkg.Installer.Location.Replace('\\', '/');
+                // Normalize path separators for comparison and trim leading slashes
+                var location = pkg.Installer.Location.TrimStart('/', '\\').Replace('\\', '/');
+                var relativePath = "pkgs/" + location;
                 if (!existingFiles.Contains(relativePath))
                 {
                     warnings.Add($"{pkg.FilePath} has missing installer => {relativePath}");
@@ -126,7 +127,9 @@ public class CatalogBuilder
 
             if (pkg.Uninstaller?.Location != null)
             {
-                var relativePath = "pkgs/" + pkg.Uninstaller.Location.Replace('\\', '/');
+                // Trim leading slashes from uninstaller Location
+                var uninstallerLocation = pkg.Uninstaller.Location.TrimStart('/', '\\').Replace('\\', '/');
+                var relativePath = "pkgs/" + uninstallerLocation;
                 if (!existingFiles.Contains(relativePath))
                 {
                     warnings.Add($"{pkg.FilePath} has missing uninstaller => {relativePath}");
