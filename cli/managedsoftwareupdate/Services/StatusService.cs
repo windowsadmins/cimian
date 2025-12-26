@@ -151,6 +151,30 @@ public class StatusService
                 return CheckScriptStatus(item);
             }
 
+            // Go parity: For MSI items without explicit checks, compare version from ManagedInstalls registry
+            // This handles cases like Zoom where no product_code is specified but we have registry version
+            if (item.Installer?.Type?.ToLowerInvariant() == "msi")
+            {
+                var registryVersion = GetManagedInstallsVersion(item.Name);
+                if (!string.IsNullOrEmpty(registryVersion))
+                {
+                    // Compare registry version to catalog version
+                    var comparison = CatalogService.CompareVersions(item.Version, registryVersion);
+                    if (comparison > 0)
+                    {
+                        // Catalog has newer version - update needed
+                        result.Status = "pending";
+                        result.NeedsAction = true;
+                        result.IsUpdate = true;
+                        result.Reason = $"Registry version {registryVersion} < catalog version {item.Version}";
+                        return result;
+                    }
+                    result.Status = "installed";
+                    result.Reason = $"Registry version {registryVersion} >= catalog version {item.Version}";
+                    return result;
+                }
+            }
+
             // Go parity: If no checks are defined and no installs array, 
             // assume item doesn't need action (it may not have verification methods)
             // Don't fall back to ManagedInstalls registry as Go doesn't do this
@@ -304,6 +328,23 @@ public class StatusService
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Get the version of an item from the ManagedInstalls registry
+    /// This is used for version comparison when no product_code is available
+    /// </summary>
+    private string? GetManagedInstallsVersion(string itemName)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\ManagedInstalls\{itemName}");
+            return key?.GetValue("version")?.ToString();
+        }
+        catch
+        {
+            return null;
         }
     }
 
