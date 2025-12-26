@@ -50,7 +50,7 @@ public class ConfigurationService
     }
 
     /// <summary>
-    /// Saves the configuration.
+    /// Saves the configuration while preserving existing settings not managed by cimiimport.
     /// </summary>
     public void SaveConfig(ImportConfiguration config)
     {
@@ -60,7 +60,35 @@ public class ConfigurationService
             Directory.CreateDirectory(configDir);
         }
 
-        var yaml = _serializer.Serialize(config);
+        // Load existing config to preserve other settings
+        Dictionary<string, object>? existingConfig = null;
+        if (File.Exists(ConfigPath))
+        {
+            try
+            {
+                var existingYaml = File.ReadAllText(ConfigPath);
+                var rawDeserializer = new DeserializerBuilder()
+                    .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                    .Build();
+                existingConfig = rawDeserializer.Deserialize<Dictionary<string, object>>(existingYaml);
+            }
+            catch
+            {
+                // If we can't parse existing config, we'll create a new one
+            }
+        }
+
+        existingConfig ??= new Dictionary<string, object>();
+
+        // Update only the fields managed by cimiimport
+        existingConfig["repo_path"] = config.RepoPath;
+        existingConfig["cloud_provider"] = config.CloudProvider;
+        existingConfig["cloud_bucket"] = config.CloudBucket;
+        existingConfig["default_catalog"] = config.DefaultCatalog;
+        existingConfig["default_arch"] = config.DefaultArch;
+        existingConfig["open_imported_yaml"] = config.OpenImportedYaml;
+
+        var yaml = _serializer.Serialize(existingConfig);
         File.WriteAllText(ConfigPath, yaml);
     }
 
