@@ -64,14 +64,16 @@ public class CodeSigner
         }
 
         // Build PowerShell command to sign the script
+        // Note: Using EKU filter for code signing instead of -CodeSigningCert parameter
+        // for better compatibility across PowerShell versions
         var getCertCommand = !string.IsNullOrEmpty(certThumbprint)
-            ? $"Get-ChildItem -Path Cert:\\CurrentUser\\My -CodeSigningCert | Where-Object {{ $_.Thumbprint -eq '{certThumbprint}' }}"
-            : $"Get-ChildItem -Path Cert:\\CurrentUser\\My -CodeSigningCert | Where-Object {{ $_.Subject -like '*{certSubject}*' }}";
+            ? $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Thumbprint -eq '{certThumbprint}' -and $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3' }}"
+            : $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3' }}";
 
         var psCommand = $@"
 $cert = {getCertCommand} | Select-Object -First 1
 if (-not $cert) {{
-    $cert = Get-ChildItem -Path Cert:\\LocalMachine\\My -CodeSigningCert | Where-Object {{ $_.Subject -like '*{certSubject}*' }} | Select-Object -First 1
+    $cert = Get-ChildItem -Path Cert:\\LocalMachine\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3' }} | Select-Object -First 1
 }}
 if (-not $cert) {{
     throw 'Code signing certificate not found'
