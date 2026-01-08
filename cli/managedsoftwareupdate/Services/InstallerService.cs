@@ -174,8 +174,8 @@ public class InstallerService
             $"/l*v \"{Path.Combine(_config.CachePath, $"{item.Name}_install.log")}\""
         };
 
-        // Add custom args
-        args.AddRange(item.Installer.Args);
+        // Add custom args (switches, flags, and args combined)
+        args.AddRange(item.Installer.GetAllArgs());
 
         var startInfo = new ProcessStartInfo
         {
@@ -195,8 +195,10 @@ public class InstallerService
         string localFile,
         CancellationToken cancellationToken)
     {
-        var args = item.Installer.Args.Count > 0
-            ? item.Installer.Args
+        // Get all args (switches + flags + args combined)
+        var allArgs = item.Installer.GetAllArgs();
+        var args = allArgs.Count > 0
+            ? allArgs
             : new List<string> { "/S", "/silent", "/quiet", "/SILENT", "/VERYSILENT", "/qn" };
 
         var startInfo = new ProcessStartInfo
@@ -329,7 +331,7 @@ public class InstallerService
             "/norestart"
         };
 
-        args.AddRange(uninstaller.Args);
+        args.AddRange(uninstaller.GetAllArgs());
 
         var startInfo = new ProcessStartInfo
         {
@@ -356,7 +358,7 @@ public class InstallerService
         var startInfo = new ProcessStartInfo
         {
             FileName = uninstaller.Command,
-            Arguments = string.Join(" ", uninstaller.Args),
+            Arguments = string.Join(" ", uninstaller.GetAllArgs()),
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
