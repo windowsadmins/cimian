@@ -269,6 +269,22 @@ public class InstallerInfo
     [YamlMember(Alias = "type")]
     public string Type { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Command-line switches (Windows-style with / prefix)
+    /// Used by InnoSetup and other Windows installers
+    /// </summary>
+    [YamlMember(Alias = "switches")]
+    public List<string> Switches { get; set; } = new();
+
+    /// <summary>
+    /// Command-line flags (Unix-style with - or -- prefix)
+    /// </summary>
+    [YamlMember(Alias = "flags")]
+    public List<string> Flags { get; set; } = new();
+
+    /// <summary>
+    /// Generic command-line arguments
+    /// </summary>
     [YamlMember(Alias = "args")]
     public List<string> Args { get; set; } = new();
 
@@ -277,6 +293,78 @@ public class InstallerInfo
 
     [YamlMember(Alias = "size")]
     public long? Size { get; set; }
+
+    /// <summary>
+    /// Gets all command-line arguments combined (switches + flags + args)
+    /// Normalizes switches and flags to ensure proper prefixes:
+    /// - Switches: ensures / prefix (accepts both "VERYSILENT" and "/VERYSILENT")
+    /// - Flags: ensures - or -- prefix (accepts both "quiet" and "--quiet")
+    /// - Args: passed through as-is
+    /// </summary>
+    public List<string> GetAllArgs()
+    {
+        var allArgs = new List<string>();
+        
+        // Process switches - ensure / prefix
+        foreach (var sw in Switches)
+        {
+            allArgs.Add(NormalizeSwitch(sw));
+        }
+        
+        // Process flags - ensure - or -- prefix
+        foreach (var flag in Flags)
+        {
+            allArgs.Add(NormalizeFlag(flag));
+        }
+        
+        // Args are passed through as-is
+        allArgs.AddRange(Args);
+        
+        return allArgs;
+    }
+
+    /// <summary>
+    /// Normalizes a switch to ensure it has a / prefix
+    /// Supports both "VERYSILENT" and "/VERYSILENT" input formats
+    /// </summary>
+    private static string NormalizeSwitch(string sw)
+    {
+        if (string.IsNullOrWhiteSpace(sw))
+            return sw;
+        
+        var trimmed = sw.Trim();
+        
+        // Already has / prefix - use as-is
+        if (trimmed.StartsWith('/'))
+            return trimmed;
+        
+        // Add / prefix
+        return "/" + trimmed;
+    }
+
+    /// <summary>
+    /// Normalizes a flag to ensure it has a - or -- prefix
+    /// Supports both "quiet" and "--quiet" input formats
+    /// Uses -- for flags longer than 1 character, - for single char
+    /// </summary>
+    private static string NormalizeFlag(string flag)
+    {
+        if (string.IsNullOrWhiteSpace(flag))
+            return flag;
+        
+        var trimmed = flag.Trim();
+        
+        // Already has - or -- prefix - use as-is
+        if (trimmed.StartsWith('-'))
+            return trimmed;
+        
+        // Determine prefix based on flag length (single char = -, otherwise --)
+        // Handle flags with = or space (e.g., "mode=silent" -> "--mode=silent")
+        var flagName = trimmed.Split('=', ' ')[0];
+        var prefix = flagName.Length == 1 ? "-" : "--";
+        
+        return prefix + trimmed;
+    }
 }
 
 /// <summary>
@@ -293,8 +381,81 @@ public class UninstallerInfo
     [YamlMember(Alias = "command")]
     public string? Command { get; set; }
 
+    /// <summary>
+    /// Command-line switches (Windows-style with / prefix)
+    /// </summary>
+    [YamlMember(Alias = "switches")]
+    public List<string> Switches { get; set; } = new();
+
+    /// <summary>
+    /// Command-line flags (Unix-style with - or -- prefix)
+    /// </summary>
+    [YamlMember(Alias = "flags")]
+    public List<string> Flags { get; set; } = new();
+
+    /// <summary>
+    /// Generic command-line arguments
+    /// </summary>
     [YamlMember(Alias = "args")]
     public List<string> Args { get; set; } = new();
+
+    /// <summary>
+    /// Gets all command-line arguments combined (switches + flags + args)
+    /// Normalizes switches and flags to ensure proper prefixes:
+    /// - Switches: ensures / prefix (accepts both "SILENT" and "/SILENT")
+    /// - Flags: ensures - or -- prefix (accepts both "force" and "--force")
+    /// - Args: passed through as-is
+    /// </summary>
+    public List<string> GetAllArgs()
+    {
+        var allArgs = new List<string>();
+        
+        // Process switches - ensure / prefix
+        foreach (var sw in Switches)
+        {
+            allArgs.Add(NormalizeSwitch(sw));
+        }
+        
+        // Process flags - ensure - or -- prefix
+        foreach (var flag in Flags)
+        {
+            allArgs.Add(NormalizeFlag(flag));
+        }
+        
+        // Args are passed through as-is
+        allArgs.AddRange(Args);
+        
+        return allArgs;
+    }
+
+    /// <summary>
+    /// Normalizes a switch to ensure it has a / prefix
+    /// </summary>
+    private static string NormalizeSwitch(string sw)
+    {
+        if (string.IsNullOrWhiteSpace(sw))
+            return sw;
+        
+        var trimmed = sw.Trim();
+        return trimmed.StartsWith('/') ? trimmed : "/" + trimmed;
+    }
+
+    /// <summary>
+    /// Normalizes a flag to ensure it has a - or -- prefix
+    /// </summary>
+    private static string NormalizeFlag(string flag)
+    {
+        if (string.IsNullOrWhiteSpace(flag))
+            return flag;
+        
+        var trimmed = flag.Trim();
+        if (trimmed.StartsWith('-'))
+            return trimmed;
+        
+        var flagName = trimmed.Split('=', ' ')[0];
+        var prefix = flagName.Length == 1 ? "-" : "--";
+        return prefix + trimmed;
+    }
 }
 
 /// <summary>
