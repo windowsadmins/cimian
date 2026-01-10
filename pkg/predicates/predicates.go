@@ -455,11 +455,35 @@ func (fc *FactsCollector) compareValues(factValue interface{}, operator string, 
 }
 
 // compareEquals performs equality comparison
+// When factValue is an array/slice, checks if conditionValue is an element of that array
 func (fc *FactsCollector) compareEquals(factValue, conditionValue interface{}) (bool, error) {
-	// Convert both values to strings for comparison
-	factStr := fc.valueToString(factValue)
 	conditionStr := fc.valueToString(conditionValue)
 
+	// Handle array/slice fact values - check if condition value is IN the array
+	// This allows conditions like "catalogs == Staging" to work when catalogs is ["Staging"]
+	switch fv := factValue.(type) {
+	case []string:
+		for _, item := range fv {
+			if item == conditionStr {
+				logging.Debug("Array equality match found", "factValue", fv, "conditionValue", conditionStr)
+				return true, nil
+			}
+		}
+		logging.Debug("Array equality no match", "factValue", fv, "conditionValue", conditionStr)
+		return false, nil
+	case []interface{}:
+		for _, item := range fv {
+			if fc.valueToString(item) == conditionStr {
+				logging.Debug("Array equality match found", "factValue", fv, "conditionValue", conditionStr)
+				return true, nil
+			}
+		}
+		logging.Debug("Array equality no match", "factValue", fv, "conditionValue", conditionStr)
+		return false, nil
+	}
+
+	// Standard string comparison for non-array values
+	factStr := fc.valueToString(factValue)
 	return factStr == conditionStr, nil
 }
 
@@ -549,10 +573,30 @@ func (fc *FactsCollector) compareIn(factValue, conditionValue interface{}) (bool
 }
 
 // compareContains checks if fact value contains the condition value
+// For array fact values, checks if any element contains the condition value as a substring
 func (fc *FactsCollector) compareContains(factValue, conditionValue interface{}) (bool, error) {
-	factStr := strings.ToLower(fc.valueToString(factValue))
 	conditionStr := strings.ToLower(fc.valueToString(conditionValue))
 
+	// Handle array/slice fact values - check if any element contains the substring
+	switch fv := factValue.(type) {
+	case []string:
+		for _, item := range fv {
+			if strings.Contains(strings.ToLower(item), conditionStr) {
+				return true, nil
+			}
+		}
+		return false, nil
+	case []interface{}:
+		for _, item := range fv {
+			if strings.Contains(strings.ToLower(fc.valueToString(item)), conditionStr) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	// Standard string contains for non-array values
+	factStr := strings.ToLower(fc.valueToString(factValue))
 	return strings.Contains(factStr, conditionStr), nil
 }
 
