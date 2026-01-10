@@ -518,11 +518,18 @@ func AuthenticatedGet(cfg *config.Configuration) ([]Item, error) {
 	var finalItems []Item
 	deduplicateCheck := make(map[string]bool) // key = action + pkgName (case-insensitive)
 
+	// Convert catalogNames map to slice for conditional evaluation
+	var allCatalogs []string
+	for catName := range catalogNames {
+		allCatalogs = append(allCatalogs, catName)
+	}
+	logging.Debug("Collected catalogs for conditional evaluation", "catalogs", allCatalogs)
+
 	for _, mf := range allManifests {
 		// Process conditional items first
 		if len(mf.ConditionalItems) > 0 {
 			logging.Debug("Processing conditional items", "count", len(mf.ConditionalItems))
-			conditionalInstalls, conditionalUninstalls, conditionalUpdates, conditionalOptional, conditionalProfiles, conditionalApps, err := EvaluateConditionalItems(mf.ConditionalItems)
+			conditionalInstalls, conditionalUninstalls, conditionalUpdates, conditionalOptional, conditionalProfiles, conditionalApps, err := EvaluateConditionalItems(mf.ConditionalItems, allCatalogs)
 			if err != nil {
 				logging.Warn("Error evaluating conditional items", "error", err)
 			} else {
@@ -916,11 +923,12 @@ func parseCatalogFile(path string) ([]CatalogEntry, error) {
 }
 
 // EvaluateConditionalItems processes conditional items and returns items that match system facts
-func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []string, []string, []string, []string, []string, error) {
+// catalogs parameter allows passing the catalog names from manifests for conditional evaluation
+func EvaluateConditionalItems(conditionalItems []*ConditionalItem, catalogs []string) ([]string, []string, []string, []string, []string, []string, error) {
 	var managedInstalls, managedUninstalls, managedUpdates, optionalInstalls, managedProfiles, managedApps []string
 
-	// Gather system facts
-	facts := gatherSystemFacts()
+	// Gather system facts with catalogs from manifests
+	facts := gatherSystemFacts(catalogs)
 
 	for _, item := range conditionalItems {
 		installs, uninstalls, updates, optional, profiles, apps, err := evaluateConditionalItemRecursive(item, facts)
@@ -941,8 +949,15 @@ func EvaluateConditionalItems(conditionalItems []*ConditionalItem) ([]string, []
 }
 
 // gatherSystemFacts collects system information for predicate evaluation
-func gatherSystemFacts() map[string]interface{} {
+// catalogs parameter allows injecting catalog names from manifests for conditional evaluation
+func gatherSystemFacts(catalogs []string) map[string]interface{} {
 	facts := make(map[string]interface{})
+
+	// Catalogs from manifests - critical for conditional items like "catalogs == Staging"
+	if len(catalogs) > 0 {
+		facts["catalogs"] = catalogs
+		logging.Debug("Added catalogs to facts", "catalogs", catalogs)
+	}
 
 	// Hostname
 	if hostname, err := os.Hostname(); err == nil {
@@ -1209,10 +1224,18 @@ func evaluateCondition(condition *Condition, facts map[string]interface{}) (bool
 
 	factValue, exists := facts[condition.Key]
 	if !exists {
+		logging.Debug("Condition evaluation failed - fact not found", "key", condition.Key)
 		return false, fmt.Errorf("fact key '%s' not found", condition.Key)
 	}
 
-	return compareValues(factValue, condition.Operator, condition.Value)
+	result, err := compareValues(factValue, condition.Operator, condition.Value)
+	logging.Debug("Condition evaluated", 
+		"key", condition.Key, 
+		"operator", condition.Operator, 
+		"factValue", factValue, 
+		"conditionValue", condition.Value, 
+		"result", result)
+	return result, err
 }
 
 // evaluateConditionsAnd evaluates multiple conditions with AND logic
@@ -1280,6 +1303,25 @@ func compareValues(factValue interface{}, operator string, conditionValue interf
 
 // Helper comparison functions
 func compareEquals(factValue, conditionValue interface{}) bool {
+	// Handle array/slice factValue - check if conditionValue is IN the array
+	switch fv := factValue.(type) {
+	case []string:
+		condStr := valueToString(conditionValue)
+		for _, item := range fv {
+			if item == condStr {
+				return true
+			}
+		}
+		return false
+	case []interface{}:
+		condStr := valueToString(conditionValue)
+		for _, item := range fv {
+			if valueToString(item) == condStr {
+				return true
+			}
+		}
+		return false
+	}
 	return valueToString(factValue) == valueToString(conditionValue)
 }
 
@@ -1326,8 +1368,27 @@ func compareIn(factValue, conditionValue interface{}) bool {
 }
 
 func compareContains(factValue, conditionValue interface{}) bool {
-	factStr := strings.ToLower(valueToString(factValue))
 	conditionStr := strings.ToLower(valueToString(conditionValue))
+	
+	// Handle array/slice factValue - check if any element contains conditionValue
+	switch fv := factValue.(type) {
+	case []string:
+		for _, item := range fv {
+			if strings.Contains(strings.ToLower(item), conditionStr) {
+				return true
+			}
+		}
+		return false
+	case []interface{}:
+		for _, item := range fv {
+			if strings.Contains(strings.ToLower(valueToString(item)), conditionStr) {
+				return true
+			}
+		}
+		return false
+	}
+	
+	factStr := strings.ToLower(valueToString(factValue))
 	return strings.Contains(factStr, conditionStr)
 }
 

@@ -1061,7 +1061,7 @@ function Remove-VersionResources {
 #  SKIP BUILD STEPS FOR PACKAGE-ONLY MODES
 # 
 # Only run build steps if not in package-only mode
-if (-not ($PackageOnly -or $NupkgOnly -or $MsiOnly)) {
+if (-not ($PackageOnly -or $NupkgOnly -or $MsiOnly -or $PkgOnly)) {
     Write-Log "Starting full build process..." "INFO"
 
     # Step 0: Clean Release Directory Before Build
