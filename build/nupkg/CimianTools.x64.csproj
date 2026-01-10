@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>CimianTools-x64</PackageId>
+    <Version>25.12.25.2049</Version>
+    <Title>Cimian Tools (x64)</Title>
+    <Authors>WindowsAdmins</Authors>
+    <Description>Enterprise Software Deployment System for Windows - x64 binaries</Description>
+    <ProjectUrl>https://github.com/windowsadmins/cimian</ProjectUrl>
+    <License>MIT</License>
+    <PackageTags>deployment;software-management;windows;enterprise;intune</PackageTags>
+  </PropertyGroup>
+</Project>

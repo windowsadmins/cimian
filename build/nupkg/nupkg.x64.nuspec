@@ -1,0 +1,18 @@
+﻿<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>CimianTools-x64</id>
+    <version>25.12.25.2111</version>
+    <title>Cimian Tools (x64)</title>
+    <authors>WindowsAdmins</authors>
+    <owners>WindowsAdmins</owners>
+    <description>Enterprise Software Deployment System for Windows - x64 binaries</description>
+    <projectUrl>https://github.com/windowsadmins/cimian</projectUrl>
+    <license type="expression">MIT</license>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>deployment;software-management;windows;enterprise;intune</tags>
+  </metadata>
+  <files>
+    <file src="..\..\..\release\x64\*.exe" target="tools" />
+  </files>
+</package>
