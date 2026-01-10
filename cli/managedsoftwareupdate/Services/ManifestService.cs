@@ -62,11 +62,13 @@ public class ManifestService
 
     /// <summary>
     /// Retrieves all manifest items from server
+    /// Uses two-pass approach: first collect catalogs, then process conditional items
     /// </summary>
     public async Task<List<ManifestItem>> GetManifestItemsAsync()
     {
         var items = new List<ManifestItem>();
         var processedManifests = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pendingConditionals = new List<(List<ConditionalItem> Items, string SourceManifest)>();
 
         // Start with the client identifier manifest
         var clientIdentifier = _config.ClientIdentifier;
@@ -75,7 +77,19 @@ public class ManifestService
             clientIdentifier = Environment.MachineName;
         }
 
-        await ProcessManifestAsync(clientIdentifier, items, processedManifests);
+        // PASS 1: Process all manifests, collecting catalogs and deferring conditional items
+        await ProcessManifestAsync(clientIdentifier, items, processedManifests, pendingConditionals);
+
+        // Log collected catalogs before processing conditionals
+        Console.WriteLine($"[DEBUG] Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
+
+        // PASS 2: Now process all conditional items with full catalog context
+        foreach (var (conditionalItems, sourceManifest) in pendingConditionals)
+        {
+            Console.WriteLine($"[DEBUG] Processing {conditionalItems.Count} conditional items from {sourceManifest}");
+            var conditionalResults = ProcessConditionalItems(conditionalItems, sourceManifest);
+            items.AddRange(conditionalResults);
+        }
 
         return items;
     }
@@ -87,8 +101,16 @@ public class ManifestService
     {
         var items = new List<ManifestItem>();
         var processedManifests = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pendingConditionals = new List<(List<ConditionalItem> Items, string SourceManifest)>();
 
-        await ProcessManifestAsync(manifestName, items, processedManifests);
+        await ProcessManifestAsync(manifestName, items, processedManifests, pendingConditionals);
+        
+        // Process deferred conditional items
+        foreach (var (conditionalItems, sourceManifest) in pendingConditionals)
+        {
+            var conditionalResults = ProcessConditionalItems(conditionalItems, sourceManifest);
+            items.AddRange(conditionalResults);
+        }
 
         return items;
     }
@@ -112,7 +134,8 @@ public class ManifestService
     private async Task ProcessManifestAsync(
         string manifestName,
         List<ManifestItem> items,
-        HashSet<string> processedManifests)
+        HashSet<string> processedManifests,
+        List<(List<ConditionalItem> Items, string SourceManifest)> pendingConditionals)
     {
         // Avoid infinite loops from circular includes
         if (processedManifests.Contains(manifestName))
@@ -143,23 +166,10 @@ public class ManifestService
                 var manifest = _deserializer.Deserialize<ManifestFile>(content);
                 if (manifest != null)
                 {
-                    // Process included manifests first (Munki-like behavior)
-                    if (manifest.IncludedManifests != null)
-                    {
-                        foreach (var include in manifest.IncludedManifests)
-                        {
-                            // Clean up the include path - normalize slashes and remove .yaml extension
-                            var includeName = include.Replace(".yaml", "").Replace("\\", "/");
-                            
-                            // Include paths are relative or absolute manifest references
-                            // They should be passed as-is to ProcessManifestAsync
-                            await ProcessManifestAsync(includeName, items, processedManifests);
-                        }
-                    }
-
-                    // Add catalogs to config if specified
+                    // Add catalogs to config FIRST (before processing anything else)
                     if (manifest.Catalogs != null && manifest.Catalogs.Count > 0)
                     {
+                        Console.WriteLine($"[DEBUG] Processing catalogs from manifest {manifestName}: [{string.Join(", ", manifest.Catalogs)}]");
                         foreach (var catalog in manifest.Catalogs)
                         {
                             if (!_config.Catalogs.Contains(catalog))
@@ -169,15 +179,29 @@ public class ManifestService
                         }
                     }
 
-                    // Convert to manifest items (including conditional items)
+                    // Process included manifests (Munki-like behavior)
+                    if (manifest.IncludedManifests != null)
+                    {
+                        foreach (var include in manifest.IncludedManifests)
+                        {
+                            // Clean up the include path - normalize slashes and remove .yaml extension
+                            var includeName = include.Replace(".yaml", "").Replace("\\", "/");
+                            
+                            // Include paths are relative or absolute manifest references
+                            // They should be passed as-is to ProcessManifestAsync
+                            await ProcessManifestAsync(includeName, items, processedManifests, pendingConditionals);
+                        }
+                    }
+
+                    // Convert to manifest items (excluding conditional items - they're deferred)
                     var manifestItems = ConvertToManifestItems(manifest, manifestName);
                     items.AddRange(manifestItems);
                     
-                    // Process conditional items
+                    // DEFER conditional items processing until all manifests are loaded
+                    // This ensures catalogs are fully populated before conditional evaluation
                     if (manifest.ConditionalItems != null && manifest.ConditionalItems.Count > 0)
                     {
-                        var conditionalItems = ProcessConditionalItems(manifest.ConditionalItems, manifestName);
-                        items.AddRange(conditionalItems);
+                        pendingConditionals.Add((manifest.ConditionalItems, manifestName));
                     }
                 }
             }
@@ -295,6 +319,13 @@ public class ManifestService
         
         var key = parts[0].Trim().ToLowerInvariant();
         var expectedValue = parts[1].Trim();
+        
+        // Strip surrounding quotes from expected value (handles both "Testing" and Testing)
+        if ((expectedValue.StartsWith('"') && expectedValue.EndsWith('"')) ||
+            (expectedValue.StartsWith('\'') && expectedValue.EndsWith('\'')))
+        {
+            expectedValue = expectedValue[1..^1];
+        }
         
         // Determine the operator
         var isEquals = condition.Contains("==");
