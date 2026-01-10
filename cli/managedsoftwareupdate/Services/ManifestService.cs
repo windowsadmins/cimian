@@ -169,9 +169,16 @@ public class ManifestService
                         }
                     }
 
-                    // Convert to manifest items
+                    // Convert to manifest items (including conditional items)
                     var manifestItems = ConvertToManifestItems(manifest, manifestName);
                     items.AddRange(manifestItems);
+                    
+                    // Process conditional items
+                    if (manifest.ConditionalItems != null && manifest.ConditionalItems.Count > 0)
+                    {
+                        var conditionalItems = ProcessConditionalItems(manifest.ConditionalItems, manifestName);
+                        items.AddRange(conditionalItems);
+                    }
                 }
             }
             else
@@ -183,6 +190,167 @@ public class ManifestService
         {
             Console.Error.WriteLine($"[WARNING] Error processing manifest {manifestName}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Processes conditional items by evaluating conditions against system facts
+    /// </summary>
+    private List<ManifestItem> ProcessConditionalItems(List<ConditionalItem> conditionalItems, string sourceManifest)
+    {
+        var items = new List<ManifestItem>();
+        
+        foreach (var conditional in conditionalItems)
+        {
+            if (string.IsNullOrWhiteSpace(conditional.Condition))
+            {
+                continue;
+            }
+            
+            // Evaluate the condition
+            if (EvaluateCondition(conditional.Condition))
+            {
+                Console.WriteLine($"[DEBUG] Conditional item matched: {conditional.Condition}");
+                
+                // Add managed_installs from this conditional
+                if (conditional.ManagedInstalls != null)
+                {
+                    foreach (var name in conditional.ManagedInstalls)
+                    {
+                        items.Add(new ManifestItem
+                        {
+                            Name = name,
+                            Action = "install",
+                            SourceManifest = sourceManifest
+                        });
+                        SetItemSource(name, sourceManifest, "conditional_managed_installs");
+                    }
+                }
+                
+                // Add managed_uninstalls from this conditional
+                if (conditional.ManagedUninstalls != null)
+                {
+                    foreach (var name in conditional.ManagedUninstalls)
+                    {
+                        items.Add(new ManifestItem
+                        {
+                            Name = name,
+                            Action = "uninstall",
+                            SourceManifest = sourceManifest
+                        });
+                        SetItemSource(name, sourceManifest, "conditional_managed_uninstalls");
+                    }
+                }
+                
+                // Add managed_updates from this conditional
+                if (conditional.ManagedUpdates != null)
+                {
+                    foreach (var name in conditional.ManagedUpdates)
+                    {
+                        items.Add(new ManifestItem
+                        {
+                            Name = name,
+                            Action = "update",
+                            SourceManifest = sourceManifest
+                        });
+                        SetItemSource(name, sourceManifest, "conditional_managed_updates");
+                    }
+                }
+                
+                // Add optional_installs from this conditional
+                if (conditional.OptionalInstalls != null)
+                {
+                    foreach (var name in conditional.OptionalInstalls)
+                    {
+                        items.Add(new ManifestItem
+                        {
+                            Name = name,
+                            Action = "optional",
+                            SourceManifest = sourceManifest
+                        });
+                        SetItemSource(name, sourceManifest, "conditional_optional_installs");
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"[DEBUG] Conditional item did not match: {conditional.Condition}");
+            }
+        }
+        
+        return items;
+    }
+
+    /// <summary>
+    /// Evaluates a simple condition string like "catalogs == Staging" or "arch == x64"
+    /// </summary>
+    private bool EvaluateCondition(string condition)
+    {
+        // Parse simple conditions like "key == value" or "key CONTAINS value"
+        var parts = condition.Split(new[] { "==", "!=", "CONTAINS", "LIKE" }, StringSplitOptions.None);
+        if (parts.Length != 2)
+        {
+            Console.WriteLine($"[WARNING] Could not parse condition: {condition}");
+            return false;
+        }
+        
+        var key = parts[0].Trim().ToLowerInvariant();
+        var expectedValue = parts[1].Trim();
+        
+        // Determine the operator
+        var isEquals = condition.Contains("==");
+        var isNotEquals = condition.Contains("!=");
+        var isContains = condition.ToUpperInvariant().Contains("CONTAINS");
+        
+        // Get the actual value from facts
+        object? actualValue = key switch
+        {
+            "catalogs" => _config.Catalogs,
+            "arch" or "architecture" => Environment.Is64BitOperatingSystem ? "x64" : "x86",
+            "hostname" => Environment.MachineName,
+            "os" or "operatingsystem" => "Windows",
+            _ => null
+        };
+        
+        if (actualValue == null)
+        {
+            Console.WriteLine($"[WARNING] Unknown fact key: {key}");
+            return false;
+        }
+        
+        // Handle array comparison (like catalogs)
+        if (actualValue is List<string> list)
+        {
+            Console.WriteLine($"[DEBUG] Comparing array [{string.Join(", ", list)}] with '{expectedValue}'");
+            if (isEquals)
+            {
+                return list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
+            }
+            if (isNotEquals)
+            {
+                return !list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
+            }
+            if (isContains)
+            {
+                return list.Any(v => v.Contains(expectedValue, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        
+        // Handle string comparison
+        var actualStr = actualValue.ToString() ?? "";
+        if (isEquals)
+        {
+            return string.Equals(actualStr, expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        if (isNotEquals)
+        {
+            return !string.Equals(actualStr, expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        if (isContains)
+        {
+            return actualStr.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        
+        return false;
     }
 
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)
