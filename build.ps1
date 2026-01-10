@@ -12,6 +12,9 @@
     Version Format: YYYY.MM.DD.HHMM (e.g., 2025.12.04.1430)
     MSI versions are automatically converted to compatible format (YY.MM.DDHH).
 
+.PARAMETER Task
+    Run specific task: build, package, all (default: all)
+
 .PARAMETER Sign
     Sign binaries with code signing certificate (default if enterprise cert found)
 
@@ -50,6 +53,9 @@
 
 .PARAMETER MsiOnly
     Create MSI packages only using existing binaries (skip build and NUPKG)
+
+.PARAMETER PkgOnly
+    Create .pkg packages only using existing binaries (direct binary payload)
 
 .PARAMETER Clean
     Clean all build artifacts before building
@@ -97,6 +103,10 @@
     # Create only MSI packages from existing binaries
 
 .EXAMPLE
+    .\build.ps1 -PkgOnly
+    # Create only .pkg packages from existing binaries (direct payload)
+
+.EXAMPLE
     .\build.ps1 -IntuneWin
     # Full build including .intunewin packages
 
@@ -107,6 +117,8 @@
 
 [CmdletBinding()]
 param(
+    [ValidateSet("build", "package", "all")]
+    [string]$Task = "all",
     [switch]$Sign,
     [switch]$NoSign,
     [string]$Thumbprint,
@@ -120,6 +132,7 @@ param(
     [switch]$PackageOnly,
     [switch]$NupkgOnly,
     [switch]$MsiOnly,
+    [switch]$PkgOnly,
     [switch]$Clean,
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
@@ -148,6 +161,66 @@ function Write-BuildLog {
     Write-Host "[$timestamp] " -NoNewline -ForegroundColor DarkGray
     Write-Host "[$Level] " -NoNewline -ForegroundColor $color
     Write-Host $Message
+}
+
+#endregion
+
+#region Chocolatey and Tool Installation Functions
+
+function Install-Chocolatey {
+    if (Test-Command "choco") {
+        Write-BuildLog "Chocolatey is already installed" "SUCCESS"
+        return $true
+    }
+    
+    Write-BuildLog "Installing Chocolatey..." "INFO"
+    try {
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+        
+        # Refresh PATH
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        
+        if (Test-Command "choco") {
+            Write-BuildLog "Chocolatey installed successfully" "SUCCESS"
+            return $true
+        }
+    }
+    catch {
+        Write-BuildLog "Failed to install Chocolatey: $_" "ERROR"
+    }
+    return $false
+}
+
+function Install-NuGetCli {
+    if (Test-Command "nuget") {
+        Write-BuildLog "nuget.exe is already installed" "SUCCESS"
+        return $true
+    }
+    
+    Write-BuildLog "Installing nuget.commandline via Chocolatey..." "INFO"
+    
+    if (-not (Install-Chocolatey)) {
+        Write-BuildLog "Cannot install nuget.commandline - Chocolatey installation failed" "ERROR"
+        return $false
+    }
+    
+    try {
+        & choco install nuget.commandline --yes --no-progress | Out-Null
+        
+        # Refresh PATH
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        
+        if (Test-Command "nuget") {
+            Write-BuildLog "nuget.commandline installed successfully" "SUCCESS"
+            return $true
+        }
+    }
+    catch {
+        Write-BuildLog "Failed to install nuget.commandline: $_" "ERROR"
+    }
+    return $false
 }
 
 #endregion
@@ -205,6 +278,103 @@ $Global:GuiApps = @{
 function Test-Command {
     param ([string]$Command)
     return $null -ne (Get-Command $Command -ErrorAction SilentlyContinue)
+}
+
+# Cleanup old package versions, keeping only the latest
+function Clean-OldPackages {
+    param(
+        [string]$OutputDirectory = "release",
+        [string]$KeepCount = 1  # Keep this many latest versions
+    )
+    
+    if (-not (Test-Path $OutputDirectory)) {
+        return
+    }
+    
+    Write-BuildLog "Cleaning up old package versions (keeping latest $KeepCount)..." "INFO"
+    
+    # Clean up NuGet packages by architecture
+    foreach ($arch in @('x64', 'arm64')) {
+        $pattern = "CimianTools-$arch.*.nupkg"
+        $packages = Get-ChildItem -Path $OutputDirectory -Filter $pattern -ErrorAction SilentlyContinue | 
+                    Sort-Object LastWriteTime -Descending
+        
+        if ($packages.Count -gt $KeepCount) {
+            $toRemove = $packages | Select-Object -Skip $KeepCount
+            foreach ($pkg in $toRemove) {
+                try {
+                    Remove-Item -Path $pkg.FullName -Force
+                    Write-BuildLog "Removed old NuGet: $($pkg.Name)" "INFO"
+                }
+                catch {
+                    Write-BuildLog "Failed to remove $($pkg.Name): $_" "WARNING"
+                }
+            }
+        }
+    }
+    
+    # Clean up MSI packages by architecture
+    foreach ($arch in @('x64', 'arm64')) {
+        $pattern = "Cimian-*-$arch.msi"
+        $packages = Get-ChildItem -Path $OutputDirectory -Filter $pattern -ErrorAction SilentlyContinue | 
+                    Sort-Object LastWriteTime -Descending
+        
+        if ($packages.Count -gt $KeepCount) {
+            $toRemove = $packages | Select-Object -Skip $KeepCount
+            foreach ($pkg in $toRemove) {
+                try {
+                    Remove-Item -Path $pkg.FullName -Force
+                    Write-BuildLog "Removed old MSI: $($pkg.Name)" "INFO"
+                }
+                catch {
+                    Write-BuildLog "Failed to remove $($pkg.Name): $_" "WARNING"
+                }
+            }
+        }
+    }
+    
+    # Clean up generic MSI (if exists)
+    $genericMsi = Get-ChildItem -Path $OutputDirectory -Filter "Cimian.msi" -ErrorAction SilentlyContinue
+    if ($genericMsi) {
+        # Keep the most recent one
+        $msis = @($genericMsi) + (Get-ChildItem -Path $OutputDirectory -Filter "Cimian-*.msi" -ErrorAction SilentlyContinue)
+        if ($msis.Count -gt 1) {
+            $newest = $msis | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            foreach ($old in ($msis | Where-Object { $_.FullName -ne $newest.FullName })) {
+                if ($old.Name -eq "Cimian.msi") {
+                    try {
+                        Remove-Item -Path $old.FullName -Force
+                        Write-BuildLog "Removed old generic MSI: $($old.Name)" "INFO"
+                    }
+                    catch {
+                        Write-BuildLog "Failed to remove $($old.Name): $_" "WARNING"
+                    }
+                }
+            }
+        }
+    }
+    
+    # Clean up PKG packages by architecture
+    foreach ($arch in @('x64', 'arm64')) {
+        $pattern = "CimianTools-$arch-*.pkg"
+        $packages = Get-ChildItem -Path $OutputDirectory -Filter $pattern -ErrorAction SilentlyContinue | 
+                    Sort-Object LastWriteTime -Descending
+        
+        if ($packages.Count -gt $KeepCount) {
+            $toRemove = $packages | Select-Object -Skip $KeepCount
+            foreach ($pkg in $toRemove) {
+                try {
+                    Remove-Item -Path $pkg.FullName -Force
+                    Write-BuildLog "Removed old PKG: $($pkg.Name)" "INFO"
+                }
+                catch {
+                    Write-BuildLog "Failed to remove $($pkg.Name): $_" "WARNING"
+                }
+            }
+        }
+    }
+    
+    Write-BuildLog "Package cleanup complete" "SUCCESS"
 }
 
 function Get-SigningCertThumbprint {
@@ -647,11 +817,27 @@ function Build-MsiPackage {
     }
     
     $msiProjectPath = Join-Path $BuildDir "msi\Cimian.wixproj"
+    $msiSourceDir = Join-Path $BuildDir "msi"
     $binDir = Join-Path $OutputDir $Architecture
     
     if (-not (Test-Path $msiProjectPath)) {
         Write-BuildLog "MSI project not found at $msiProjectPath - skipping MSI creation" "WARNING"
         return $null
+    }
+    
+    # Copy support scripts to the binDir so WiX can find them
+    $supportScripts = @(
+        "install-tasks.ps1",
+        "uninstall-tasks.ps1",
+        "manage-service.ps1",
+        "verify-installation.ps1",
+        "diagnose-cimianwatcher.ps1"
+    )
+    foreach ($script in $supportScripts) {
+        $srcPath = Join-Path $msiSourceDir $script
+        if (Test-Path $srcPath) {
+            Copy-Item $srcPath -Destination $binDir -Force
+        }
     }
     
     $msiVersion = $Version.MsiCompatible
@@ -669,8 +855,9 @@ function Build-MsiPackage {
     }
     
     # Find and rename the MSI
+    # Look for: Cimian-x64.msi, Cimian-arm64.msi, or generic Cimian.msi
     $msiFile = Get-ChildItem -Path $OutputDir -Filter "Cimian*.msi" | 
-        Where-Object { $_.Name -eq "Cimian.msi" -or $_.Name -notmatch '^\d{4}\.\d{2}\.\d{2}\.' } | 
+        Where-Object { $_.Name -match "^Cimian(-($Architecture|x64|arm64))?\.msi$" -and $_.Name -notmatch '^\d{4}\.\d{2}\.\d{2}\.' } | 
         Select-Object -First 1
         
     if ($msiFile) {
@@ -705,29 +892,29 @@ function Build-NuGetPackage {
     
     Write-BuildLog "Creating NuGet package for $Architecture..." "INFO"
     
-    # Check for nuget
-    if (-not (Test-Command "nuget")) {
-        Write-BuildLog "nuget.exe not found - skipping NuGet package creation" "WARNING"
+    # Ensure build directory structure
+    $nuspecDir = Join-Path $BuildDir "nupkg"
+    if (-not (Test-Path $nuspecDir)) {
+        New-Item -ItemType Directory -Path $nuspecDir -Force | Out-Null
+    }
+    
+    $releaseArchDir = Join-Path $OutputDir $Architecture
+    
+    # Verify binaries exist
+    if (-not (Test-Path $releaseArchDir)) {
+        Write-BuildLog "Binaries not found for $Architecture in $releaseArchDir" "WARNING"
         return $null
     }
     
-    $nuspecDir = Join-Path $BuildDir "nupkg"
     $nuspecPath = Join-Path $nuspecDir "nupkg.$Architecture.nuspec"
     
-    # If architecture-specific nuspec doesn't exist, create a generic one
-    if (-not (Test-Path $nuspecPath)) {
-        Write-BuildLog "Creating NuGet spec for $Architecture..." "INFO"
-        
-        if (-not (Test-Path $nuspecDir)) {
-            New-Item -ItemType Directory -Path $nuspecDir -Force | Out-Null
-        }
-        
-        $nuspecContent = @"
+    # Create or update nuspec file
+    $nuspecContent = @"
 <?xml version="1.0"?>
 <package>
   <metadata>
     <id>CimianTools-$Architecture</id>
-    <version>{{VERSION}}</version>
+    <version>$($Version.Semantic)</version>
     <title>Cimian Tools ($Architecture)</title>
     <authors>WindowsAdmins</authors>
     <owners>WindowsAdmins</owners>
@@ -735,54 +922,283 @@ function Build-NuGetPackage {
     <projectUrl>https://github.com/windowsadmins/cimian</projectUrl>
     <license type="expression">MIT</license>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <tags>deployment software-management windows enterprise intune</tags>
+    <tags>deployment;software-management;windows;enterprise;intune</tags>
   </metadata>
   <files>
-    <file src="..\..\release\$Architecture\*.exe" target="tools" />
+    <file src="..\..\..\release\$Architecture\*.exe" target="tools" />
   </files>
 </package>
 "@
-        $nuspecContent | Set-Content -Path $nuspecPath -Encoding UTF8
+    [System.IO.File]::WriteAllText($nuspecPath, $nuspecContent, [System.Text.Encoding]::UTF8)
+    
+    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
+    
+    # Method 1: Try using nuget.exe directly (simplest, most reliable)
+    if (Test-Command "nuget") {
+        Write-BuildLog "Using nuget.exe to create package..." "INFO"
+        try {
+            Push-Location $nuspecDir
+            & nuget pack "nupkg.$Architecture.nuspec" -OutputDirectory $OutputDir -NonInteractive -ForceEnglishOutput 2>&1 | Out-Null
+            Pop-Location
+            
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $nupkgOutput)) {
+                Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
+                
+                if ($Sign) {
+                    Invoke-SignNuget -NupkgPath $nupkgOutput -Thumbprint $Thumbprint
+                }
+                
+                return $nupkgOutput
+            }
+        }
+        catch {
+            Write-BuildLog "nuget.exe method failed: $_" "DEBUG"
+        }
     }
     
-    # Create temp nuspec with version substitution
-    $nuspecContent = Get-Content $nuspecPath -Raw
-    $nuspecWithVersion = $nuspecContent -replace '\{\{VERSION\}\}', $Version.Semantic
-    $tempNuspecPath = Join-Path $nuspecDir "temp_nupkg_$Architecture.nuspec"
-    $nuspecWithVersion | Set-Content $tempNuspecPath -Encoding UTF8
+    # Method 2: Create ZIP-based .nupkg manually (no external tools required)
+    Write-BuildLog "Creating NuGet package using ZIP method..." "INFO"
     
-    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture-$($Version.Semantic).nupkg"
+    try {
+        # Create temp directory structure
+        $tempDir = Join-Path $nuspecDir "temp_nupkg_$Architecture"
+        if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        
+        # Create tools directory with binaries
+        $toolsDir = Join-Path $tempDir "tools"
+        New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+        Copy-Item "$releaseArchDir\*.exe" -Destination $toolsDir -Force -ErrorAction Stop
+        
+        # Create package metadata directory
+        $metaDir = Join-Path $tempDir "_package"
+        New-Item -ItemType Directory -Path $metaDir -Force | Out-Null
+        
+        # Create [Content_Types].xml (required for .nupkg)
+        $contentTypes = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="exe" ContentType="application/octet-stream" />
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />
+  <Default Extension="xml" ContentType="application/xml" />
+</Types>
+"@
+        [System.IO.File]::WriteAllText("$tempDir\[Content_Types].xml", $contentTypes, [System.Text.Encoding]::UTF8)
+        
+        # Create .rels file
+        $relsDir = Join-Path $tempDir "_rels"
+        New-Item -ItemType Directory -Path $relsDir -Force | Out-Null
+        $relsContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Id="rel0" Target="package/services/metadata/core-properties/metadata.psmdcp" />
+</Relationships>
+"@
+        [System.IO.File]::WriteAllText("$relsDir\.rels", $relsContent, [System.Text.Encoding]::UTF8)
+        
+        # Create manifest file
+        $manifestContent = @"
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd">
+  <metadata>
+    <id>CimianTools-$Architecture</id>
+    <version>$($Version.Semantic)</version>
+    <title>Cimian Tools ($Architecture)</title>
+    <authors>WindowsAdmins</authors>
+    <owners>WindowsAdmins</owners>
+    <description>Enterprise Software Deployment System for Windows - $Architecture binaries</description>
+    <projectUrl>https://github.com/windowsadmins/cimian</projectUrl>
+    <license type="expression">MIT</license>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>deployment;software-management;windows;enterprise;intune</tags>
+  </metadata>
+</package>
+"@
+        [System.IO.File]::WriteAllText("$metaDir\manifest.xml", $manifestContent, [System.Text.Encoding]::UTF8)
+        
+        # Create ZIP archive as .nupkg
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        
+        # Remove old file if exists
+        if (Test-Path $nupkgOutput) {
+            Remove-Item $nupkgOutput -Force
+        }
+        
+        # Create ZIP with proper compression
+        [System.IO.Compression.ZipFile]::CreateFromDirectory($tempDir, $nupkgOutput, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+        
+        # Clean up temp directory
+        Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        
+        if (Test-Path $nupkgOutput) {
+            Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
+            
+            # Note: NuGet signing requires nuget.exe. For ZIP-based packages, signing is skipped.
+            # To sign: install nuget.commandline and run: .\build.ps1 -NupkgOnly -Sign
+            if ($Sign -and (Test-Command "nuget")) {
+                Invoke-SignNuget -NupkgPath $nupkgOutput -Thumbprint $Thumbprint | Out-Null
+            }
+            
+            return $nupkgOutput
+        }
+    }
+    catch {
+        Write-BuildLog "NuGet package creation failed: $_" "ERROR"
+        Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     
-    # Pack
-    & nuget pack $tempNuspecPath -OutputDirectory $OutputDir -BasePath $nuspecDir -NoDefaultExcludes
+    Write-BuildLog "NuGet package creation failed for $Architecture" "WARNING"
+    return $null
+}
+
+#endregion
+
+#region Pkg Packaging Functions
+
+function Build-PkgPackage {
+    param(
+        [string]$Architecture,
+        [hashtable]$Version,
+        [switch]$Sign,
+        [string]$Thumbprint
+    )
     
-    if ($LASTEXITCODE -ne 0) {
-        Write-BuildLog "NuGet pack failed for $Architecture" "WARNING"
-        Remove-Item $tempNuspecPath -Force -ErrorAction SilentlyContinue
+    Write-BuildLog "Creating .pkg package for $Architecture..." "INFO"
+    
+    $binariesDir = "release\$Architecture"
+    $cimipkgPath = Join-Path $binariesDir "cimipkg.exe"
+    
+    # Check if binaries directory exists
+    if (-not (Test-Path $binariesDir)) {
+        Write-BuildLog "Binaries directory not found for $Architecture architecture: $binariesDir" "WARNING"
         return $null
     }
     
-    # Find and rename the package
-    $builtPkg = Get-ChildItem $OutputDir -Filter "CimianTools-$Architecture*.nupkg" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    
-    if ($builtPkg -and $builtPkg.FullName -ne $nupkgOutput) {
-        Move-Item $builtPkg.FullName $nupkgOutput -Force
+    # Check if cimipkg exists for this architecture
+    if (-not (Test-Path $cimipkgPath)) {
+        Write-BuildLog "cimipkg.exe not found for $Architecture architecture: $cimipkgPath" "WARNING"
+        Write-BuildLog "Build cimipkg first with: .\build.ps1 -Architecture $Architecture -Sign" "INFO"
+        return $null
     }
     
-    # Clean up temp file
-    Remove-Item $tempNuspecPath -Force -ErrorAction SilentlyContinue
+    # Create temporary .pkg build directory
+    $pkgTempDir = "release\pkg_$Architecture"
+    if (Test-Path $pkgTempDir) { Remove-Item $pkgTempDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $pkgTempDir -Force | Out-Null
     
-    if (Test-Path $nupkgOutput) {
-        Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
+    # Create payload directory and copy all binaries
+    $payloadDir = Join-Path $pkgTempDir "payload"
+    New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
+    
+    Write-BuildLog "Copying CimianTools binaries for $Architecture architecture to .pkg payload..." "INFO"
+    $expectedExecutables = @(
+        'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
+        'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
+        'repoclean.exe', 'ManagedSoftwareCenter.exe'
+    )
+    
+    $missingExecutables = @()
+    foreach ($exe in $expectedExecutables) {
+        $sourcePath = Join-Path $binariesDir $exe
+        $destPath = Join-Path $payloadDir $exe
         
-        if ($Sign) {
-            Invoke-SignNuget -NupkgPath $nupkgOutput -Thumbprint $Thumbprint
+        if (Test-Path $sourcePath) {
+            Copy-Item $sourcePath $destPath -Force
+            Write-BuildLog "Copied $exe to .pkg payload" "INFO"
+        } else {
+            $missingExecutables += $exe
         }
-        
-        return $nupkgOutput
     }
     
-    Write-BuildLog "NuGet package not found after build" "WARNING"
+    if ($missingExecutables.Count -gt 0) {
+        Write-BuildLog "Missing executables for $Architecture architecture: $($missingExecutables -join ', ')" "WARNING"
+        Write-BuildLog "Continuing with available executables..." "WARNING"
+    }
+    
+    # Create scripts directory and copy install scripts
+    $scriptsDir = Join-Path $pkgTempDir "scripts"
+    New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+    
+    $releaseVersion = $Version.Full
+    $semanticVersion = $Version.Semantic
+    
+    # Copy postinstall script
+    $postinstallTemplatePath = "build\pkg\postinstall.ps1"
+    $postinstallPath = Join-Path $scriptsDir "postinstall.ps1"
+    if (Test-Path $postinstallTemplatePath) {
+        $postinstallTemplate = Get-Content $postinstallTemplatePath -Raw
+        $postinstallContent = $postinstallTemplate -replace '\{\{VERSION\}\}', $semanticVersion
+        $postinstallContent | Set-Content $postinstallPath -Encoding UTF8
+        Write-BuildLog "Created postinstall.ps1 script in scripts directory for .pkg" "INFO"
+    } else {
+        Write-BuildLog "Postinstall template not found: $postinstallTemplatePath" "WARNING"
+    }
+    
+    # Copy preinstall script
+    $preinstallTemplatePath = "build\pkg\preinstall.ps1"
+    $preinstallPath = Join-Path $scriptsDir "preinstall.ps1"
+    if (Test-Path $preinstallTemplatePath) {
+        $preinstallTemplate = Get-Content $preinstallTemplatePath -Raw
+        $preinstallContent = $preinstallTemplate -replace '\{\{VERSION\}\}', $semanticVersion
+        $preinstallContent | Set-Content $preinstallPath -Encoding UTF8
+        Write-BuildLog "Created preinstall.ps1 script in scripts directory for .pkg" "INFO"
+    } else {
+        Write-BuildLog "Preinstall template not found: $preinstallTemplatePath" "WARNING"
+    }
+    
+    # Create build-info.yaml from template
+    $buildInfoTemplatePath = "build\pkg\build-info.yaml"
+    $buildInfoPath = Join-Path $pkgTempDir "build-info.yaml"
+    if (Test-Path $buildInfoTemplatePath) {
+        $buildInfoTemplate = Get-Content $buildInfoTemplatePath -Raw
+        $buildInfoContent = $buildInfoTemplate -replace '\{\{VERSION\}\}', $releaseVersion
+        $buildInfoContent | Set-Content $buildInfoPath -Encoding UTF8
+        Write-BuildLog "Created build-info.yaml with version $releaseVersion" "INFO"
+    } else {
+        Write-BuildLog "build-info.yaml template not found: $buildInfoTemplatePath" "WARNING"
+    }
+    
+    # Build the .pkg package using cimipkg
+    try {
+        $cimipkgArgs = @("--verbose", $pkgTempDir)
+        
+        Write-BuildLog "Running cimipkg.exe to create .pkg package..." "INFO"
+        $process = Start-Process -FilePath $cimipkgPath -ArgumentList $cimipkgArgs -Wait -NoNewWindow -PassThru
+        
+        if ($process.ExitCode -eq 0) {
+            Write-BuildLog ".pkg package created successfully for $Architecture" "SUCCESS"
+            
+            # Look for the created .pkg file in the build subdirectory
+            $buildDir = Join-Path $pkgTempDir "build"
+            if (Test-Path $buildDir) {
+                $createdPkgFiles = Get-ChildItem -Path $buildDir -Filter "*.pkg"
+                foreach ($pkgFile in $createdPkgFiles) {
+                    $pkgSize = $pkgFile.Length
+                    Write-BuildLog ".pkg package created: $($pkgFile.Name) ($([math]::Round($pkgSize / 1MB, 2)) MB)" "INFO"
+                    
+                    # Move to release directory with expected naming
+                    $expectedName = "CimianTools-$Architecture-$releaseVersion.pkg"
+                    $targetPath = "release\$expectedName"
+                    Copy-Item $pkgFile.FullName $targetPath -Force
+                    Write-BuildLog "Moved .pkg package to: $expectedName" "INFO"
+                    
+                    return $targetPath
+                }
+            } else {
+                Write-BuildLog "Build directory not found after cimipkg execution: $buildDir" "WARNING"
+            }
+        } else {
+            Write-BuildLog "Failed to create .pkg package for $Architecture (exit code: $($process.ExitCode))" "ERROR"
+        }
+    }
+    catch {
+        Write-BuildLog "Error creating .pkg package for $Architecture : $_" "ERROR"
+    }
+    finally {
+        # Clean up temporary directory
+        Remove-Item $pkgTempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    
     return $null
 }
 
@@ -963,7 +1379,7 @@ function Show-BuildSummary {
     # List built files
     if (Test-Path $OutputDir) {
         Write-Host "Built Artifacts:" -ForegroundColor Green
-        Get-ChildItem -Path $OutputDir -Recurse -Include "*.exe","*.msi","*.nupkg","*.intunewin" | ForEach-Object {
+        Get-ChildItem -Path $OutputDir -Recurse -Include "*.exe","*.msi","*.nupkg","*.pkg","*.intunewin" | ForEach-Object {
             $relativePath = $_.FullName.Replace($OutputDir, '').TrimStart('\')
             $size = [math]::Round($_.Length / 1MB, 1)
             Write-Host "  • $relativePath ($size MB)" -ForegroundColor White
@@ -1053,8 +1469,28 @@ try {
         Invoke-Clean
     }
     
+    # Handle Binaries/Binary flags - force Task to build only
+    if ($Binaries -or $Binary) {
+        $Task = "build"
+        Write-BuildLog "Binaries flag detected - will only build and sign .exe files, skipping all packaging." "INFO"
+    }
+    
+    # Handle package-only modes - force Task to package
+    if ($PackageOnly -or $NupkgOnly -or $MsiOnly -or $PkgOnly) {
+        $Task = "package"
+        if ($PkgOnly) {
+            Write-BuildLog ".pkg-only mode: Will create .pkg packages using cimipkg" "INFO"
+        } elseif ($NupkgOnly) {
+            Write-BuildLog "NuGet-only mode: Will create NuGet packages" "INFO"
+        } elseif ($MsiOnly) {
+            Write-BuildLog "MSI-only mode: Will create MSI packages" "INFO"
+        } else {
+            Write-BuildLog "Package-only mode: Will create MSI, NuGet, and .pkg packages" "INFO"
+        }
+    }
+    
     # Build phase
-    if (-not ($PackageOnly -or $NupkgOnly -or $MsiOnly)) {
+    if (-not ($PackageOnly -or $NupkgOnly -or $MsiOnly -or $PkgOnly) -and ($Task -eq "build" -or $Task -eq "all")) {
         # Build solution first
         Build-Solution
         
@@ -1071,39 +1507,51 @@ try {
     }
     
     # Signing phase
-    if ($shouldSign -and -not ($PackageOnly -or $NupkgOnly -or $MsiOnly)) {
+    if ($shouldSign -and -not ($PackageOnly -or $NupkgOnly -or $MsiOnly -or $PkgOnly)) {
         Invoke-SignAllBinaries -Thumbprint $actualThumbprint -CertStore $certStore
     }
     
-    # Early exit for binaries-only mode
-    if ($Binaries -or $Binary) {
+    # Early exit for binaries-only mode or build-only task
+    if ($Binaries -or $Binary -or $Task -eq "build") {
         Show-BuildSummary -Version $version
         $elapsed = (Get-Date) - $startTime
         Write-BuildLog "Build completed in $($elapsed.TotalSeconds.ToString('F1')) seconds" -Level 'SUCCESS'
         exit 0
     }
     
-    # Packaging phase
-    $archs = if ($Architecture -eq 'both') { @('x64', 'arm64') } elseif ($Architecture -eq 'x64') { @('x64') } else { @('arm64') }
-    
-    # MSI packages (unless skipped)
-    if (-not $SkipMSI -and -not $NupkgOnly) {
-        foreach ($arch in $archs) {
-            $msiPath = Build-MsiPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint -CertStore $certStore
+    # Packaging phase (Task = package or all)
+    if ($Task -eq "package" -or $Task -eq "all") {
+        # Clean up old packages before creating new ones
+        Clean-OldPackages -OutputDirectory $OutputDir -KeepCount 1
+        
+        $archs = if ($Architecture -eq 'both') { @('x64', 'arm64') } elseif ($Architecture -eq 'x64') { @('x64') } else { @('arm64') }
+        
+        # MSI packages (unless skipped)
+        if (-not $SkipMSI -and -not $NupkgOnly -and -not $PkgOnly) {
+            foreach ($arch in $archs) {
+                $msiPath = Build-MsiPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint -CertStore $certStore
+            }
         }
-    }
-    
-    # NuGet packages (unless skipped)
-    if (-not $MsiOnly) {
-        foreach ($arch in $archs) {
-            $nupkgPath = Build-NuGetPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint
+        
+        # NuGet packages (unless skipped)
+        if (-not $MsiOnly -and -not $PkgOnly) {
+            foreach ($arch in $archs) {
+                $nupkgPath = Build-NuGetPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint
+            }
         }
-    }
-    
-    # IntuneWin packages (if requested)
-    if ($IntuneWin) {
-        foreach ($arch in $archs) {
-            $intunewinPath = Build-IntuneWinPackage -Architecture $arch -Version $version
+        
+        # .pkg packages (if -PkgOnly or -PackageOnly)
+        if ($PkgOnly -or $PackageOnly) {
+            foreach ($arch in $archs) {
+                $pkgPath = Build-PkgPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint
+            }
+        }
+        
+        # IntuneWin packages (if requested)
+        if ($IntuneWin) {
+            foreach ($arch in $archs) {
+                $intunewinPath = Build-IntuneWinPackage -Architecture $arch -Version $version
+            }
         }
     }
     
@@ -1131,6 +1579,11 @@ try {
         else {
             Write-BuildLog "No MSI package found for installation" "ERROR"
         }
+    }
+    
+    # Final cleanup - ensure only latest version is kept
+    if ($Task -eq "package" -or $Task -eq "all") {
+        Clean-OldPackages -OutputDirectory $OutputDir -KeepCount 1
     }
     
     # Summary
