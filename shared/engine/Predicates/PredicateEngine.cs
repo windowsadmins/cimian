@@ -215,17 +215,84 @@ public class PredicateEngine : IPredicateEngine
         return facts.GetFactValue(factName);
     }
 
+    /// <summary>
+    /// Compares two values for equality.
+    /// When the left value is an array/collection, checks if the right value is an element of that collection.
+    /// This allows conditions like "catalogs == Staging" to work when catalogs is ["Staging"].
+    /// </summary>
     private bool CompareEquals(object? left, object? right)
     {
-        var leftStr = left?.ToString() ?? "";
         var rightStr = right?.ToString() ?? "";
+
+        // Handle array/collection left values - check if right value is IN the collection
+        if (left is IEnumerable<string> stringCollection)
+        {
+            foreach (var item in stringCollection)
+            {
+                if (string.Equals(item, rightStr, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("Array equality match found: {Collection} contains {Value}", 
+                        string.Join(", ", stringCollection), rightStr);
+                    return true;
+                }
+            }
+            _logger.LogDebug("Array equality no match: {Collection} does not contain {Value}", 
+                string.Join(", ", stringCollection), rightStr);
+            return false;
+        }
+
+        if (left is IEnumerable<object> objectCollection)
+        {
+            foreach (var item in objectCollection)
+            {
+                if (string.Equals(item?.ToString(), rightStr, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Standard string comparison for non-collection values
+        var leftStr = left?.ToString() ?? "";
         return string.Equals(leftStr, rightStr, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Checks if fact value contains the condition value.
+    /// For collection fact values, checks if any element contains the condition value as a substring.
+    /// </summary>
     private bool CompareContains(object? factValue, object? conditionValue)
     {
-        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
         var conditionStr = conditionValue?.ToString()?.ToLowerInvariant() ?? "";
+
+        // Handle collection fact values - check if any element contains the substring
+        if (factValue is IEnumerable<string> stringCollection)
+        {
+            foreach (var item in stringCollection)
+            {
+                if ((item?.ToLowerInvariant() ?? "").Contains(conditionStr))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (factValue is IEnumerable<object> objectCollection)
+        {
+            foreach (var item in objectCollection)
+            {
+                if ((item?.ToString()?.ToLowerInvariant() ?? "").Contains(conditionStr))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Standard string contains for non-collection values
+        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
         return factStr.Contains(conditionStr);
     }
 
