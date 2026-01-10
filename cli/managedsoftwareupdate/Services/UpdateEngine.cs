@@ -232,11 +232,16 @@ public class UpdateEngine : IDisposable
             // Identify actions needed
             var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
 
+            // Resolve dependencies and update_for items (Go parity: process.go dependency resolution)
+            // This adds items like ReportMatePrefs (update_for ReportMate) to the manifest items
+            ResolveDependenciesForCheckOnly(manifestItems, catalogMap, toUpdate);
+
             // Print hierarchy and tables in checkonly mode (matches Go behavior - always shows this)
             if (_checkOnly)
             {
                 PrintManifestHierarchy(manifestItems);
                 PrintManagedInstallsTable(manifestItems, toInstall, toUpdate, catalogMap);
+                PrintManagedUpdatesTable(manifestItems, toUpdate, catalogMap);
             }
 
             // Print summary
@@ -389,6 +394,90 @@ public class UpdateEngine : IDisposable
         }
 
         return (toInstall, toUpdate, toUninstall);
+    }
+
+    /// <summary>
+    /// Resolves dependencies for checkonly mode to show what will be installed.
+    /// This finds update_for items that would be installed when the target package is installed.
+    /// Go parity: This happens during ProcessInstallWithDependencies in process.go
+    /// Example: ReportMatePrefs has update_for: [ReportMate], so when ReportMate is in the install list,
+    /// ReportMatePrefs should also appear in the list with source "dependency".
+    /// </summary>
+    private void ResolveDependenciesForCheckOnly(
+        List<ManifestItem> manifestItems, 
+        Dictionary<string, CatalogItem> catalogMap,
+        List<CatalogItem> itemsToProcess)
+    {
+        LogInfo("Resolving dependencies (requires and update_for)...");
+        
+        // Get list of item names already in the manifest
+        var existingNames = manifestItems.Select(m => m.Name.ToLowerInvariant()).ToHashSet();
+        
+        // Get names of items that will be installed/updated
+        var installListNames = manifestItems
+            .Where(m => m.Action?.ToLowerInvariant() == "install" || m.Action?.ToLowerInvariant() == "update")
+            .Select(m => m.Name)
+            .ToList();
+        
+        LogDebug($"Items to check for update_for: {string.Join(", ", installListNames.Take(10))}...");
+        
+        // Look for update_for items for each item in the install list
+        foreach (var itemName in installListNames)
+        {
+            var updateList = CatalogService.LookForUpdates(itemName, catalogMap);
+            
+            if (updateList.Count > 0)
+            {
+                LogDebug($"Found update_for items for {itemName}: {string.Join(", ", updateList)}");
+            }
+            
+            foreach (var updateItemName in updateList)
+            {
+                var updateKey = updateItemName.ToLowerInvariant();
+                
+                // Skip if already in manifest
+                if (existingNames.Contains(updateKey))
+                {
+                    LogDebug($"Skipping {updateItemName} - already in manifest");
+                    continue;
+                }
+                
+                // Get the update item from catalog
+                if (!catalogMap.TryGetValue(updateKey, out var updateItem))
+                {
+                    LogDebug($"Skipping {updateItemName} - not found in catalog");
+                    continue;
+                }
+                
+                // Check if the update item needs action
+                var status = _statusService.CheckStatus(updateItem, "install", _config.CachePath);
+                
+                LogInfo($"Adding update_for item to install list update: {updateItemName} updateFor: {itemName}");
+                
+                // Add to manifest items with source "dependency"
+                manifestItems.Add(new ManifestItem
+                {
+                    Name = updateItemName,
+                    Action = "install",
+                    SourceManifest = "dependency"
+                });
+                existingNames.Add(updateKey);
+                
+                // If it needs action, add to the toUpdate list
+                if (status.NeedsAction && !itemsToProcess.Any(i => i.Name.Equals(updateItemName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    itemsToProcess.Add(updateItem);
+                }
+            }
+        }
+        
+        var depCount = manifestItems.Count(m => m.SourceManifest == "dependency");
+        if (depCount > 0)
+        {
+            LogInfo($"Dependency resolution complete originalCount: {installListNames.Count} dependenciesAdded: 0 updateForAdded: {depCount} totalCount: {manifestItems.Count}");
+            LogInfo($"Added dependency to manifest items dependency: {string.Join(", ", manifestItems.Where(m => m.SourceManifest == "dependency").Select(m => m.Name))}");
+        }
+        LogInfo($"Dependencies resolved original: {installListNames.Count} afterResolution: {manifestItems.Count} addedDependencies: {depCount}");
     }
 
     private void PrintActionSummary(
@@ -899,11 +988,41 @@ public class UpdateEngine : IDisposable
     #region Verbose Output Methods (Go Parity)
     
     /// <summary>
+    /// Gets the version string in YYYY.MM.DD.HHMM format
+    /// </summary>
+    private static string GetFormattedVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        
+        // Try AssemblyInformationalVersion first (has proper YYYY.MM.DD.HHMM format)
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(informationalVersion))
+        {
+            var plusIndex = informationalVersion.IndexOf('+');
+            if (plusIndex >= 0)
+            {
+                return informationalVersion[..plusIndex];
+            }
+            return informationalVersion;
+        }
+        
+        // Fall back to AssemblyFileVersion
+        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+        if (!string.IsNullOrEmpty(fileVersion))
+        {
+            return fileVersion;
+        }
+        
+        // Last resort - assembly version (may lose leading zeros)
+        return assembly.GetName().Version?.ToString() ?? "Unknown";
+    }
+    
+    /// <summary>
     /// Prints the verbose header banner - matches Go output with timestamps
     /// </summary>
     private void PrintVerboseHeader()
     {
-        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "Unknown";
+        var version = GetFormattedVersion();
         
         Log($"Cimian version is {version}");
         Log();
@@ -1157,6 +1276,68 @@ public class UpdateEngine : IDisposable
         Log("INVENTORY SUMMARY");
         Log($"   Total managed items: {managedInstalls.Count}");
         Log($"   Installed: {installedCount} | Pending Install: {pendingInstallCount} | Pending Update: {pendingUpdateCount}");
+        Log();
+    }
+
+    /// <summary>
+    /// Prints the managed updates status table - for items from managed_updates section
+    /// This matches Go behavior which shows a separate section for managed_updates items
+    /// </summary>
+    private void PrintManagedUpdatesTable(
+        List<ManifestItem> manifestItems,
+        List<CatalogItem> toUpdate,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        // Filter to update actions only (from managed_updates)
+        var managedUpdates = manifestItems
+            .Where(m => m.Action?.ToLowerInvariant() == "update")
+            .ToList();
+        
+        if (managedUpdates.Count == 0) return;
+        
+        // Build status for each item
+        var packageStatuses = new List<(string Name, string Version, string Status)>();
+        var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+        
+        foreach (var item in managedUpdates)
+        {
+            var name = item.Name;
+            var version = "Unknown";
+            var status = "Installed";
+            
+            // Get catalog version
+            if (catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem))
+            {
+                version = catalogItem.Version;
+            }
+            
+            // Determine status
+            if (toUpdateNames.Contains(name.ToLowerInvariant()))
+            {
+                status = "Pending Update";
+            }
+            
+            packageStatuses.Add((name, version, status));
+        }
+        
+        // Sort: Installed first, then Pending Update
+        packageStatuses = packageStatuses
+            .OrderBy(p => p.Status == "Installed" ? 0 : 1)
+            .ThenBy(p => p.Name)
+            .ToList();
+        
+        Log("----------------------------------------------------------------------");
+        Log($"MANAGED UPDATES ({managedUpdates.Count} items)");
+        Log("----------------------------------------------------------------------");
+        Log($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
+        Log("----------------------------------------------------------------------");
+        
+        foreach (var (name, version, status) in packageStatuses)
+        {
+            Log($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
+        }
+        
+        Log("----------------------------------------------------------------------");
         Log();
     }
     
