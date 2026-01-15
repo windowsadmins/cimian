@@ -700,9 +700,6 @@ func cimianImport(
 		
 		if strings.EqualFold(ans, "y") || ans == "" {
 			extractedVersion := metadata.Version
-			// Preserve the detected architecture from filename before applying template
-			detectedArch := metadata.Architecture
-			detectedSupportedArch := metadata.SupportedArch
 
 			metadata.ID = existingPkg.Name
 			metadata.Title = existingPkg.DisplayName
@@ -715,14 +712,7 @@ func cimianImport(
 			metadata.Description = desc
 
 			metadata.Category = string(existingPkg.Category)
-			// Only use template architecture if we didn't detect one from filename
-			if detectedArch != "" && len(detectedSupportedArch) > 0 {
-				// Restore the detected architecture - don't overwrite with template
-				metadata.Architecture = detectedArch
-				metadata.SupportedArch = detectedSupportedArch
-			} else {
-				metadata.SupportedArch = existingPkg.SupportedArch
-			}
+			metadata.SupportedArch = existingPkg.SupportedArch
 			metadata.Catalogs = existingPkg.Catalogs
 
 			// Bring forward scripts from the existing template if they exist and no command-line scripts were provided
