@@ -242,6 +242,7 @@ public class UpdateEngine : IDisposable
                 PrintManifestHierarchy(manifestItems);
                 PrintManagedInstallsTable(manifestItems, toInstall, toUpdate, catalogMap);
                 PrintManagedUpdatesTable(manifestItems, toUpdate, catalogMap);
+                PrintManagedUninstallsTable(manifestItems, toUninstall, catalogMap);
             }
 
             // Print summary
@@ -1328,6 +1329,68 @@ public class UpdateEngine : IDisposable
         
         Log("----------------------------------------------------------------------");
         Log($"MANAGED UPDATES ({managedUpdates.Count} items)");
+        Log("----------------------------------------------------------------------");
+        Log($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
+        Log("----------------------------------------------------------------------");
+        
+        foreach (var (name, version, status) in packageStatuses)
+        {
+            Log($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
+        }
+        
+        Log("----------------------------------------------------------------------");
+        Log();
+    }
+
+    /// <summary>
+    /// Prints the managed uninstalls status table - for items from managed_uninstalls section
+    /// This matches Go behavior which shows a separate section for managed_uninstalls items
+    /// </summary>
+    private void PrintManagedUninstallsTable(
+        List<ManifestItem> manifestItems,
+        List<CatalogItem> toUninstall,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        // Filter to uninstall actions only (from managed_uninstalls)
+        var managedUninstalls = manifestItems
+            .Where(m => m.Action?.ToLowerInvariant() == "uninstall")
+            .ToList();
+        
+        if (managedUninstalls.Count == 0) return;
+        
+        // Build status for each item
+        var packageStatuses = new List<(string Name, string Version, string Status)>();
+        var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+        
+        foreach (var item in managedUninstalls)
+        {
+            var name = item.Name;
+            var version = "Unknown";
+            var status = "Uninstalled";
+            
+            // Get catalog version
+            if (catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem))
+            {
+                version = catalogItem.Version;
+            }
+            
+            // Determine status - if in toUninstall list, it's still installed and pending removal
+            if (toUninstallNames.Contains(name.ToLowerInvariant()))
+            {
+                status = "Pending Removal";
+            }
+            
+            packageStatuses.Add((name, version, status));
+        }
+        
+        // Sort: Uninstalled first, then Pending Removal
+        packageStatuses = packageStatuses
+            .OrderBy(p => p.Status == "Uninstalled" ? 0 : 1)
+            .ThenBy(p => p.Name)
+            .ToList();
+        
+        Log("----------------------------------------------------------------------");
+        Log($"MANAGED UNINSTALLS ({managedUninstalls.Count} items)");
         Log("----------------------------------------------------------------------");
         Log($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
         Log("----------------------------------------------------------------------");
