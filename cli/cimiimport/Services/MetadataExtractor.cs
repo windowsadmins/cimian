@@ -21,6 +21,15 @@ public partial class MetadataExtractor
         var ext = Path.GetExtension(packagePath).ToLowerInvariant();
         var metadata = new InstallerMetadata();
 
+        // First, check if the filename contains architecture hints (x64, arm64, etc.)
+        // This takes priority over the default configuration
+        var detectedArch = DetectArchFromFilename(Path.GetFileName(packagePath));
+        if (!string.IsNullOrEmpty(detectedArch))
+        {
+            metadata.Architecture = detectedArch;
+            metadata.SupportedArch = [detectedArch];
+        }
+
         switch (ext)
         {
             case ".msi":
@@ -46,7 +55,7 @@ public partial class MetadataExtractor
                 break;
         }
 
-        // Ensure architecture is set
+        // Ensure architecture is set from config default if not detected from filename
         if (string.IsNullOrEmpty(metadata.Architecture))
         {
             metadata.Architecture = config.DefaultArch;
@@ -453,6 +462,37 @@ function Get-MsiProperty($name) {
             path = "/" + path;
         }
         return path;
+    }
+
+    /// <summary>
+    /// Detects architecture from filename patterns like "x64", "arm64", "amd64", etc.
+    /// Returns empty string if no architecture hint is found.
+    /// </summary>
+    public static string DetectArchFromFilename(string filename)
+    {
+        var lower = filename.ToLowerInvariant();
+        
+        // Check for arm64 first (more specific)
+        if (lower.Contains("arm64") || lower.Contains("aarch64"))
+        {
+            return "arm64";
+        }
+        
+        // Check for x64/amd64/x86_64
+        if (lower.Contains("x64") || lower.Contains("amd64") || 
+            lower.Contains("x86_64") || lower.Contains("x86-64"))
+        {
+            return "x64";
+        }
+        
+        // Check for x86/win32 (32-bit)
+        if (lower.Contains("x86") || lower.Contains("win32") || 
+            lower.Contains("i386") || lower.Contains("i686"))
+        {
+            return "x86";
+        }
+        
+        return "";
     }
 }
 /// <summary>
