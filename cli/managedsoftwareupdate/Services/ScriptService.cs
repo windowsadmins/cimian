@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Management.Automation;
 using System.Text;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -318,7 +319,7 @@ public class ScriptService
             return (true, "No preflight script found");
         }
 
-        Console.WriteLine($"[INFO] Executing preflight script: {preflightPath}");
+        ConsoleLogger.Info($"Executing preflight script: {preflightPath}");
         return await ExecuteScriptFileAsync(preflightPath, cancellationToken);
     }
 
@@ -350,7 +351,7 @@ public class ScriptService
             return (true, "No postflight script found");
         }
 
-        Console.WriteLine($"[INFO] Executing postflight script: {postflightPath}");
+        ConsoleLogger.Info($"Executing postflight script: {postflightPath}");
         return await ExecuteScriptFileAsync(postflightPath, cancellationToken);
     }
 }
