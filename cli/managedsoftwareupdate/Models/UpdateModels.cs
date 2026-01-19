@@ -530,17 +530,43 @@ public class SessionSummary
 }
 
 /// <summary>
-/// Status check result
+/// Status check result with comprehensive reason tracking
 /// </summary>
 public class StatusCheckResult
 {
+    /// <summary>Status string: "installed", "pending", "error", "unknown"</summary>
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>Human-readable reason for the status</summary>
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Machine-readable status reason code.
+    /// See Cimian.Core.Models.StatusReasonCode for all values.
+    /// </summary>
+    public string ReasonCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Detection method used to determine status.
+    /// See Cimian.Core.Models.DetectionMethod for all values.
+    /// </summary>
+    public string DetectionMethod { get; set; } = string.Empty;
+
+    /// <summary>Currently installed version, if known</summary>
+    public string? InstalledVersion { get; set; }
+
+    /// <summary>Target version from catalog</summary>
+    public string? TargetVersion { get; set; }
+
+    /// <summary>Whether action is needed</summary>
     public bool NeedsAction { get; set; }
+
     /// <summary>
     /// True if the item is already installed but needs an update (version mismatch, etc.)
     /// False if the item is not installed at all (new install)
     /// </summary>
     public bool IsUpdate { get; set; }
+
+    /// <summary>Error if status check failed</summary>
     public Exception? Error { get; set; }
 }

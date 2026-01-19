@@ -2,7 +2,12 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Models;
 using Microsoft.Win32;
+
+// Resolve ambiguous references between CLI and Core models
+using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
+using StatusCheckResult = Cimian.CLI.managedsoftwareupdate.Models.StatusCheckResult;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -88,7 +93,8 @@ public class StatusService
         var result = new StatusCheckResult
         {
             Status = "unknown",
-            NeedsAction = false
+            NeedsAction = false,
+            TargetVersion = item.Version
         };
 
         try
@@ -108,6 +114,9 @@ public class StatusService
                     // Running version is same or newer than catalog - no update needed
                     result.Status = "installed";
                     result.Reason = $"Running version {runningVersion} >= catalog version {catalogVersion}";
+                    result.ReasonCode = StatusReasonCode.SelfUpdateCurrent;
+                    result.DetectionMethod = DetectionMethod.SelfUpdate;
+                    result.InstalledVersion = runningVersion;
                     return result;
                 }
                 // Otherwise fall through to normal checks
@@ -130,6 +139,8 @@ public class StatusService
                 // If installs array verification passed, item is installed
                 result.Status = "installed";
                 result.Reason = "Installs array verification passed";
+                result.ReasonCode = StatusReasonCode.FileMatch;
+                result.DetectionMethod = DetectionMethod.InstallsArray;
                 return result;
             }
 
@@ -167,10 +178,16 @@ public class StatusService
                         result.NeedsAction = true;
                         result.IsUpdate = true;
                         result.Reason = $"Registry version {registryVersion} < catalog version {item.Version}";
+                        result.ReasonCode = StatusReasonCode.UpdateAvailable;
+                        result.DetectionMethod = DetectionMethod.ManagedInstalls;
+                        result.InstalledVersion = registryVersion;
                         return result;
                     }
                     result.Status = "installed";
                     result.Reason = $"Registry version {registryVersion} >= catalog version {item.Version}";
+                    result.ReasonCode = StatusReasonCode.VersionMatch;
+                    result.DetectionMethod = DetectionMethod.ManagedInstalls;
+                    result.InstalledVersion = registryVersion;
                     return result;
                 }
             }
@@ -180,12 +197,16 @@ public class StatusService
             // Don't fall back to ManagedInstalls registry as Go doesn't do this
             result.Status = "installed";
             result.Reason = "No explicit checks defined - assuming installed";
+            result.ReasonCode = StatusReasonCode.NoChecks;
+            result.DetectionMethod = DetectionMethod.None;
             return result;
         }
         catch (Exception ex)
         {
             result.Status = "error";
             result.Reason = ex.Message;
+            result.ReasonCode = StatusReasonCode.CheckFailed;
+            result.DetectionMethod = DetectionMethod.None;
             result.Error = ex;
             result.NeedsAction = true;
         }
@@ -199,7 +220,11 @@ public class StatusService
     /// </summary>
     private StatusCheckResult CheckInstallcheckScript(CatalogItem item)
     {
-        var result = new StatusCheckResult();
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Script,
+            TargetVersion = item.Version
+        };
 
         try
         {
@@ -214,12 +239,14 @@ public class StatusService
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = hasRegistryEntry;
-                result.Reason = $"Installcheck script indicates installation needed: {output}";
+                result.Reason = $"installcheck_script returned 0 (install needed): {output}";
+                result.ReasonCode = StatusReasonCode.InstallcheckNeeded;
             }
             else // exit non-zero (typically 1)
             {
                 result.Status = "installed";
-                result.Reason = "Installcheck script indicates item is installed";
+                result.Reason = "installcheck_script returned non-zero (no install needed)";
+                result.ReasonCode = StatusReasonCode.ScriptConfirmed;
             }
         }
         catch (Exception ex)
@@ -227,7 +254,8 @@ public class StatusService
             // On error, assume needs action
             result.Status = "error";
             result.NeedsAction = true;
-            result.Reason = $"Installcheck script failed: {ex.Message}";
+            result.Reason = $"installcheck_script failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
             result.Error = ex;
         }
 
@@ -242,7 +270,9 @@ public class StatusService
     {
         var result = new StatusCheckResult
         {
-            Status = "installed"
+            Status = "installed",
+            DetectionMethod = DetectionMethod.InstallsArray,
+            TargetVersion = item.Version
         };
 
         foreach (var installItem in item.Installs)
@@ -260,6 +290,8 @@ public class StatusService
                             result.NeedsAction = true;
                             result.IsUpdate = hasRegistryEntry; // If has registry entry, it was installed before
                             result.Reason = $"File not found: {installItem.Path}";
+                            result.ReasonCode = StatusReasonCode.FileMissing;
+                            result.DetectionMethod = DetectionMethod.File;
                             return result;
                         }
 
@@ -273,6 +305,8 @@ public class StatusService
                                 result.NeedsAction = true;
                                 result.IsUpdate = true; // File exists but hash mismatch = update
                                 result.Reason = $"Hash mismatch for {installItem.Path}: expected {installItem.Md5Checksum}, got {actualMd5}";
+                                result.ReasonCode = StatusReasonCode.HashMismatch;
+                                result.DetectionMethod = DetectionMethod.File;
                                 return result;
                             }
                         }
@@ -289,6 +323,8 @@ public class StatusService
                             result.NeedsAction = true;
                             result.IsUpdate = hasRegistryEntry;
                             result.Reason = $"Directory not found: {installItem.Path}";
+                            result.ReasonCode = StatusReasonCode.DirectoryMissing;
+                            result.DetectionMethod = DetectionMethod.Directory;
                             return result;
                         }
                     }
@@ -304,6 +340,8 @@ public class StatusService
                             result.NeedsAction = true;
                             result.IsUpdate = hasRegistryEntry;
                             result.Reason = $"MSI product not installed: {installItem.ProductCode}";
+                            result.ReasonCode = StatusReasonCode.ProductCodeMissing;
+                            result.DetectionMethod = DetectionMethod.Msi;
                             return result;
                         }
                     }
@@ -311,7 +349,8 @@ public class StatusService
             }
         }
 
-        result.Reason = "Installs array verification passed";
+        result.Reason = $"All {item.Installs.Count} install checks passed";
+        result.ReasonCode = StatusReasonCode.FileMatch;
         return result;
     }
 
@@ -380,7 +419,11 @@ public class StatusService
 
     private StatusCheckResult CheckRegistryStatus(CatalogItem item)
     {
-        var result = new StatusCheckResult();
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Registry,
+            TargetVersion = item.Version
+        };
         var regCheck = item.Check.Registry;
 
         try
@@ -409,7 +452,9 @@ public class StatusService
                     {
                         // Found the item - it's installed
                         result.Status = "installed";
-                        result.Reason = $"Found {displayName} version {displayVersion}";
+                        result.Reason = $"Found {displayName} version {displayVersion} in registry";
+                        result.ReasonCode = StatusReasonCode.RegistryMatch;
+                        result.InstalledVersion = displayVersion;
 
                         // Check if version matches
                         if (!string.IsNullOrEmpty(regCheck.Version) && !string.IsNullOrEmpty(displayVersion))
@@ -423,6 +468,7 @@ public class StatusService
                                 result.NeedsAction = true;
                                 result.IsUpdate = true; // Item is installed but needs update
                                 result.Reason = $"Update available: {displayVersion} -> {item.Version}";
+                                result.ReasonCode = StatusReasonCode.UpdateAvailable;
                             }
                         }
 
@@ -435,12 +481,14 @@ public class StatusService
             result.Status = "pending";
             result.NeedsAction = true;
             result.IsUpdate = false; // Not installed - new install
-            result.Reason = $"Not installed: {regCheck.Name}";
+            result.Reason = $"Not found in registry: {regCheck.Name}";
+            result.ReasonCode = StatusReasonCode.RegistryMissing;
         }
         catch (Exception ex)
         {
             result.Status = "error";
             result.Reason = $"Registry check failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.CheckFailed;
             result.Error = ex;
         }
 
@@ -449,7 +497,11 @@ public class StatusService
 
     private StatusCheckResult CheckFileStatus(CatalogItem item)
     {
-        var result = new StatusCheckResult();
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.File,
+            TargetVersion = item.Version
+        };
         var fileCheck = item.Check.File!;
 
         try
@@ -460,16 +512,20 @@ public class StatusService
                 result.NeedsAction = true;
                 result.IsUpdate = false; // File doesn't exist - new install
                 result.Reason = $"File not found: {fileCheck.Path}";
+                result.ReasonCode = StatusReasonCode.FileMissing;
                 return result;
             }
 
             result.Status = "installed";
             result.Reason = $"File exists: {fileCheck.Path}";
+            result.ReasonCode = StatusReasonCode.FileMatch;
 
             // Check version if specified
             if (!string.IsNullOrEmpty(fileCheck.Version))
             {
                 var fileVersion = GetFileVersion(fileCheck.Path);
+                result.InstalledVersion = fileVersion;
+                
                 if (!string.IsNullOrEmpty(fileVersion))
                 {
                     var comparison = CatalogService.CompareVersions(
@@ -480,7 +536,12 @@ public class StatusService
                         result.Status = "pending";
                         result.NeedsAction = true;
                         result.IsUpdate = true; // File exists but needs version update
-                        result.Reason = $"Version mismatch: {fileVersion} < {fileCheck.Version}";
+                        result.Reason = $"File at {fileCheck.Path} is version {fileVersion}, need {fileCheck.Version}";
+                        result.ReasonCode = StatusReasonCode.UpdateAvailable;
+                    }
+                    else
+                    {
+                        result.Reason = $"File at {fileCheck.Path} verified at version {fileVersion}";
                     }
                 }
             }
@@ -494,7 +555,12 @@ public class StatusService
                     result.Status = "pending";
                     result.NeedsAction = true;
                     result.IsUpdate = true; // File exists but hash mismatch - reinstall/update
-                    result.Reason = "Hash mismatch";
+                    result.Reason = $"Hash mismatch for {fileCheck.Path}";
+                    result.ReasonCode = StatusReasonCode.HashMismatch;
+                }
+                else
+                {
+                    result.ReasonCode = StatusReasonCode.HashMatch;
                 }
             }
         }
@@ -502,6 +568,7 @@ public class StatusService
         {
             result.Status = "error";
             result.Reason = $"File check failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.CheckFailed;
             result.Error = ex;
         }
 
@@ -510,7 +577,11 @@ public class StatusService
 
     private StatusCheckResult CheckScriptStatus(CatalogItem item)
     {
-        var result = new StatusCheckResult();
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Script,
+            TargetVersion = item.Version
+        };
 
         try
         {
@@ -521,7 +592,8 @@ public class StatusService
             {
                 // Script returned success = installed
                 result.Status = "installed";
-                result.Reason = "Check script returned success";
+                result.Reason = "Check script returned success (exit 0)";
+                result.ReasonCode = StatusReasonCode.ScriptConfirmed;
             }
             else
             {
@@ -529,12 +601,14 @@ public class StatusService
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.Reason = $"Check script indicates installation needed: {output}";
+                result.ReasonCode = StatusReasonCode.NotInstalled;
             }
         }
         catch (Exception ex)
         {
             result.Status = "error";
             result.Reason = $"Check script failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
             result.Error = ex;
         }
 
@@ -543,7 +617,11 @@ public class StatusService
 
     private StatusCheckResult CheckManagedInstallsStatus(CatalogItem item)
     {
-        var result = new StatusCheckResult();
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.ManagedInstalls,
+            TargetVersion = item.Version
+        };
 
         try
         {
@@ -555,23 +633,27 @@ public class StatusService
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = false; // Not registered - new install
-                result.Reason = "Not registered in ManagedInstalls";
+                result.Reason = $"Not registered in ManagedInstalls: {item.Name}";
+                result.ReasonCode = StatusReasonCode.RegistryMissing;
                 return result;
             }
 
             var installedVersion = key.GetValue("Version")?.ToString();
+            result.InstalledVersion = installedVersion;
             
             if (string.IsNullOrEmpty(installedVersion))
             {
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = false; // No version = new install
-                result.Reason = "No version recorded";
+                result.Reason = "No version recorded in ManagedInstalls registry";
+                result.ReasonCode = StatusReasonCode.RegistryMissing;
                 return result;
             }
 
             result.Status = "installed";
-            result.Reason = $"Installed version: {installedVersion}";
+            result.Reason = $"Found in ManagedInstalls at version {installedVersion}";
+            result.ReasonCode = StatusReasonCode.RegistryMatch;
 
             // Check if update needed
             var comparison = CatalogService.CompareVersions(item.Version, installedVersion);
@@ -581,12 +663,14 @@ public class StatusService
                 result.NeedsAction = true;
                 result.IsUpdate = true; // Has version but needs update
                 result.Reason = $"Update available: {installedVersion} -> {item.Version}";
+                result.ReasonCode = StatusReasonCode.UpdateAvailable;
             }
         }
         catch (Exception ex)
         {
             result.Status = "error";
-            result.Reason = $"Status check failed: {ex.Message}";
+            result.Reason = $"ManagedInstalls status check failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.CheckFailed;
             result.Error = ex;
         }
 
@@ -690,6 +774,197 @@ public class StatusService
     {
         return GetIdleSeconds() < 300;
     }
+
+    #region Pending State Detection
+
+    /// <summary>
+    /// Checks if any blocking applications are running for the given item
+    /// </summary>
+    /// <param name="blockingApps">List of process names or executable paths to check</param>
+    /// <param name="runningApps">Output: list of blocking apps that are currently running</param>
+    /// <returns>True if any blocking apps are running</returns>
+    public static bool CheckBlockingApps(IEnumerable<string>? blockingApps, out List<string> runningApps)
+    {
+        runningApps = new List<string>();
+        
+        if (blockingApps == null) return false;
+
+        try
+        {
+            var processes = System.Diagnostics.Process.GetProcesses()
+                .Select(p => p.ProcessName.ToLowerInvariant())
+                .ToHashSet();
+
+            foreach (var app in blockingApps)
+            {
+                if (string.IsNullOrEmpty(app)) continue;
+                
+                // Extract process name without extension
+                var processName = Path.GetFileNameWithoutExtension(app).ToLowerInvariant();
+                
+                if (processes.Contains(processName))
+                {
+                    runningApps.Add(app);
+                }
+            }
+        }
+        catch
+        {
+            // On error, assume no blocking apps
+        }
+
+        return runningApps.Count > 0;
+    }
+
+    /// <summary>
+    /// Checks if the system has a pending reboot
+    /// </summary>
+    /// <returns>True if a reboot is pending</returns>
+    public static bool IsPendingReboot()
+    {
+        try
+        {
+            // Check Windows Update pending reboot
+            using var wuKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
+            if (wuKey != null) return true;
+
+            // Check Component Based Servicing pending reboot
+            using var cbsKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending");
+            if (cbsKey != null) return true;
+
+            // Check Session Manager pending file rename operations
+            using var smKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager");
+            if (smKey != null)
+            {
+                var pendingOps = smKey.GetValue("PendingFileRenameOperations");
+                if (pendingOps is string[] ops && ops.Length > 0) return true;
+            }
+
+            // Check if SCCM/ConfigMgr says reboot is pending
+            using var ccmKey = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\CCM\ClientSDK\InProgress");
+            if (ccmKey != null)
+            {
+                var rebootPending = ccmKey.GetValue("RebootRequired");
+                if (rebootPending != null) return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Checks if there's sufficient disk space for installation
+    /// </summary>
+    /// <param name="requiredBytes">Required space in bytes (from package size)</param>
+    /// <param name="targetPath">Target installation path (defaults to C:\)</param>
+    /// <param name="availableBytes">Output: available bytes on drive</param>
+    /// <returns>True if sufficient space is available</returns>
+    public static bool HasSufficientDiskSpace(long requiredBytes, string? targetPath, out long availableBytes)
+    {
+        availableBytes = 0;
+        
+        if (requiredBytes <= 0) return true; // No size specified, assume OK
+
+        try
+        {
+            var drivePath = targetPath ?? @"C:\";
+            
+            // Get drive letter from path
+            var driveLetter = Path.GetPathRoot(drivePath);
+            if (string.IsNullOrEmpty(driveLetter)) driveLetter = @"C:\";
+
+            var driveInfo = new DriveInfo(driveLetter);
+            availableBytes = driveInfo.AvailableFreeSpace;
+
+            // Require at least 2x the package size (for extraction, temp files, etc.)
+            var requiredWithBuffer = requiredBytes * 2;
+            
+            return availableBytes >= requiredWithBuffer;
+        }
+        catch
+        {
+            // On error, assume sufficient space
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Checks pending states for a package and returns appropriate status result if blocked
+    /// </summary>
+    /// <param name="item">The catalog item to check</param>
+    /// <param name="missingDependencies">List of missing dependencies (from external dependency check)</param>
+    /// <returns>StatusCheckResult if blocked by pending conditions, null otherwise</returns>
+    public StatusCheckResult? CheckPendingConditions(CatalogItem item, IEnumerable<string>? missingDependencies = null)
+    {
+        // Check blocking apps
+        if (CheckBlockingApps(item.BlockingApps, out var runningApps))
+        {
+            return new StatusCheckResult
+            {
+                Status = "pending",
+                NeedsAction = true,
+                Reason = $"Waiting for {string.Join(", ", runningApps)} to close",
+                ReasonCode = StatusReasonCode.BlockingApps,
+                DetectionMethod = DetectionMethod.None,
+                TargetVersion = item.Version
+            };
+        }
+
+        // Check pending reboot
+        if (IsPendingReboot())
+        {
+            return new StatusCheckResult
+            {
+                Status = "pending",
+                NeedsAction = true,
+                Reason = "System requires reboot before installation can proceed",
+                ReasonCode = StatusReasonCode.PendingReboot,
+                DetectionMethod = DetectionMethod.None,
+                TargetVersion = item.Version
+            };
+        }
+
+        // Check missing dependencies
+        var deps = missingDependencies?.ToList();
+        if (deps != null && deps.Count > 0)
+        {
+            return new StatusCheckResult
+            {
+                Status = "pending",
+                NeedsAction = true,
+                Reason = $"Waiting for dependencies: {string.Join(", ", deps)}",
+                ReasonCode = StatusReasonCode.DependencyMissing,
+                DetectionMethod = DetectionMethod.None,
+                TargetVersion = item.Version
+            };
+        }
+
+        // Check disk space
+        var installerSize = item.Installer.Size ?? 0;
+        if (installerSize > 0 && !HasSufficientDiskSpace(installerSize, null, out var availableBytes))
+        {
+            var requiredMb = installerSize / (1024 * 1024);
+            var availableMb = availableBytes / (1024 * 1024);
+            return new StatusCheckResult
+            {
+                Status = "pending",
+                NeedsAction = true,
+                Reason = $"Insufficient disk space (need {requiredMb}MB, have {availableMb}MB)",
+                ReasonCode = StatusReasonCode.DiskSpace,
+                DetectionMethod = DetectionMethod.None,
+                TargetVersion = item.Version
+            };
+        }
+
+        // No pending conditions blocking installation
+        return null;
+    }
+
+    #endregion
 
     [StructLayout(LayoutKind.Sequential)]
     private struct LASTINPUTINFO

@@ -290,6 +290,31 @@ public class EventRecord
     [JsonPropertyName("log_file")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? LogFile { get; set; }
+
+    #region Status Reason Tracking
+
+    /// <summary>
+    /// Human-readable explanation of status determination for this event.
+    /// </summary>
+    [JsonPropertyName("status_reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusReason { get; set; }
+
+    /// <summary>
+    /// Machine-readable status reason code.
+    /// </summary>
+    [JsonPropertyName("status_reason_code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusReasonCode { get; set; }
+
+    /// <summary>
+    /// Detection method used to determine status.
+    /// </summary>
+    [JsonPropertyName("detection_method")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DetectionMethod { get; set; }
+
+    #endregion
 }
 
 /// <summary>
@@ -506,6 +531,43 @@ public class ItemRecord
     [JsonPropertyName("recent_attempts")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<ItemAttempt>? RecentAttempts { get; set; }
+
+    #region Status Reason Tracking
+
+    /// <summary>
+    /// Human-readable explanation of how status was determined.
+    /// Example: "File at C:\Program Files\App\app.exe verified at version 1.2.3"
+    /// </summary>
+    [JsonPropertyName("status_reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusReason { get; set; }
+
+    /// <summary>
+    /// Machine-readable reason code for programmatic handling.
+    /// Example: "file_match", "registry_missing", "update_available"
+    /// See StatusReasonCode class for all values.
+    /// </summary>
+    [JsonPropertyName("status_reason_code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusReasonCode { get; set; }
+
+    /// <summary>
+    /// The detection method used to determine status.
+    /// Example: "file", "registry", "script", "msi"
+    /// See DetectionMethod class for all values.
+    /// </summary>
+    [JsonPropertyName("detection_method")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DetectionMethod { get; set; }
+
+    /// <summary>
+    /// When the current status was determined
+    /// </summary>
+    [JsonPropertyName("status_determined_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusDeterminedAt { get; set; }
+
+    #endregion
 }
 
 /// <summary>
@@ -579,6 +641,31 @@ public class SessionPackageInfo
     [JsonPropertyName("warning_message")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? WarningMessage { get; set; }
+
+    #region Status Reason Tracking
+
+    /// <summary>
+    /// Human-readable explanation of how status was determined.
+    /// </summary>
+    [JsonPropertyName("status_reason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusReason { get; set; }
+
+    /// <summary>
+    /// Machine-readable status reason code.
+    /// </summary>
+    [JsonPropertyName("status_reason_code")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StatusReasonCode { get; set; }
+
+    /// <summary>
+    /// Detection method used to determine status.
+    /// </summary>
+    [JsonPropertyName("detection_method")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DetectionMethod { get; set; }
+
+    #endregion
 }
 
 /// <summary>
@@ -781,4 +868,28 @@ public class ComprehensiveItemStat
     public string SignerCertificate { get; set; } = string.Empty;
     public string SignerCommonName { get; set; } = string.Empty;
     public string SignatureTimestamp { get; set; } = string.Empty;
+
+    #region Status Reason Tracking
+
+    /// <summary>
+    /// Human-readable explanation of how status was determined.
+    /// </summary>
+    public string StatusReason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Machine-readable status reason code.
+    /// </summary>
+    public string StatusReasonCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Detection method used to determine status.
+    /// </summary>
+    public string DetectionMethod { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When the current status was determined.
+    /// </summary>
+    public string StatusDeterminedAt { get; set; } = string.Empty;
+
+    #endregion
 }
