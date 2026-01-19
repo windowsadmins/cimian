@@ -3,6 +3,7 @@ using System.Text;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 using Cimian.Engine.Predicates;
 // Use the Predicate expression types from Cimian.Engine
 using ParsedExpression = Cimian.Engine.Predicates.ParsedExpression;
@@ -24,7 +25,6 @@ public class ManifestService
     private readonly IDeserializer _deserializer;
     private readonly CimianConfig _config;
     private readonly Dictionary<string, string> _itemSources = new();
-    private readonly ExpressionParser _predicateParser = new();
 
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
@@ -90,12 +90,12 @@ public class ManifestService
         await ProcessManifestAsync(clientIdentifier, items, processedManifests, pendingConditionals);
 
         // Log collected catalogs before processing conditionals
-        Console.WriteLine($"[DEBUG] Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
+        ConsoleLogger.Debug($"Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
 
         // PASS 2: Now process all conditional items with full catalog context
         foreach (var (conditionalItems, sourceManifest) in pendingConditionals)
         {
-            Console.WriteLine($"[DEBUG] Processing {conditionalItems.Count} conditional items from {sourceManifest}");
+            ConsoleLogger.Debug($"Processing {conditionalItems.Count} conditional items from {sourceManifest}");
             var conditionalResults = ProcessConditionalItems(conditionalItems, sourceManifest);
             items.AddRange(conditionalResults);
         }
@@ -178,7 +178,7 @@ public class ManifestService
                     // Add catalogs to config FIRST (before processing anything else)
                     if (manifest.Catalogs != null && manifest.Catalogs.Count > 0)
                     {
-                        Console.WriteLine($"[DEBUG] Processing catalogs from manifest {manifestName}: [{string.Join(", ", manifest.Catalogs)}]");
+                        ConsoleLogger.Debug($"Processing catalogs from manifest {manifestName}: [{string.Join(", ", manifest.Catalogs)}]");
                         foreach (var catalog in manifest.Catalogs)
                         {
                             if (!_config.Catalogs.Contains(catalog))
@@ -242,7 +242,7 @@ public class ManifestService
             // Evaluate the condition
             if (EvaluateCondition(conditional.Condition))
             {
-                Console.WriteLine($"[DEBUG] Conditional item matched: {conditional.Condition}");
+                ConsoleLogger.Debug($"Conditional item matched: {conditional.Condition}");
                 
                 // Add managed_installs from this conditional
                 if (conditional.ManagedInstalls != null)
@@ -306,7 +306,7 @@ public class ManifestService
             }
             else
             {
-                Console.WriteLine($"[DEBUG] Conditional item did not match: {conditional.Condition}");
+                ConsoleLogger.Debug($"Conditional item did not match: {conditional.Condition}");
             }
         }
         
@@ -314,184 +314,83 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Evaluates a condition string using the full predicate engine
-    /// Supports complex conditions with AND, OR, CONTAINS, DOES_NOT_CONTAIN, etc.
+    /// Evaluates a simple condition string like "catalogs == Staging" or "arch == x64"
     /// </summary>
     private bool EvaluateCondition(string condition)
     {
-        try
+        // Parse simple conditions like "key == value" or "key CONTAINS value"
+        var parts = condition.Split(new[] { "==", "!=", "CONTAINS", "LIKE" }, StringSplitOptions.None);
+        if (parts.Length != 2)
         {
-            // Parse the condition using the expression parser
-            var expression = _predicateParser.Parse(condition);
-            
-            // Build system facts for evaluation
-            var facts = BuildSystemFacts();
-            
-            // Evaluate the parsed expression
-            return EvaluateExpression(expression, facts);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[WARNING] Error evaluating condition '{condition}': {ex.Message}");
+            Console.WriteLine($"[WARNING] Could not parse condition: {condition}");
             return false;
         }
-    }
-    
-    /// <summary>
-    /// Builds system facts dictionary for condition evaluation
-    /// </summary>
-    private Dictionary<string, object> BuildSystemFacts()
-    {
-        var facts = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+        
+        var key = parts[0].Trim().ToLowerInvariant();
+        var expectedValue = parts[1].Trim();
+        
+        // Strip surrounding quotes from expected value (handles both "Testing" and Testing)
+        if ((expectedValue.StartsWith('"') && expectedValue.EndsWith('"')) ||
+            (expectedValue.StartsWith('\'') && expectedValue.EndsWith('\'')))
         {
-            ["hostname"] = Environment.MachineName,
-            ["arch"] = Environment.Is64BitOperatingSystem ? "x64" : "x86",
-            ["architecture"] = Environment.Is64BitOperatingSystem ? "x64" : "x86",
-            ["os"] = "Windows",
-            ["operatingsystem"] = "Windows",
-            ["catalogs"] = _config.Catalogs ?? new List<string>(),
-            ["machine_type"] = GetMachineType(),
-            ["machine_model"] = GetMachineModel()
+            expectedValue = expectedValue[1..^1];
+        }
+        
+        // Determine the operator
+        var isEquals = condition.Contains("==");
+        var isNotEquals = condition.Contains("!=");
+        var isContains = condition.ToUpperInvariant().Contains("CONTAINS");
+        
+        // Get the actual value from facts
+        object? actualValue = key switch
+        {
+            "catalogs" => _config.Catalogs,
+            "arch" or "architecture" => Environment.Is64BitOperatingSystem ? "x64" : "x86",
+            "hostname" => Environment.MachineName,
+            "os" or "operatingsystem" => "Windows",
+            _ => null
         };
-        return facts;
-    }
-    
-    /// <summary>
-    /// Gets the machine type (desktop, laptop, etc.)
-    /// </summary>
-    private string GetMachineType()
-    {
-        try
+        
+        if (actualValue == null)
         {
-            // Check if it's a laptop by looking for battery
-            using var searcher = new System.Management.ManagementObjectSearcher("SELECT * FROM Win32_Battery");
-            var batteries = searcher.Get();
-            return batteries.Count > 0 ? "laptop" : "desktop";
+            ConsoleLogger.Warn($"Unknown fact key: {key}");
+            return false;
         }
-        catch
+        
+        // Handle array comparison (like catalogs)
+        if (actualValue is List<string> list)
         {
-            return "unknown";
-        }
-    }
-    
-    /// <summary>
-    /// Gets the machine model
-    /// </summary>
-    private string GetMachineModel()
-    {
-        try
-        {
-            using var searcher = new System.Management.ManagementObjectSearcher("SELECT Model FROM Win32_ComputerSystem");
-            foreach (var obj in searcher.Get())
+            ConsoleLogger.Debug($"Comparing array [{string.Join(", ", list)}] with '{expectedValue}'");
+            if (isEquals)
             {
-                return obj["Model"]?.ToString() ?? "unknown";
+                return list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
+            }
+            if (isNotEquals)
+            {
+                return !list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
+            }
+            if (isContains)
+            {
+                return list.Any(v => v.Contains(expectedValue, StringComparison.OrdinalIgnoreCase));
             }
         }
-        catch
-        {
-        }
-        return "unknown";
-    }
-    
-    /// <summary>
-    /// Recursively evaluates a parsed expression against system facts
-    /// </summary>
-    private bool EvaluateExpression(ParsedExpression expression, Dictionary<string, object> facts)
-    {
-        return expression switch
-        {
-            LiteralExpression literal => Convert.ToBoolean(literal.Value),
-            ComparisonExpression comparison => EvaluateComparison(comparison, facts),
-            LogicalExpression logical => EvaluateLogical(logical, facts),
-            NotExpression not => !EvaluateExpression(not.Operand, facts),
-            AnyExpression any => EvaluateAny(any, facts),
-            _ => throw new NotSupportedException($"Expression type {expression.GetType().Name} not supported")
-        };
-    }
-    
-    private bool EvaluateComparison(ComparisonExpression comparison, Dictionary<string, object> facts)
-    {
-        var leftValue = GetFactValue(comparison.Left, facts);
-        var rightValue = comparison.Right?.ToString() ?? "";
         
-        Console.WriteLine($"[DEBUG] Evaluating: {comparison.Left} {comparison.Operator} '{rightValue}' (actual: '{leftValue}')");
-        
-        return comparison.Operator.ToUpperInvariant() switch
+        // Handle string comparison
+        var actualStr = actualValue.ToString() ?? "";
+        if (isEquals)
         {
-            "==" or "EQUALS" => CompareEquals(leftValue, rightValue),
-            "!=" or "NOT_EQUALS" => !CompareEquals(leftValue, rightValue),
-            "CONTAINS" => CompareContains(leftValue, rightValue),
-            "DOES_NOT_CONTAIN" => !CompareContains(leftValue, rightValue),
-            "BEGINSWITH" => CompareBeginsWith(leftValue, rightValue),
-            "ENDSWITH" => CompareEndsWith(leftValue, rightValue),
-            _ => throw new NotSupportedException($"Operator {comparison.Operator} not supported")
-        };
-    }
-    
-    private bool EvaluateLogical(LogicalExpression logical, Dictionary<string, object> facts)
-    {
-        return logical.Operator.ToUpperInvariant() switch
-        {
-            "AND" => logical.Operands.All(op => EvaluateExpression(op, facts)),
-            "OR" => logical.Operands.Any(op => EvaluateExpression(op, facts)),
-            _ => throw new NotSupportedException($"Logical operator {logical.Operator} not supported")
-        };
-    }
-    
-    private bool EvaluateAny(AnyExpression any, Dictionary<string, object> facts)
-    {
-        var collectionValue = GetFactValue(any.CollectionKey, facts);
-        if (collectionValue is IEnumerable<string> strings)
-        {
-            var rightValue = any.Value?.ToString() ?? "";
-            return any.Operator.ToUpperInvariant() switch
-            {
-                "==" or "EQUALS" => strings.Any(s => CompareEquals(s, rightValue)),
-                "!=" or "NOT_EQUALS" => strings.All(s => !CompareEquals(s, rightValue)),
-                "CONTAINS" => strings.Any(s => CompareContains(s, rightValue)),
-                "DOES_NOT_CONTAIN" => strings.All(s => !CompareContains(s, rightValue)),
-                _ => false
-            };
+            return string.Equals(actualStr, expectedValue, StringComparison.OrdinalIgnoreCase);
         }
+        if (isNotEquals)
+        {
+            return !string.Equals(actualStr, expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        if (isContains)
+        {
+            return actualStr.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        
         return false;
-    }
-    
-    private object GetFactValue(string key, Dictionary<string, object> facts)
-    {
-        if (facts.TryGetValue(key, out var value))
-        {
-            return value;
-        }
-        Console.WriteLine($"[WARNING] Unknown fact key: {key}");
-        return "";
-    }
-    
-    private bool CompareEquals(object left, string right)
-    {
-        // Handle string enumerable (like catalogs list) but not a single string
-        if (left is IEnumerable<string> strings && !(left is string))
-        {
-            return strings.Any(s => string.Equals(s, right, StringComparison.OrdinalIgnoreCase));
-        }
-        return string.Equals(left?.ToString(), right, StringComparison.OrdinalIgnoreCase);
-    }
-    
-    private bool CompareContains(object left, string right)
-    {
-        var leftStr = left?.ToString() ?? "";
-        return leftStr.Contains(right, StringComparison.OrdinalIgnoreCase);
-    }
-    
-    private bool CompareBeginsWith(object left, string right)
-    {
-        var leftStr = left?.ToString() ?? "";
-        return leftStr.StartsWith(right, StringComparison.OrdinalIgnoreCase);
-    }
-    
-    private bool CompareEndsWith(object left, string right)
-    {
-        var leftStr = left?.ToString() ?? "";
-        return leftStr.EndsWith(right, StringComparison.OrdinalIgnoreCase);
     }
 
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)

@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -67,7 +68,7 @@ public class DownloadService
             var existingHash = CalculateSHA256(localPath);
             if (existingHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
             {
-                Console.WriteLine($"[INFO] Using cached file: {Path.GetFileName(localPath)}");
+                ConsoleLogger.Info($"Using cached file: {Path.GetFileName(localPath)}");
                 return true;
             }
         }
@@ -106,8 +107,8 @@ public class DownloadService
                 if (!downloadedHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
                     File.Delete(tempPath);
-                    Console.Error.WriteLine($"[ERROR] Hash mismatch for {url}");
-                    Console.Error.WriteLine($"        Expected: {expectedHash}");
+                    ConsoleLogger.Error($"Hash mismatch for {url}");
+                    ConsoleLogger.Error($"        Expected: {expectedHash}");
                     Console.Error.WriteLine($"        Got:      {downloadedHash}");
                     return false;
                 }
@@ -124,7 +125,7 @@ public class DownloadService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[ERROR] Failed to download {url}: {ex.Message}");
+            ConsoleLogger.Error($"Failed to download {url}: {ex.Message}");
             return false;
         }
     }
@@ -182,7 +183,7 @@ public class DownloadService
                 result[item.Name] = path;
             }
 
-            Console.WriteLine($"[INFO] Downloaded {count}/{itemList.Count}: {item.Name}");
+            ConsoleLogger.Info($"Downloaded {count}/{itemList.Count}: {item.Name}");
         }
 
         return result;
@@ -259,18 +260,18 @@ public class DownloadService
                 {
                     File.Delete(file);
                     corruptCount++;
-                    Console.WriteLine($"[INFO] Removed corrupt file: {file}");
+                    ConsoleLogger.Info($"Removed corrupt file: {file}");
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[WARNING] Failed to remove corrupt file {file}: {ex.Message}");
+                    ConsoleLogger.Warn($"Failed to remove corrupt file {file}: {ex.Message}");
                 }
             }
         }
 
         if (corruptCount > 0)
         {
-            Console.WriteLine($"[INFO] Removed {corruptCount} corrupt files from cache");
+            ConsoleLogger.Info($"Removed {corruptCount} corrupt files from cache");
         }
     }
 
@@ -326,11 +327,11 @@ public class DownloadService
                 try
                 {
                     File.Delete(file);
-                    Console.WriteLine($"[INFO] Removed cached file: {fileName}");
+                    ConsoleLogger.Info($"Removed cached file: {fileName}");
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[WARNING] Failed to remove cached file {fileName}: {ex.Message}");
+                    ConsoleLogger.Warn($"Failed to remove cached file {fileName}: {ex.Message}");
                 }
             }
         }
