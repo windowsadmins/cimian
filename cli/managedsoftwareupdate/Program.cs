@@ -1,6 +1,7 @@
 using CommandLine;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core.Services;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -238,12 +239,12 @@ public class Program
 
         if (success)
         {
-            Console.WriteLine("[SUCCESS] Preflight completed successfully");
+            ConsoleLogger.Success("Preflight completed successfully");
             return 0;
         }
         else
         {
-            Console.WriteLine("[ERROR] Preflight script failed");
+            ConsoleLogger.Error("Preflight script failed");
             return 1;
         }
     }
@@ -272,12 +273,12 @@ public class Program
 
         if (success)
         {
-            Console.WriteLine("[SUCCESS] Postflight completed successfully");
+            ConsoleLogger.Success("Postflight completed successfully");
             return 0;
         }
         else
         {
-            Console.WriteLine("[ERROR] Postflight script failed");
+            ConsoleLogger.Error("Postflight script failed");
             return 1;
         }
     }
@@ -302,8 +303,8 @@ public class Program
 
         if (corruptCount > 0)
         {
-            Console.WriteLine($"[WARNING] Corrupt Files: {corruptCount} (0-byte files detected)");
-            Console.WriteLine("[INFO] Run with --validate-cache to clean up corrupt files");
+            ConsoleLogger.Warn($"Corrupt Files: {corruptCount} (0-byte files detected)");
+            ConsoleLogger.Info("Run with --validate-cache to clean up corrupt files");
         }
         else
         {
@@ -382,7 +383,7 @@ public class Program
         {
             Console.WriteLine("[STATUS]: Self-update pending");
             Console.WriteLine();
-            Console.WriteLine("[INFO] To trigger the update:");
+            ConsoleLogger.Info("To trigger the update:");
             Console.WriteLine("   managedsoftwareupdate --restart-service");
         }
         else
@@ -399,7 +400,7 @@ public class Program
         // This is an internal flag used by the self-update mechanism
         // When a new version of Cimian is downloaded, it may re-launch itself with this flag
         // to complete the update process
-        Console.WriteLine("[INFO] Performing self-update...");
+        ConsoleLogger.Info("Performing self-update...");
 
         try
         {
@@ -408,13 +409,13 @@ public class Program
             
             if (!File.Exists(flagPath))
             {
-                Console.WriteLine("[INFO] No self-update pending. Nothing to do.");
+                ConsoleLogger.Info("No self-update pending. Nothing to do.");
                 return 0;
             }
 
             // Read the self-update metadata
             var flagData = File.ReadAllText(flagPath);
-            Console.WriteLine("[INFO] Self-update metadata found:");
+            ConsoleLogger.Info("Self-update metadata found:");
             
             // Parse and display metadata
             var lines = flagData.Split('\n');
@@ -447,20 +448,20 @@ public class Program
 
             if (string.IsNullOrEmpty(localFile))
             {
-                Console.WriteLine("[ERROR] Self-update metadata missing LocalFile information");
+                ConsoleLogger.Error("Self-update metadata missing LocalFile information");
                 return 1;
             }
 
             Console.WriteLine();
-            Console.WriteLine($"[INFO] Would execute: {installerType} installer at {localFile}");
-            Console.WriteLine("[WARNING] Full self-update execution is not yet implemented in C# version.");
-            Console.WriteLine("[INFO] For now, please run the Go version or manually install the update.");
+            ConsoleLogger.Info($"Would execute: {installerType} installer at {localFile}");
+            ConsoleLogger.Warn("Full self-update execution is not yet implemented in C# version.");
+            ConsoleLogger.Info("For now, please run the Go version or manually install the update.");
 
             return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] Self-update failed: {ex.Message}");
+            ConsoleLogger.Error($"Self-update failed: {ex.Message}");
             return 1;
         }
     }

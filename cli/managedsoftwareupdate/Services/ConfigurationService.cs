@@ -1,6 +1,7 @@
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -52,7 +53,7 @@ public class ConfigurationService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[ERROR] Failed to load configuration from {path}: {ex.Message}");
+            ConsoleLogger.Error($"Failed to load configuration from {path}: {ex.Message}");
             return GetDefaultConfig();
         }
     }

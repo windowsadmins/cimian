@@ -173,14 +173,14 @@ public class SessionLogger : IDisposable
                 _runLogFile?.WriteLine(formattedLine);
                 _reportRunLog?.WriteLine(formattedLine);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.Error.WriteLine($"[ERROR] Failed to write to log files: {ex.Message}");
+                // Silent failure - don't spam console with log file errors
             }
         }
 
-        // Also write to console
-        Console.WriteLine(formattedLine);
+        // Note: Console output is handled separately by ConsoleLogger
+        // SessionLogger only writes to log files
     }
 
     /// <summary>

@@ -3,6 +3,7 @@ using System.Text;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -81,12 +82,12 @@ public class ManifestService
         await ProcessManifestAsync(clientIdentifier, items, processedManifests, pendingConditionals);
 
         // Log collected catalogs before processing conditionals
-        Console.WriteLine($"[DEBUG] Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
+        ConsoleLogger.Debug($"Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
 
         // PASS 2: Now process all conditional items with full catalog context
         foreach (var (conditionalItems, sourceManifest) in pendingConditionals)
         {
-            Console.WriteLine($"[DEBUG] Processing {conditionalItems.Count} conditional items from {sourceManifest}");
+            ConsoleLogger.Debug($"Processing {conditionalItems.Count} conditional items from {sourceManifest}");
             var conditionalResults = ProcessConditionalItems(conditionalItems, sourceManifest);
             items.AddRange(conditionalResults);
         }
@@ -169,7 +170,7 @@ public class ManifestService
                     // Add catalogs to config FIRST (before processing anything else)
                     if (manifest.Catalogs != null && manifest.Catalogs.Count > 0)
                     {
-                        Console.WriteLine($"[DEBUG] Processing catalogs from manifest {manifestName}: [{string.Join(", ", manifest.Catalogs)}]");
+                        ConsoleLogger.Debug($"Processing catalogs from manifest {manifestName}: [{string.Join(", ", manifest.Catalogs)}]");
                         foreach (var catalog in manifest.Catalogs)
                         {
                             if (!_config.Catalogs.Contains(catalog))
@@ -233,7 +234,7 @@ public class ManifestService
             // Evaluate the condition
             if (EvaluateCondition(conditional.Condition))
             {
-                Console.WriteLine($"[DEBUG] Conditional item matched: {conditional.Condition}");
+                ConsoleLogger.Debug($"Conditional item matched: {conditional.Condition}");
                 
                 // Add managed_installs from this conditional
                 if (conditional.ManagedInstalls != null)
@@ -297,7 +298,7 @@ public class ManifestService
             }
             else
             {
-                Console.WriteLine($"[DEBUG] Conditional item did not match: {conditional.Condition}");
+                ConsoleLogger.Debug($"Conditional item did not match: {conditional.Condition}");
             }
         }
         
@@ -344,14 +345,14 @@ public class ManifestService
         
         if (actualValue == null)
         {
-            Console.WriteLine($"[WARNING] Unknown fact key: {key}");
+            ConsoleLogger.Warn($"Unknown fact key: {key}");
             return false;
         }
         
         // Handle array comparison (like catalogs)
         if (actualValue is List<string> list)
         {
-            Console.WriteLine($"[DEBUG] Comparing array [{string.Join(", ", list)}] with '{expectedValue}'");
+            ConsoleLogger.Debug($"Comparing array [{string.Join(", ", list)}] with '{expectedValue}'");
             if (isEquals)
             {
                 return list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
