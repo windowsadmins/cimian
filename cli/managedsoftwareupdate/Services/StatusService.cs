@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Models;
+using Cimian.Core.Services;
 using Microsoft.Win32;
 
 // Resolve ambiguous references between CLI and Core models
@@ -90,6 +91,9 @@ public class StatusService
     /// </summary>
     public StatusCheckResult CheckStatus(CatalogItem item, string action, string cachePath)
     {
+        // Go parity: Log CheckStatus starting with full context
+        ConsoleLogger.Debug($"CheckStatus starting item: {item.Name} installType: {action} OnDemand: false");
+        
         var result = new StatusCheckResult
         {
             Status = "unknown",
@@ -105,6 +109,7 @@ public class StatusService
             {
                 var runningVersion = GetRunningVersion();
                 var catalogVersion = item.Version;
+                ConsoleLogger.Detail($"Self-update check: {item.Name} running: {runningVersion} catalog: {catalogVersion}");
                 
                 // Compare versions: only update if catalog version > running version
                 var comparison = CatalogService.CompareVersions(catalogVersion, runningVersion);
@@ -112,6 +117,7 @@ public class StatusService
                 if (comparison <= 0)
                 {
                     // Running version is same or newer than catalog - no update needed
+                    ConsoleLogger.Detail($"Self-update current: {item.Name} (running {runningVersion} >= catalog {catalogVersion})");
                     result.Status = "installed";
                     result.Reason = $"Running version {runningVersion} >= catalog version {catalogVersion}";
                     result.ReasonCode = StatusReasonCode.SelfUpdateCurrent;
@@ -119,28 +125,36 @@ public class StatusService
                     result.InstalledVersion = runningVersion;
                     return result;
                 }
+                ConsoleLogger.Info($"Self-update available: {item.Name} (running {runningVersion} < catalog {catalogVersion})");
                 // Otherwise fall through to normal checks
             }
 
             // Priority 1: Check installcheck_script if defined (Go parity - runs before anything else)
             if (!string.IsNullOrEmpty(item.InstallcheckScript))
             {
+                ConsoleLogger.Info($"Checking status via installcheck_script item: {item.Name}");
                 return CheckInstallcheckScript(item);
             }
 
             // Priority 2: Check installs array if present (Go parity - file/hash verification)
             if (item.Installs != null && item.Installs.Count > 0)
             {
+                ConsoleLogger.Info($"Checking installs array for file verification item: {item.Name} installsCount: {item.Installs.Count}");
                 var installsResult = CheckInstallsArray(item);
                 if (installsResult.NeedsAction)
                 {
+                    ConsoleLogger.Info($"File verification failed - reinstallation required item: {item.Name}");
+                    ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                     return installsResult;
                 }
+                ConsoleLogger.Debug($"Installation verification checks passed, no action needed item: {item.Name}");
+                ConsoleLogger.Debug($"File verification passed - no update needed item: {item.Name}");
                 // If installs array verification passed, item is installed
                 result.Status = "installed";
                 result.Reason = "Installs array verification passed";
                 result.ReasonCode = StatusReasonCode.FileMatch;
                 result.DetectionMethod = DetectionMethod.InstallsArray;
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                 return result;
             }
 
@@ -195,10 +209,12 @@ public class StatusService
             // Go parity: If no checks are defined and no installs array, 
             // assume item doesn't need action (it may not have verification methods)
             // Don't fall back to ManagedInstalls registry as Go doesn't do this
+            ConsoleLogger.Debug($"No file tracking needed - registry/product code verification sufficient item: {item.Name}");
             result.Status = "installed";
             result.Reason = "No explicit checks defined - assuming installed";
             result.ReasonCode = StatusReasonCode.NoChecks;
             result.DetectionMethod = DetectionMethod.None;
+            ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
             return result;
         }
         catch (Exception ex)
@@ -231,6 +247,8 @@ public class StatusService
             var scriptService = new ScriptService();
             var (success, output) = scriptService.ExecuteScriptAsync(item.InstallcheckScript!).Result;
 
+            ConsoleLogger.Debug($"InstallCheckScript output stdout: {output?.Trim()} stderr:  error: <nil>");
+
             // Go behavior: exit code 0 = needs install, exit code 1 = does not need install
             if (success) // exit 0
             {
@@ -241,12 +259,14 @@ public class StatusService
                 result.IsUpdate = hasRegistryEntry;
                 result.Reason = $"installcheck_script returned 0 (install needed): {output}";
                 result.ReasonCode = StatusReasonCode.InstallcheckNeeded;
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
             }
             else // exit non-zero (typically 1)
             {
                 result.Status = "installed";
                 result.Reason = "installcheck_script returned non-zero (no install needed)";
                 result.ReasonCode = StatusReasonCode.ScriptConfirmed;
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
             }
         }
         catch (Exception ex)
@@ -275,6 +295,9 @@ public class StatusService
             TargetVersion = item.Version
         };
 
+        // Go parity: Read the ManagedInstalls registry version first
+        var registryVersion = GetManagedInstallsVersion(item.Name);
+
         foreach (var installItem in item.Installs)
         {
             switch (installItem.Type?.ToLowerInvariant())
@@ -282,8 +305,10 @@ public class StatusService
                 case "file":
                     if (!string.IsNullOrEmpty(installItem.Path))
                     {
+                        ConsoleLogger.Debug($"Checking file exists: {installItem.Path}");
                         if (!File.Exists(installItem.Path))
                         {
+                            ConsoleLogger.Info($"File not found item: {item.Name} path: {installItem.Path}");
                             // File missing - check if this is a new install or update
                             var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
                             result.Status = "pending";
@@ -298,9 +323,11 @@ public class StatusService
                         // File exists - check MD5 if specified
                         if (!string.IsNullOrEmpty(installItem.Md5Checksum))
                         {
+                            ConsoleLogger.Debug($"Verifying hash for: {installItem.Path}");
                             var actualMd5 = CalculateMD5(installItem.Path);
                             if (!actualMd5.Equals(installItem.Md5Checksum, StringComparison.OrdinalIgnoreCase))
                             {
+                                ConsoleLogger.Info($"Installs array verification failed - hash mismatch, reinstallation needed item: {item.Name} path: {installItem.Path} localHash: {actualMd5} expectedHash: {installItem.Md5Checksum}");
                                 result.Status = "pending";
                                 result.NeedsAction = true;
                                 result.IsUpdate = true; // File exists but hash mismatch = update
@@ -309,6 +336,12 @@ public class StatusService
                                 result.DetectionMethod = DetectionMethod.File;
                                 return result;
                             }
+                            ConsoleLogger.Info($"Hash verification passed item: {item.Name} path: {installItem.Path} hash: {actualMd5}");
+                        }
+                        else
+                        {
+                            // Go parity: File exists but no hash specified
+                            ConsoleLogger.Debug($"File exists (no hash check) item: {item.Name} path: {installItem.Path}");
                         }
                     }
                     break;
@@ -316,8 +349,10 @@ public class StatusService
                 case "directory":
                     if (!string.IsNullOrEmpty(installItem.Path))
                     {
+                        ConsoleLogger.Debug($"Checking directory exists: {installItem.Path}");
                         if (!Directory.Exists(installItem.Path))
                         {
+                            ConsoleLogger.Info($"Directory not found item: {item.Name} path: {installItem.Path}");
                             var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
                             result.Status = "pending";
                             result.NeedsAction = true;
@@ -327,14 +362,18 @@ public class StatusService
                             result.DetectionMethod = DetectionMethod.Directory;
                             return result;
                         }
+                        ConsoleLogger.Debug($"Directory exists item: {item.Name} path: {installItem.Path}");
                     }
                     break;
 
                 case "msi":
                     if (!string.IsNullOrEmpty(installItem.ProductCode))
                     {
-                        if (!IsMsiInstalled(installItem.ProductCode))
+                        ConsoleLogger.Debug($"Checking MSI product code: {installItem.ProductCode}");
+                        var (msiInstalled, msiVersion) = CheckMsiProductWithVersion(installItem.ProductCode);
+                        if (!msiInstalled)
                         {
+                            ConsoleLogger.Info($"MSI product not installed item: {item.Name} productCode: {installItem.ProductCode}");
                             var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
                             result.Status = "pending";
                             result.NeedsAction = true;
@@ -344,6 +383,8 @@ public class StatusService
                             result.DetectionMethod = DetectionMethod.Msi;
                             return result;
                         }
+                        ConsoleLogger.Debug($"Found MSI product in registry productCode: {installItem.ProductCode} version: {msiVersion}");
+                        ConsoleLogger.Info($"MSI verification passed item: {item.Name} productCode: {installItem.ProductCode} version: {msiVersion}");
                     }
                     break;
             }
@@ -352,6 +393,28 @@ public class StatusService
         result.Reason = $"All {item.Installs.Count} install checks passed";
         result.ReasonCode = StatusReasonCode.FileMatch;
         return result;
+    }
+
+    /// <summary>
+    /// Check if an MSI product is installed and return its version
+    /// </summary>
+    private (bool installed, string? version) CheckMsiProductWithVersion(string productCode)
+    {
+        var views = new[] { RegistryView.Registry64, RegistryView.Registry32 };
+        
+        foreach (var view in views)
+        {
+            using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+            var registryPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\" + productCode;
+            using var uninstallKey = baseKey.OpenSubKey(registryPath);
+            if (uninstallKey != null)
+            {
+                var displayVersion = uninstallKey.GetValue("DisplayVersion")?.ToString();
+                ConsoleLogger.Debug($"Found MSI product in {(view == RegistryView.Registry64 ? "64-bit" : "32-bit")} registry productCode: {productCode} registryPath: {registryPath} version: {displayVersion}");
+                return (true, displayVersion);
+            }
+        }
+        return (false, null);
     }
 
     /// <summary>
@@ -376,13 +439,24 @@ public class StatusService
     /// </summary>
     private string? GetManagedInstallsVersion(string itemName)
     {
+        ConsoleLogger.Debug($"Reading local installed version from registry (if any) item: {itemName}");
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\ManagedInstalls\{itemName}");
-            return key?.GetValue("version")?.ToString();
+            var version = key?.GetValue("version")?.ToString();
+            if (!string.IsNullOrEmpty(version))
+            {
+                ConsoleLogger.Info($"Found Cimian-managed registry version item: {itemName} registryVersion: {version}");
+            }
+            else
+            {
+                ConsoleLogger.Debug($"No registry version found, returning empty item: {itemName}");
+            }
+            return version;
         }
-        catch
+        catch (Exception ex)
         {
+            ConsoleLogger.Debug($"No Cimian version found in registry or error reading it item: {itemName} error: {ex.Message}");
             return null;
         }
     }
@@ -419,6 +493,7 @@ public class StatusService
 
     private StatusCheckResult CheckRegistryStatus(CatalogItem item)
     {
+        ConsoleLogger.Debug($"Checking registry for: {item.Name}");
         var result = new StatusCheckResult
         {
             DetectionMethod = DetectionMethod.Registry,
@@ -451,6 +526,7 @@ public class StatusService
                         displayName.Contains(regCheck.Name!, StringComparison.OrdinalIgnoreCase))
                     {
                         // Found the item - it's installed
+                        ConsoleLogger.Info($"Partial registry match found item: {item.Name} registryEntry: {displayName} registryVersion: {displayVersion}");
                         result.Status = "installed";
                         result.Reason = $"Found {displayName} version {displayVersion} in registry";
                         result.ReasonCode = StatusReasonCode.RegistryMatch;
@@ -464,12 +540,23 @@ public class StatusService
 
                             if (comparison > 0)
                             {
+                                ConsoleLogger.Info($"Update available for {item.Name}: {displayVersion} -> {item.Version}");
+                                ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                                 result.Status = "pending";
                                 result.NeedsAction = true;
                                 result.IsUpdate = true; // Item is installed but needs update
                                 result.Reason = $"Update available: {displayVersion} -> {item.Version}";
                                 result.ReasonCode = StatusReasonCode.UpdateAvailable;
                             }
+                            else
+                            {
+                                ConsoleLogger.Debug($"Version current - no update needed item: {item.Name} version: {displayVersion}");
+                                ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
+                            }
+                        }
+                        else
+                        {
+                            ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                         }
 
                         return result;
@@ -478,6 +565,8 @@ public class StatusService
             }
 
             // Not found - new install
+            ConsoleLogger.Debug($"Registry entry not found: {regCheck.Name}");
+            ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
             result.Status = "pending";
             result.NeedsAction = true;
             result.IsUpdate = false; // Not installed - new install
@@ -486,6 +575,7 @@ public class StatusService
         }
         catch (Exception ex)
         {
+            ConsoleLogger.Debug($"Registry check failed item: {item.Name} error: {ex.Message}");
             result.Status = "error";
             result.Reason = $"Registry check failed: {ex.Message}";
             result.ReasonCode = StatusReasonCode.CheckFailed;
@@ -503,11 +593,14 @@ public class StatusService
             TargetVersion = item.Version
         };
         var fileCheck = item.Check.File!;
+        ConsoleLogger.Debug($"Checking file status item: {item.Name} path: {fileCheck.Path}");
 
         try
         {
             if (!File.Exists(fileCheck.Path))
             {
+                ConsoleLogger.Debug($"File not found item: {item.Name} path: {fileCheck.Path}");
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = false; // File doesn't exist - new install
@@ -516,6 +609,7 @@ public class StatusService
                 return result;
             }
 
+            ConsoleLogger.Debug($"File exists item: {item.Name} path: {fileCheck.Path}");
             result.Status = "installed";
             result.Reason = $"File exists: {fileCheck.Path}";
             result.ReasonCode = StatusReasonCode.FileMatch;
@@ -525,6 +619,7 @@ public class StatusService
             {
                 var fileVersion = GetFileVersion(fileCheck.Path);
                 result.InstalledVersion = fileVersion;
+                ConsoleLogger.Debug($"File version check item: {item.Name} installedVersion: {fileVersion} catalogVersion: {fileCheck.Version}");
                 
                 if (!string.IsNullOrEmpty(fileVersion))
                 {
@@ -533,6 +628,8 @@ public class StatusService
 
                     if (comparison > 0)
                     {
+                        ConsoleLogger.Info($"Update available for {item.Name}: {fileVersion} -> {fileCheck.Version}");
+                        ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                         result.Status = "pending";
                         result.NeedsAction = true;
                         result.IsUpdate = true; // File exists but needs version update
@@ -541,17 +638,26 @@ public class StatusService
                     }
                     else
                     {
+                        ConsoleLogger.Debug($"File version OK item: {item.Name} version: {fileVersion}");
+                        ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                         result.Reason = $"File at {fileCheck.Path} verified at version {fileVersion}";
                     }
+                }
+                else
+                {
+                    ConsoleLogger.Debug($"No version info available in file item: {item.Name}");
                 }
             }
 
             // Check hash if specified
             if (!string.IsNullOrEmpty(fileCheck.Hash))
             {
+                ConsoleLogger.Debug($"Verifying hash item: {item.Name} path: {fileCheck.Path}");
                 var actualHash = DownloadService.CalculateSHA256(fileCheck.Path);
                 if (!actualHash.Equals(fileCheck.Hash, StringComparison.OrdinalIgnoreCase))
                 {
+                    ConsoleLogger.Debug($"Hash mismatch item: {item.Name} expected: {fileCheck.Hash.Substring(0, 12)}... got: {actualHash.Substring(0, 12)}...");
+                    ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                     result.Status = "pending";
                     result.NeedsAction = true;
                     result.IsUpdate = true; // File exists but hash mismatch - reinstall/update
@@ -560,12 +666,19 @@ public class StatusService
                 }
                 else
                 {
+                    ConsoleLogger.Debug($"Hash verification passed item: {item.Name}");
+                    ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                     result.ReasonCode = StatusReasonCode.HashMatch;
                 }
+            }
+            else if (result.Status == "installed")
+            {
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
             }
         }
         catch (Exception ex)
         {
+            ConsoleLogger.Debug($"File check failed item: {item.Name} error: {ex.Message}");
             result.Status = "error";
             result.Reason = $"File check failed: {ex.Message}";
             result.ReasonCode = StatusReasonCode.CheckFailed;
@@ -582,15 +695,20 @@ public class StatusService
             DetectionMethod = DetectionMethod.Script,
             TargetVersion = item.Version
         };
+        ConsoleLogger.Debug($"Running check script for item: {item.Name}");
 
         try
         {
             var scriptService = new ScriptService();
             var (success, output) = scriptService.ExecuteScriptAsync(item.Check.Script!).Result;
 
+            ConsoleLogger.Debug($"Check script output stdout: {output?.Trim()} stderr:  error: <nil>");
+
             if (success)
             {
                 // Script returned success = installed
+                ConsoleLogger.Debug($"Check script returned success item: {item.Name}");
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                 result.Status = "installed";
                 result.Reason = "Check script returned success (exit 0)";
                 result.ReasonCode = StatusReasonCode.ScriptConfirmed;
@@ -598,6 +716,8 @@ public class StatusService
             else
             {
                 // Script returned failure = needs install
+                ConsoleLogger.Debug($"Check script indicates install needed item: {item.Name} output: {output}");
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.Reason = $"Check script indicates installation needed: {output}";
@@ -606,6 +726,7 @@ public class StatusService
         }
         catch (Exception ex)
         {
+            ConsoleLogger.Debug($"Check script failed item: {item.Name} error: {ex.Message}");
             result.Status = "error";
             result.Reason = $"Check script failed: {ex.Message}";
             result.ReasonCode = StatusReasonCode.ScriptError;
@@ -622,6 +743,7 @@ public class StatusService
             DetectionMethod = DetectionMethod.ManagedInstalls,
             TargetVersion = item.Version
         };
+        ConsoleLogger.Detail($"Checking ManagedInstalls registry item: {item.Name}");
 
         try
         {
@@ -630,6 +752,7 @@ public class StatusService
 
             if (key == null)
             {
+                ConsoleLogger.Debug($"ManagedInstalls registry key not found item: {item.Name}");
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = false; // Not registered - new install
@@ -640,9 +763,11 @@ public class StatusService
 
             var installedVersion = key.GetValue("Version")?.ToString();
             result.InstalledVersion = installedVersion;
+            ConsoleLogger.Detail($"Found ManagedInstalls registry item: {item.Name} installedVersion: {installedVersion}");
             
             if (string.IsNullOrEmpty(installedVersion))
             {
+                ConsoleLogger.Debug($"ManagedInstalls version empty item: {item.Name}");
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = false; // No version = new install
@@ -659,15 +784,21 @@ public class StatusService
             var comparison = CatalogService.CompareVersions(item.Version, installedVersion);
             if (comparison > 0)
             {
+                ConsoleLogger.Info($"Update available for {item.Name}: {installedVersion} -> {item.Version}");
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = true; // Has version but needs update
                 result.Reason = $"Update available: {installedVersion} -> {item.Version}";
                 result.ReasonCode = StatusReasonCode.UpdateAvailable;
             }
+            else
+            {
+                ConsoleLogger.Debug($"Version current item: {item.Name} version: {installedVersion}");
+            }
         }
         catch (Exception ex)
         {
+            ConsoleLogger.Debug($"ManagedInstalls check failed item: {item.Name} error: {ex.Message}");
             result.Status = "error";
             result.Reason = $"ManagedInstalls status check failed: {ex.Message}";
             result.ReasonCode = StatusReasonCode.CheckFailed;

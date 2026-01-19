@@ -3,6 +3,7 @@ using System.Text;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -67,15 +68,19 @@ public class CatalogService
         var items = new Dictionary<string, CatalogItem>(StringComparer.OrdinalIgnoreCase);
         var catalogs = _config.Catalogs.Count > 0 ? _config.Catalogs : new List<string> { "Production" };
         var sysArch = GetSystemArchitecture();
+        ConsoleLogger.Info($"    Loading catalogs catalogCount: {catalogs.Count} systemArch: {sysArch}");
 
         foreach (var catalogName in catalogs)
         {
+            ConsoleLogger.Info($"    Downloading catalog: {catalogName}");
             var catalogItems = await DownloadCatalogAsync(catalogName);
+            ConsoleLogger.Info($"    Downloaded catalog: {catalogName} itemCount: {catalogItems.Count}");
             foreach (var item in catalogItems)
             {
                 // Filter by architecture first (Go parity)
                 if (!SupportsArchitecture(item, sysArch))
                 {
+                    ConsoleLogger.Debug($"Skipping item (arch mismatch) item: {item.Name} arch: {string.Join(",", item.SupportedArch ?? new List<string>())} sysArch: {sysArch}");
                     continue;
                 }
                 
@@ -84,7 +89,19 @@ public class CatalogService
                 if (!items.ContainsKey(key) || 
                     CompareVersions(item.Version, items[key].Version) > 0)
                 {
+                    if (items.ContainsKey(key))
+                    {
+                        ConsoleLogger.Debug($"Replaced catalog item name: {item.Name} oldVersion: {items[key].Version} newVersion: {item.Version}");
+                    }
+                    else
+                    {
+                        ConsoleLogger.Debug($"Added catalog item name: {item.Name} version: {item.Version} arch: {string.Join(" ", item.SupportedArch ?? new List<string>())}");
+                    }
                     items[key] = item;
+                }
+                else
+                {
+                    ConsoleLogger.Debug($"Kept existing catalog item name: {item.Name} existingVersion: {items[key].Version} skippedVersion: {item.Version}");
                 }
             }
         }
@@ -100,6 +117,7 @@ public class CatalogService
         var items = new List<CatalogItem>();
         var catalogUrl = $"{_config.SoftwareRepoURL.TrimEnd('/')}/catalogs/{catalogName}.yaml";
         var localPath = Path.Combine(_config.CatalogsPath, $"{catalogName}.yaml");
+        ConsoleLogger.Debug($"Starting download url: {catalogUrl} destination: {localPath}");
 
         try
         {
@@ -107,6 +125,7 @@ public class CatalogService
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
+                ConsoleLogger.Debug($"Download completed to temp file tempFile: {localPath}.downloading size: {content.Length}");
                 
                 // Save locally
                 var dir = Path.GetDirectoryName(localPath);
@@ -115,20 +134,25 @@ public class CatalogService
                     Directory.CreateDirectory(dir);
                 }
                 await File.WriteAllTextAsync(localPath, content);
+                ConsoleLogger.Debug($"File saved successfully file: {localPath} size: {content.Length}");
+                ConsoleLogger.Debug($"Download completed successfully file: {localPath}");
+                ConsoleLogger.Debug($"Downloaded catalog: {catalogName}");
 
                 items = ParseCatalog(content);
             }
             else
             {
-                Console.Error.WriteLine($"[WARNING] Failed to download catalog {catalogName}: {response.StatusCode}");
+                ConsoleLogger.Warn($"Failed to download catalog {catalogName}: {response.StatusCode}");
                 // Try to load from local cache
+                ConsoleLogger.Info($"    Falling back to local cache: {localPath}");
                 items = LoadLocalCatalog(localPath);
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[WARNING] Error downloading catalog {catalogName}: {ex.Message}");
+            ConsoleLogger.Warn($"Error downloading catalog {catalogName}: {ex.Message}");
             // Try to load from local cache
+            ConsoleLogger.Info($"    Falling back to local cache: {localPath}");
             items = LoadLocalCatalog(localPath);
         }
 
@@ -142,17 +166,21 @@ public class CatalogService
     {
         if (!File.Exists(path))
         {
+            ConsoleLogger.Debug($"    Local catalog not found: {path}");
             return new List<CatalogItem>();
         }
 
         try
         {
+            ConsoleLogger.Debug($"    Loading local catalog: {path}");
             var yaml = File.ReadAllText(path);
-            return ParseCatalog(yaml);
+            var items = ParseCatalog(yaml);
+            ConsoleLogger.Debug($"    Loaded local catalog itemCount: {items.Count}");
+            return items;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[WARNING] Failed to load local catalog {path}: {ex.Message}");
+            ConsoleLogger.Warn($"Failed to load local catalog {path}: {ex.Message}");
             return new List<CatalogItem>();
         }
     }

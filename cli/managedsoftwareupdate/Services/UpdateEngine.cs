@@ -406,7 +406,7 @@ public class UpdateEngine : IDisposable
         var sysArch = StatusService.GetSystemArchitecture();
 
         // Log manifest and catalog stats for debugging
-        LogDebug($"IdentifyActions: {manifestItems.Count} manifest items, {catalogMap.Count} catalog items");
+        ConsoleLogger.Detail($"    IdentifyActions: {manifestItems.Count} manifest items, {catalogMap.Count} catalog items");
 
         foreach (var item in manifestItems)
         {
@@ -418,14 +418,14 @@ public class UpdateEngine : IDisposable
             {
                 // Go behavior: items not in catalog with action=install are new installs
                 // But we need the catalog item for installation - log this discrepancy
-                LogDebug($"Item not in catalog: {item.Name} (action: {item.Action})");
+                ConsoleLogger.Detail($"    Item not in catalog: {item.Name} (action: {item.Action})");
                 continue;
             }
 
             // Check architecture compatibility
             if (!CatalogService.SupportsArchitecture(catalogItem, sysArch))
             {
-                LogInfo($"Skipping {item.Name}: architecture mismatch (system: {sysArch}, item version: {catalogItem.Version}, item arch: [{string.Join(",", catalogItem.SupportedArch)}])");
+                ConsoleLogger.Info($"Skipping {item.Name}: architecture mismatch (system: {sysArch}, item version: {catalogItem.Version}, item arch: [{string.Join(",", catalogItem.SupportedArch)}])");
                 continue;
             }
 
@@ -435,7 +435,7 @@ public class UpdateEngine : IDisposable
                 case "update":
                     // Go treats both install and update actions the same - calls CheckStatus
                     var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
-                    LogDebug($"CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
+                    ConsoleLogger.Detail($"    CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
                     
                     // Log status check event with full reason tracking
                     _sessionLogger?.LogStatusCheck(
@@ -453,7 +453,7 @@ public class UpdateEngine : IDisposable
                         // Go doesn't distinguish - all items needing action go to toUpdate
                         // unless they are truly new (not in catalog, which we already handled)
                         toUpdate.Add(catalogItem);
-                        LogDebug($"  -> Adding to toUpdate");
+                        ConsoleLogger.Info($"    -> Adding to toUpdate");
                     }
                     break;
 
@@ -467,7 +467,7 @@ public class UpdateEngine : IDisposable
                 case "profile":
                 case "app":
                     // External MDM management - skip
-                    LogDebug($"Skipping external item: {item.Name} (action: {item.Action})");
+                    ConsoleLogger.Detail($"    Skipping external item: {item.Name} (action: {item.Action})");
                     break;
             }
         }
@@ -498,7 +498,7 @@ public class UpdateEngine : IDisposable
             .Select(m => m.Name)
             .ToList();
         
-        LogDebug($"Items to check for update_for: {string.Join(", ", installListNames.Take(10))}...");
+        LogDetail($"    Items to check for update_for: {string.Join(", ", installListNames.Take(10))}...");
         
         // Look for update_for items for each item in the install list
         foreach (var itemName in installListNames)
@@ -507,7 +507,7 @@ public class UpdateEngine : IDisposable
             
             if (updateList.Count > 0)
             {
-                LogDebug($"Found update_for items for {itemName}: {string.Join(", ", updateList)}");
+                LogDetail($"    Found update_for items for {itemName}: {string.Join(", ", updateList)}");
             }
             
             foreach (var updateItemName in updateList)
@@ -517,14 +517,14 @@ public class UpdateEngine : IDisposable
                 // Skip if already in manifest
                 if (existingNames.Contains(updateKey))
                 {
-                    LogDebug($"Skipping {updateItemName} - already in manifest");
+                    LogDetail($"    Skipping {updateItemName} - already in manifest");
                     continue;
                 }
                 
                 // Get the update item from catalog
                 if (!catalogMap.TryGetValue(updateKey, out var updateItem))
                 {
-                    LogDebug($"Skipping {updateItemName} - not found in catalog");
+                    LogDetail($"    Skipping {updateItemName} - not found in catalog");
                     continue;
                 }
                 
@@ -622,7 +622,7 @@ public class UpdateEngine : IDisposable
             // Skip if already processed (may have been installed as a dependency)
             if (installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
             {
-                LogDebug($"Skipping {item.Name}: already installed as dependency");
+                LogDetail($"Skipping {item.Name}: already installed as dependency");
                 successCount++;
                 continue;
             }
@@ -668,7 +668,7 @@ public class UpdateEngine : IDisposable
         Dictionary<string, string> downloadedPaths,
         CancellationToken cancellationToken)
     {
-        LogDebug($"ProcessInstallWithDependencies: {itemName}");
+        LogDetail($"ProcessInstallWithDependencies: {itemName}");
 
         // Get the item from catalog
         var key = itemName.ToLowerInvariant();
@@ -690,7 +690,7 @@ public class UpdateEngine : IDisposable
         // Check and install requires dependencies first
         if (item.Requires.Count > 0)
         {
-            LogDebug($"Processing requires dependencies for {itemName}: {string.Join(", ", item.Requires)}");
+            LogDetail($"Processing requires dependencies for {itemName}: {string.Join(", ", item.Requires)}");
             var missingDeps = CatalogService.CheckDependencies(item, installedItems, scheduledItems);
 
             if (missingDeps.Count > 0)
@@ -737,7 +737,7 @@ public class UpdateEngine : IDisposable
                     scheduledItems.Add(dep);
                 }
 
-                LogDebug($"Successfully processed dependency: {dep} (for {itemName})");
+                LogDetail($"Successfully processed dependency: {dep} (for {itemName})");
             }
         }
 
@@ -814,7 +814,7 @@ public class UpdateEngine : IDisposable
         var updateList = CatalogService.LookForUpdates(item.Name, _catalogMap);
         if (updateList.Count > 0)
         {
-            LogDebug($"Found {updateList.Count} update_for items for {item.Name}: {string.Join(", ", updateList)}");
+            LogDetail($"Found {updateList.Count} update_for items for {item.Name}: {string.Join(", ", updateList)}");
         }
 
         foreach (var updateItemName in updateList)
@@ -847,7 +847,7 @@ public class UpdateEngine : IDisposable
                 }
                 else
                 {
-                    LogDebug($"Update item {updateItemName} doesn't need action: {status.Reason}");
+                    LogDetail($"Update item {updateItemName} doesn't need action: {status.Reason}");
                 }
             }
         }
@@ -865,7 +865,7 @@ public class UpdateEngine : IDisposable
         List<string> installedItems,
         CancellationToken cancellationToken)
     {
-        LogDebug($"ProcessUninstallWithDependencies: {itemName}");
+        LogDetail($"ProcessUninstallWithDependencies: {itemName}");
 
         // Find items that require this item
         var dependentItems = CatalogService.FindItemsRequiring(itemName, _catalogMap);
@@ -940,7 +940,7 @@ public class UpdateEngine : IDisposable
             // Skip if already removed (may have been removed as a dependent)
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
             {
-                LogDebug($"Skipping {item.Name}: already removed as dependent");
+                LogDetail($"Skipping {item.Name}: already removed as dependent");
                 successCount++;
                 continue;
             }
@@ -1020,6 +1020,11 @@ public class UpdateEngine : IDisposable
     private void LogInfo(string message)
     {
         ConsoleLogger.Info(message);
+    }
+
+    private void LogDetail(string message)
+    {
+        ConsoleLogger.Detail(message);
     }
 
     private void LogDebug(string message)
