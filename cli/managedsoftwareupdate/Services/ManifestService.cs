@@ -90,12 +90,12 @@ public class ManifestService
         await ProcessManifestAsync(clientIdentifier, items, processedManifests, pendingConditionals);
 
         // Log collected catalogs before processing conditionals
-        ConsoleLogger.Debug($"Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
+        ConsoleLogger.Info($"    Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
 
         // PASS 2: Now process all conditional items with full catalog context
         foreach (var (conditionalItems, sourceManifest) in pendingConditionals)
         {
-            ConsoleLogger.Debug($"Processing {conditionalItems.Count} conditional items from {sourceManifest}");
+            ConsoleLogger.Info($"    Processing {conditionalItems.Count} conditional items from {sourceManifest}");
             var conditionalResults = ProcessConditionalItems(conditionalItems, sourceManifest);
             items.AddRange(conditionalResults);
         }
@@ -149,20 +149,25 @@ public class ManifestService
         // Avoid infinite loops from circular includes
         if (processedManifests.Contains(manifestName))
         {
+            ConsoleLogger.Debug($"Skipping already-processed manifest: {manifestName}");
             return;
         }
         processedManifests.Add(manifestName);
+        ConsoleLogger.Debug($"Processing manifest originalName: {manifestName} processedName: {manifestName}.yaml");
 
         // Try to download the manifest
         var manifestUrl = $"{_config.SoftwareRepoURL.TrimEnd('/')}/manifests/{manifestName}.yaml";
         var localPath = Path.Combine(_config.ManifestsPath, $"{manifestName}.yaml");
+        ConsoleLogger.Debug($"Downloading manifest url: {manifestUrl} localPath: {localPath}");
 
         try
         {
+            ConsoleLogger.Debug($"Starting download url: {manifestUrl} destination: {localPath}");
             var response = await _httpClient.GetAsync(manifestUrl);
             if (response.IsSuccessStatusCode)
             {
                 var content = await response.Content.ReadAsStringAsync();
+                ConsoleLogger.Debug($"Download completed to temp file tempFile: {localPath}.downloading size: {content.Length}");
                 
                 // Save locally
                 var dir = Path.GetDirectoryName(localPath);
@@ -171,6 +176,10 @@ public class ManifestService
                     Directory.CreateDirectory(dir);
                 }
                 await File.WriteAllTextAsync(localPath, content);
+                ConsoleLogger.Debug($"File saved successfully file: {localPath} size: {content.Length}");
+                ConsoleLogger.Debug($"Download completed successfully file: {localPath}");
+                ConsoleLogger.Debug($"Successfully downloaded manifest url: {manifestUrl}");
+                ConsoleLogger.Debug($"Processed manifest: {Path.GetFileNameWithoutExtension(manifestName)}");
 
                 var manifest = _deserializer.Deserialize<ManifestFile>(content);
                 if (manifest != null)
@@ -178,23 +187,30 @@ public class ManifestService
                     // Add catalogs to config FIRST (before processing anything else)
                     if (manifest.Catalogs != null && manifest.Catalogs.Count > 0)
                     {
-                        ConsoleLogger.Debug($"Processing catalogs from manifest {manifestName}: [{string.Join(", ", manifest.Catalogs)}]");
+                        ConsoleLogger.Debug($"Processing catalogs for manifest manifest: {Path.GetFileNameWithoutExtension(manifestName)} catalogs: [{string.Join(", ", manifest.Catalogs)}]");
                         foreach (var catalog in manifest.Catalogs)
                         {
                             if (!_config.Catalogs.Contains(catalog))
                             {
+                                ConsoleLogger.Debug($"Added catalog to collection catalog: {catalog}");
                                 _config.Catalogs.Add(catalog);
                             }
                         }
+                    }
+                    else
+                    {
+                        ConsoleLogger.Debug($"Processing catalogs for manifest manifest: {Path.GetFileNameWithoutExtension(manifestName)} catalogs: []");
                     }
 
                     // Process included manifests (Munki-like behavior)
                     if (manifest.IncludedManifests != null)
                     {
+                        ConsoleLogger.Debug($"Processing included manifests from {manifestName} count: {manifest.IncludedManifests.Count}");
                         foreach (var include in manifest.IncludedManifests)
                         {
                             // Clean up the include path - normalize slashes and remove .yaml extension
                             var includeName = include.Replace(".yaml", "").Replace("\\", "/");
+                            ConsoleLogger.Debug($"Processing included manifest: {includeName}");
                             
                             // Include paths are relative or absolute manifest references
                             // They should be passed as-is to ProcessManifestAsync
@@ -204,24 +220,26 @@ public class ManifestService
 
                     // Convert to manifest items (excluding conditional items - they're deferred)
                     var manifestItems = ConvertToManifestItems(manifest, manifestName);
+                    ConsoleLogger.Debug($"Processed manifest: {manifestName} itemCount: {manifestItems.Count}");
                     items.AddRange(manifestItems);
                     
                     // DEFER conditional items processing until all manifests are loaded
                     // This ensures catalogs are fully populated before conditional evaluation
                     if (manifest.ConditionalItems != null && manifest.ConditionalItems.Count > 0)
                     {
+                        ConsoleLogger.Info($"    Deferring {manifest.ConditionalItems.Count} conditional items from {manifestName}");
                         pendingConditionals.Add((manifest.ConditionalItems, manifestName));
                     }
                 }
             }
             else
             {
-                Console.Error.WriteLine($"[WARNING] Failed to download manifest {manifestName}: {response.StatusCode}");
+                ConsoleLogger.Warn($"Failed to download manifest {manifestName}: {response.StatusCode}");
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[WARNING] Error processing manifest {manifestName}: {ex.Message}");
+            ConsoleLogger.Warn($"Error processing manifest {manifestName}: {ex.Message}");
         }
     }
 
@@ -242,7 +260,7 @@ public class ManifestService
             // Evaluate the condition
             if (EvaluateCondition(conditional.Condition))
             {
-                ConsoleLogger.Debug($"Conditional item matched: {conditional.Condition}");
+                ConsoleLogger.Info($"    Conditional item matched: {conditional.Condition}");
                 
                 // Add managed_installs from this conditional
                 if (conditional.ManagedInstalls != null)
@@ -306,7 +324,7 @@ public class ManifestService
             }
             else
             {
-                ConsoleLogger.Debug($"Conditional item did not match: {conditional.Condition}");
+                ConsoleLogger.Info($"    Conditional item did not match: {conditional.Condition}");
             }
         }
         
@@ -314,53 +332,201 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Evaluates a simple condition string like "catalogs == Staging" or "arch == x64"
+    /// Evaluates complex condition strings with support for OR/AND operators and DOES_NOT_CONTAIN
+    /// Examples:
+    ///   - "catalogs == Staging"
+    ///   - "arch == x64"  
+    ///   - "hostname CONTAINS Cintiq"
+    ///   - "hostname DOES_NOT_CONTAIN Camera"
+    ///   - "hostname CONTAINS Cintiq-1 OR hostname CONTAINS Cintiq-0"
+    ///   - "hostname DOES_NOT_CONTAIN Camera AND hostname DOES_NOT_CONTAIN ANIM-CAM"
     /// </summary>
     private bool EvaluateCondition(string condition)
     {
-        // Parse simple conditions like "key == value" or "key CONTAINS value"
-        var parts = condition.Split(new[] { "==", "!=", "CONTAINS", "LIKE" }, StringSplitOptions.None);
-        if (parts.Length != 2)
+        if (string.IsNullOrWhiteSpace(condition))
         {
-            Console.WriteLine($"[WARNING] Could not parse condition: {condition}");
+            return true; // No condition means always true
+        }
+
+        var conditionUpper = condition.ToUpperInvariant();
+        
+        // Check for OR operator (case insensitive) - evaluate as ANY match
+        if (conditionUpper.Contains(" OR "))
+        {
+            var parts = SplitOnLogicalOperator(condition, " OR ");
+            ConsoleLogger.Debug($"    Evaluating OR condition with {parts.Count} parts: {condition}");
+            foreach (var part in parts)
+            {
+                if (EvaluateSingleCondition(part.Trim()))
+                {
+                    ConsoleLogger.Debug($"    OR condition matched on: {part.Trim()}");
+                    return true; // Short-circuit on first true
+                }
+            }
+            ConsoleLogger.Debug($"    OR condition did not match any part");
             return false;
         }
         
-        var key = parts[0].Trim().ToLowerInvariant();
-        var expectedValue = parts[1].Trim();
+        // Check for AND operator (case insensitive) - evaluate as ALL must match
+        if (conditionUpper.Contains(" AND "))
+        {
+            var parts = SplitOnLogicalOperator(condition, " AND ");
+            ConsoleLogger.Debug($"    Evaluating AND condition with {parts.Count} parts: {condition}");
+            foreach (var part in parts)
+            {
+                if (!EvaluateSingleCondition(part.Trim()))
+                {
+                    ConsoleLogger.Debug($"    AND condition failed on: {part.Trim()}");
+                    return false; // Short-circuit on first false
+                }
+            }
+            ConsoleLogger.Debug($"    AND condition matched all parts");
+            return true;
+        }
         
-        // Strip surrounding quotes from expected value (handles both "Testing" and Testing)
+        // Single condition
+        return EvaluateSingleCondition(condition);
+    }
+    
+    /// <summary>
+    /// Splits a condition string on a logical operator while preserving quoted strings
+    /// </summary>
+    private List<string> SplitOnLogicalOperator(string condition, string logicalOp)
+    {
+        var results = new List<string>();
+        var opUpper = logicalOp.ToUpperInvariant();
+        var conditionUpper = condition.ToUpperInvariant();
+        
+        var startIndex = 0;
+        var index = conditionUpper.IndexOf(opUpper, StringComparison.Ordinal);
+        
+        while (index != -1)
+        {
+            results.Add(condition.Substring(startIndex, index - startIndex));
+            startIndex = index + opUpper.Length;
+            index = conditionUpper.IndexOf(opUpper, startIndex, StringComparison.Ordinal);
+        }
+        
+        if (startIndex < condition.Length)
+        {
+            results.Add(condition.Substring(startIndex));
+        }
+        
+        return results;
+    }
+    
+    /// <summary>
+    /// Evaluates a single condition (no OR/AND operators)
+    /// </summary>
+    private bool EvaluateSingleCondition(string condition)
+    {
+        if (string.IsNullOrWhiteSpace(condition))
+        {
+            return true;
+        }
+        
+        var conditionUpper = condition.ToUpperInvariant();
+        
+        // Determine the operator - check in order of specificity (longer operators first)
+        string operatorUsed;
+        bool isDoesNotContain = false;
+        bool isContains = false;
+        bool isEquals = false;
+        bool isNotEquals = false;
+        bool isBeginsWith = false;
+        bool isEndsWith = false;
+        
+        if (conditionUpper.Contains("DOES_NOT_CONTAIN"))
+        {
+            operatorUsed = "DOES_NOT_CONTAIN";
+            isDoesNotContain = true;
+        }
+        else if (conditionUpper.Contains("BEGINSWITH"))
+        {
+            operatorUsed = "BEGINSWITH";
+            isBeginsWith = true;
+        }
+        else if (conditionUpper.Contains("ENDSWITH"))
+        {
+            operatorUsed = "ENDSWITH";
+            isEndsWith = true;
+        }
+        else if (conditionUpper.Contains("CONTAINS"))
+        {
+            operatorUsed = "CONTAINS";
+            isContains = true;
+        }
+        else if (condition.Contains("!="))
+        {
+            operatorUsed = "!=";
+            isNotEquals = true;
+        }
+        else if (condition.Contains("=="))
+        {
+            operatorUsed = "==";
+            isEquals = true;
+        }
+        else if (conditionUpper.Contains("LIKE"))
+        {
+            operatorUsed = "LIKE";
+            isContains = true; // LIKE is treated similar to CONTAINS for simple cases
+        }
+        else
+        {
+            ConsoleLogger.Warn($"Unknown operator in condition: {condition}");
+            return false;
+        }
+        
+        // Split on the operator (case insensitive for text operators)
+        int splitIndex;
+        if (operatorUsed == "==" || operatorUsed == "!=")
+        {
+            splitIndex = condition.IndexOf(operatorUsed, StringComparison.Ordinal);
+        }
+        else
+        {
+            splitIndex = conditionUpper.IndexOf(operatorUsed, StringComparison.OrdinalIgnoreCase);
+        }
+        
+        if (splitIndex == -1)
+        {
+            ConsoleLogger.Warn($"Could not find operator in condition: {condition}");
+            return false;
+        }
+        
+        var key = condition.Substring(0, splitIndex).Trim().ToLowerInvariant();
+        var expectedValue = condition.Substring(splitIndex + operatorUsed.Length).Trim();
+        
+        // Strip surrounding quotes from expected value
         if ((expectedValue.StartsWith('"') && expectedValue.EndsWith('"')) ||
             (expectedValue.StartsWith('\'') && expectedValue.EndsWith('\'')))
         {
             expectedValue = expectedValue[1..^1];
         }
         
-        // Determine the operator
-        var isEquals = condition.Contains("==");
-        var isNotEquals = condition.Contains("!=");
-        var isContains = condition.ToUpperInvariant().Contains("CONTAINS");
-        
         // Get the actual value from facts
         object? actualValue = key switch
         {
             "catalogs" => _config.Catalogs,
-            "arch" or "architecture" => Environment.Is64BitOperatingSystem ? "x64" : "x86",
+            "arch" or "architecture" => GetSystemArchitecture(),
             "hostname" => Environment.MachineName,
             "os" or "operatingsystem" => "Windows",
+            "machine_type" => "desktop", // Simplified - could be enhanced
+            "machine_model" => GetMachineModel(),
             _ => null
         };
         
         if (actualValue == null)
         {
-            ConsoleLogger.Warn($"Unknown fact key: {key}");
+            ConsoleLogger.Debug($"    Unknown fact key: {key} (condition may be unsupported)");
             return false;
         }
+        
+        ConsoleLogger.Debug($"    Evaluating: {key} {operatorUsed} '{expectedValue}' (actual: {actualValue})");
         
         // Handle array comparison (like catalogs)
         if (actualValue is List<string> list)
         {
-            ConsoleLogger.Debug($"Comparing array [{string.Join(", ", list)}] with '{expectedValue}'");
             if (isEquals)
             {
                 return list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
@@ -372,6 +538,10 @@ public class ManifestService
             if (isContains)
             {
                 return list.Any(v => v.Contains(expectedValue, StringComparison.OrdinalIgnoreCase));
+            }
+            if (isDoesNotContain)
+            {
+                return !list.Any(v => v.Contains(expectedValue, StringComparison.OrdinalIgnoreCase));
             }
         }
         
@@ -389,8 +559,65 @@ public class ManifestService
         {
             return actualStr.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
         }
+        if (isDoesNotContain)
+        {
+            return !actualStr.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        if (isBeginsWith)
+        {
+            return actualStr.StartsWith(expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+        if (isEndsWith)
+        {
+            return actualStr.EndsWith(expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
         
         return false;
+    }
+    
+    /// <summary>
+    /// Gets the system architecture in a format matching Go behavior
+    /// </summary>
+    private static string GetSystemArchitecture()
+    {
+        // Check PROCESSOR_IDENTIFIER first to detect native ARM64 hardware
+        var procId = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "";
+        if (procId.ToUpperInvariant().Contains("ARM"))
+        {
+            return "arm64";
+        }
+        
+        // Check for WoW64 native architecture
+        var nativeArch = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITEW6432") ?? "";
+        if (!string.IsNullOrEmpty(nativeArch))
+        {
+            return nativeArch.ToUpperInvariant() switch
+            {
+                "AMD64" or "X86_64" => "x64",
+                "ARM64" => "arm64",
+                _ => nativeArch.ToLowerInvariant()
+            };
+        }
+        
+        // Fall back to PROCESSOR_ARCHITECTURE
+        var arch = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") ?? "";
+        return arch.ToUpperInvariant() switch
+        {
+            "AMD64" or "X86_64" => "x64",
+            "X86" or "386" => "x86",
+            "ARM64" => "arm64",
+            _ => Environment.Is64BitOperatingSystem ? "x64" : "x86"
+        };
+    }
+    
+    /// <summary>
+    /// Gets the machine model (for ARM64 Surface detection, etc.)
+    /// </summary>
+    private static string GetMachineModel()
+    {
+        // This would ideally use WMI Win32_ComputerSystem.Model
+        // For now, return a placeholder - can be enhanced later
+        return "Unknown";
     }
 
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)
@@ -492,6 +719,7 @@ public class ManifestService
     {
         var key = itemName.ToLowerInvariant();
         _itemSources[key] = $"{sourceManifest}:{sourceType}";
+        ConsoleLogger.Debug($"Setting item source item: {itemName} sourceManifest: {sourceManifest} sourceType: {sourceType}");
     }
 
     public (string SourceManifest, string SourceType) GetItemSource(string itemName)
