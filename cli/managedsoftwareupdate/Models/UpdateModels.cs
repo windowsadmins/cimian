@@ -192,7 +192,7 @@ public class CatalogItem
     [YamlMember(Alias = "update_for")]
     public List<string> UpdateFor { get; set; } = new();
 
-    [YamlMember(Alias = "blocking_apps")]
+    [YamlMember(Alias = "blocking_applications")]
     public List<string> BlockingApps { get; set; } = new();
 
     [YamlMember(Alias = "minimum_os_version")]
