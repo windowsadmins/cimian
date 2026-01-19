@@ -234,6 +234,82 @@ public class SessionLogger : IDisposable
     }
 
     /// <summary>
+    /// Convenience method to log an installation event with full status reason tracking
+    /// </summary>
+    /// <param name="packageName">Name of the package</param>
+    /// <param name="version">Target version</param>
+    /// <param name="action">Action: install, update, uninstall</param>
+    /// <param name="status">Status: pending, completed, failed</param>
+    /// <param name="message">Human-readable message</param>
+    /// <param name="statusReason">Status reason from detection</param>
+    /// <param name="statusReasonCode">Machine-readable reason code</param>
+    /// <param name="detectionMethod">Detection method used</param>
+    /// <param name="installedVersion">Installed version if detected</param>
+    /// <param name="error">Error message if failed</param>
+    public void LogInstallWithReason(
+        string packageName,
+        string version,
+        string action,
+        string status,
+        string message,
+        string? statusReason = null,
+        string? statusReasonCode = null,
+        string? detectionMethod = null,
+        string? installedVersion = null,
+        string? error = null)
+    {
+        LogEvent(new LogEvent
+        {
+            EventType = "install",
+            PackageName = packageName,
+            PackageVersion = version,
+            TargetVersion = version,
+            Action = action,
+            Status = status,
+            Message = message,
+            Error = error,
+            Level = status == "failed" ? "ERROR" : (status == "completed" ? "INFO" : "DEBUG"),
+            StatusReason = statusReason,
+            StatusReasonCode = statusReasonCode,
+            DetectionMethod = detectionMethod,
+            InstalledVersion = installedVersion
+        });
+    }
+
+    /// <summary>
+    /// Logs a status check event with full reason tracking
+    /// </summary>
+    public void LogStatusCheck(
+        string packageName,
+        string version,
+        string status,
+        string statusReason,
+        string statusReasonCode,
+        string detectionMethod,
+        string? installedVersion = null,
+        bool needsAction = false)
+    {
+        LogEvent(new LogEvent
+        {
+            EventType = "status_check",
+            PackageName = packageName,
+            PackageVersion = version,
+            TargetVersion = version,
+            Status = status,
+            Message = statusReason,
+            Level = "DEBUG",
+            StatusReason = statusReason,
+            StatusReasonCode = statusReasonCode,
+            DetectionMethod = detectionMethod,
+            InstalledVersion = installedVersion,
+            Context = new Dictionary<string, object>
+            {
+                ["needs_action"] = needsAction
+            }
+        });
+    }
+
+    /// <summary>
     /// Ends the current session and writes final summary
     /// </summary>
     public void EndSession(string status, SessionLogSummary summary)
@@ -492,6 +568,45 @@ public class LogEvent
 
     [JsonPropertyName("installer_type")]
     public string? InstallerType { get; set; }
+
+    #region Status Reason Tracking
+
+    /// <summary>
+    /// Human-readable explanation of how status was determined.
+    /// Example: "File at C:\Program Files\App\app.exe verified at version 1.2.3"
+    /// </summary>
+    [JsonPropertyName("status_reason")]
+    public string? StatusReason { get; set; }
+
+    /// <summary>
+    /// Machine-readable status reason code.
+    /// Example: "file_match", "registry_missing", "update_available"
+    /// See Cimian.Core.Models.StatusReasonCode for all values.
+    /// </summary>
+    [JsonPropertyName("status_reason_code")]
+    public string? StatusReasonCode { get; set; }
+
+    /// <summary>
+    /// Detection method used to determine status.
+    /// Example: "file", "registry", "script", "msi"
+    /// See Cimian.Core.Models.DetectionMethod for all values.
+    /// </summary>
+    [JsonPropertyName("detection_method")]
+    public string? DetectionMethod { get; set; }
+
+    /// <summary>
+    /// Currently installed version at time of check, if detected.
+    /// </summary>
+    [JsonPropertyName("installed_version")]
+    public string? InstalledVersion { get; set; }
+
+    /// <summary>
+    /// Target version from catalog that was checked against.
+    /// </summary>
+    [JsonPropertyName("target_version")]
+    public string? TargetVersion { get; set; }
+
+    #endregion
 }
 
 /// <summary>
