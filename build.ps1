@@ -817,13 +817,22 @@ if ($Binaries -or $Binary) {
         }
         foreach ($dir in $binaryDirs) {
             $binaryName = $dir.Name
+            
+            # Detect Go sources for this binary (skip non-Go projects in cmd/)
+            $goFiles = Get-ChildItem -Path $dir.FullName -Recurse -Filter "*.go" -File -ErrorAction SilentlyContinue
+            $hasGoFiles = ($goFiles -and $goFiles.Count -gt 0)
+            $submoduleGoMod = Join-Path $dir.FullName "go.mod"
+            if (-not $hasGoFiles -and -not (Test-Path $submoduleGoMod)) {
+                Write-Log "Skipping $binaryName for ${arch}: no Go sources found in $($dir.FullName)." "WARNING"
+                continue
+            }
+
             Write-Log "Building $binaryName for $arch..." "INFO"
             
             # Generate Windows version information for this binary
             New-VersionInfo -BinaryName $binaryName -BinaryPath $dir.FullName -Version $env:RELEASE_VERSION -SemanticVersion $env:SEMANTIC_VERSION
             
             # Check if this is a Go project
-            $submoduleGoMod = Join-Path $dir.FullName "go.mod"
             $outputPath = "release\$arch\$binaryName.exe"
             if (Test-Path $submoduleGoMod) {
                 # This is a Go submodule project
