@@ -435,7 +435,18 @@ public class UpdateEngine : IDisposable
                 case "update":
                     // Go treats both install and update actions the same - calls CheckStatus
                     var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
-                    LogDebug($"CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}");
+                    LogDebug($"CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
+                    
+                    // Log status check event with full reason tracking
+                    _sessionLogger?.LogStatusCheck(
+                        catalogItem.Name,
+                        catalogItem.Version,
+                        status.Status,
+                        status.Reason,
+                        status.ReasonCode,
+                        status.DetectionMethod,
+                        status.InstalledVersion,
+                        status.NeedsAction);
                     
                     if (status.NeedsAction)
                     {
@@ -736,7 +747,20 @@ public class UpdateEngine : IDisposable
         // Check for blocking apps
         if (_installerService.CheckBlockingApps(item, out var runningApps))
         {
-            ConsoleLogger.Warn($"Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
+            var blockingAppsStr = string.Join(", ", runningApps);
+            ConsoleLogger.Warn($"Skipping {item.Name}: blocking apps running: {blockingAppsStr}");
+            
+            // Log with status reason tracking
+            _sessionLogger?.LogInstallWithReason(
+                item.Name,
+                item.Version,
+                "install",
+                "blocked",
+                $"Waiting for {blockingAppsStr} to close",
+                $"Waiting for {blockingAppsStr} to close",
+                Cimian.Core.Models.StatusReasonCode.BlockingApps,
+                Cimian.Core.Models.DetectionMethod.None);
+            
             return false;
         }
 
@@ -749,9 +773,17 @@ public class UpdateEngine : IDisposable
         {
             LogSuccess($"Installed: {item.Name} v{item.Version}");
             
-            // Log structured event for external monitoring
-            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed", 
-                $"Successfully installed {item.Name} v{item.Version}");
+            // Log structured event for external monitoring with reason tracking
+            _sessionLogger?.LogInstallWithReason(
+                item.Name,
+                item.Version,
+                "install",
+                "completed",
+                $"Successfully installed {item.Name} v{item.Version}",
+                $"Installation completed successfully",
+                Cimian.Core.Models.StatusReasonCode.UninstallConfirmed,
+                Cimian.Core.Models.DetectionMethod.None,
+                item.Version);
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -763,9 +795,18 @@ public class UpdateEngine : IDisposable
         {
             ConsoleLogger.Error($"Failed to install {item.Name}: {output}");
             
-            // Log structured event for failure
-            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", 
-                $"Failed to install {item.Name}", output);
+            // Log structured event for failure with reason tracking
+            _sessionLogger?.LogInstallWithReason(
+                item.Name,
+                item.Version,
+                "install",
+                "failed",
+                $"Failed to install {item.Name}",
+                output,
+                Cimian.Core.Models.StatusReasonCode.CheckFailed,
+                Cimian.Core.Models.DetectionMethod.None,
+                null,
+                output);
             return false;
         }
 
