@@ -61,6 +61,10 @@ public class ImportService
             metadata.ID = Path.GetFileNameWithoutExtension(packagePath);
         }
 
+        // Detect architecture from filename (this takes priority)
+        var filenameArch = MetadataExtractor.DetectArchFromFilename(Path.GetFileName(packagePath));
+        var hasFilenameArch = !string.IsNullOrEmpty(filenameArch);
+
         // Step 3: Check for existing item in All.yaml
         var (existingPkg, found) = FindMatchingItemInAllCatalog(config.RepoPath, metadata.ID);
         if (found && existingPkg != null)
@@ -72,21 +76,14 @@ public class ImportService
 
             if (noInteractive)
             {
-                // Preserve the detected architecture from filename before applying template
-                var detectedArch = metadata.Architecture;
-                var detectedSupportedArch = metadata.SupportedArch.ToList();
-
                 // Auto-apply template in non-interactive mode
                 ApplyTemplate(metadata, existingPkg, scripts);
 
-                // Restore the detected architecture if it was set from filename detection
-                if (!string.IsNullOrEmpty(detectedArch))
+                // Restore the detected architecture from filename if it was detected
+                if (hasFilenameArch)
                 {
-                    metadata.Architecture = detectedArch;
-                }
-                if (detectedSupportedArch.Count > 0)
-                {
-                    metadata.SupportedArch = detectedSupportedArch;
+                    metadata.Architecture = filenameArch;
+                    metadata.SupportedArch = [filenameArch];
                 }
             }
             else
@@ -95,20 +92,13 @@ public class ImportService
                 var ans = Console.ReadLine()?.Trim();
                 if (string.IsNullOrEmpty(ans) || ans.Equals("y", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Preserve the detected architecture from filename before applying template
-                    var detectedArch = metadata.Architecture;
-                    var detectedSupportedArch = metadata.SupportedArch.ToList();
-
                     ApplyTemplate(metadata, existingPkg, scripts);
 
-                    // Restore the detected architecture if it was set from filename detection
-                    if (!string.IsNullOrEmpty(detectedArch))
+                    // Restore the detected architecture from filename if it was detected
+                    if (hasFilenameArch)
                     {
-                        metadata.Architecture = detectedArch;
-                    }
-                    if (detectedSupportedArch.Count > 0)
-                    {
-                        metadata.SupportedArch = detectedSupportedArch;
+                        metadata.Architecture = filenameArch;
+                        metadata.SupportedArch = [filenameArch];
                     }
                 }
             }
