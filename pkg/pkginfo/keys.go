@@ -125,6 +125,7 @@ type PkgsInfo struct {
 	UnattendedUninstall  bool               `yaml:"unattended_uninstall"`
 	Requires             []string           `yaml:"requires,omitempty"`
 	UpdateFor            []string           `yaml:"update_for,omitempty"`
+	BlockingApps         []string           `yaml:"blocking_applications,omitempty"`
 	MinOSVersion         string             `yaml:"minimum_os_version,omitempty"`
 	MaxOSVersion         string             `yaml:"maximum_os_version,omitempty"`
 	InstallerType        string             `yaml:"installer_type,omitempty"`
@@ -204,6 +205,9 @@ func (p *PkgsInfo) MarshalYAML() (interface{}, error) {
 	)
 
 	// === REMAINING FIELDS (alphabetically) ===
+
+	// blocking_applications
+	addStringSlice("blocking_applications", p.BlockingApps)
 
 	// catalogs
 	addStringSlice("catalogs", p.Catalogs)
