@@ -72,7 +72,7 @@ func BlockingApplicationsRunning(item catalog.Item) bool {
 	// First check if blocking_applications is explicitly specified
 	if len(item.BlockingApps) > 0 {
 		appNames = item.BlockingApps
-		logging.Debug("Using explicit blocking_applications", "item", item.Name, "blocking_apps", appNames)
+		logging.Debug("Using explicit blocking_applications", "item", item.Name, "blocking_applications", appNames)
 	} else {
 		// If no blocking_applications specified, get app names from 'installs' list
 		// This mirrors Munki's fallback behavior
@@ -85,7 +85,7 @@ func BlockingApplicationsRunning(item catalog.Item) bool {
 				}
 			}
 		}
-		logging.Debug("Using installs list for blocking apps", "item", item.Name, "blocking_apps", appNames)
+		logging.Debug("Using installs list for blocking apps", "item", item.Name, "blocking_applications", appNames)
 	}
 
 	if len(appNames) == 0 {

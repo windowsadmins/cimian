@@ -2485,7 +2485,7 @@ func uninstallCatalogItems(items []catalog.Item, cfg *config.Configuration) erro
 			logging.LogEventEntry("uninstall", "blocked", "skipped",
 				fmt.Sprintf("Uninstall of %s skipped due to blocking applications", item.Name),
 				logging.WithPackage(item.Name, item.Version),
-				logging.WithContext("blocking_apps", runningApps),
+				logging.WithContext("blocking_applications", runningApps),
 				logging.WithError(fmt.Errorf("blocking applications running: %v", runningApps)))
 
 			failedItems = append(failedItems, fmt.Sprintf("%s (blocked by: %v)", item.Name, runningApps))
@@ -3673,7 +3673,7 @@ func installOneCatalogItem(cItem catalog.Item, localFile string, cfg *config.Con
 		logging.LogEventEntry("install", "blocked", "skipped",
 			fmt.Sprintf("Installation of %s skipped due to blocking applications", cItem.Name),
 			logging.WithPackage(cItem.Name, cItem.Version),
-			logging.WithContext("blocking_apps", runningApps),
+			logging.WithContext("blocking_applications", runningApps),
 			logging.WithError(fmt.Errorf("blocking applications running: %v", runningApps)))
 
 		// Return a special error to indicate this was skipped due to blocking applications
