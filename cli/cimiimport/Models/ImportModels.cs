@@ -54,6 +54,9 @@ public class PkgsInfo
     [YamlMember(Alias = "update_for")]
     public List<string>? UpdateFor { get; set; }
 
+    [YamlMember(Alias = "blocking_applications")]
+    public List<string>? BlockingApps { get; set; }
+
     [YamlMember(Alias = "minimum_os_version")]
     public string? MinOSVersion { get; set; }
 
@@ -166,6 +169,7 @@ public class InstallerMetadata
     public bool UnattendedUninstall { get; set; } = true;
     public List<string>? Requires { get; set; }
     public List<string>? UpdateFor { get; set; }
+    public List<string>? BlockingApps { get; set; }
 }
 
 /// <summary>
