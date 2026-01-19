@@ -5,6 +5,7 @@ using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
 using Cimian.Engine.Predicates;
+using SystemFacts = Cimian.Core.Models.SystemFacts;
 // Use the Predicate expression types from Cimian.Engine
 using ParsedExpression = Cimian.Engine.Predicates.ParsedExpression;
 using LiteralExpression = Cimian.Engine.Predicates.LiteralExpression;
@@ -25,6 +26,8 @@ public class ManifestService
     private readonly IDeserializer _deserializer;
     private readonly CimianConfig _config;
     private readonly Dictionary<string, string> _itemSources = new();
+    private readonly PredicateEngine _predicateEngine;
+    private SystemFacts? _systemFacts;
 
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
@@ -34,6 +37,7 @@ public class ManifestService
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
             .Build();
+        _predicateEngine = new PredicateEngine(new Microsoft.Extensions.Logging.Abstractions.NullLogger<PredicateEngine>());
     }
 
     private static HttpClient CreateHttpClient(CimianConfig config)
@@ -332,14 +336,27 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Evaluates complex condition strings with support for OR/AND operators and DOES_NOT_CONTAIN
-    /// Examples:
-    ///   - "catalogs == Staging"
-    ///   - "arch == x64"  
-    ///   - "hostname CONTAINS Cintiq"
-    ///   - "hostname DOES_NOT_CONTAIN Camera"
-    ///   - "hostname CONTAINS Cintiq-1 OR hostname CONTAINS Cintiq-0"
-    ///   - "hostname DOES_NOT_CONTAIN Camera AND hostname DOES_NOT_CONTAIN ANIM-CAM"
+    /// Ensures SystemFacts are populated for predicate evaluation
+    /// </summary>
+    private void EnsureSystemFacts()
+    {
+        if (_systemFacts != null) return;
+        
+        _systemFacts = new Cimian.Core.Models.SystemFacts
+        {
+            Hostname = Environment.MachineName,
+            Architecture = GetSystemArchitecture(),
+            OperatingSystem = "Windows",
+            Catalogs = _config.Catalogs,
+            MachineType = "desktop", // Could be enhanced with WMI detection
+            MachineModel = GetMachineModel(),
+            CollectedAt = DateTime.UtcNow
+        };
+    }
+    
+    /// <summary>
+    /// Evaluates a condition using the PredicateEngine for proper NSPredicate-style parsing
+    /// Supports complex expressions with OR/AND/NOT operators, parentheses, and nested conditions
     /// </summary>
     private bool EvaluateCondition(string condition)
     {
@@ -348,231 +365,29 @@ public class ManifestService
             return true; // No condition means always true
         }
 
-        var conditionUpper = condition.ToUpperInvariant();
+        EnsureSystemFacts();
         
-        // Check for OR operator (case insensitive) - evaluate as ANY match
-        if (conditionUpper.Contains(" OR "))
+        try
         {
-            var parts = SplitOnLogicalOperator(condition, " OR ");
-            ConsoleLogger.Debug($"    Evaluating OR condition with {parts.Count} parts: {condition}");
-            foreach (var part in parts)
+            // Use the sophisticated PredicateEngine for proper parsing and evaluation
+            var result = _predicateEngine.EvaluateConditionAsync(condition, _systemFacts!).GetAwaiter().GetResult();
+            
+            if (result)
             {
-                if (EvaluateSingleCondition(part.Trim()))
-                {
-                    ConsoleLogger.Debug($"    OR condition matched on: {part.Trim()}");
-                    return true; // Short-circuit on first true
-                }
+                ConsoleLogger.Debug($"    Condition matched: {condition}");
             }
-            ConsoleLogger.Debug($"    OR condition did not match any part");
+            else
+            {
+                ConsoleLogger.Debug($"    Condition did not match: {condition}");
+            }
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Error evaluating condition '{condition}': {ex.Message}");
             return false;
         }
-        
-        // Check for AND operator (case insensitive) - evaluate as ALL must match
-        if (conditionUpper.Contains(" AND "))
-        {
-            var parts = SplitOnLogicalOperator(condition, " AND ");
-            ConsoleLogger.Debug($"    Evaluating AND condition with {parts.Count} parts: {condition}");
-            foreach (var part in parts)
-            {
-                if (!EvaluateSingleCondition(part.Trim()))
-                {
-                    ConsoleLogger.Debug($"    AND condition failed on: {part.Trim()}");
-                    return false; // Short-circuit on first false
-                }
-            }
-            ConsoleLogger.Debug($"    AND condition matched all parts");
-            return true;
-        }
-        
-        // Single condition
-        return EvaluateSingleCondition(condition);
-    }
-    
-    /// <summary>
-    /// Splits a condition string on a logical operator while preserving quoted strings
-    /// </summary>
-    private List<string> SplitOnLogicalOperator(string condition, string logicalOp)
-    {
-        var results = new List<string>();
-        var opUpper = logicalOp.ToUpperInvariant();
-        var conditionUpper = condition.ToUpperInvariant();
-        
-        var startIndex = 0;
-        var index = conditionUpper.IndexOf(opUpper, StringComparison.Ordinal);
-        
-        while (index != -1)
-        {
-            results.Add(condition.Substring(startIndex, index - startIndex));
-            startIndex = index + opUpper.Length;
-            index = conditionUpper.IndexOf(opUpper, startIndex, StringComparison.Ordinal);
-        }
-        
-        if (startIndex < condition.Length)
-        {
-            results.Add(condition.Substring(startIndex));
-        }
-        
-        return results;
-    }
-    
-    /// <summary>
-    /// Evaluates a single condition (no OR/AND operators)
-    /// </summary>
-    private bool EvaluateSingleCondition(string condition)
-    {
-        if (string.IsNullOrWhiteSpace(condition))
-        {
-            return true;
-        }
-        
-        var conditionUpper = condition.ToUpperInvariant();
-        
-        // Determine the operator - check in order of specificity (longer operators first)
-        string operatorUsed;
-        bool isDoesNotContain = false;
-        bool isContains = false;
-        bool isEquals = false;
-        bool isNotEquals = false;
-        bool isBeginsWith = false;
-        bool isEndsWith = false;
-        
-        if (conditionUpper.Contains("DOES_NOT_CONTAIN"))
-        {
-            operatorUsed = "DOES_NOT_CONTAIN";
-            isDoesNotContain = true;
-        }
-        else if (conditionUpper.Contains("BEGINSWITH"))
-        {
-            operatorUsed = "BEGINSWITH";
-            isBeginsWith = true;
-        }
-        else if (conditionUpper.Contains("ENDSWITH"))
-        {
-            operatorUsed = "ENDSWITH";
-            isEndsWith = true;
-        }
-        else if (conditionUpper.Contains("CONTAINS"))
-        {
-            operatorUsed = "CONTAINS";
-            isContains = true;
-        }
-        else if (condition.Contains("!="))
-        {
-            operatorUsed = "!=";
-            isNotEquals = true;
-        }
-        else if (condition.Contains("=="))
-        {
-            operatorUsed = "==";
-            isEquals = true;
-        }
-        else if (conditionUpper.Contains("LIKE"))
-        {
-            operatorUsed = "LIKE";
-            isContains = true; // LIKE is treated similar to CONTAINS for simple cases
-        }
-        else
-        {
-            ConsoleLogger.Warn($"Unknown operator in condition: {condition}");
-            return false;
-        }
-        
-        // Split on the operator (case insensitive for text operators)
-        int splitIndex;
-        if (operatorUsed == "==" || operatorUsed == "!=")
-        {
-            splitIndex = condition.IndexOf(operatorUsed, StringComparison.Ordinal);
-        }
-        else
-        {
-            splitIndex = conditionUpper.IndexOf(operatorUsed, StringComparison.OrdinalIgnoreCase);
-        }
-        
-        if (splitIndex == -1)
-        {
-            ConsoleLogger.Warn($"Could not find operator in condition: {condition}");
-            return false;
-        }
-        
-        var key = condition.Substring(0, splitIndex).Trim().ToLowerInvariant();
-        var expectedValue = condition.Substring(splitIndex + operatorUsed.Length).Trim();
-        
-        // Strip surrounding quotes from expected value
-        if ((expectedValue.StartsWith('"') && expectedValue.EndsWith('"')) ||
-            (expectedValue.StartsWith('\'') && expectedValue.EndsWith('\'')))
-        {
-            expectedValue = expectedValue[1..^1];
-        }
-        
-        // Get the actual value from facts
-        object? actualValue = key switch
-        {
-            "catalogs" => _config.Catalogs,
-            "arch" or "architecture" => GetSystemArchitecture(),
-            "hostname" => Environment.MachineName,
-            "os" or "operatingsystem" => "Windows",
-            "machine_type" => "desktop", // Simplified - could be enhanced
-            "machine_model" => GetMachineModel(),
-            _ => null
-        };
-        
-        if (actualValue == null)
-        {
-            ConsoleLogger.Debug($"    Unknown fact key: {key} (condition may be unsupported)");
-            return false;
-        }
-        
-        ConsoleLogger.Debug($"    Evaluating: {key} {operatorUsed} '{expectedValue}' (actual: {actualValue})");
-        
-        // Handle array comparison (like catalogs)
-        if (actualValue is List<string> list)
-        {
-            if (isEquals)
-            {
-                return list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
-            }
-            if (isNotEquals)
-            {
-                return !list.Any(v => string.Equals(v, expectedValue, StringComparison.OrdinalIgnoreCase));
-            }
-            if (isContains)
-            {
-                return list.Any(v => v.Contains(expectedValue, StringComparison.OrdinalIgnoreCase));
-            }
-            if (isDoesNotContain)
-            {
-                return !list.Any(v => v.Contains(expectedValue, StringComparison.OrdinalIgnoreCase));
-            }
-        }
-        
-        // Handle string comparison
-        var actualStr = actualValue.ToString() ?? "";
-        if (isEquals)
-        {
-            return string.Equals(actualStr, expectedValue, StringComparison.OrdinalIgnoreCase);
-        }
-        if (isNotEquals)
-        {
-            return !string.Equals(actualStr, expectedValue, StringComparison.OrdinalIgnoreCase);
-        }
-        if (isContains)
-        {
-            return actualStr.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
-        }
-        if (isDoesNotContain)
-        {
-            return !actualStr.Contains(expectedValue, StringComparison.OrdinalIgnoreCase);
-        }
-        if (isBeginsWith)
-        {
-            return actualStr.StartsWith(expectedValue, StringComparison.OrdinalIgnoreCase);
-        }
-        if (isEndsWith)
-        {
-            return actualStr.EndsWith(expectedValue, StringComparison.OrdinalIgnoreCase);
-        }
-        
-        return false;
     }
     
     /// <summary>
