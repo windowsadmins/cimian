@@ -61,16 +61,20 @@ public class DownloadService
         {
             Directory.CreateDirectory(dir);
         }
+        ConsoleLogger.Detail($"    Starting download url: {url}");
 
         // Check if file exists and matches hash
         if (File.Exists(localPath) && !string.IsNullOrEmpty(expectedHash))
         {
+            ConsoleLogger.Detail($"    Verifying cached file: {localPath}");
             var existingHash = CalculateSHA256(localPath);
             if (existingHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
             {
                 ConsoleLogger.Info($"Using cached file: {Path.GetFileName(localPath)}");
+                ConsoleLogger.Detail($"    Hash verification passed for cached file: {localPath}");
                 return true;
             }
+            ConsoleLogger.Detail($"    Cached file hash mismatch, re-downloading expected: {expectedHash.Substring(0, 12)}... got: {existingHash.Substring(0, 12)}...");
         }
 
         try
@@ -80,6 +84,7 @@ public class DownloadService
 
             var totalBytes = response.Content.Headers.ContentLength ?? -1;
             var tempPath = localPath + ".tmp";
+            ConsoleLogger.Detail($"    Download started size: {totalBytes} bytes dest: {tempPath}");
 
             using (var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
             using (var httpStream = await response.Content.ReadAsStreamAsync(cancellationToken))
@@ -99,10 +104,12 @@ public class DownloadService
                     }
                 }
             }
+            ConsoleLogger.Detail($"    Download completed to temp file tempFile: {tempPath}");
 
             // Verify hash if provided
             if (!string.IsNullOrEmpty(expectedHash))
             {
+                ConsoleLogger.Detail($"    Verifying hash for downloaded file: {tempPath}");
                 var downloadedHash = CalculateSHA256(tempPath);
                 if (!downloadedHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
                 {
@@ -112,6 +119,7 @@ public class DownloadService
                     Console.Error.WriteLine($"        Got:      {downloadedHash}");
                     return false;
                 }
+                ConsoleLogger.Detail($"    Hash verification passed for: {tempPath}");
             }
 
             // Move temp file to final location
@@ -120,6 +128,7 @@ public class DownloadService
                 File.Delete(localPath);
             }
             File.Move(tempPath, localPath);
+            ConsoleLogger.Detail($"    File saved successfully file: {localPath}");
 
             return true;
         }
