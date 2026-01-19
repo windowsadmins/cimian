@@ -82,6 +82,56 @@ public class PredicateEngineTests
     }
 
     [Theory]
+    [InlineData("hostname DOES_NOT_CONTAIN 'Camera'", "DESIGN-001", true)]
+    [InlineData("hostname DOES_NOT_CONTAIN 'Camera'", "ANIM-Camera-01", false)]
+    [InlineData("hostname DOES_NOT_CONTAIN 'Design'", "DESIGN-001", false)]
+    [InlineData("hostname DOES_NOT_CONTAIN 'Kiosk'", "LOBBY-DISPLAY", true)]
+    public async Task EvaluateCondition_DoesNotContainOperator_ShouldMatch(string condition, string hostname, bool expected)
+    {
+        var facts = CreateFacts(hostname: hostname);
+        var result = await _engine.EvaluateConditionAsync(condition, facts);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_DoesNotContainWithAnd_ShouldMatch()
+    {
+        // This is the real-world condition from Cintiq manifest
+        var condition = "hostname DOES_NOT_CONTAIN 'Camera' AND hostname DOES_NOT_CONTAIN 'ANIM-CAM'";
+        
+        var facts1 = CreateFacts(hostname: "Cintiq22-01");
+        var result1 = await _engine.EvaluateConditionAsync(condition, facts1);
+        result1.Should().BeTrue("Cintiq22-01 should match (no Camera or ANIM-CAM)");
+        
+        var facts2 = CreateFacts(hostname: "ANIM-Camera-01");
+        var result2 = await _engine.EvaluateConditionAsync(condition, facts2);
+        result2.Should().BeFalse("ANIM-Camera-01 should NOT match (contains Camera)");
+        
+        var facts3 = CreateFacts(hostname: "ANIM-CAM-05");
+        var result3 = await _engine.EvaluateConditionAsync(condition, facts3);
+        result3.Should().BeFalse("ANIM-CAM-05 should NOT match (contains ANIM-CAM)");
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_ComplexOrWithContains_ShouldMatch()
+    {
+        // This is the real-world condition from Cintiq manifest for lab matching
+        var condition = "hostname CONTAINS 'Cintiq-1' OR hostname CONTAINS 'Cintiq-0'";
+        
+        var facts1 = CreateFacts(hostname: "Cintiq-15");
+        var result1 = await _engine.EvaluateConditionAsync(condition, facts1);
+        result1.Should().BeTrue("Cintiq-15 should match (contains Cintiq-1)");
+        
+        var facts2 = CreateFacts(hostname: "Cintiq-02");
+        var result2 = await _engine.EvaluateConditionAsync(condition, facts2);
+        result2.Should().BeTrue("Cintiq-02 should match (contains Cintiq-0)");
+        
+        var facts3 = CreateFacts(hostname: "Cintiq-22");
+        var result3 = await _engine.EvaluateConditionAsync(condition, facts3);
+        result3.Should().BeFalse("Cintiq-22 should NOT match (no Cintiq-1 or Cintiq-0)");
+    }
+
+    [Theory]
     [InlineData("arch == 'x64'", "x64", true)]
     [InlineData("arch == 'x64'", "ARM64", false)]
     [InlineData("architecture == 'ARM64'", "ARM64", true)]
