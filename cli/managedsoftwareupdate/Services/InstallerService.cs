@@ -3,6 +3,7 @@ using System.Management.Automation;
 using System.Runtime.InteropServices;
 using System.Text;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 using Microsoft.Win32;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -30,12 +31,12 @@ public class InstallerService
         string localFile,
         CancellationToken cancellationToken = default)
     {
-        Console.WriteLine($"[INFO] Installing {item.Name} v{item.Version}...");
+        ConsoleLogger.Info($"Installing {item.Name} v{item.Version}...");
 
         // Run preinstall script if present
         if (!string.IsNullOrEmpty(item.PreinstallScript))
         {
-            Console.WriteLine($"[INFO] Running preinstall script for {item.Name}...");
+            ConsoleLogger.Info($"Running preinstall script for {item.Name}...");
             var preResult = await _scriptService.ExecuteScriptAsync(item.PreinstallScript, cancellationToken);
             if (!preResult.Success)
             {
@@ -65,11 +66,11 @@ public class InstallerService
         // Run postinstall script if present
         if (!string.IsNullOrEmpty(item.PostinstallScript))
         {
-            Console.WriteLine($"[INFO] Running postinstall script for {item.Name}...");
+            ConsoleLogger.Info($"Running postinstall script for {item.Name}...");
             var postResult = await _scriptService.ExecuteScriptAsync(item.PostinstallScript, cancellationToken);
             if (!postResult.Success)
             {
-                Console.Error.WriteLine($"[WARNING] Postinstall script failed: {postResult.Output}");
+                ConsoleLogger.Warn($"Postinstall script failed: {postResult.Output}");
                 // Don't fail the installation for postinstall script failures
             }
         }
@@ -87,12 +88,12 @@ public class InstallerService
         CatalogItem item,
         CancellationToken cancellationToken = default)
     {
-        Console.WriteLine($"[INFO] Uninstalling {item.Name}...");
+        ConsoleLogger.Info($"Uninstalling {item.Name}...");
 
         // Run preuninstall script if present
         if (!string.IsNullOrEmpty(item.PreuninstallScript))
         {
-            Console.WriteLine($"[INFO] Running preuninstall script for {item.Name}...");
+            ConsoleLogger.Info($"Running preuninstall script for {item.Name}...");
             var preResult = await _scriptService.ExecuteScriptAsync(item.PreuninstallScript, cancellationToken);
             if (!preResult.Success)
             {
@@ -122,11 +123,11 @@ public class InstallerService
         // Run postuninstall script if present
         if (!string.IsNullOrEmpty(item.PostuninstallScript))
         {
-            Console.WriteLine($"[INFO] Running postuninstall script for {item.Name}...");
+            ConsoleLogger.Info($"Running postuninstall script for {item.Name}...");
             var postResult = await _scriptService.ExecuteScriptAsync(item.PostuninstallScript, cancellationToken);
             if (!postResult.Success)
             {
-                Console.Error.WriteLine($"[WARNING] Postuninstall script failed: {postResult.Output}");
+                ConsoleLogger.Warn($"Postuninstall script failed: {postResult.Output}");
             }
         }
 
@@ -463,7 +464,7 @@ public class InstallerService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[WARNING] Failed to register installation: {ex.Message}");
+            ConsoleLogger.Warn($"Failed to register installation: {ex.Message}");
         }
     }
 
@@ -476,7 +477,7 @@ public class InstallerService
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[WARNING] Failed to unregister installation: {ex.Message}");
+            ConsoleLogger.Warn($"Failed to unregister installation: {ex.Message}");
         }
     }
 

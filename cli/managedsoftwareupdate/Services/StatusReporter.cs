@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -76,7 +77,7 @@ public class StatusReporter : IDisposable
 
                     if (_verbosity >= 2)
                     {
-                        Console.WriteLine($"[DEBUG] Connected to GUI status server on port {DefaultPort}");
+                        ConsoleLogger.Debug($"Connected to GUI status server on port {DefaultPort}");
                     }
 
                     return true;
@@ -85,7 +86,7 @@ public class StatusReporter : IDisposable
                 {
                     if (_verbosity >= 3)
                     {
-                        Console.WriteLine($"[DEBUG] Failed to connect to GUI (attempt {attempt + 1}): {ex.Message}");
+                        ConsoleLogger.Debug($"Failed to connect to GUI (attempt {attempt + 1}): {ex.Message}");
                     }
                     
                     _client?.Dispose();
@@ -189,14 +190,14 @@ public class StatusReporter : IDisposable
                 
                 if (_verbosity >= 3)
                 {
-                    Console.WriteLine($"[DEBUG] Sent to GUI: {json}");
+                    ConsoleLogger.Debug($"Sent to GUI: {json}");
                 }
             }
             catch (Exception ex)
             {
                 if (_verbosity >= 2)
                 {
-                    Console.WriteLine($"[DEBUG] Failed to send status message: {ex.Message}");
+                    ConsoleLogger.Debug($"Failed to send status message: {ex.Message}");
                 }
                 
                 // Connection lost - mark as disconnected
