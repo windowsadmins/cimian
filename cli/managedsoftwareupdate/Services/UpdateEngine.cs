@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -28,6 +29,7 @@ public class UpdateEngine : IDisposable
     private readonly StatusService _statusService;
     private readonly ScriptService _scriptService;
     private StatusReporter? _statusReporter;
+    private SessionLogger? _sessionLogger;
 
     private int _verbosity;
     private bool _isBootstrap;
@@ -125,6 +127,33 @@ public class UpdateEngine : IDisposable
             _statusReporter = new StatusReporter(verbosity);
             _statusReporter.TryConnect();
         }
+
+        // Initialize session logger for structured logging (Go parity: pkg/logging)
+        // This creates timestamped directories in C:\ProgramData\ManagedInstalls\logs
+        // and writes to reports directory for external monitoring tools
+        var runType = _isBootstrap ? "bootstrap" : 
+                      _auto ? "auto" : 
+                      _checkOnly ? "checkonly" : 
+                      _installOnly ? "installonly" : "manual";
+        
+        _sessionLogger = new SessionLogger();
+        var sessionId = _sessionLogger.StartSession(runType, new Dictionary<string, object>
+        {
+            ["verbosity"] = verbosity,
+            ["bootstrap"] = _isBootstrap,
+            ["check_only"] = checkOnly,
+            ["install_only"] = installOnly,
+            ["auto"] = auto,
+            ["show_status"] = showStatus,
+            ["skip_preflight"] = skipPreflight,
+            ["skip_postflight"] = skipPostflight,
+            ["manifest_target"] = manifestTarget ?? "",
+            ["local_manifest"] = localManifest ?? "",
+            ["client_identifier"] = _config.ClientIdentifier
+        });
+        
+        _sessionLogger.Log("INFO", $"Session started: {sessionId}");
+        _sessionLogger.Log("INFO", $"Run type: {runType}");
 
         try
         {
@@ -252,8 +281,12 @@ public class UpdateEngine : IDisposable
             if (_checkOnly)
             {
                 LogInfo("Check-only mode - no actions performed");
+                _sessionLogger?.Log("INFO", "Check-only mode - no actions performed");
                 ReportStatus("Check complete");
                 ReportPercent(100);
+                
+                // End session for check-only
+                EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 0, 0, manifestItems);
                 return 0;
             }
 
@@ -261,33 +294,46 @@ public class UpdateEngine : IDisposable
             if (_auto && StatusService.IsUserActive())
             {
                 LogInfo($"User is active (idle: {StatusService.GetIdleSeconds()}s). Skipping automatic updates.");
+                _sessionLogger?.Log("INFO", $"User is active - skipping automatic updates");
                 ReportStatus("Skipped - user active");
+                
+                EndSessionWithSummary("skipped", 0, 0, 0, 0, 0, manifestItems);
                 return 0;
             }
 
             // Perform installations
             var installSuccess = true;
+            var successCount = 0;
+            var failCount = 0;
             if (toInstall.Count > 0 || toUpdate.Count > 0)
             {
                 var allToInstall = toInstall.Concat(toUpdate).ToList();
                 ReportStatus("Installing updates...");
+                _sessionLogger?.Log("INFO", $"Installing {allToInstall.Count} items...");
                 installSuccess = await PerformInstallationsAsync(allToInstall, cancellationToken);
+                
+                // Count successes/failures based on result
+                successCount = installSuccess ? allToInstall.Count : 0;
+                failCount = installSuccess ? 0 : allToInstall.Count;
             }
 
             // Perform uninstalls
             var uninstallSuccess = true;
             if (toUninstall.Count > 0)
             {
+                _sessionLogger?.Log("INFO", $"Removing {toUninstall.Count} items...");
                 uninstallSuccess = await PerformUninstallsAsync(toUninstall, cancellationToken);
             }
 
             // Run postflight unless skipped
             if (!skipPostflight && !_config.NoPostflight)
             {
+                _sessionLogger?.Log("INFO", "Running postflight script...");
                 var (postflightSuccess, postflightOutput) = await _scriptService.RunPostflightAsync(cancellationToken);
                 if (!postflightSuccess)
                 {
                     Console.Error.WriteLine($"[WARNING] Postflight script failed: {postflightOutput}");
+                    _sessionLogger?.Log("WARN", $"Postflight script failed: {postflightOutput}");
                 }
             }
 
@@ -301,14 +347,22 @@ public class UpdateEngine : IDisposable
             if (installSuccess && uninstallSuccess)
             {
                 LogSuccess("All operations completed successfully");
+                _sessionLogger?.Log("INFO", "All operations completed successfully");
                 ReportStatus("Complete");
                 ReportPercent(100);
+                
+                EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 
+                    toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
                 return 0;
             }
             else
             {
                 Console.Error.WriteLine("[WARNING] Some operations failed");
+                _sessionLogger?.Log("WARN", "Some operations failed");
                 ReportError("Some operations failed");
+                
+                EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
+                    successCount, failCount, manifestItems);
                 return 1;
             }
         }
@@ -316,16 +370,26 @@ public class UpdateEngine : IDisposable
         {
             ReportError($"Update failed: {ex.Message}");
             Console.Error.WriteLine($"[ERROR] Update failed: {ex.Message}");
+            _sessionLogger?.Log("ERROR", $"Update failed: {ex.Message}");
             if (_verbosity >= 2)
             {
                 Console.Error.WriteLine(ex.StackTrace);
             }
+            
+            // End session with failure
+            _sessionLogger?.EndSession("failed", new SessionLogSummary
+            {
+                TotalActions = 0,
+                Failures = 1,
+                PackagesHandled = new List<string>()
+            });
             return 1;
         }
         finally
         {
-            // Always send quit and dispose reporter
+            // Always send quit and dispose resources
             _statusReporter?.Dispose();
+            _sessionLogger?.Dispose();
         }
     }
 
@@ -721,6 +785,10 @@ public class UpdateEngine : IDisposable
         if (success)
         {
             LogSuccess($"Installed: {item.Name} v{item.Version}");
+            
+            // Log structured event for external monitoring
+            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed", 
+                $"Successfully installed {item.Name} v{item.Version}");
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -731,6 +799,10 @@ public class UpdateEngine : IDisposable
         else
         {
             Console.Error.WriteLine($"[ERROR] Failed to install {item.Name}: {output}");
+            
+            // Log structured event for failure
+            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", 
+                $"Failed to install {item.Name}", output);
             return false;
         }
 
@@ -1442,6 +1514,44 @@ public class UpdateEngine : IDisposable
 
     #endregion
 
+    #region Session Logging Helpers
+
+    /// <summary>
+    /// Ends the session with a summary of operations performed
+    /// </summary>
+    private void EndSessionWithSummary(
+        string status, 
+        int installCount, 
+        int updateCount, 
+        int uninstallCount,
+        int successCount,
+        int failCount,
+        List<ManifestItem> manifestItems)
+    {
+        if (_sessionLogger == null) return;
+
+        var packagesHandled = manifestItems
+            .Where(m => !string.IsNullOrEmpty(m.Name))
+            .Select(m => m.Name)
+            .Distinct()
+            .ToList();
+
+        var summary = new SessionLogSummary
+        {
+            TotalActions = installCount + updateCount + uninstallCount,
+            Installs = installCount,
+            Updates = updateCount,
+            Removals = uninstallCount,
+            Successes = successCount,
+            Failures = failCount,
+            PackagesHandled = packagesHandled
+        };
+
+        _sessionLogger.EndSession(status, summary);
+    }
+
+    #endregion
+
     #region IDisposable
 
     private bool _disposed;
@@ -1452,6 +1562,7 @@ public class UpdateEngine : IDisposable
         _disposed = true;
 
         _statusReporter?.Dispose();
+        _sessionLogger?.Dispose();
 
         GC.SuppressFinalize(this);
     }
