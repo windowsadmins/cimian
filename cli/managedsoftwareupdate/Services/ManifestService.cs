@@ -4,6 +4,14 @@ using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
+using Cimian.Engine.Predicates;
+// Use the Predicate expression types from Cimian.Engine
+using ParsedExpression = Cimian.Engine.Predicates.ParsedExpression;
+using LiteralExpression = Cimian.Engine.Predicates.LiteralExpression;
+using ComparisonExpression = Cimian.Engine.Predicates.ComparisonExpression;
+using LogicalExpression = Cimian.Engine.Predicates.LogicalExpression;
+using NotExpression = Cimian.Engine.Predicates.NotExpression;
+using AnyExpression = Cimian.Engine.Predicates.AnyExpression;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
