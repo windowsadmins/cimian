@@ -161,6 +161,7 @@ public class ImportService
             UnattendedUninstall = metadata.UnattendedUninstall,
             Requires = metadata.Requires,
             UpdateFor = metadata.UpdateFor,
+            BlockingApps = metadata.BlockingApps,
             PreinstallScript = preinstallScript,
             PostinstallScript = postinstallScript,
             PreuninstallScript = preuninstallScript,
@@ -365,6 +366,11 @@ public class ImportService
         metadata.UnattendedUninstall = existing.UnattendedUninstall;
         metadata.Requires = existing.Requires;
         metadata.UpdateFor = existing.UpdateFor;
+        // Preserve blocking_applications from template
+        if (existing.BlockingApps != null && existing.BlockingApps.Count > 0)
+        {
+            metadata.BlockingApps = existing.BlockingApps;
+        }
 
         if (existing.Installer?.Location != null)
         {
