@@ -121,6 +121,9 @@ public class UpdateEngine : IDisposable
         _verbosity = verbosity;
         _showStatus = showStatus;
 
+        // Set global verbosity for ConsoleLogger (Munki-style clean output)
+        ConsoleLogger.Verbosity = verbosity;
+
         // Initialize status reporter if --show-status is set
         if (_showStatus)
         {
@@ -171,7 +174,7 @@ public class UpdateEngine : IDisposable
             if (!StatusService.IsAdministrator())
             {
                 ReportError("Administrative access required");
-                Console.Error.WriteLine("[ERROR] Administrative access required.");
+                ConsoleLogger.Error("Administrative access required.");
                 return 1;
             }
 
@@ -275,7 +278,7 @@ public class UpdateEngine : IDisposable
             }
 
             // Print summary
-            PrintActionSummary(toInstall, toUpdate, toUninstall);
+            PrintActionSummary(manifestItems, toInstall, toUpdate, toUninstall);
 
             // Exit if check-only mode
             if (_checkOnly)
@@ -332,7 +335,7 @@ public class UpdateEngine : IDisposable
                 var (postflightSuccess, postflightOutput) = await _scriptService.RunPostflightAsync(cancellationToken);
                 if (!postflightSuccess)
                 {
-                    Console.Error.WriteLine($"[WARNING] Postflight script failed: {postflightOutput}");
+                    ConsoleLogger.Warn($"Postflight script failed: {postflightOutput}");
                     _sessionLogger?.Log("WARN", $"Postflight script failed: {postflightOutput}");
                 }
             }
@@ -357,7 +360,7 @@ public class UpdateEngine : IDisposable
             }
             else
             {
-                Console.Error.WriteLine("[WARNING] Some operations failed");
+                ConsoleLogger.Warn("Some operations failed");
                 _sessionLogger?.Log("WARN", "Some operations failed");
                 ReportError("Some operations failed");
                 
@@ -369,11 +372,11 @@ public class UpdateEngine : IDisposable
         catch (Exception ex)
         {
             ReportError($"Update failed: {ex.Message}");
-            Console.Error.WriteLine($"[ERROR] Update failed: {ex.Message}");
+            ConsoleLogger.Error($"Update failed: {ex.Message}");
             _sessionLogger?.Log("ERROR", $"Update failed: {ex.Message}");
             if (_verbosity >= 2)
             {
-                Console.Error.WriteLine(ex.StackTrace);
+                ConsoleLogger.Debug(ex.StackTrace ?? "");
             }
             
             // End session with failure
@@ -546,6 +549,7 @@ public class UpdateEngine : IDisposable
     }
 
     private void PrintActionSummary(
+        List<ManifestItem> manifestItems,
         List<CatalogItem> toInstall,
         List<CatalogItem> toUpdate,
         List<CatalogItem> toUninstall)
@@ -555,59 +559,18 @@ public class UpdateEngine : IDisposable
         if (total == 0)
         {
             Log();
-            Log("================================================================================");
             Log("All software is up to date");
-            Log("================================================================================");
             Log();
             return;
         }
 
         Log();
-        Log("================================================================================");
-        Log("PENDING ACTIONS");
-        Log("================================================================================");
-
-        if (toInstall.Count > 0)
-        {
-            Log();
-            Log("NEW INSTALLS:");
-            Log("----------------------------------------------------------------------");
-            Log($"{"Package Name",-30} | {"Version",-15} | {"Type",-10}");
-            Log("----------------------------------------------------------------------");
-            foreach (var item in toInstall)
-            {
-                Log($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15} | {item.Installer.Type,-10}");
-            }
-        }
-
-        if (toUpdate.Count > 0)
-        {
-            Log();
-            Log("UPDATES:");
-            Log("----------------------------------------------------------------------");
-            Log($"{"Package Name",-30} | {"Version",-15} | {"Type",-10}");
-            Log("----------------------------------------------------------------------");
-            foreach (var item in toUpdate)
-            {
-                Log($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15} | {item.Installer.Type,-10}");
-            }
-        }
-
-        if (toUninstall.Count > 0)
-        {
-            Log();
-            Log("REMOVALS:");
-            Log("----------------------------------------------------------------------");
-            Log($"{"Package Name",-30} | {"Version",-15}");
-            Log("----------------------------------------------------------------------");
-            foreach (var item in toUninstall)
-            {
-                Log($"{Truncate(item.Name, 28),-30} | {Truncate(item.Version, 13),-15}");
-            }
-        }
-
-        Log();
-        Log($"Total: {total} actions ({toInstall.Count} installs, {toUpdate.Count} updates, {toUninstall.Count} removals)");
+        Log("SUMMARY");
+        var installCount = manifestItems.Count(m => m.Action?.ToLowerInvariant() == "install");
+        var updateCount = manifestItems.Count(m => m.Action?.ToLowerInvariant() == "update");
+        var uninstallCount = manifestItems.Count(m => m.Action?.ToLowerInvariant() == "uninstall");
+        Log($"   Total managed items: {manifestItems.Count} ({installCount} installs, {updateCount} updates, {uninstallCount} removals)");
+        Log($"   Pending actions: {total} ({toInstall.Count} installs, {toUpdate.Count} updates, {toUninstall.Count} removals)");
         Log();
     }
 
@@ -700,7 +663,7 @@ public class UpdateEngine : IDisposable
         var key = itemName.ToLowerInvariant();
         if (!_catalogMap.TryGetValue(key, out var item))
         {
-            Console.Error.WriteLine($"[ERROR] Item not found in catalog: {itemName}");
+            ConsoleLogger.Error($"Item not found in catalog: {itemName}");
             return false;
         }
 
@@ -735,7 +698,7 @@ public class UpdateEngine : IDisposable
                 var depKey = depName.ToLowerInvariant();
                 if (!_catalogMap.TryGetValue(depKey, out var depItem))
                 {
-                    Console.Error.WriteLine($"[ERROR] Required dependency not found in catalog: {depName} (for {itemName})");
+                    ConsoleLogger.Error($"Required dependency not found in catalog: {depName} (for {itemName})");
                     return false;
                 }
 
@@ -753,7 +716,7 @@ public class UpdateEngine : IDisposable
                 var newScheduled = new List<string>(scheduledItems) { dep };
                 if (!await ProcessInstallWithDependenciesAsync(dep, installedItems, newScheduled, downloadedPaths, cancellationToken))
                 {
-                    Console.Error.WriteLine($"[ERROR] Failed to install required dependency: {dep}");
+                    ConsoleLogger.Error($"Failed to install required dependency: {dep}");
                     return false;
                 }
 
@@ -773,7 +736,7 @@ public class UpdateEngine : IDisposable
         // Check for blocking apps
         if (_installerService.CheckBlockingApps(item, out var runningApps))
         {
-            Console.Error.WriteLine($"[WARNING] Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
+            ConsoleLogger.Warn($"Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
             return false;
         }
 
@@ -798,7 +761,7 @@ public class UpdateEngine : IDisposable
         }
         else
         {
-            Console.Error.WriteLine($"[ERROR] Failed to install {item.Name}: {output}");
+            ConsoleLogger.Error($"Failed to install {item.Name}: {output}");
             
             // Log structured event for failure
             _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", 
@@ -875,7 +838,7 @@ public class UpdateEngine : IDisposable
                 LogInfo($"Removing dependent item first: {depItem.Name} (requires {itemName})");
                 if (!await ProcessUninstallWithDependenciesAsync(depItem.Name, installedItems, cancellationToken))
                 {
-                    Console.Error.WriteLine($"[ERROR] Failed to remove dependent item: {depItem.Name}");
+                    ConsoleLogger.Error($"Failed to remove dependent item: {depItem.Name}");
                     return false;
                 }
             }
@@ -885,14 +848,14 @@ public class UpdateEngine : IDisposable
         var key = itemName.ToLowerInvariant();
         if (!_catalogMap.TryGetValue(key, out var item))
         {
-            Console.Error.WriteLine($"[ERROR] Item not found in catalog: {itemName}");
+            ConsoleLogger.Error($"Item not found in catalog: {itemName}");
             return false;
         }
 
         // Check for blocking apps
         if (_installerService.CheckBlockingApps(item, out var runningApps))
         {
-            Console.Error.WriteLine($"[WARNING] Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
+            ConsoleLogger.Warn($"Skipping {item.Name}: blocking apps running: {string.Join(", ", runningApps)}");
             return false;
         }
 
@@ -907,7 +870,7 @@ public class UpdateEngine : IDisposable
         }
         else
         {
-            Console.Error.WriteLine($"[ERROR] Failed to remove {item.Name}: {output}");
+            ConsoleLogger.Error($"Failed to remove {item.Name}: {output}");
             return false;
         }
     }
@@ -989,66 +952,53 @@ public class UpdateEngine : IDisposable
         switch (action)
         {
             case "abort":
-                Console.Error.WriteLine($"[ERROR] Preflight script failed: {output}");
-                Console.Error.WriteLine("[ERROR] Aborting due to PreflightFailureAction=abort");
+                ConsoleLogger.Error($"Preflight script failed: {output}");
+                ConsoleLogger.Error("Aborting due to PreflightFailureAction=abort");
                 throw new Exception("Preflight script failed");
 
             case "warn":
-                Console.Error.WriteLine($"[WARNING] Preflight script failed: {output}");
-                Console.Error.WriteLine("[WARNING] Continuing despite preflight failure (PreflightFailureAction=warn)");
+                ConsoleLogger.Warn($"Preflight script failed: {output}");
+                ConsoleLogger.Warn("Continuing despite preflight failure (PreflightFailureAction=warn)");
                 break;
 
             default: // "continue"
-                Console.Error.WriteLine($"[WARNING] Preflight script failed: {output}");
-                Console.Error.WriteLine("[WARNING] Continuing with software updates (PreflightFailureAction=continue)");
+                ConsoleLogger.Warn($"Preflight script failed: {output}");
+                ConsoleLogger.Warn("Continuing with software updates (PreflightFailureAction=continue)");
                 break;
         }
     }
 
-    private static string Timestamp() => DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-
     /// <summary>
-    /// Log a line with timestamp prefix (no log level) - for verbose output like Go
+    /// Log a plain message (always shown) - Munki-style clean output
     /// </summary>
     private void Log(string message = "")
     {
-        Console.WriteLine($"[{Timestamp()}] {message}");
+        ConsoleLogger.Log(message);
     }
 
     private void LogInfo(string message)
     {
-        if (_verbosity >= 1)
-        {
-            // INFO has no color in Go (default terminal color)
-            Console.WriteLine($"[{Timestamp()}] INFO  {message}");
-        }
+        ConsoleLogger.Info(message);
     }
 
     private void LogDebug(string message)
     {
-        if (_verbosity >= 2)
-        {
-            // DEBUG is cyan in Go (easier to read on dark backgrounds)
-            Console.WriteLine($"{ColorCyan}[{Timestamp()}] DEBUG {message}{ColorReset}");
-        }
+        ConsoleLogger.Debug(message);
     }
 
     private void LogSuccess(string message)
     {
-        // SUCCESS is green in Go
-        Console.WriteLine($"{ColorGreen}[{Timestamp()}] SUCCESS {message}{ColorReset}");
+        ConsoleLogger.Success(message);
     }
 
     private void LogWarn(string message)
     {
-        // WARN is yellow in Go
-        Console.WriteLine($"{ColorYellow}[{Timestamp()}] WARN  {message}{ColorReset}");
+        ConsoleLogger.Warn(message);
     }
 
     private void LogError(string message)
     {
-        // ERROR is red in Go
-        Console.Error.WriteLine($"{ColorRed}[{Timestamp()}] ERROR {message}{ColorReset}");
+        ConsoleLogger.Error(message);
     }
 
     private static string Truncate(string value, int maxLength)
@@ -1337,19 +1287,6 @@ public class UpdateEngine : IDisposable
         {
             Log($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
         }
-        
-        Log("----------------------------------------------------------------------");
-        Log();
-        
-        // Print inventory summary
-        var installedCount = packageStatuses.Count(p => p.Status == "Installed");
-        var pendingInstallCount = packageStatuses.Count(p => p.Status == "Pending Install");
-        var pendingUpdateCount = packageStatuses.Count(p => p.Status == "Pending Update");
-        
-        Log("INVENTORY SUMMARY");
-        Log($"   Total managed items: {managedInstalls.Count}");
-        Log($"   Installed: {installedCount} | Pending Install: {pendingInstallCount} | Pending Update: {pendingUpdateCount}");
-        Log();
     }
 
     /// <summary>
@@ -1402,16 +1339,11 @@ public class UpdateEngine : IDisposable
         Log("----------------------------------------------------------------------");
         Log($"MANAGED UPDATES ({managedUpdates.Count} items)");
         Log("----------------------------------------------------------------------");
-        Log($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
-        Log("----------------------------------------------------------------------");
         
         foreach (var (name, version, status) in packageStatuses)
         {
             Log($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
         }
-        
-        Log("----------------------------------------------------------------------");
-        Log();
     }
 
     /// <summary>
@@ -1464,16 +1396,11 @@ public class UpdateEngine : IDisposable
         Log("----------------------------------------------------------------------");
         Log($"MANAGED UNINSTALLS ({managedUninstalls.Count} items)");
         Log("----------------------------------------------------------------------");
-        Log($"{"Package Name",-27} | {"Version",-17} | {"Status",-15}");
-        Log("----------------------------------------------------------------------");
         
         foreach (var (name, version, status) in packageStatuses)
         {
             Log($"{Truncate(name, 25),-27} | {Truncate(version, 15),-17} | {status,-15}");
         }
-        
-        Log("----------------------------------------------------------------------");
-        Log();
     }
     
     #endregion
