@@ -1,0 +1,556 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Cimian.Core.Services;
+
+/// <summary>
+/// SessionLogger provides structured logging with timestamped directories
+/// compatible with external monitoring and reporting tools.
+/// Ported from Go: pkg/logging/logging.go and pkg/logging/events.go
+/// 
+/// Features:
+/// - Timestamped subdirectories (YYYY-MM-DD-HHMMss format)
+/// - Creates session.json, events.jsonl, install.log, and run.log files
+/// - Writes reports to C:\ProgramData\ManagedInstalls\reports
+/// - Structured data formats for external tool integration
+/// </summary>
+public class SessionLogger : IDisposable
+{
+    private const string BaseLogsDir = @"C:\ProgramData\ManagedInstalls\logs";
+    private const string ReportsDir = @"C:\ProgramData\ManagedInstalls\reports";
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private static readonly JsonSerializerOptions JsonLinesOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private string _sessionId = "";
+    private string _sessionDir = "";
+    private DateTime _sessionStart;
+    private string _runType = "manual";
+
+    private StreamWriter? _logFile;        // install.log
+    private StreamWriter? _runLogFile;     // run.log (session copy)
+    private StreamWriter? _reportRunLog;   // reports/run.log
+    private StreamWriter? _eventsFile;     // events.jsonl
+
+    private readonly ConcurrentQueue<LogEvent> _events = new();
+    private SessionData _sessionData = new();
+    private bool _disposed;
+
+    private readonly object _logLock = new();
+
+    /// <summary>
+    /// Gets the current session ID
+    /// </summary>
+    public string SessionId => _sessionId;
+
+    /// <summary>
+    /// Gets the current session directory path
+    /// </summary>
+    public string SessionDir => _sessionDir;
+
+    /// <summary>
+    /// Initializes a new session with timestamped directory structure
+    /// </summary>
+    /// <param name="runType">Type of run: auto, manual, bootstrap, checkonly, installonly</param>
+    /// <param name="metadata">Optional metadata to include in session</param>
+    /// <returns>The session ID</returns>
+    public string StartSession(string runType, Dictionary<string, object>? metadata = null)
+    {
+        _sessionStart = DateTime.Now;
+        _runType = runType;
+        
+        // Generate session ID in YYYY-MM-DD-HHMMss format (matches Go)
+        _sessionId = _sessionStart.ToString("yyyy-MM-dd-HHmmss");
+        
+        // Create session directory
+        _sessionDir = Path.Combine(BaseLogsDir, _sessionId);
+        Directory.CreateDirectory(_sessionDir);
+        
+        // Ensure reports directory exists
+        Directory.CreateDirectory(ReportsDir);
+
+        // Initialize log files
+        InitializeLogFiles();
+
+        // Initialize session data
+        _sessionData = new SessionData
+        {
+            SessionId = _sessionId,
+            StartTime = _sessionStart.ToString("o"),
+            RunType = runType,
+            Status = "running",
+            Environment = GatherEnvironmentInfo(),
+            Summary = new SessionLogSummary
+            {
+                PackagesHandled = new List<string>()
+            }
+        };
+
+        // Add metadata if provided
+        if (metadata != null && _sessionData.Environment != null)
+        {
+            foreach (var kvp in metadata)
+            {
+                _sessionData.Environment[kvp.Key] = kvp.Value;
+            }
+        }
+
+        // Write initial session.json
+        WriteSessionFile();
+
+        return _sessionId;
+    }
+
+    /// <summary>
+    /// Initializes all log files for the session
+    /// </summary>
+    private void InitializeLogFiles()
+    {
+        try
+        {
+            // Main log file (install.log)
+            var installLogPath = Path.Combine(_sessionDir, "install.log");
+            _logFile = new StreamWriter(installLogPath, append: true) { AutoFlush = true };
+
+            // Session run log (run.log in session directory)
+            var sessionRunLogPath = Path.Combine(_sessionDir, "run.log");
+            _runLogFile = new StreamWriter(sessionRunLogPath, append: true) { AutoFlush = true };
+
+            // Report run log (reports/run.log - truncated each session)
+            // This may fail if the file is locked by another process (e.g., Go version running)
+            try
+            {
+                var reportRunLogPath = Path.Combine(ReportsDir, "run.log");
+                // Delete existing file to start fresh (like Go does with O_TRUNC)
+                if (File.Exists(reportRunLogPath))
+                {
+                    try { File.Delete(reportRunLogPath); } catch { /* ignore */ }
+                }
+                _reportRunLog = new StreamWriter(reportRunLogPath, append: false) { AutoFlush = true };
+            }
+            catch
+            {
+                // If we can't write to reports/run.log, just continue without it
+                // This is non-fatal - the session logs are more important
+                _reportRunLog = null;
+            }
+
+            // Events file (events.jsonl - JSON Lines format)
+            var eventsPath = Path.Combine(_sessionDir, "events.jsonl");
+            _eventsFile = new StreamWriter(eventsPath, append: true) { AutoFlush = true };
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to initialize log files: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Logs a message to all log files
+    /// </summary>
+    public void Log(string level, string message)
+    {
+        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        var formattedLine = $"[{timestamp}] {level,-5} {message}";
+
+        lock (_logLock)
+        {
+            try
+            {
+                _logFile?.WriteLine(formattedLine);
+                _runLogFile?.WriteLine(formattedLine);
+                _reportRunLog?.WriteLine(formattedLine);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[ERROR] Failed to write to log files: {ex.Message}");
+            }
+        }
+
+        // Also write to console
+        Console.WriteLine(formattedLine);
+    }
+
+    /// <summary>
+    /// Logs a structured event for external monitoring tools
+    /// </summary>
+    public void LogEvent(LogEvent evt)
+    {
+        // Ensure event has proper metadata
+        if (string.IsNullOrEmpty(evt.SessionId))
+            evt.SessionId = _sessionId;
+        
+        if (evt.Timestamp == default)
+            evt.Timestamp = DateTime.Now;
+        
+        if (string.IsNullOrEmpty(evt.EventId))
+            evt.EventId = $"{_sessionId}-{DateTime.Now.Ticks}";
+
+        _events.Enqueue(evt);
+
+        // Write to events.jsonl
+        try
+        {
+            var json = JsonSerializer.Serialize(evt, JsonLinesOptions);
+            lock (_logLock)
+            {
+                _eventsFile?.WriteLine(json);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to write event: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Convenience method to log an installation event
+    /// </summary>
+    public void LogInstall(string packageName, string version, string action, string status, string message, string? error = null)
+    {
+        LogEvent(new LogEvent
+        {
+            EventType = "install",
+            PackageName = packageName,
+            PackageVersion = version,
+            Action = action,
+            Status = status,
+            Message = message,
+            Error = error,
+            Level = status == "failed" ? "ERROR" : (status == "completed" ? "INFO" : "DEBUG")
+        });
+    }
+
+    /// <summary>
+    /// Ends the current session and writes final summary
+    /// </summary>
+    public void EndSession(string status, SessionLogSummary summary)
+    {
+        var endTime = DateTime.Now;
+        var duration = endTime - _sessionStart;
+
+        // Update session data
+        _sessionData.EndTime = endTime.ToString("o");
+        _sessionData.Status = status;
+        _sessionData.DurationSeconds = (long)duration.TotalSeconds;
+        _sessionData.Summary = summary;
+        summary.Duration = duration;
+
+        // Write final session.json
+        WriteSessionFile();
+
+        // Generate reports
+        GenerateReports();
+
+        // Cleanup
+        CloseLogFiles();
+    }
+
+    /// <summary>
+    /// Writes the session.json file
+    /// </summary>
+    private void WriteSessionFile()
+    {
+        try
+        {
+            var sessionPath = Path.Combine(_sessionDir, "session.json");
+            var json = JsonSerializer.Serialize(_sessionData, JsonOptions);
+            File.WriteAllText(sessionPath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to write session.json: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Generates report files for external tools
+    /// </summary>
+    private void GenerateReports()
+    {
+        try
+        {
+            // Generate sessions.json - list of recent sessions
+            GenerateSessionsReport();
+
+            // Generate events.json - recent events
+            GenerateEventsReport();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to generate reports: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Generates the sessions.json report file
+    /// </summary>
+    private void GenerateSessionsReport()
+    {
+        var sessions = new List<SessionData>();
+
+        // Collect recent sessions (last 3 days)
+        if (Directory.Exists(BaseLogsDir))
+        {
+            var sessionDirs = Directory.GetDirectories(BaseLogsDir)
+                .Where(d => IsValidSessionDir(Path.GetFileName(d)))
+                .OrderByDescending(d => Path.GetFileName(d))
+                .Take(100); // Limit to 100 sessions
+
+            foreach (var dir in sessionDirs)
+            {
+                var sessionPath = Path.Combine(dir, "session.json");
+                if (File.Exists(sessionPath))
+                {
+                    try
+                    {
+                        var json = File.ReadAllText(sessionPath);
+                        var session = JsonSerializer.Deserialize<SessionData>(json, JsonOptions);
+                        if (session != null)
+                        {
+                            sessions.Add(session);
+                        }
+                    }
+                    catch { /* Skip invalid session files */ }
+                }
+            }
+        }
+
+        var sessionsPath = Path.Combine(ReportsDir, "sessions.json");
+        File.WriteAllText(sessionsPath, JsonSerializer.Serialize(sessions, JsonOptions));
+    }
+
+    /// <summary>
+    /// Generates the events.json report file from recent sessions
+    /// </summary>
+    private void GenerateEventsReport()
+    {
+        var allEvents = new List<LogEvent>();
+
+        // Collect events from recent sessions (last 48 hours)
+        var cutoff = DateTime.Now.AddHours(-48);
+
+        if (Directory.Exists(BaseLogsDir))
+        {
+            var sessionDirs = Directory.GetDirectories(BaseLogsDir)
+                .Where(d => IsValidSessionDir(Path.GetFileName(d)))
+                .OrderByDescending(d => Path.GetFileName(d))
+                .Take(10); // Last 10 sessions
+
+            foreach (var dir in sessionDirs)
+            {
+                var eventsPath = Path.Combine(dir, "events.jsonl");
+                if (File.Exists(eventsPath))
+                {
+                    try
+                    {
+                        foreach (var line in File.ReadLines(eventsPath))
+                        {
+                            if (!string.IsNullOrWhiteSpace(line))
+                            {
+                                var evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions);
+                                if (evt != null && evt.Timestamp >= cutoff)
+                                {
+                                    allEvents.Add(evt);
+                                }
+                            }
+                        }
+                    }
+                    catch { /* Skip invalid event files */ }
+                }
+            }
+        }
+
+        var eventsReportPath = Path.Combine(ReportsDir, "events.json");
+        File.WriteAllText(eventsReportPath, JsonSerializer.Serialize(allEvents, JsonOptions));
+    }
+
+    /// <summary>
+    /// Checks if a directory name is a valid session directory (YYYY-MM-DD-HHmmss format)
+    /// </summary>
+    private static bool IsValidSessionDir(string dirName)
+    {
+        // Format: YYYY-MM-DD-HHmmss (17 characters)
+        if (dirName.Length != 17) return false;
+        if (dirName[4] != '-' || dirName[7] != '-' || dirName[10] != '-') return false;
+        return DateTime.TryParseExact(
+            dirName,
+            "yyyy-MM-dd-HHmmss",
+            null,
+            System.Globalization.DateTimeStyles.None,
+            out _);
+    }
+
+    /// <summary>
+    /// Gathers environment information for the session
+    /// </summary>
+    private Dictionary<string, object> GatherEnvironmentInfo()
+    {
+        return new Dictionary<string, object>
+        {
+            ["hostname"] = Environment.MachineName,
+            ["user"] = Environment.UserName,
+            ["os_version"] = Environment.OSVersion.ToString(),
+            ["architecture"] = Environment.Is64BitOperatingSystem ? "x64" : "x86",
+            ["process_id"] = Environment.ProcessId,
+            ["log_version"] = "2.0"
+        };
+    }
+
+    /// <summary>
+    /// Closes all log files
+    /// </summary>
+    private void CloseLogFiles()
+    {
+        lock (_logLock)
+        {
+            _logFile?.Dispose();
+            _logFile = null;
+
+            _runLogFile?.Dispose();
+            _runLogFile = null;
+
+            _reportRunLog?.Dispose();
+            _reportRunLog = null;
+
+            _eventsFile?.Dispose();
+            _eventsFile = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        CloseLogFiles();
+        GC.SuppressFinalize(this);
+    }
+}
+
+/// <summary>
+/// Represents a structured log event
+/// </summary>
+public class LogEvent
+{
+    [JsonPropertyName("event_id")]
+    public string EventId { get; set; } = "";
+
+    [JsonPropertyName("session_id")]
+    public string SessionId { get; set; } = "";
+
+    [JsonPropertyName("timestamp")]
+    public DateTime Timestamp { get; set; }
+
+    [JsonPropertyName("level")]
+    public string Level { get; set; } = "INFO";
+
+    [JsonPropertyName("event_type")]
+    public string EventType { get; set; } = "";
+
+    [JsonPropertyName("package_id")]
+    public string? PackageId { get; set; }
+
+    [JsonPropertyName("package_name")]
+    public string? PackageName { get; set; }
+
+    [JsonPropertyName("package_version")]
+    public string? PackageVersion { get; set; }
+
+    [JsonPropertyName("action")]
+    public string Action { get; set; } = "";
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = "";
+
+    [JsonPropertyName("duration")]
+    public TimeSpan? Duration { get; set; }
+
+    [JsonPropertyName("progress")]
+    public int? Progress { get; set; }
+
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+
+    [JsonPropertyName("context")]
+    public Dictionary<string, object>? Context { get; set; }
+
+    [JsonPropertyName("installer_type")]
+    public string? InstallerType { get; set; }
+}
+
+/// <summary>
+/// Session data for session.json file
+/// </summary>
+public class SessionData
+{
+    [JsonPropertyName("session_id")]
+    public string SessionId { get; set; } = "";
+
+    [JsonPropertyName("start_time")]
+    public string StartTime { get; set; } = "";
+
+    [JsonPropertyName("end_time")]
+    public string? EndTime { get; set; }
+
+    [JsonPropertyName("run_type")]
+    public string RunType { get; set; } = "";
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+
+    [JsonPropertyName("duration_seconds")]
+    public long? DurationSeconds { get; set; }
+
+    [JsonPropertyName("summary")]
+    public SessionLogSummary? Summary { get; set; }
+
+    [JsonPropertyName("environment")]
+    public Dictionary<string, object>? Environment { get; set; }
+}
+
+/// <summary>
+/// Session summary statistics for session logging
+/// </summary>
+public class SessionLogSummary
+{
+    [JsonPropertyName("total_actions")]
+    public int TotalActions { get; set; }
+
+    [JsonPropertyName("installs")]
+    public int Installs { get; set; }
+
+    [JsonPropertyName("updates")]
+    public int Updates { get; set; }
+
+    [JsonPropertyName("removals")]
+    public int Removals { get; set; }
+
+    [JsonPropertyName("successes")]
+    public int Successes { get; set; }
+
+    [JsonPropertyName("failures")]
+    public int Failures { get; set; }
+
+    [JsonPropertyName("duration")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public TimeSpan Duration { get; set; }
+
+    [JsonPropertyName("packages_handled")]
+    public List<string> PackagesHandled { get; set; } = new();
+}
