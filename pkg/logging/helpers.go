@@ -169,7 +169,7 @@ func LogBlockingEvent(packageName string, blockingApps []string) error {
 	return instance.LogEvent("blocking", "check", "blocked",
 		fmt.Sprintf("Package %s blocked by running applications", packageName),
 		WithPackage(packageName, ""),
-		WithContext("blocking_apps", blockingApps),
+		WithContext("blocking_applications", blockingApps),
 		WithLevel("WARNING"))
 }
 

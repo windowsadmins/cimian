@@ -84,6 +84,7 @@ type Metadata struct {
 	UnattendedUninstall bool
 	Requires            []string
 	UpdateFor           []string
+	BlockingApps        []string
 }
 
 // parseCustomArgs manually parses os.Args for:
@@ -750,6 +751,10 @@ func cimianImport(
 			metadata.UnattendedUninstall = existingPkg.UnattendedUninstall
 			metadata.Requires = existingPkg.Requires
 			metadata.UpdateFor = existingPkg.UpdateFor
+			// Preserve blocking_applications from template
+			if len(existingPkg.BlockingApps) > 0 {
+				metadata.BlockingApps = existingPkg.BlockingApps
+			}
 
 			// Extract repo path from installer location
 			if existingPkg.Installer != nil && existingPkg.Installer.Location != "" {
@@ -850,6 +855,7 @@ func cimianImport(
 		UnattendedUninstall: metadata.UnattendedUninstall,
 		Requires:            metadata.Requires,
 		UpdateFor:           metadata.UpdateFor,
+		BlockingApps:        metadata.BlockingApps,
 
 		PreinstallScript:     preinstallScriptContent,
 		PostinstallScript:    postinstallScriptContent,

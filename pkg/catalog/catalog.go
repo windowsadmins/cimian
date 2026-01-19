@@ -25,7 +25,7 @@ type Item struct {
 	Check                InstallCheck        `yaml:"check"`
 	Installs             []InstallItem       `yaml:"installs"`
 	Version              string              `yaml:"version"`
-	BlockingApps         []string            `yaml:"blocking_apps"`
+	BlockingApps         []string            `yaml:"blocking_applications"`
 	PreScript            utils.LiteralString `yaml:"preinstall_script"`
 	PostScript           utils.LiteralString `yaml:"postinstall_script"`
 	PreUninstallScript   utils.LiteralString `yaml:"preuninstall_script"`
