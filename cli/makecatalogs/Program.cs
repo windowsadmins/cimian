@@ -18,7 +18,7 @@ class Program
         };
 
         var repoPathOption = new Option<string?>(
-            aliases: ["--repo_path", "-r"],
+            aliases: ["--repo_path", "-repo_path", "-r"],
             description: "Path to the Cimian repo. If empty, uses config.");
 
         var skipPayloadCheckOption = new Option<bool>(
