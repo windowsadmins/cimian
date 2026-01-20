@@ -73,7 +73,126 @@ public class CimianConfig
     [YamlMember(Alias = "CacheRetentionDays")]
     public int CacheRetentionDays { get; set; } = 30;
 
+    // sbin-installer configuration (matches Go: config.Configuration)
+    [YamlMember(Alias = "SbinInstallerPath")]
+    public string? SbinInstallerPath { get; set; }
+
+    [YamlMember(Alias = "SbinInstallerTargetRoot")]
+    public string? SbinInstallerTargetRoot { get; set; } = "/";
+
+    [YamlMember(Alias = "ForceChocolatey")]
+    public bool ForceChocolatey { get; set; }
+
+    [YamlMember(Alias = "PreferSbinInstaller")]
+    public bool PreferSbinInstaller { get; set; } = true;
+
+    [YamlMember(Alias = "PkgRequireSignature")]
+    public bool PkgRequireSignature { get; set; }
+
     public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
+}
+
+/// <summary>
+/// Build information extracted from .pkg packages (build-info.yaml)
+/// Matches Go: extract.PkgBuildInfo
+/// </summary>
+public class PkgBuildInfo
+{
+    [YamlMember(Alias = "format_version")]
+    public string? FormatVersion { get; set; }
+
+    [YamlMember(Alias = "generator")]
+    public string? Generator { get; set; }
+
+    [YamlMember(Alias = "build_date")]
+    public string? BuildDate { get; set; }
+
+    [YamlMember(Alias = "product")]
+    public PkgProductInfo? Product { get; set; }
+
+    [YamlMember(Alias = "install_location")]
+    public string? InstallLocation { get; set; }
+
+    [YamlMember(Alias = "signature")]
+    public PkgSignatureInfo? Signature { get; set; }
+
+    // Convenience properties
+    public string? ProductIdentifier => Product?.Identifier;
+    public string? ProductVersion => Product?.Version;
+    public string? Developer => Product?.Developer;
+    public string? Architecture => Product?.Architecture;
+}
+
+/// <summary>
+/// Product information within a .pkg package
+/// </summary>
+public class PkgProductInfo
+{
+    [YamlMember(Alias = "identifier")]
+    public string? Identifier { get; set; }
+
+    [YamlMember(Alias = "version")]
+    public string? Version { get; set; }
+
+    [YamlMember(Alias = "developer")]
+    public string? Developer { get; set; }
+
+    [YamlMember(Alias = "architecture")]
+    public string? Architecture { get; set; }
+
+    [YamlMember(Alias = "name")]
+    public string? Name { get; set; }
+
+    [YamlMember(Alias = "description")]
+    public string? Description { get; set; }
+}
+
+/// <summary>
+/// Signature information within a .pkg package
+/// </summary>
+public class PkgSignatureInfo
+{
+    [YamlMember(Alias = "algorithm")]
+    public string? Algorithm { get; set; }
+
+    [YamlMember(Alias = "hash")]
+    public string? Hash { get; set; }
+
+    [YamlMember(Alias = "package_hash")]
+    public string? PackageHash { get; set; }
+
+    [YamlMember(Alias = "signature")]
+    public string? Signature { get; set; }
+
+    [YamlMember(Alias = "signed_hash")]
+    public string? SignedHash { get; set; }
+
+    [YamlMember(Alias = "certificate")]
+    public PkgCertificateInfo? Certificate { get; set; }
+}
+
+/// <summary>
+/// Certificate information within a .pkg signature
+/// </summary>
+public class PkgCertificateInfo
+{
+    [YamlMember(Alias = "subject")]
+    public string? Subject { get; set; }
+
+    [YamlMember(Alias = "issuer")]
+    public string? Issuer { get; set; }
+
+    [YamlMember(Alias = "serial_number")]
+    public string? SerialNumber { get; set; }
+
+    [YamlMember(Alias = "thumbprint")]
+    public string? Thumbprint { get; set; }
+
+    [YamlMember(Alias = "not_before")]
+    public string? NotBefore { get; set; }
+
+    [YamlMember(Alias = "not_after")]
+    public string? NotAfter { get; set; }
 }
 
 /// <summary>

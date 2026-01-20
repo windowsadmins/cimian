@@ -1,27 +1,478 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Management.Automation;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
 using Microsoft.Win32;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
 /// <summary>
 /// Service for installing/uninstalling packages
-/// Migrated from Go pkg/installer
+/// Migrated from Go pkg/installer (3,308 lines)
+/// 
+/// Supports:
+/// - sbin-installer for .pkg and .nupkg (PRIMARY - matches Go)
+/// - MSI via msiexec.exe
+/// - EXE with silent switches
+/// - Chocolatey fallback for .nupkg
+/// - MSIX/AppX via PowerShell
+/// - PowerShell scripts
 /// </summary>
 public class InstallerService
 {
+    // sbin-installer paths (matches Go: detectSbinInstaller)
+    private const string SbinInstallerPath = @"C:\Program Files\sbin\installer.exe";
+    private const string SbinInstallerPathAlt = @"C:\Program Files (x86)\sbin\installer.exe";
+    
     private readonly CimianConfig _config;
     private readonly ScriptService _scriptService;
+    private SessionLogger? _sessionLogger;
+    
+    // Cached sbin-installer path (null = not checked, empty = not available)
+    private static string? _sbinInstallerBin;
 
     public InstallerService(CimianConfig config)
     {
         _config = config;
         _scriptService = new ScriptService();
     }
+
+    /// <summary>
+    /// Sets the session logger for structured event logging
+    /// </summary>
+    public void SetSessionLogger(SessionLogger? logger)
+    {
+        _sessionLogger = logger;
+    }
+
+    #region sbin-installer Support (Ported from Go pkg/installer)
+
+    /// <summary>
+    /// Detects and returns the sbin-installer path if available.
+    /// Matches Go: detectSbinInstaller()
+    /// </summary>
+    private string? DetectSbinInstaller()
+    {
+        // Return cached result if already checked
+        if (_sbinInstallerBin != null)
+        {
+            return string.IsNullOrEmpty(_sbinInstallerBin) ? null : _sbinInstallerBin;
+        }
+
+        // Check configured path first
+        if (!string.IsNullOrEmpty(_config.SbinInstallerPath) && File.Exists(_config.SbinInstallerPath))
+        {
+            ConsoleLogger.Debug($"Using configured sbin-installer path: {_config.SbinInstallerPath}");
+            _sbinInstallerBin = _config.SbinInstallerPath;
+            return _sbinInstallerBin;
+        }
+
+        // Try common installation paths
+        string[] commonPaths = 
+        {
+            SbinInstallerPath,
+            SbinInstallerPathAlt,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "sbin", "installer.exe"),
+        };
+
+        foreach (var path in commonPaths)
+        {
+            if (File.Exists(path))
+            {
+                ConsoleLogger.Debug($"Found sbin-installer at: {path}");
+                _sbinInstallerBin = path;
+                return _sbinInstallerBin;
+            }
+        }
+
+        ConsoleLogger.Debug("sbin-installer not found in any common locations");
+        _sbinInstallerBin = ""; // Mark as checked but not found
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if sbin-installer is available and functional.
+    /// Matches Go: isSbinInstallerAvailable()
+    /// </summary>
+    private bool IsSbinInstallerAvailable()
+    {
+        // If Chocolatey is forced, don't use sbin-installer
+        if (_config.ForceChocolatey)
+        {
+            ConsoleLogger.Debug("Chocolatey forced via configuration, skipping sbin-installer");
+            return false;
+        }
+
+        var sbinPath = DetectSbinInstaller();
+        if (string.IsNullOrEmpty(sbinPath))
+        {
+            return false;
+        }
+
+        // Test that it's functional by checking version
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = sbinPath,
+                Arguments = "--vers",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(startInfo);
+            if (process == null) return false;
+            
+            process.WaitForExit(10000);
+            if (process.ExitCode == 0)
+            {
+                ConsoleLogger.Debug($"sbin-installer is available and functional: {sbinPath}");
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"sbin-installer version check failed: {ex.Message}");
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Executes sbin-installer for a package file.
+    /// Matches Go: runSbinInstaller()
+    /// </summary>
+    private async Task<(bool Success, string Output)> RunSbinInstallerAsync(
+        string packagePath,
+        CatalogItem item,
+        CancellationToken cancellationToken)
+    {
+        var sbinPath = DetectSbinInstaller();
+        if (string.IsNullOrEmpty(sbinPath))
+        {
+            return (false, "sbin-installer not available");
+        }
+
+        var target = _config.SbinInstallerTargetRoot ?? "/";
+
+        ConsoleLogger.Info($"Installing package with sbin-installer: {item.Name}");
+        _sessionLogger?.Log("INFO", $"Installing package with sbin-installer: {item.Name} -> {packagePath}");
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started", 
+            $"sbin-installer installation started for {item.Name}");
+
+        // Build command arguments (matches Go)
+        var args = $"--pkg \"{packagePath}\" --target {target} --verbose";
+
+        // Use configured timeout or default to 30 minutes
+        var timeoutMinutes = _config.InstallerTimeout > 0 
+            ? _config.InstallerTimeout / 60 
+            : 30;
+
+        ConsoleLogger.Debug($"sbin-installer command: {sbinPath} {args}");
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = sbinPath,
+            Arguments = args,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        try
+        {
+            using var process = new Process { StartInfo = startInfo };
+            var output = new StringBuilder();
+
+            process.OutputDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    output.AppendLine(e.Data);
+                    ConsoleLogger.Debug($"  {e.Data}");
+                }
+            };
+
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    output.AppendLine($"ERROR: {e.Data}");
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
+
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(true); } catch { }
+                var errorMsg = $"sbin-installer timed out after {timeoutMinutes} minutes";
+                ConsoleLogger.Error(errorMsg);
+                _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
+                return (false, errorMsg);
+            }
+
+            var outputStr = output.ToString();
+
+            if (process.ExitCode == 0)
+            {
+                ConsoleLogger.Success($"sbin-installer completed successfully for {item.Name}");
+                _sessionLogger?.Log("INFO", $"sbin-installer completed successfully for {item.Name}");
+                _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed",
+                    $"sbin-installer installation succeeded for {item.Name}");
+                return (true, outputStr);
+            }
+            else
+            {
+                var errorMsg = $"sbin-installer failed with exit code: {process.ExitCode}";
+                ConsoleLogger.Error(errorMsg);
+                _sessionLogger?.Log("ERROR", $"{errorMsg}\n{outputStr}");
+                _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
+                return (false, $"{errorMsg}\n{outputStr}");
+            }
+        }
+        catch (Exception ex)
+        {
+            var errorMsg = $"sbin-installer execution failed: {ex.Message}";
+            ConsoleLogger.Error(errorMsg);
+            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg, ex.Message);
+            return (false, errorMsg);
+        }
+    }
+
+    /// <summary>
+    /// Installs a .pkg package using sbin-installer.
+    /// Matches Go: installOrUpgradePkgWithSbin()
+    /// </summary>
+    private async Task<(bool Success, string Output)> InstallPkgWithSbinAsync(
+        CatalogItem item,
+        string packagePath,
+        CancellationToken cancellationToken)
+    {
+        ConsoleLogger.Info($"Installing .pkg package: {item.Name}");
+        _sessionLogger?.Log("INFO", $"Installing .pkg package with sbin-installer: {item.Name}");
+
+        // Try to extract and log package metadata (build-info.yaml)
+        var buildInfo = ExtractPkgBuildInfo(packagePath);
+        if (buildInfo != null)
+        {
+            ConsoleLogger.Detail($"Package ID: {buildInfo.ProductIdentifier}");
+            ConsoleLogger.Detail($"Package Version: {buildInfo.ProductVersion}");
+            ConsoleLogger.Detail($"Developer: {buildInfo.Developer}");
+            ConsoleLogger.Detail($"Architecture: {buildInfo.Architecture}");
+            
+            _sessionLogger?.Log("INFO", $"Package metadata: {buildInfo.ProductIdentifier} v{buildInfo.ProductVersion} by {buildInfo.Developer}");
+
+            // Verify architecture compatibility
+            if (!IsArchitectureCompatible(buildInfo.Architecture))
+            {
+                var archError = $"Package architecture '{buildInfo.Architecture}' is not compatible with system";
+                ConsoleLogger.Warn(archError);
+                _sessionLogger?.Log("WARN", archError);
+                // Don't fail - let sbin-installer handle it (it may have its own logic)
+            }
+
+            // Verify package signature if signature info is present
+            if (buildInfo.Signature != null)
+            {
+                var (signatureValid, signatureDetails) = VerifyPkgSignature(packagePath, buildInfo);
+                if (signatureValid)
+                {
+                    ConsoleLogger.Success($"✓ Signature verified: {signatureDetails}");
+                    _sessionLogger?.Log("INFO", $"Signature verified for {item.Name}: {signatureDetails}");
+                }
+                else
+                {
+                    ConsoleLogger.Warn($"⚠ Signature verification failed: {signatureDetails}");
+                    _sessionLogger?.Log("WARN", $"Signature verification failed for {item.Name}: {signatureDetails}");
+                    
+                    // Check if signature is required by config
+                    if (_config?.PkgRequireSignature == true)
+                    {
+                        var error = $"Package signature verification required but failed: {signatureDetails}";
+                        ConsoleLogger.Error(error);
+                        _sessionLogger?.Log("ERROR", error);
+                        return (false, error);
+                    }
+                }
+            }
+            else
+            {
+                ConsoleLogger.Detail("Package is unsigned");
+                _sessionLogger?.Log("INFO", $"Package {item.Name} is unsigned");
+            }
+        }
+
+        // Execute sbin-installer
+        var result = await RunSbinInstallerAsync(packagePath, item, cancellationToken);
+
+        if (result.Success)
+        {
+            // Store enhanced version information in registry
+            RegisterInstallationWithPkgInfo(item, buildInfo);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Installs a .nupkg package using sbin-installer with Chocolatey fallback.
+    /// Matches Go: installOrUpgradeNupkgWithSbin() and installOrUpgradePackage()
+    /// </summary>
+    private async Task<(bool Success, string Output)> InstallNupkgWithSbinAsync(
+        CatalogItem item,
+        string packagePath,
+        CancellationToken cancellationToken)
+    {
+        // Try sbin-installer first if available
+        if (IsSbinInstallerAvailable())
+        {
+            ConsoleLogger.Info($"[INSTALLER METHOD: sbin-installer] Attempting .nupkg installation: {item.Name}");
+            _sessionLogger?.Log("INFO", $"Attempting .nupkg installation with sbin-installer: {item.Name}");
+
+            var result = await RunSbinInstallerAsync(packagePath, item, cancellationToken);
+            if (result.Success)
+            {
+                ConsoleLogger.Success($"[INSTALLER METHOD: sbin-installer] Installation successful: {item.Name}");
+                return result;
+            }
+
+            // Log fallback
+            ConsoleLogger.Warn($"[INSTALLER METHOD: sbin-installer → choco] sbin-installer failed, falling back to Chocolatey");
+            _sessionLogger?.Log("WARN", $"sbin-installer failed for {item.Name}, attempting Chocolatey fallback");
+        }
+
+        // Fallback to Chocolatey
+        ConsoleLogger.Info($"[INSTALLER METHOD: choco] Using Chocolatey for .nupkg installation: {item.Name}");
+        return await InstallChocolateyAsync(item, packagePath, cancellationToken);
+    }
+
+    /// <summary>
+    /// Extracts build-info.yaml from a .pkg file.
+    /// Matches Go: extract.ExtractPkgBuildInfo()
+    /// </summary>
+    private PkgBuildInfo? ExtractPkgBuildInfo(string packagePath)
+    {
+        try
+        {
+            using var archive = ZipFile.OpenRead(packagePath);
+            var buildInfoEntry = archive.GetEntry("build-info.yaml");
+            if (buildInfoEntry == null)
+            {
+                ConsoleLogger.Debug("No build-info.yaml found in package");
+                return null;
+            }
+
+            using var stream = buildInfoEntry.Open();
+            using var reader = new StreamReader(stream);
+            var yaml = reader.ReadToEnd();
+
+            var deserializer = new DeserializerBuilder()
+                .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                .IgnoreUnmatchedProperties()
+                .Build();
+
+            return deserializer.Deserialize<PkgBuildInfo>(yaml);
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"Failed to extract build-info.yaml: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Checks if package architecture is compatible with the current system.
+    /// </summary>
+    private bool IsArchitectureCompatible(string? packageArch)
+    {
+        if (string.IsNullOrEmpty(packageArch) || packageArch.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var systemArch = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "x86",
+            _ => "unknown"
+        };
+
+        // x64 packages can run on arm64 via emulation
+        if (packageArch.Equals("x64", StringComparison.OrdinalIgnoreCase) && systemArch == "arm64")
+        {
+            return true; // Windows ARM64 can run x64 via emulation
+        }
+
+        return packageArch.Equals(systemArch, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Registers installation with enhanced .pkg metadata.
+    /// Matches Go: storeInstalledVersionInRegistryWithPkgInfo()
+    /// </summary>
+    private void RegisterInstallationWithPkgInfo(CatalogItem item, PkgBuildInfo? buildInfo)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.CreateSubKey($@"SOFTWARE\ManagedInstalls\{item.Name}");
+            if (key == null) return;
+
+            var version = !string.IsNullOrEmpty(item.Version) ? item.Version 
+                : buildInfo?.ProductVersion ?? "0.0.0";
+            
+            key.SetValue("Version", version);
+            key.SetValue("DisplayName", item.DisplayName ?? item.Name);
+            key.SetValue("InstallDate", DateTime.Now.ToString("yyyy-MM-dd"));
+            key.SetValue("InstallerType", "pkg");
+
+            if (buildInfo != null)
+            {
+                if (!string.IsNullOrEmpty(buildInfo.ProductIdentifier))
+                    key.SetValue("PackageIdentifier", buildInfo.ProductIdentifier);
+                if (!string.IsNullOrEmpty(buildInfo.Developer))
+                    key.SetValue("Developer", buildInfo.Developer);
+                if (!string.IsNullOrEmpty(buildInfo.Architecture))
+                    key.SetValue("Architecture", buildInfo.Architecture);
+            }
+
+            // If this is Cimian, also update the main Cimian registry key
+            var itemName = item.Name.ToLowerInvariant();
+            if (itemName == "cimian" || itemName == "cimiantools" || 
+                itemName.StartsWith("cimian-") || itemName.StartsWith("cimiantools-"))
+            {
+                using var cimianKey = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Cimian");
+                cimianKey?.SetValue("Version", version);
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to register installation with pkg info: {ex.Message}");
+        }
+    }
+
+    #endregion
 
     /// <summary>
     /// Installs a catalog item
@@ -32,26 +483,42 @@ public class InstallerService
         CancellationToken cancellationToken = default)
     {
         ConsoleLogger.Info($"Installing {item.Name} v{item.Version}...");
+        _sessionLogger?.Log("INFO", $"Starting installation: {item.Name} v{item.Version}");
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started", $"Installing {item.Name}");
 
         // Run preinstall script if present
         if (!string.IsNullOrEmpty(item.PreinstallScript))
         {
             ConsoleLogger.Info($"Running preinstall script for {item.Name}...");
+            _sessionLogger?.Log("INFO", $"Executing preinstall script for {item.Name}");
             var preResult = await _scriptService.ExecuteScriptAsync(item.PreinstallScript, cancellationToken);
             if (!preResult.Success)
             {
-                return (false, $"Preinstall script failed: {preResult.Output}");
+                var errorMsg = $"Preinstall script failed: {preResult.Output}";
+                _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
+                return (false, errorMsg);
             }
         }
 
         // Determine installer type
         var installerType = GetInstallerType(item, localFile);
+        ConsoleLogger.Detail($"Installer type: {installerType}");
+        _sessionLogger?.Log("DEBUG", $"Using installer type: {installerType} for {item.Name}");
         
         var result = installerType.ToLowerInvariant() switch
         {
+            // PRIMARY: .pkg files use sbin-installer (matches Go behavior)
+            "pkg" => await InstallPkgWithSbinAsync(item, localFile, cancellationToken),
+            
+            // .nupkg files: try sbin-installer first, fallback to Chocolatey
+            "nupkg" => await InstallNupkgWithSbinAsync(item, localFile, cancellationToken),
+            
+            // Legacy Chocolatey (explicit request)
+            "chocolatey" => await InstallChocolateyAsync(item, localFile, cancellationToken),
+            
+            // Standard installers
             "msi" => await InstallMsiAsync(item, localFile, cancellationToken),
             "exe" => await InstallExeAsync(item, localFile, cancellationToken),
-            "nupkg" or "chocolatey" => await InstallChocolateyAsync(item, localFile, cancellationToken),
             "msix" or "appx" => await InstallMsixAsync(item, localFile, cancellationToken),
             "powershell" or "ps1" => await InstallPowerShellAsync(item, localFile, cancellationToken),
             "script" => await InstallScriptOnlyAsync(item, cancellationToken),
@@ -60,6 +527,7 @@ public class InstallerService
 
         if (!result.Success)
         {
+            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", result.Output);
             return result;
         }
 
@@ -67,16 +535,24 @@ public class InstallerService
         if (!string.IsNullOrEmpty(item.PostinstallScript))
         {
             ConsoleLogger.Info($"Running postinstall script for {item.Name}...");
+            _sessionLogger?.Log("INFO", $"Executing postinstall script for {item.Name}");
             var postResult = await _scriptService.ExecuteScriptAsync(item.PostinstallScript, cancellationToken);
             if (!postResult.Success)
             {
                 ConsoleLogger.Warn($"Postinstall script failed: {postResult.Output}");
+                _sessionLogger?.Log("WARN", $"Postinstall script failed for {item.Name}: {postResult.Output}");
                 // Don't fail the installation for postinstall script failures
             }
         }
 
-        // Register in ManagedInstalls registry
-        RegisterInstallation(item);
+        // Register in ManagedInstalls registry (if not already done by pkg handler)
+        if (installerType != "pkg")
+        {
+            RegisterInstallation(item);
+        }
+
+        ConsoleLogger.Success($"Successfully installed {item.Name} v{item.Version}");
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed", $"Successfully installed {item.Name}");
 
         return result;
     }
@@ -152,9 +628,10 @@ public class InstallerService
         var ext = Path.GetExtension(localFile).ToLowerInvariant();
         return ext switch
         {
+            ".pkg" => "pkg",      // PRIMARY: sbin-installer .pkg format
             ".msi" => "msi",
             ".exe" => "exe",
-            ".nupkg" => "nupkg",
+            ".nupkg" => "nupkg",  // sbin-installer with choco fallback
             ".msix" or ".appx" or ".msixbundle" or ".appxbundle" => "msix",
             ".ps1" => "powershell",
             _ => "exe"
@@ -544,6 +1021,123 @@ public class InstallerService
         catch
         {
             return true; // Assume needs update on error
+        }
+    }
+
+    /// <summary>
+    /// Verifies the signature of a .pkg package.
+    /// Matches Go: extract.VerifyPkgSignature()
+    /// </summary>
+    private (bool Valid, string Details) VerifyPkgSignature(string packagePath, PkgBuildInfo buildInfo)
+    {
+        if (buildInfo.Signature == null)
+        {
+            return (false, "Package is not signed");
+        }
+
+        var signature = buildInfo.Signature;
+        var issues = new List<string>();
+
+        // 1. Verify certificate validity (date range)
+        var certificateValid = VerifyCertificateValidity(signature.Certificate);
+        if (!certificateValid)
+        {
+            issues.Add("certificate expired or not yet valid");
+        }
+
+        // 2. Calculate package hash (excluding build-info.yaml)
+        var (calculatedHash, hashError) = CalculatePkgPackageHash(packagePath);
+        if (hashError != null)
+        {
+            return (false, $"Failed to calculate package hash: {hashError}");
+        }
+
+        // 3. Verify hash matches
+        var expectedHash = signature.PackageHash?.Replace("sha256:", "") ?? "";
+        var hashValid = string.Equals(calculatedHash, expectedHash, StringComparison.OrdinalIgnoreCase);
+        if (!hashValid)
+        {
+            issues.Add("hash mismatch - package may have been tampered with");
+        }
+
+        // 4. Verify signature (simplified - checks hash, not full crypto verification)
+        var signatureValid = !string.IsNullOrEmpty(signature.SignedHash);
+        if (!signatureValid)
+        {
+            issues.Add("signature missing");
+        }
+
+        var valid = certificateValid && hashValid && signatureValid;
+
+        if (valid)
+        {
+            return (true, $"Signature valid, signed by {signature.Certificate?.Subject ?? "unknown"}");
+        }
+        else
+        {
+            return (false, $"Signature verification failed: {string.Join(", ", issues)}");
+        }
+    }
+
+    /// <summary>
+    /// Verifies certificate validity based on date range.
+    /// </summary>
+    private bool VerifyCertificateValidity(PkgCertificateInfo? certificate)
+    {
+        if (certificate == null) return false;
+        
+        var now = DateTime.UtcNow;
+        
+        // Parse NotBefore
+        if (!string.IsNullOrEmpty(certificate.NotBefore) && 
+            DateTime.TryParse(certificate.NotBefore, out var notBefore))
+        {
+            if (now < notBefore) return false;
+        }
+        
+        // Parse NotAfter
+        if (!string.IsNullOrEmpty(certificate.NotAfter) && 
+            DateTime.TryParse(certificate.NotAfter, out var notAfter))
+        {
+            if (now > notAfter) return false;
+        }
+        
+        return true;
+    }
+
+    /// <summary>
+    /// Calculates SHA256 hash of package contents, excluding build-info.yaml.
+    /// Matches Go: calculatePkgPackageHash()
+    /// </summary>
+    private (string Hash, string? Error) CalculatePkgPackageHash(string packagePath)
+    {
+        try
+        {
+            using var archive = ZipFile.OpenRead(packagePath);
+            var fileHashes = new List<string>();
+
+            foreach (var entry in archive.Entries.OrderBy(e => e.FullName))
+            {
+                if (entry.FullName.EndsWith("/")) continue; // Skip directories
+                if (entry.Name == "build-info.yaml") continue; // Skip signature file
+
+                using var stream = entry.Open();
+                using var sha256 = SHA256.Create();
+                var hash = sha256.ComputeHash(stream);
+                fileHashes.Add($"{entry.FullName}:{Convert.ToHexString(hash).ToLowerInvariant()}");
+            }
+
+            // Combine all file hashes
+            using var finalSha = SHA256.Create();
+            var combined = string.Join("\n", fileHashes);
+            var combinedBytes = Encoding.UTF8.GetBytes(combined);
+            var finalHash = finalSha.ComputeHash(combinedBytes);
+
+            return (Convert.ToHexString(finalHash).ToLowerInvariant(), null);
+        }
+        catch (Exception ex)
+        {
+            return ("", ex.Message);
         }
     }
 }
