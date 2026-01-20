@@ -20,6 +20,10 @@ public class SessionLogger : IDisposable
     private const string BaseLogsDir = @"C:\ProgramData\ManagedInstalls\logs";
     private const string ReportsDir = @"C:\ProgramData\ManagedInstalls\reports";
 
+    // Retention policy defaults (matches Go logging/events.go)
+    private const int DefaultMaxAgeDays = 30;
+    private const int DefaultKeepRecentSessions = 50;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -80,6 +84,9 @@ public class SessionLogger : IDisposable
         
         // Ensure reports directory exists
         Directory.CreateDirectory(ReportsDir);
+
+        // Perform log retention cleanup (async, non-blocking)
+        Task.Run(() => PerformRetentionCleanup());
 
         // Initialize log files
         InitializeLogFiles();
@@ -348,6 +355,83 @@ public class SessionLogger : IDisposable
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[ERROR] Failed to write session.json: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Performs log retention cleanup based on age and count policies.
+    /// Matches Go: cleanupOldLogs() and performRetentionCleanup()
+    /// </summary>
+    private void PerformRetentionCleanup()
+    {
+        try
+        {
+            if (!Directory.Exists(BaseLogsDir))
+                return;
+
+            var sessionDirs = Directory.GetDirectories(BaseLogsDir)
+                .Select(d => new DirectoryInfo(d))
+                .Where(d => IsSessionDirectory(d.Name))
+                .OrderByDescending(d => d.Name) // Newest first (timestamped format)
+                .ToList();
+
+            var now = DateTime.Now;
+            var maxAge = TimeSpan.FromDays(DefaultMaxAgeDays);
+            var deleted = new HashSet<string>();
+
+            // Delete directories beyond the keep count
+            for (var i = DefaultKeepRecentSessions; i < sessionDirs.Count; i++)
+            {
+                TryDeleteSessionDirectory(sessionDirs[i].FullName);
+                deleted.Add(sessionDirs[i].Name);
+            }
+
+            // Delete directories older than max age
+            foreach (var dir in sessionDirs)
+            {
+                if (deleted.Contains(dir.Name))
+                    continue;
+
+                if (now - dir.CreationTime > maxAge)
+                {
+                    TryDeleteSessionDirectory(dir.FullName);
+                }
+            }
+        }
+        catch
+        {
+            // Silent failure - retention cleanup is non-critical
+        }
+    }
+
+    /// <summary>
+    /// Checks if a directory name matches the session timestamp format (YYYY-MM-DD-HHMMss)
+    /// </summary>
+    private static bool IsSessionDirectory(string name)
+    {
+        // Format: 2024-01-15-143022 (17 chars, 3 dashes)
+        if (name.Length != 17)
+            return false;
+
+        if (name.Count(c => c == '-') != 3)
+            return false;
+
+        // Basic validation - check if it looks like a timestamp
+        return name[4] == '-' && name[7] == '-' && name[10] == '-';
+    }
+
+    /// <summary>
+    /// Safely attempts to delete a session directory
+    /// </summary>
+    private static void TryDeleteSessionDirectory(string path)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+            // Ignore - directory may be in use or protected
         }
     }
 
