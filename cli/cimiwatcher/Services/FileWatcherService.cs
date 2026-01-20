@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Cimian.Core.Services;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -6,6 +7,7 @@ namespace Cimian.CLI.Cimiwatcher.Services;
 
 /// <summary>
 /// Background service that monitors bootstrap flag files and triggers updates when detected.
+/// Also checks for pending self-updates on service start.
 /// </summary>
 public class FileWatcherService : BackgroundService
 {
@@ -29,6 +31,10 @@ public class FileWatcherService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("CimianWatcher file monitoring service started");
+        
+        // Check for pending self-updates on service start
+        CheckAndPerformSelfUpdate();
+        
         _logger.LogInformation("Monitoring bootstrap files:");
         _logger.LogInformation("  GUI: {BootstrapFile}", BootstrapFlagFile);
         _logger.LogInformation("  Headless: {HeadlessFile}", HeadlessFlagFile);
@@ -228,6 +234,47 @@ public class FileWatcherService : BackgroundService
         {
             _isPaused = false;
             _logger.LogInformation("Monitoring resumed");
+        }
+    }
+
+    /// <summary>
+    /// Checks for pending self-updates and executes them on service start.
+    /// Port of Go cimiwatcher checkAndPerformSelfUpdate()
+    /// </summary>
+    private void CheckAndPerformSelfUpdate()
+    {
+        try
+        {
+            var (pending, metadata, error) = SelfUpdateService.GetSelfUpdateStatus();
+            
+            if (error != null)
+            {
+                _logger.LogError("Failed to check self-update status: {Error}", error);
+                return;
+            }
+
+            if (!pending || metadata == null)
+            {
+                _logger.LogInformation("No self-update pending");
+                return;
+            }
+
+            _logger.LogInformation("Self-update detected, executing update for {Item} v{Version}", 
+                metadata.Item, metadata.Version);
+
+            // Perform the self-update
+            if (SelfUpdateService.PerformSelfUpdate())
+            {
+                _logger.LogInformation("Self-update completed successfully");
+            }
+            else
+            {
+                _logger.LogError("Self-update failed");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error during self-update check");
         }
     }
 }

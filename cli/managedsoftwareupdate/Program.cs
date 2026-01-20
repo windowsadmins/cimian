@@ -376,12 +376,22 @@ public class Program
         Console.WriteLine("Cimian Self-Update Status");
         Console.WriteLine("════════════════════════════");
 
-        // Check for pending self-update flag
-        var flagPath = @"C:\ProgramData\ManagedInstalls\.selfupdate_pending";
+        var (pending, metadata, error) = SelfUpdateService.GetSelfUpdateStatus();
         
-        if (File.Exists(flagPath))
+        if (error != null)
+        {
+            ConsoleLogger.Error($"Error checking self-update status: {error}");
+            return 1;
+        }
+        
+        if (pending && metadata != null)
         {
             Console.WriteLine("[STATUS]: Self-update pending");
+            Console.WriteLine();
+            Console.WriteLine($"   Item: {metadata.Item}");
+            Console.WriteLine($"   Version: {metadata.Version}");
+            Console.WriteLine($"   Installer: {metadata.InstallerType}");
+            Console.WriteLine($"   Scheduled: {metadata.ScheduledAt}");
             Console.WriteLine();
             ConsoleLogger.Info("To trigger the update:");
             Console.WriteLine("   managedsoftwareupdate --restart-service");
@@ -397,73 +407,8 @@ public class Program
 
     private static int PerformSelfUpdate()
     {
-        // This is an internal flag used by the self-update mechanism
-        // When a new version of Cimian is downloaded, it may re-launch itself with this flag
-        // to complete the update process
-        ConsoleLogger.Info("Performing self-update...");
-
-        try
-        {
-            // Check for pending self-update flag
-            var flagPath = @"C:\ProgramData\ManagedInstalls\.selfupdate_pending";
-            
-            if (!File.Exists(flagPath))
-            {
-                ConsoleLogger.Info("No self-update pending. Nothing to do.");
-                return 0;
-            }
-
-            // Read the self-update metadata
-            var flagData = File.ReadAllText(flagPath);
-            ConsoleLogger.Info("Self-update metadata found:");
-            
-            // Parse and display metadata
-            var lines = flagData.Split('\n');
-            string? localFile = null;
-            string? itemName = null;
-            string? version = null;
-            string? installerType = null;
-
-            foreach (var line in lines)
-            {
-                if (line.Contains(':') && !line.TrimStart().StartsWith("#"))
-                {
-                    var parts = line.Split(':', 2);
-                    if (parts.Length == 2)
-                    {
-                        var key = parts[0].Trim();
-                        var value = parts[1].Trim();
-                        Console.WriteLine($"   {key}: {value}");
-
-                        switch (key)
-                        {
-                            case "LocalFile": localFile = value; break;
-                            case "Item": itemName = value; break;
-                            case "Version": version = value; break;
-                            case "InstallerType": installerType = value; break;
-                        }
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(localFile))
-            {
-                ConsoleLogger.Error("Self-update metadata missing LocalFile information");
-                return 1;
-            }
-
-            Console.WriteLine();
-            ConsoleLogger.Info($"Would execute: {installerType} installer at {localFile}");
-            ConsoleLogger.Warn("Full self-update execution is not yet implemented in C# version.");
-            ConsoleLogger.Info("For now, please run the Go version or manually install the update.");
-
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            ConsoleLogger.Error($"Self-update failed: {ex.Message}");
-            return 1;
-        }
+        // Use the SelfUpdateService to perform the actual update
+        return SelfUpdateService.PerformSelfUpdate() ? 0 : 1;
     }
 
     private static bool TryAcquireSingleInstance()
