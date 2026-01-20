@@ -2,6 +2,7 @@ using CommandLine;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
 using Cimian.Core.Services;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -111,6 +112,11 @@ public class Program
             return ValidateCache();
         }
 
+        if (options.CleanCache)
+        {
+            return CleanCache();
+        }
+
         if (options.SelfUpdateStatus)
         {
             return ShowSelfUpdateStatus();
@@ -119,6 +125,21 @@ public class Program
         if (options.PerformSelfUpdate)
         {
             return PerformSelfUpdate();
+        }
+
+        if (options.CheckSelfUpdate)
+        {
+            return CheckSelfUpdate();
+        }
+
+        if (options.ClearSelfUpdate)
+        {
+            return ClearSelfUpdate();
+        }
+
+        if (options.RestartService)
+        {
+            return RestartCimianWatcherService();
         }
 
         // Handle preflight-only: run preflight and exit
@@ -136,8 +157,26 @@ public class Program
         // Check for single instance
         if (!TryAcquireSingleInstance())
         {
-            Console.Error.WriteLine("Another instance of managedsoftwareupdate is running. Exiting.");
-            return 1;
+            // If checkonly, provide interactive options
+            if (options.CheckOnly)
+            {
+                var action = HandleCheckOnlyConflict();
+                if (action == "exit")
+                {
+                    return 1;
+                }
+                // action == "retry" - try to acquire mutex again
+                if (!TryAcquireSingleInstance())
+                {
+                    Console.Error.WriteLine("Failed to acquire single instance after retry. Exiting.");
+                    return 1;
+                }
+            }
+            else
+            {
+                Console.Error.WriteLine("Another instance of managedsoftwareupdate is running. Exiting.");
+                return 1;
+            }
         }
 
         try
@@ -411,6 +450,365 @@ public class Program
         return SelfUpdateService.PerformSelfUpdate() ? 0 : 1;
     }
 
+    private static int CleanCache()
+    {
+        Console.WriteLine("Cleaning Cimian Cache");
+        Console.WriteLine("════════════════════════════");
+
+        var cacheDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "Cimian", "Cache");
+
+        if (!Directory.Exists(cacheDir))
+        {
+            Console.WriteLine("Cache directory does not exist. Nothing to clean.");
+            return 0;
+        }
+
+        try
+        {
+            var files = Directory.GetFiles(cacheDir, "*", SearchOption.AllDirectories);
+            var totalSize = files.Sum(f => new FileInfo(f).Length);
+
+            Console.WriteLine($"Found {files.Length} cached files ({totalSize / 1024 / 1024:N0} MB)");
+
+            foreach (var file in files)
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    ConsoleLogger.Warn($"Could not delete {Path.GetFileName(file)}: {ex.Message}");
+                }
+            }
+
+            // Clean empty directories
+            foreach (var dir in Directory.GetDirectories(cacheDir, "*", SearchOption.AllDirectories).Reverse())
+            {
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                    {
+                        Directory.Delete(dir);
+                    }
+                }
+                catch { /* Ignore directory cleanup errors */ }
+            }
+
+            ConsoleLogger.Success("Cache cleaned successfully");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Error($"Failed to clean cache: {ex.Message}");
+            return 1;
+        }
+    }
+
+    private static int CheckSelfUpdate()
+    {
+        Console.WriteLine("Checking for Cimian Self-Update");
+        Console.WriteLine("════════════════════════════════");
+
+        var (pending, metadata, error) = SelfUpdateService.GetSelfUpdateStatus();
+
+        if (error != null)
+        {
+            ConsoleLogger.Error($"Error: {error}");
+            return 1;
+        }
+
+        if (pending && metadata != null)
+        {
+            Console.WriteLine();
+            ConsoleLogger.Info($"Update available: {metadata.Item} v{metadata.Version}");
+            Console.WriteLine($"   Scheduled: {metadata.ScheduledAt}");
+            Console.WriteLine();
+            Console.WriteLine("Run with --restart-service to apply the update.");
+            return 0;
+        }
+
+        Console.WriteLine("No updates pending. Cimian is up to date.");
+        return 0;
+    }
+
+    private static int ClearSelfUpdate()
+    {
+        Console.WriteLine("Clearing Pending Self-Update");
+        Console.WriteLine("════════════════════════════════");
+
+        var (pending, metadata, _) = SelfUpdateService.GetSelfUpdateStatus();
+
+        if (!pending || metadata == null)
+        {
+            Console.WriteLine("No pending self-update to clear.");
+            return 0;
+        }
+
+        // Clear the flag file
+        var flagFile = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "Cimian", "Flags", "selfupdate.pending");
+
+        try
+        {
+            if (File.Exists(flagFile))
+            {
+                File.Delete(flagFile);
+                ConsoleLogger.Success($"Cleared pending update: {metadata.Item} v{metadata.Version}");
+            }
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Error($"Failed to clear self-update: {ex.Message}");
+            return 1;
+        }
+    }
+
+    private static int RestartCimianWatcherService()
+    {
+        Console.WriteLine("Restarting Cimian Watcher Service");
+        Console.WriteLine("══════════════════════════════════");
+
+        const string serviceName = "CimianWatcher";
+
+        try
+        {
+            // Stop the service
+            Console.WriteLine($"Stopping {serviceName}...");
+            var stopProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = $"stop {serviceName}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+
+            stopProcess?.WaitForExit(30000);
+
+            // Wait for service to stop
+            Thread.Sleep(2000);
+
+            // Start the service
+            Console.WriteLine($"Starting {serviceName}...");
+            var startProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = $"start {serviceName}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+
+            startProcess?.WaitForExit(30000);
+
+            if (startProcess?.ExitCode == 0)
+            {
+                ConsoleLogger.Success($"{serviceName} restarted successfully");
+                Console.WriteLine();
+                Console.WriteLine("Note: If a self-update was pending, it will be applied now.");
+                return 0;
+            }
+            else
+            {
+                ConsoleLogger.Error($"Failed to start {serviceName}");
+                return 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Error($"Error restarting service: {ex.Message}");
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// Handles conflict when --checkonly is used but another instance is running.
+    /// Matches Go: handleCheckOnlyConflict()
+    /// </summary>
+    private static string HandleCheckOnlyConflict()
+    {
+        Console.Error.WriteLine("\nAnother managedsoftwareupdate process is currently running.\n");
+
+        // Try to determine what the running process is doing
+        var runningProcessInfo = GetRunningProcessInfo();
+        if (!string.IsNullOrEmpty(runningProcessInfo))
+        {
+            Console.Error.WriteLine($"Current process status: {runningProcessInfo}\n");
+        }
+
+        Console.Error.WriteLine("Options:");
+        Console.Error.WriteLine("  [K] Kill the existing process and continue with --checkonly");
+        Console.Error.WriteLine("  [W] Wait for the existing process to complete");
+        Console.Error.WriteLine("  [Q] Quit (default)\n");
+        Console.Error.Write("Choice [k/w/q]: ");
+
+        var choice = Console.ReadLine()?.ToLower().Trim() ?? "";
+
+        switch (choice)
+        {
+            case "k":
+            case "kill":
+                Console.Error.WriteLine("\nAttempting to terminate existing process...");
+                if (!KillExistingProcess())
+                {
+                    Console.Error.WriteLine("ERROR: Failed to kill existing process.");
+                    Console.Error.WriteLine("The existing process may be in a critical state. Exiting.");
+                    return "exit";
+                }
+                Console.Error.WriteLine("Existing process terminated. Continuing with --checkonly...\n");
+                Thread.Sleep(500); // Give system time to release mutex
+                return "retry";
+
+            case "w":
+            case "wait":
+                Console.Error.WriteLine("\nWaiting for existing process to complete...");
+                WaitForProcessCompletion();
+                Console.Error.WriteLine("Process completed. Continuing with --checkonly...\n");
+                return "retry";
+
+            case "q":
+            case "quit":
+            case "":
+                Console.Error.WriteLine("\nExiting. The existing process will continue running.");
+                return "exit";
+
+            default:
+                Console.Error.WriteLine("\nInvalid choice. Exiting.");
+                return "exit";
+        }
+    }
+
+    /// <summary>
+    /// Gets information about the running managedsoftwareupdate process.
+    /// Matches Go: getRunningProcessInfo()
+    /// </summary>
+    private static string GetRunningProcessInfo()
+    {
+        try
+        {
+            var currentPid = Environment.ProcessId;
+            var processes = Process.GetProcessesByName("managedsoftwareupdate");
+            
+            foreach (var proc in processes)
+            {
+                if (proc.Id == currentPid) continue;
+                
+                try
+                {
+                    var cmdLine = GetProcessCommandLine(proc.Id);
+                    
+                    if (string.IsNullOrEmpty(cmdLine))
+                        return "Unable to determine process status";
+                    
+                    if (cmdLine.Contains("--checkonly"))
+                        return "Running check-only operation (safe to terminate)";
+                    else if (cmdLine.Contains("--show-config") || cmdLine.Contains("--version"))
+                        return "Running information display (safe to terminate)";
+                    else if (cmdLine.Contains("--auto"))
+                        return "WARNING: Running automatic installation (RISKY to terminate)";
+                    else if (cmdLine.Contains("--installonly"))
+                        return "WARNING: Running install-only operation (RISKY to terminate)";
+                    else
+                        return "WARNING: Running software management operation (POTENTIALLY RISKY to terminate)";
+                }
+                catch
+                {
+                    return "Unable to determine process status";
+                }
+            }
+
+            return "Process no longer running";
+        }
+        catch
+        {
+            return "Unable to determine process status";
+        }
+    }
+
+    /// <summary>
+    /// Gets the command line of a process by PID using WMI.
+    /// </summary>
+    private static string? GetProcessCommandLine(int pid)
+    {
+        try
+        {
+            using var ps = System.Management.Automation.PowerShell.Create();
+            ps.AddScript($"Get-WmiObject Win32_Process -Filter \"ProcessId = {pid}\" | Select-Object -ExpandProperty CommandLine");
+            var result = ps.Invoke();
+            return result.FirstOrDefault()?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Kills existing managedsoftwareupdate processes.
+    /// Matches Go: killExistingProcess()
+    /// </summary>
+    private static bool KillExistingProcess()
+    {
+        try
+        {
+            var currentPid = Environment.ProcessId;
+            var processes = Process.GetProcessesByName("managedsoftwareupdate");
+
+            foreach (var proc in processes)
+            {
+                if (proc.Id == currentPid) continue;
+                
+                try
+                {
+                    proc.Kill(true); // Kill entire process tree
+                    proc.WaitForExit(5000);
+                }
+                catch
+                {
+                    // Continue trying to kill other instances
+                }
+            }
+            
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Waits for existing managedsoftwareupdate processes to complete.
+    /// Matches Go: waitForProcessCompletion()
+    /// </summary>
+    private static void WaitForProcessCompletion()
+    {
+        var currentPid = Environment.ProcessId;
+        Console.Error.Write("Monitoring process completion");
+
+        while (true)
+        {
+            var processes = Process.GetProcessesByName("managedsoftwareupdate")
+                .Where(p => p.Id != currentPid)
+                .ToList();
+
+            if (processes.Count == 0)
+                break;
+
+            Console.Error.Write(".");
+            Thread.Sleep(2000);
+        }
+
+        Console.Error.WriteLine();
+    }
+
     private static bool TryAcquireSingleInstance()
     {
         try
@@ -550,6 +948,9 @@ public class Options
 
     [Option("cache-status", Required = false, HelpText = "Show cache status and statistics")]
     public bool CacheStatus { get; set; }
+
+    [Option("clean-cache", Required = false, HelpText = "Perform comprehensive cache cleanup and exit")]
+    public bool CleanCache { get; set; }
 
     // Script control flags
     [Option("no-preflight", Required = false, HelpText = "Skip preflight script execution")]

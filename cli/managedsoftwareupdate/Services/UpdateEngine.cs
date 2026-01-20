@@ -155,6 +155,9 @@ public class UpdateEngine : IDisposable
             ["client_identifier"] = _config.ClientIdentifier
         });
         
+        // Pass session logger to services for structured logging
+        _installerService.SetSessionLogger(_sessionLogger);
+        
         _sessionLogger.Log("INFO", $"Session started: {sessionId}");
         _sessionLogger.Log("INFO", $"Run type: {runType}");
 
@@ -222,6 +225,7 @@ public class UpdateEngine : IDisposable
                 _catalogService = new CatalogService(_config);
                 _downloadService = new DownloadService(_config);
                 _installerService = new InstallerService(_config);
+                _installerService.SetSessionLogger(_sessionLogger);
             }
 
             // Get manifest items
