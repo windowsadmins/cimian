@@ -2,7 +2,7 @@
 <package>
   <metadata>
     <id>CimianTools-arm64</id>
-    <version>26.1.18.2111</version>
+    <version>{{VERSION}}</version>
     <title>Cimian Tools (arm64)</title>
     <authors>WindowsAdmins</authors>
     <owners>WindowsAdmins</owners>
