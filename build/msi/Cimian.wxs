@@ -82,11 +82,6 @@
           <File Id="BinaryFile6" Source="$(var.BIN_DIR)\cimipkg.exe" />
         </Component>
 
-        <!-- CimianStatus GUI for bootstrap progress -->
-        <Component Id="Binary7" Guid="BF855CDE-1234-5678-9ABC-26091DE9B83C">
-          <File Id="BinaryFile7" Source="$(var.BIN_DIR)\cimistatus.exe" />
-        </Component>
-
         <!-- CimianWatcher service for responsive bootstrap monitoring -->
         <Component Id="Binary8" Guid="CF855CDE-1234-5678-9ABC-26091DE9B83D">
           <File Id="BinaryFile8" Source="$(var.BIN_DIR)\cimiwatcher.exe" />
@@ -182,7 +177,6 @@
       <ComponentRef Id="Binary4" />
       <ComponentRef Id="Binary5" />
       <ComponentRef Id="Binary6" />
-      <ComponentRef Id="Binary7" />
       <ComponentRef Id="Binary8" />
       <ComponentRef Id="Binary9" />
       <ComponentRef Id="ScheduledTaskScripts" />
