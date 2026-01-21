@@ -12,7 +12,6 @@
     <file src="..\..\release\arm64\cimiwatcher.exe" target="tools" />
     <file src="..\..\release\arm64\managedsoftwareupdate.exe" target="tools" />
     <file src="..\..\release\arm64\cimitrigger.exe" target="tools" />
-    <file src="..\..\release\arm64\cimistatus.exe" target="tools" />
     <file src="..\..\release\arm64\cimiimport.exe" target="tools" />
     <file src="..\..\release\arm64\cimipkg.exe" target="tools" />
     <file src="..\..\release\arm64\makecatalogs.exe" target="tools" />
