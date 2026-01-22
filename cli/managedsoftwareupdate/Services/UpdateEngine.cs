@@ -112,8 +112,12 @@ public class UpdateEngine : IDisposable
         bool skipPreflight = false,
         bool skipPostflight = false,
         bool showStatus = false,
+        IEnumerable<string>? itemFilter = null,
         CancellationToken cancellationToken = default)
     {
+        // Create item filter service (Go parity: pkg/filter)
+        var itemFilterService = new ItemFilterService(itemFilter);
+        
         _checkOnly = checkOnly;
         _installOnly = installOnly;
         _auto = auto;
@@ -267,6 +271,21 @@ public class UpdateEngine : IDisposable
 
             // Identify actions needed
             var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
+
+            // Apply --item filter if specified (Go parity: pkg/filter)
+            if (itemFilterService.HasFilter)
+            {
+                ConsoleLogger.Info($"Applying --item filter: [{string.Join(", ", itemFilterService.Items)}]");
+                toInstall = itemFilterService.FilterCatalogItems(toInstall);
+                toUpdate = itemFilterService.FilterCatalogItems(toUpdate);
+                toUninstall = itemFilterService.FilterCatalogItems(toUninstall);
+                
+                // Log if everything was filtered out
+                if (toInstall.Count == 0 && toUpdate.Count == 0 && toUninstall.Count == 0)
+                {
+                    ConsoleLogger.Warn("No pending actions match the --item filter");
+                }
+            }
 
             // Resolve dependencies and update_for items (Go parity: process.go dependency resolution)
             // This adds items like ReportMatePrefs (update_for ReportMate) to the manifest items

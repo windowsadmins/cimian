@@ -213,7 +213,8 @@ public class Program
                 localManifest: options.LocalOnlyManifest,
                 skipPreflight: options.NoPreflight,
                 skipPostflight: options.NoPostflight,
-                showStatus: options.ShowStatus);
+                showStatus: options.ShowStatus,
+                itemFilter: options.Items);
 
             return result;
         }
@@ -852,6 +853,10 @@ public class Program
 
         try
         {
+            // Enable UTF-8 output for proper Unicode character rendering
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.InputEncoding = System.Text.Encoding.UTF8;
+            
             var handle = GetStdHandle(-11); // STD_OUTPUT_HANDLE
             if (handle != IntPtr.Zero && GetConsoleMode(handle, out var mode))
             {
