@@ -54,7 +54,7 @@ public class ImportService
         }
 
         // Step 2: Extract metadata
-        Console.WriteLine("[INFO] Extracting metadata...");
+        Console.WriteLine("Extracting metadata...");
         var metadata = _metadataExtractor.ExtractMetadata(packagePath, config);
         if (string.IsNullOrEmpty(metadata.ID))
         {
@@ -69,7 +69,7 @@ public class ImportService
         var (existingPkg, found) = FindMatchingItemInAllCatalog(config.RepoPath, metadata.ID);
         if (found && existingPkg != null)
         {
-            Console.WriteLine("[INFO] This item has the same Name as an existing item in the repo:");
+            Console.WriteLine("This item has the same Name as an existing item in the repo:");
             Console.WriteLine($"    Name: {existingPkg.Name}");
             Console.WriteLine($"    Version: {existingPkg.Version}");
             Console.WriteLine($"    Description: {existingPkg.Description}");
@@ -126,7 +126,7 @@ public class ImportService
         }
 
         // Step 7: Calculate file hash and size
-        Console.WriteLine("[INFO] Calculating file hash...");
+        Console.WriteLine("Calculating file hash...");
         var fileHash = MetadataExtractor.CalculateSHA256(packagePath);
         var fileInfo = new FileInfo(packagePath);
         var fileSizeKB = fileInfo.Length / 1024;
@@ -239,7 +239,7 @@ public class ImportService
         string? iconName = null;
         if (extractIcon)
         {
-            Console.WriteLine("[INFO] Extracting icon (EXPERIMENTAL)...");
+            Console.WriteLine("Extracting icon (EXPERIMENTAL)...");
             try
             {
                 var iconExtractor = new IconExtractor();
@@ -248,7 +248,7 @@ public class ImportService
                 {
                     iconName = iconResult;
                     pkgsInfo.IconName = iconName;
-                    Console.WriteLine($"[OK] Icon extracted: {iconName}");
+                    Console.WriteLine($"Icon extracted: {iconName}");
                 }
                 else
                 {
@@ -261,7 +261,7 @@ public class ImportService
             }
         }
         // Step 12: Copy installer to pkgs subdir
-        Console.WriteLine("[INFO] Copying installer to repo...");
+        Console.WriteLine("Copying installer to repo...");
         repoSubPath = repoSubPath.TrimStart('\\');
         var installerFolderPath = Path.Combine(config.RepoPath, "pkgs", repoSubPath);
         Directory.CreateDirectory(installerFolderPath);
@@ -274,17 +274,17 @@ public class ImportService
         pkgsInfo.Installer!.Location = MetadataExtractor.NormalizeWindowsPath(subpathAndFile);
 
         // Step 13: Write pkginfo YAML
-        Console.WriteLine("[INFO] Writing pkginfo file...");
+        Console.WriteLine("Writing pkginfo file...");
         var pkginfoFolderPath = Path.Combine(config.RepoPath, "pkgsinfo", repoSubPath);
         Directory.CreateDirectory(pkginfoFolderPath);
 
         var pkginfoFilename = $"{sanitizedName}{archTag}{pkgsInfo.Version}.yaml";
         var pkginfoPath = Path.Combine(pkginfoFolderPath, pkginfoFilename);
 
-        var yaml = _serializer.Serialize(pkgsInfo);
+        var yaml = SerializePkgsInfoWithKeyOrder(pkgsInfo);
         await File.WriteAllTextAsync(pkginfoPath, yaml);
 
-        Console.WriteLine($"[OK] Pkginfo created at: {pkginfoPath}");
+        Console.WriteLine($"Pkginfo created at: {pkginfoPath}");
 
         // Open in editor if configured
         if (config.OpenImportedYaml)
@@ -292,7 +292,7 @@ public class ImportService
             TryOpenFile(pkginfoPath);
         }
 
-        Console.WriteLine("[OK] Installer imported successfully!");
+        Console.WriteLine("Installer imported successfully!");
         return true;
     }
 
@@ -366,11 +366,7 @@ public class ImportService
         metadata.UnattendedUninstall = existing.UnattendedUninstall;
         metadata.Requires = existing.Requires;
         metadata.UpdateFor = existing.UpdateFor;
-        // Preserve blocking_applications from template
-        if (existing.BlockingApps != null && existing.BlockingApps.Count > 0)
-        {
-            metadata.BlockingApps = existing.BlockingApps;
-        }
+        metadata.BlockingApps = existing.BlockingApps;
 
         if (existing.Installer?.Location != null)
         {
@@ -670,6 +666,198 @@ public class ImportService
     }
 
     /// <summary>
+    /// Serializes PkgsInfo with custom key ordering:
+    /// 1. name
+    /// 2. display_name
+    /// 3. version
+    /// 4. all other keys alphabetically
+    /// 5. _metadata (if present)
+    /// </summary>
+    private string SerializePkgsInfoWithKeyOrder(PkgsInfo pkgsInfo)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        // Priority keys in order
+        sb.AppendLine($"name: {pkgsInfo.Name}");
+        
+        if (!string.IsNullOrEmpty(pkgsInfo.DisplayName))
+            sb.AppendLine($"display_name: {pkgsInfo.DisplayName}");
+        
+        sb.AppendLine($"version: {pkgsInfo.Version}");
+
+        // Collect all other non-null properties alphabetically
+        var otherProps = new SortedDictionary<string, object?>(StringComparer.Ordinal);
+
+        // Add blocking_applications if present
+        if (pkgsInfo.BlockingApps != null && pkgsInfo.BlockingApps.Count > 0)
+            otherProps["blocking_applications"] = pkgsInfo.BlockingApps;
+
+        if (pkgsInfo.Catalogs.Count > 0)
+            otherProps["catalogs"] = pkgsInfo.Catalogs;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.Category))
+            otherProps["category"] = pkgsInfo.Category;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.Description))
+            otherProps["description"] = pkgsInfo.Description;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.Developer))
+            otherProps["developer"] = pkgsInfo.Developer;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.IconName))
+            otherProps["icon_name"] = pkgsInfo.IconName;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.Identifier))
+            otherProps["identifier"] = pkgsInfo.Identifier;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.InstallCheckScript))
+            otherProps["installcheck_script"] = pkgsInfo.InstallCheckScript;
+
+        if (pkgsInfo.Installer != null)
+            otherProps["installer"] = pkgsInfo.Installer;
+
+        if (pkgsInfo.Installs != null && pkgsInfo.Installs.Count > 0)
+            otherProps["installs"] = pkgsInfo.Installs;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.MaxOSVersion))
+            otherProps["maximum_os_version"] = pkgsInfo.MaxOSVersion;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.MinOSVersion))
+            otherProps["minimum_os_version"] = pkgsInfo.MinOSVersion;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.PostinstallScript))
+            otherProps["postinstall_script"] = pkgsInfo.PostinstallScript;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.PostuninstallScript))
+            otherProps["postuninstall_script"] = pkgsInfo.PostuninstallScript;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.PreinstallScript))
+            otherProps["preinstall_script"] = pkgsInfo.PreinstallScript;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.PreuninstallScript))
+            otherProps["preuninstall_script"] = pkgsInfo.PreuninstallScript;
+
+        if (pkgsInfo.Requires != null && pkgsInfo.Requires.Count > 0)
+            otherProps["requires"] = pkgsInfo.Requires;
+
+        if (pkgsInfo.SupportedArch.Count > 0)
+            otherProps["supported_architectures"] = pkgsInfo.SupportedArch;
+
+        // Always include unattended_install and unattended_uninstall
+        otherProps["unattended_install"] = pkgsInfo.UnattendedInstall;
+        otherProps["unattended_uninstall"] = pkgsInfo.UnattendedUninstall;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.UninstallCheckScript))
+            otherProps["uninstallcheck_script"] = pkgsInfo.UninstallCheckScript;
+
+        if (pkgsInfo.Uninstaller != null)
+            otherProps["uninstaller"] = pkgsInfo.Uninstaller;
+
+        if (pkgsInfo.UpdateFor != null && pkgsInfo.UpdateFor.Count > 0)
+            otherProps["update_for"] = pkgsInfo.UpdateFor;
+
+        // Build serializer for nested objects
+        var nestedSerializer = new SerializerBuilder()
+            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections)
+            .Build();
+
+        // Write other properties in alphabetical order
+        foreach (var kvp in otherProps)
+        {
+            if (kvp.Value is bool boolVal)
+            {
+                sb.AppendLine($"{kvp.Key}: {boolVal.ToString().ToLowerInvariant()}");
+            }
+            else if (kvp.Value is string strVal)
+            {
+                // Check if string contains newlines (multi-line script)
+                if (strVal.Contains('\n'))
+                {
+                    sb.AppendLine($"{kvp.Key}: |");
+                    foreach (var line in strVal.Split('\n'))
+                    {
+                        sb.AppendLine($"  {line.TrimEnd('\r')}");
+                    }
+                }
+                else
+                {
+                    sb.AppendLine($"{kvp.Key}: {EscapeYamlString(strVal)}");
+                }
+            }
+            else if (kvp.Value is List<string> listVal)
+            {
+                sb.AppendLine($"{kvp.Key}:");
+                foreach (var item in listVal)
+                {
+                    sb.AppendLine($"- {item}");
+                }
+            }
+            else if (kvp.Value is Installer installer)
+            {
+                sb.AppendLine($"{kvp.Key}:");
+                // Output installer properties in a specific order
+                if (!string.IsNullOrEmpty(installer.Type))
+                    sb.AppendLine($"  type: {installer.Type}");
+                if (installer.Size > 0)
+                    sb.AppendLine($"  size: {installer.Size}");
+                if (!string.IsNullOrEmpty(installer.Location))
+                    sb.AppendLine($"  location: {installer.Location}");
+                if (!string.IsNullOrEmpty(installer.Hash))
+                    sb.AppendLine($"  hash: {installer.Hash}");
+                if (!string.IsNullOrEmpty(installer.ProductCode))
+                    sb.AppendLine($"  product_code: {installer.ProductCode}");
+                if (!string.IsNullOrEmpty(installer.UpgradeCode))
+                    sb.AppendLine($"  upgrade_code: {installer.UpgradeCode}");
+                if (installer.Arguments != null && installer.Arguments.Count > 0)
+                {
+                    sb.AppendLine("  arguments:");
+                    foreach (var arg in installer.Arguments)
+                    {
+                        sb.AppendLine($"  - {arg}");
+                    }
+                }
+            }
+            else if (kvp.Value is List<InstallItem> installItems)
+            {
+                sb.AppendLine($"{kvp.Key}:");
+                foreach (var item in installItems)
+                {
+                    sb.AppendLine($"- type: {item.Type}");
+                    if (!string.IsNullOrEmpty(item.Path))
+                        sb.AppendLine($"  path: {item.Path}");
+                    if (!string.IsNullOrEmpty(item.MD5Checksum))
+                        sb.AppendLine($"  md5checksum: {item.MD5Checksum}");
+                    if (!string.IsNullOrEmpty(item.Version))
+                        sb.AppendLine($"  version: {item.Version}");
+                }
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Escapes a string for YAML if needed.
+    /// </summary>
+    private static string EscapeYamlString(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return "\"\"";
+
+        // Check if the string needs quoting
+        if (value.Contains(':') || value.Contains('#') || value.Contains('\'') || 
+            value.Contains('"') || value.StartsWith(' ') || value.EndsWith(' ') ||
+            value.StartsWith('-') || value.StartsWith('[') || value.StartsWith('{'))
+        {
+            // Use single quotes and escape any existing single quotes
+            return $"'{value.Replace("'", "''")}'";
+        }
+
+        return value;
+    }
+
+    /// <summary>
     /// Checks if repo is a git repository.
     /// </summary>
     public static bool IsGitRepository(string path)
@@ -696,7 +884,7 @@ public class ImportService
     {
         try
         {
-            Console.WriteLine($"[INFO] Running git pull in: {repoPath}");
+            Console.WriteLine($"Running git pull in: {repoPath}");
             var psi = new ProcessStartInfo
             {
                 FileName = "git",
@@ -714,7 +902,7 @@ public class ImportService
                 process.WaitForExit();
                 if (process.ExitCode == 0)
                 {
-                    Console.WriteLine("[OK] Git pull completed successfully");
+                    Console.WriteLine("Git pull completed successfully");
                 }
                 else
                 {

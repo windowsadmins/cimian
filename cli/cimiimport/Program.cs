@@ -196,7 +196,7 @@ public class Program
             var importService = new ImportService();
             if (ImportService.IsGitRepository(config.RepoPath))
             {
-                Console.WriteLine("[INFO] Git repository detected, pulling latest changes...");
+                Console.WriteLine("Git repository detected, pulling latest changes...");
                 importService.RunGitPull(config.RepoPath);
             }
 
@@ -219,10 +219,10 @@ public class Program
                 if (success)
                 {
                     // Run makecatalogs
-                    Console.WriteLine("[INFO] Running makecatalogs...");
+                    Console.WriteLine("Running makecatalogs...");
                     RunMakeCatalogs();
 
-                    Console.WriteLine("[OK] Cimian import completed successfully.");
+                    Console.WriteLine("Import completed successfully.");
                     context.ExitCode = 0;
                 }
                 else
