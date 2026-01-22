@@ -205,4 +205,59 @@ public class MetadataExtractorTests
         var result = versionPattern.Success ? versionPattern.Groups[1].Value : null;
         Assert.Equal(expectedVersion, result);
     }
+
+    [Theory]
+    [InlineData("MyApp-1.0.0-x64.exe", "x64")]
+    [InlineData("MyApp-1.0.0-arm64.exe", "arm64")]
+    [InlineData("MyApp-x86.exe", "x86")]
+    [InlineData("MyApp-amd64.exe", "x64")]
+    [InlineData("MyApp-aarch64.exe", "arm64")]
+    [InlineData("MyApp.exe", "")]
+    public void DetectArchFromFilename_DetectsCorrectly(string fileName, string expectedArch)
+    {
+        var result = MetadataExtractor.DetectArchFromFilename(fileName);
+        Assert.Equal(expectedArch, result);
+    }
+
+    [Fact]
+    public async Task ExtractMetadata_PkgFile_FilenameArchOverridesBuildInfo()
+    {
+        // This test verifies that architecture detected from the filename takes priority
+        // over architecture specified in the .pkg file's build-info.yaml
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_pkg_test_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        
+        try
+        {
+            // Create a .pkg file with build-info.yaml that specifies x64
+            var pkgPath = Path.Combine(tempDir, "StartSet-2026.01.21.1706-arm64.pkg");
+            
+            using (var zip = ZipFile.Open(pkgPath, ZipArchiveMode.Create))
+            {
+                var entry = zip.CreateEntry("build-info.yaml");
+                using var writer = new StreamWriter(entry.Open());
+                // build-info.yaml specifies x64 architecture
+                await writer.WriteAsync(@"product:
+  name: StartSet
+  version: 2026.01.21.1706
+  identifier: com.example.startset
+  developer: Windows Admins Open Source
+  description: Test package
+  architecture: x64");
+            }
+            
+            var metadata = _extractor.ExtractMetadata(pkgPath, _config);
+            
+            // The filename contains "arm64", so that should take priority over the x64 in build-info.yaml
+            Assert.Equal("arm64", metadata.Architecture);
+            Assert.Contains("arm64", metadata.SupportedArch);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
 }
