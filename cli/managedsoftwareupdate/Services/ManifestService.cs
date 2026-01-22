@@ -342,13 +342,20 @@ public class ManifestService
     {
         if (_systemFacts != null) return;
         
+        // Get OS version info for conditional evaluations
+        var osVersion = Environment.OSVersion.Version;
+        
         _systemFacts = new Cimian.Core.Models.SystemFacts
         {
             Hostname = Environment.MachineName,
             Architecture = GetSystemArchitecture(),
             OperatingSystem = "Windows",
+            OperatingSystemVersion = osVersion.ToString(), // e.g., "10.0.26200.7623"
+            OSVersMajor = osVersion.Major,                  // e.g., 10
+            OSVersMinor = osVersion.Minor,                  // e.g., 0
+            OSBuildNumber = osVersion.Build,                // e.g., 26200
             Catalogs = _config.Catalogs,
-            MachineType = "desktop", // Could be enhanced with WMI detection
+            MachineType = GetMachineType(),
             MachineModel = GetMachineModel(),
             CollectedAt = DateTime.UtcNow
         };
@@ -433,6 +440,52 @@ public class ManifestService
         // This would ideally use WMI Win32_ComputerSystem.Model
         // For now, return a placeholder - can be enhanced later
         return "Unknown";
+    }
+    
+    /// <summary>
+    /// Detects machine type: laptop, desktop, virtual, or server
+    /// Uses battery presence as primary laptop indicator
+    /// </summary>
+    private static string GetMachineType()
+    {
+        try
+        {
+            // Check for virtual machine first
+            var manufacturer = Environment.GetEnvironmentVariable("COMPUTERNAME") ?? "";
+            if (manufacturer.StartsWith("VM", StringComparison.OrdinalIgnoreCase))
+            {
+                return "virtual";
+            }
+            
+            // Check for battery - presence indicates laptop
+            // Use PowerShell to query battery status
+            var batteryCheck = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -Command \"(Get-WmiObject Win32_Battery).Count\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            
+            using var process = System.Diagnostics.Process.Start(batteryCheck);
+            if (process != null)
+            {
+                var output = process.StandardOutput.ReadToEnd().Trim();
+                process.WaitForExit(5000);
+                
+                if (int.TryParse(output, out int batteryCount) && batteryCount > 0)
+                {
+                    return "laptop";
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to default
+        }
+        
+        return "desktop";
     }
 
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)
