@@ -13,6 +13,7 @@ import (
 	"github.com/windowsadmins/cimian/pkg/download"
 	"github.com/windowsadmins/cimian/pkg/logging"
 	"github.com/windowsadmins/cimian/pkg/utils"
+	"github.com/yusufpapurcu/wmi"
 	"gopkg.in/yaml.v3"
 )
 
@@ -996,6 +997,9 @@ func gatherSystemFacts(catalogs []string) map[string]interface{} {
 	// Machine type (simplified detection)
 	facts["machine_type"] = getMachineType()
 
+	// Machine model (manufacturer + model)
+	facts["machine_model"] = getMachineModel()
+
 	// Serial number (Windows-specific)
 	facts["serial_number"] = getSerialNumber()
 
@@ -1094,6 +1098,39 @@ func getMachineType() string {
 	// This is a simplified implementation
 	// In a production environment, this could use WMI queries to determine chassis type
 	return "desktop" // Default assumption
+}
+
+// getMachineModel determines the computer model and manufacturer
+func getMachineModel() string {
+	type Win32ComputerSystem struct {
+		Model        string
+		Manufacturer string
+	}
+
+	var systems []Win32ComputerSystem
+
+	// Try to use wmi package if available
+	// This requires: "github.com/yusufpapurcu/wmi"
+	if err := wmi.Query("SELECT Model, Manufacturer FROM Win32_ComputerSystem", &systems); err != nil {
+		logging.Warn("Failed to query computer system model information", "error", err)
+		return "unknown"
+	}
+
+	if len(systems) == 0 {
+		logging.Warn("No computer system model information available")
+		return "unknown"
+	}
+
+	system := systems[0]
+	if system.Manufacturer != "" && system.Model != "" {
+		return fmt.Sprintf("%s %s", system.Manufacturer, system.Model)
+	} else if system.Model != "" {
+		return system.Model
+	} else if system.Manufacturer != "" {
+		return system.Manufacturer
+	}
+
+	return "unknown"
 }
 
 // getSerialNumber returns the system serial number
