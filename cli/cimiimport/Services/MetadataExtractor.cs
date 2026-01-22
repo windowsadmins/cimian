@@ -307,8 +307,9 @@ function Get-MsiProperty($name) {
                     metadata.Developer = product.Developer ?? "";
                     metadata.Description = product.Description ?? "";
                     
-                    // Handle architecture
-                    if (!string.IsNullOrEmpty(product.Architecture))
+                    // Handle architecture from build-info.yaml
+                    // Only use it if architecture wasn't already detected from filename
+                    if (string.IsNullOrEmpty(metadata.Architecture) && !string.IsNullOrEmpty(product.Architecture))
                     {
                         metadata.Architecture = product.Architecture.ToLowerInvariant();
                     }
