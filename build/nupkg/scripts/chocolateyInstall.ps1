@@ -144,7 +144,7 @@ try {
     # Copy EXEs from the package's tools folder (ignore shim-blockers)
     Write-Host "Copying executables to ARM64-safe Program Files..."
     $expected = @(
-      'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
+      'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe',
       'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe'
     )
     $missing = @()

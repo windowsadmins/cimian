@@ -20,8 +20,8 @@ Write-Host "Target architecture: $arch" -ForegroundColor Green
 try {
     Write-Host "Verifying CimianTools executables..."
     $expected = @(
-        'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
-        'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe','repoclean.exe'
+        'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe',
+        'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe'
     )
     $missing = @()
     foreach ($name in $expected) {
