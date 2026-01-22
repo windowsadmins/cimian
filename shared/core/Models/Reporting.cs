@@ -79,6 +79,13 @@ public class SessionRecord
     public List<string>? PackagesHandled { get; set; }
 
     /// <summary>
+    /// Catalogs used during this run (from downloaded catalog files)
+    /// </summary>
+    [JsonPropertyName("run_catalogs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? RunCatalogs { get; set; }
+
+    /// <summary>
     /// Enhanced fields for external reporting tools
     /// </summary>
     [JsonPropertyName("config")]
