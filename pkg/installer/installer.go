@@ -2626,8 +2626,9 @@ func runCMDWithWindowsElevation(command string, arguments []string) (string, err
 				if strings.Contains(errStr, "ObjectNotFound: (") {
 					// Extract from "ObjectNotFound: (C:\Path\to\command.exe:String)"
 					if start := strings.Index(errStr, "ObjectNotFound: ("); start != -1 {
-						if end := strings.Index(errStr[start:], ":"); end != -1 {
-							notFoundCmd = strings.TrimSpace(errStr[start+len("ObjectNotFound: (") : start+end])
+						startPos := start + len("ObjectNotFound: (")
+						if end := strings.Index(errStr[startPos:], ":"); end != -1 {
+							notFoundCmd = strings.TrimSpace(errStr[startPos : startPos+end])
 						}
 					}
 				}
