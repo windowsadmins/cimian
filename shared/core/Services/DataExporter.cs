@@ -161,6 +161,36 @@ public class DataExporter
     #region Table Generation
 
     /// <summary>
+    /// Gets the list of catalogs used in the current/latest run from downloaded catalog files
+    /// </summary>
+    private List<string>? GetRunCatalogs()
+    {
+        if (!Directory.Exists(CatalogsDir))
+            return null;
+
+        try
+        {
+            var catalogs = new List<string>();
+            foreach (var file in Directory.GetFiles(CatalogsDir, "*.yaml"))
+            {
+                var catalogName = Path.GetFileNameWithoutExtension(file);
+                if (!string.IsNullOrEmpty(catalogName))
+                    catalogs.Add(catalogName);
+            }
+
+            if (catalogs.Count == 0)
+                return null;
+
+            catalogs.Sort();
+            return catalogs;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Generates session records for external reporting tools
     /// </summary>
     public List<SessionRecord> GenerateSessionsTable(int limitDays = 30)
@@ -168,6 +198,7 @@ public class DataExporter
         var records = new List<SessionRecord>();
         var sessions = GetRecentSessions(limitDays);
         var sessionConfig = LoadCimianConfiguration();
+        var runCatalogs = GetRunCatalogs();
         var cacheSize = sessionConfig?.CachePath != null ? CalculateCacheSize(sessionConfig.CachePath) : 0;
         var totalManagedPackages = sessionConfig != null ? GetTotalManagedPackagesFromManifest(sessionConfig) : 0;
 
@@ -199,6 +230,7 @@ public class DataExporter
                             Successes = session.Summary?.Successes ?? 0,
                             Failures = session.Summary?.Failures ?? 0,
                             PackagesHandled = session.Summary?.PackagesHandled,
+                            RunCatalogs = runCatalogs,
                             Config = sessionConfig
                         };
 
@@ -239,7 +271,10 @@ public class DataExporter
                     // Try to generate from events if session.json fails
                     var eventRecord = GenerateSessionFromEvents(sessionDir);
                     if (eventRecord != null)
+                    {
+                        eventRecord.RunCatalogs = runCatalogs;
                         records.Add(eventRecord);
+                    }
                 }
             }
             else
@@ -247,7 +282,10 @@ public class DataExporter
                 // No session.json, generate from events
                 var eventRecord = GenerateSessionFromEvents(sessionDir);
                 if (eventRecord != null)
+                {
+                    eventRecord.RunCatalogs = runCatalogs;
                     records.Add(eventRecord);
+                }
             }
         }
 
