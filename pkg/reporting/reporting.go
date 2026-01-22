@@ -47,6 +47,7 @@ type SessionRecord struct {
 	ProcessID       int      `json:"process_id"`
 	LogVersion      string   `json:"log_version"`
 	PackagesHandled []string `json:"packages_handled,omitempty"`
+	RunCatalogs     []string `json:"run_catalogs,omitempty"`
 
 	// Enhanced fields for external reporting tools
 	Config  *SessionConfig  `json:"config,omitempty"`
@@ -318,6 +319,39 @@ func (exp *DataExporter) loadCimianConfiguration() *SessionConfig {
 	return sessionConfig
 }
 
+// getRunCatalogs retrieves the list of catalogs used in the current/latest run
+// by reading the catalog files that exist in the catalogs directory
+func (exp *DataExporter) getRunCatalogs() []string {
+	catalogsDir := filepath.Join(`C:\ProgramData\ManagedInstalls`, "catalogs")
+	
+	if _, err := os.Stat(catalogsDir); os.IsNotExist(err) {
+		return nil
+	}
+	
+	entries, err := os.ReadDir(catalogsDir)
+	if err != nil {
+		return nil
+	}
+	
+	var catalogs []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Remove .yaml extension to get catalog name
+		if strings.HasSuffix(strings.ToLower(name), ".yaml") {
+			catalogName := strings.TrimSuffix(name, ".yaml")
+			catalogName = strings.TrimSuffix(catalogName, ".YAML")
+			catalogs = append(catalogs, catalogName)
+		}
+	}
+	
+	// Sort for consistent output
+	sort.Strings(catalogs)
+	return catalogs
+}
+
 // calculateCacheSize estimates the cache directory size in MB
 func (exp *DataExporter) calculateCacheSize(cachePath string) float64 {
 	if cachePath == "" {
@@ -412,6 +446,9 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 		cacheSize = exp.calculateCacheSize(sessionConfig.CachePath)
 	}
 
+	// Get the catalogs used in the current/latest run from downloaded catalog files
+	runCatalogs := exp.getRunCatalogs()
+
 	// PERFORMANCE OPTIMIZATION: Calculate total managed packages once, not per session
 	// Since all sessions for this system use the same manifest, we only need to calculate this once
 	var totalManagedPackages int
@@ -439,6 +476,7 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 				Successes:       session.Summary.Successes,
 				Failures:        session.Summary.Failures,
 				PackagesHandled: session.Summary.PackagesHandled,
+				RunCatalogs:     runCatalogs, // Add catalogs used in the run
 				Config:          sessionConfig, // Add configuration data
 			}
 
@@ -517,8 +555,9 @@ func (exp *DataExporter) GenerateSessionsTable(limitDays int) ([]SessionRecord, 
 			// Old format - extract info from events.jsonl
 			record := exp.generateSessionFromEvents(sessionDir)
 			if record != nil {
-				// Add configuration and summary data to old format records too
+				// Add configuration, catalogs, and summary data to old format records too
 				record.Config = sessionConfig
+				record.RunCatalogs = runCatalogs
 				if record.Summary == nil {
 					// Use pre-calculated total managed packages (calculated once outside the loop)
 					finalTotalManagedPackages := totalManagedPackages
