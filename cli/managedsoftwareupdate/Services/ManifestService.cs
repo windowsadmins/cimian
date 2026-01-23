@@ -607,23 +607,64 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Deduplicates manifest items, keeping the first occurrence
+    /// Deduplicates manifest items, keeping the highest version for each item name.
+    /// Go parity: pkg/status.DeduplicateManifestItems - uses just name as key,
+    /// keeps highest version if duplicate found, preserves original order.
     /// </summary>
     public List<ManifestItem> DeduplicateItems(List<ManifestItem> items)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var result = new List<ManifestItem>();
+        var dedup = new Dictionary<string, ManifestItem>(StringComparer.OrdinalIgnoreCase);
+        var orderedKeys = new List<string>();
 
         foreach (var item in items)
         {
-            var key = $"{item.Name}:{item.Action}";
-            if (!seen.Contains(key))
+            if (string.IsNullOrEmpty(item.Name))
+                continue;
+
+            var key = item.Name.ToLowerInvariant();
+            
+            if (dedup.TryGetValue(key, out var existing))
             {
-                seen.Add(key);
-                result.Add(item);
+                // If we find a newer version, update it but keep the original position
+                if (IsOlderVersion(existing.Version, item.Version))
+                {
+                    dedup[key] = item;
+                }
+            }
+            else
+            {
+                // First time seeing this item - track its order
+                orderedKeys.Add(key);
+                dedup[key] = item;
             }
         }
 
+        // Build result in the original order items were first encountered
+        var result = new List<ManifestItem>();
+        foreach (var key in orderedKeys)
+        {
+            result.Add(dedup[key]);
+        }
         return result;
+    }
+
+    /// <summary>
+    /// Compare versions to determine if v1 is older than v2.
+    /// Go parity: pkg/status.IsOlderVersion
+    /// </summary>
+    private static bool IsOlderVersion(string? v1, string? v2)
+    {
+        if (string.IsNullOrEmpty(v1)) return true;
+        if (string.IsNullOrEmpty(v2)) return false;
+        
+        // Try to parse as Version objects first
+        if (Version.TryParse(v1.Replace("-", "."), out var ver1) && 
+            Version.TryParse(v2.Replace("-", "."), out var ver2))
+        {
+            return ver1 < ver2;
+        }
+        
+        // Fall back to string comparison
+        return string.Compare(v1, v2, StringComparison.OrdinalIgnoreCase) < 0;
     }
 }

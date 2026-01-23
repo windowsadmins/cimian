@@ -255,6 +255,14 @@ public class UpdateEngine : IDisposable
                 manifestItems = await _manifestService.GetManifestItemsAsync();
             }
 
+            // Go parity: pkg/status.DeduplicateManifestItems - deduplicate before processing
+            var rawCount = manifestItems.Count;
+            manifestItems = _manifestService.DeduplicateItems(manifestItems);
+            if (manifestItems.Count < rawCount)
+            {
+                LogInfo($"Deduplicated manifest items: {rawCount} → {manifestItems.Count}");
+            }
+
             LogInfo($"Retrieved {manifestItems.Count} manifest items");
             _allManifestItems = manifestItems;
 
@@ -574,12 +582,18 @@ public class UpdateEngine : IDisposable
         }
         
         var depCount = manifestItems.Count(m => m.SourceManifest == "dependency");
+        // Go parity: Count only managed items (exclude profile/app which are MDM-managed)
+        var managedCount = manifestItems.Count(m => 
+        {
+            var action = m.Action?.ToLowerInvariant();
+            return action != "profile" && action != "app";
+        });
         if (depCount > 0)
         {
-            LogInfo($"Dependency resolution complete originalCount: {installListNames.Count} dependenciesAdded: 0 updateForAdded: {depCount} totalCount: {manifestItems.Count}");
-            LogInfo($"Added dependency to manifest items dependency: {string.Join(", ", manifestItems.Where(m => m.SourceManifest == "dependency").Select(m => m.Name))}");
+            LogInfo($"Dependency resolution complete: {depCount} update_for items added");
+            LogInfo($"Added dependencies: {string.Join(", ", manifestItems.Where(m => m.SourceManifest == "dependency").Select(m => m.Name))}");
         }
-        LogInfo($"Dependencies resolved original: {installListNames.Count} afterResolution: {manifestItems.Count} addedDependencies: {depCount}");
+        LogInfo($"Managed items: {managedCount} (excludes {manifestItems.Count - managedCount} MDM profiles/apps)");
     }
 
     private void PrintActionSummary(
@@ -600,10 +614,17 @@ public class UpdateEngine : IDisposable
 
         Log();
         Log("SUMMARY");
-        var installCount = manifestItems.Count(m => m.Action?.ToLowerInvariant() == "install");
-        var updateCount = manifestItems.Count(m => m.Action?.ToLowerInvariant() == "update");
-        var uninstallCount = manifestItems.Count(m => m.Action?.ToLowerInvariant() == "uninstall");
-        Log($"   Total managed items: {manifestItems.Count} ({installCount} installs, {updateCount} updates, {uninstallCount} removals)");
+        // Go parity: Exclude profile/app actions - these are MDM-managed externally (managed_profiles, managed_apps)
+        var managedItems = manifestItems.Where(m => 
+        {
+            var action = m.Action?.ToLowerInvariant();
+            return action != "profile" && action != "app";
+        }).ToList();
+        
+        var installCount = managedItems.Count(m => m.Action?.ToLowerInvariant() == "install");
+        var updateCount = managedItems.Count(m => m.Action?.ToLowerInvariant() == "update");
+        var uninstallCount = managedItems.Count(m => m.Action?.ToLowerInvariant() == "uninstall");
+        Log($"   Total managed items: {managedItems.Count} ({installCount} installs, {updateCount} updates, {uninstallCount} removals)");
         Log($"   Pending actions: {total} ({toInstall.Count} installs, {toUpdate.Count} updates, {toUninstall.Count} removals)");
         Log();
     }
