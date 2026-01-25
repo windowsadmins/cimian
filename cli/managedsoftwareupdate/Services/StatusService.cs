@@ -23,7 +23,7 @@ public class StatusService
     /// <summary>
     /// Checks if the item is the Cimian/CimianTools self-update package
     /// </summary>
-    private static bool IsCimianPackage(CatalogItem item)
+    public static bool IsCimianPackage(CatalogItem item)
     {
         var itemName = item.Name.ToLowerInvariant();
         
