@@ -342,13 +342,90 @@ public class UpdateEngine : IDisposable
             if (toInstall.Count > 0 || toUpdate.Count > 0)
             {
                 var allToInstall = toInstall.Concat(toUpdate).ToList();
-                ReportStatus("Installing updates...");
-                _sessionLogger?.Log("INFO", $"Installing {allToInstall.Count} items...");
-                installSuccess = await PerformInstallationsAsync(allToInstall, cancellationToken);
                 
-                // Count successes/failures based on result
-                successCount = installSuccess ? allToInstall.Count : 0;
-                failCount = installSuccess ? 0 : allToInstall.Count;
+                // Go parity: Separate Cimian self-update packages from regular packages
+                // Self-updates must be scheduled for next service restart, not installed directly
+                // (because we can't update the running binary)
+                var selfUpdateItems = new List<CatalogItem>();
+                var regularItems = new List<CatalogItem>();
+                
+                foreach (var item in allToInstall)
+                {
+                    if (StatusService.IsCimianPackage(item))
+                    {
+                        selfUpdateItems.Add(item);
+                        LogInfo($"Detected Cimian self-update package: {item.Name} v{item.Version}");
+                        _sessionLogger?.Log("INFO", $"Detected Cimian self-update package: {item.Name} v{item.Version}");
+                    }
+                    else
+                    {
+                        regularItems.Add(item);
+                    }
+                }
+                
+                // Handle self-updates by scheduling them for next restart
+                if (selfUpdateItems.Count > 0)
+                {
+                    LogInfo("═══════════════════════════════════════════════════════════════════════");
+                    LogInfo("CIMIAN SELF-UPDATE DETECTED");
+                    LogInfo($"   {selfUpdateItems.Count} self-update package(s) will be scheduled for next restart");
+                    LogInfo("═══════════════════════════════════════════════════════════════════════");
+                    _sessionLogger?.Log("INFO", $"Scheduling {selfUpdateItems.Count} self-update package(s) for next restart");
+                    
+                    foreach (var item in selfUpdateItems)
+                    {
+                        // Download the self-update package first
+                        var downloads = await _downloadService.DownloadItemsAsync(new List<CatalogItem> { item }, null, cancellationToken);
+                        downloads.TryGetValue(item.Name, out var localFile);
+                        
+                        if (string.IsNullOrEmpty(localFile))
+                        {
+                            ConsoleLogger.Error($"Failed to download self-update package: {item.Name}");
+                            _sessionLogger?.Log("ERROR", $"Failed to download self-update package: {item.Name}");
+                            continue;
+                        }
+                        
+                        // Schedule the self-update for next service restart
+                        var scheduled = SelfUpdateService.ScheduleSelfUpdate(
+                            item.Name, 
+                            item.Version, 
+                            item.Installer.Type ?? "pkg", 
+                            localFile);
+                        
+                        if (scheduled)
+                        {
+                            LogSuccess($"Self-update scheduled: {item.Name} v{item.Version}");
+                            _sessionLogger?.Log("INFO", $"Self-update scheduled successfully: {item.Name} v{item.Version}");
+                        }
+                        else
+                        {
+                            ConsoleLogger.Error($"Failed to schedule self-update: {item.Name}");
+                            _sessionLogger?.Log("ERROR", $"Failed to schedule self-update: {item.Name}");
+                        }
+                    }
+                    
+                    // Update allToInstall to only include regular items
+                    allToInstall = regularItems;
+                }
+                
+                // Install regular items (non-Cimian packages)
+                if (allToInstall.Count > 0)
+                {
+                    ReportStatus("Installing updates...");
+                    _sessionLogger?.Log("INFO", $"Installing {allToInstall.Count} items...");
+                    installSuccess = await PerformInstallationsAsync(allToInstall, cancellationToken);
+                    
+                    // Count successes/failures based on result
+                    successCount = installSuccess ? allToInstall.Count : 0;
+                    failCount = installSuccess ? 0 : allToInstall.Count;
+                }
+                else if (selfUpdateItems.Count > 0)
+                {
+                    // Only self-updates were pending - they're scheduled, count as success
+                    LogInfo("No regular packages to install. Self-updates will apply on next restart.");
+                    _sessionLogger?.Log("INFO", "No regular packages to install. Self-updates will apply on next restart.");
+                    successCount = selfUpdateItems.Count;
+                }
             }
 
             // Perform uninstalls
