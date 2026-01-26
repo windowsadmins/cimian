@@ -583,10 +583,16 @@ func verifyInstallationBeforeRegistry(item catalog.Item, cfg *config.Configurati
 	
 	// If no installs array is defined, we don't verify
 	if len(item.Installs) == 0 {
-		// For nopkg (script-only) items, this is expected behavior - no warning needed
-		if item.Installer.Type == "nopkg" {
-			logging.Debug("No installs array for nopkg item - this is expected for script-only packages", "item", item.Name)
-			return true // Success for nopkg items without installs array
+		// For nopkg/script-only items, this is expected behavior - no warning needed
+		// Check for: explicit nopkg type, empty installer type, or items with installcheck_script
+		isScriptOnly := item.Installer.Type == "nopkg" || 
+			item.Installer.Type == "script" ||
+			item.Installer.Type == "" ||
+			string(item.InstallCheckScript) != ""
+		
+		if isScriptOnly {
+			logging.Debug("No installs array for script-only/nopkg item - this is expected", "item", item.Name, "installerType", item.Installer.Type)
+			return true // Success for script-only items without installs array
 		}
 		
 		// For other installer types, warn about missing verification data
