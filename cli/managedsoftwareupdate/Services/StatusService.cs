@@ -320,23 +320,23 @@ public class StatusService
                             return result;
                         }
 
-                        // File exists - check MD5 if specified
+                        // File exists - check hash if specified (md5checksum field may contain MD5, SHA1, or SHA256)
                         if (!string.IsNullOrEmpty(installItem.Md5Checksum))
                         {
                             ConsoleLogger.Debug($"Verifying hash for: {installItem.Path}");
-                            var actualMd5 = CalculateMD5(installItem.Path);
-                            if (!actualMd5.Equals(installItem.Md5Checksum, StringComparison.OrdinalIgnoreCase))
+                            var actualHash = CalculateHash(installItem.Path, installItem.Md5Checksum);
+                            if (!actualHash.Equals(installItem.Md5Checksum, StringComparison.OrdinalIgnoreCase))
                             {
-                                ConsoleLogger.Info($"Installs array verification failed - hash mismatch, reinstallation needed item: {item.Name} path: {installItem.Path} localHash: {actualMd5} expectedHash: {installItem.Md5Checksum}");
+                                ConsoleLogger.Info($"Installs array verification failed - hash mismatch, reinstallation needed item: {item.Name} path: {installItem.Path} localHash: {actualHash} expectedHash: {installItem.Md5Checksum}");
                                 result.Status = "pending";
                                 result.NeedsAction = true;
                                 result.IsUpdate = true; // File exists but hash mismatch = update
-                                result.Reason = $"Hash mismatch for {installItem.Path}: expected {installItem.Md5Checksum}, got {actualMd5}";
+                                result.Reason = $"Hash mismatch for {installItem.Path}: expected {installItem.Md5Checksum}, got {actualHash}";
                                 result.ReasonCode = StatusReasonCode.HashMismatch;
                                 result.DetectionMethod = DetectionMethod.File;
                                 return result;
                             }
-                            ConsoleLogger.Info($"Hash verification passed item: {item.Name} path: {installItem.Path} hash: {actualMd5}");
+                            ConsoleLogger.Info($"Hash verification passed item: {item.Name} path: {installItem.Path} hash: {actualHash}");
                         }
                         else
                         {
@@ -481,7 +481,43 @@ public class StatusService
     }
 
     /// <summary>
-    /// Calculate MD5 hash of a file
+    /// Calculate hash of a file, auto-detecting algorithm based on expected hash length.
+    /// Matches Go parity: 32 chars = MD5, 40 chars = SHA1, 64 chars = SHA256
+    /// </summary>
+    private static string CalculateHash(string filePath, string? expectedHash = null)
+    {
+        int expectedLen = expectedHash?.Length ?? 32;
+        
+        using var stream = File.OpenRead(filePath);
+        byte[] hash;
+        
+        switch (expectedLen)
+        {
+            case 40: // SHA1
+                using (var sha1 = System.Security.Cryptography.SHA1.Create())
+                {
+                    hash = sha1.ComputeHash(stream);
+                }
+                break;
+            case 64: // SHA256
+                using (var sha256 = System.Security.Cryptography.SHA256.Create())
+                {
+                    hash = sha256.ComputeHash(stream);
+                }
+                break;
+            default: // MD5 (32 chars or unknown)
+                using (var md5 = System.Security.Cryptography.MD5.Create())
+                {
+                    hash = md5.ComputeHash(stream);
+                }
+                break;
+        }
+        
+        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Calculate MD5 hash of a file (legacy method for backward compatibility)
     /// </summary>
     private static string CalculateMD5(string filePath)
     {
