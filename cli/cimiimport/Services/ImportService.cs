@@ -64,6 +64,11 @@ public class ImportService
         // Detect architecture from filename (this takes priority)
         var filenameArch = MetadataExtractor.DetectArchFromFilename(Path.GetFileName(packagePath));
         var hasFilenameArch = !string.IsNullOrEmpty(filenameArch);
+        
+        if (hasFilenameArch)
+        {
+            Console.WriteLine($"Detected architecture '{filenameArch}' from filename");
+        }
 
         // Step 3: Check for existing item in All.yaml
         var (existingPkg, found) = FindMatchingItemInAllCatalog(config.RepoPath, metadata.ID);
@@ -97,6 +102,7 @@ public class ImportService
                     // Restore the detected architecture from filename if it was detected
                     if (hasFilenameArch)
                     {
+                        Console.WriteLine($"Restoring architecture to '{filenameArch}' from filename (was: {string.Join(",", metadata.SupportedArch)})");
                         metadata.Architecture = filenameArch;
                         metadata.SupportedArch = [filenameArch];
                     }
@@ -107,6 +113,7 @@ public class ImportService
         // Step 4: Let user override fields (skip in non-interactive mode)
         if (!noInteractive)
         {
+            Console.WriteLine($"DEBUG: Before PromptForMetadata, SupportedArch = [{string.Join(",", metadata.SupportedArch)}]");
             metadata = PromptForMetadata(packagePath, metadata, config);
         }
 
