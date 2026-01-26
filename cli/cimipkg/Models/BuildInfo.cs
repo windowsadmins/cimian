@@ -17,29 +17,58 @@ public class BuildInfo
     /// <summary>
     /// Processes dynamic version placeholders in the version field.
     /// Supports ${TIMESTAMP}, ${DATE}, and ${DATETIME} placeholders.
+    /// Also supports ${version} in the name field after version is resolved.
     /// </summary>
     public void DoSubstitutions()
     {
-        if (Product == null || string.IsNullOrEmpty(Product.Version))
+        if (Product == null)
             return;
 
-        // Process dynamic version placeholders in the version field
+        // Process dynamic version placeholders in the version field first
         // ${TIMESTAMP} -> YYYY.MM.DD.HHMM (e.g., 2025.12.09.1455)
-        if (Product.Version.Contains("${TIMESTAMP}"))
+        if (!string.IsNullOrEmpty(Product.Version) && Product.Version.Contains("${TIMESTAMP}"))
         {
             Product.Version = Product.Version.Replace("${TIMESTAMP}", DynamicVersion.Timestamp);
         }
 
         // ${DATE} -> YYYY.MM.DD (e.g., 2025.12.09)
-        if (Product.Version.Contains("${DATE}"))
+        if (!string.IsNullOrEmpty(Product.Version) && Product.Version.Contains("${DATE}"))
         {
             Product.Version = Product.Version.Replace("${DATE}", DynamicVersion.Date);
         }
 
         // ${DATETIME} -> YYYY.MM.DD.HHMMSS (e.g., 2025.12.09.145530)
-        if (Product.Version.Contains("${DATETIME}"))
+        if (!string.IsNullOrEmpty(Product.Version) && Product.Version.Contains("${DATETIME}"))
         {
             Product.Version = Product.Version.Replace("${DATETIME}", DynamicVersion.DateTimeStamp);
+        }
+
+        // Now process name substitutions - support dynamic placeholders directly in name
+        if (!string.IsNullOrEmpty(Product.Name))
+        {
+            // ${TIMESTAMP} in name
+            if (Product.Name.Contains("${TIMESTAMP}"))
+            {
+                Product.Name = Product.Name.Replace("${TIMESTAMP}", DynamicVersion.Timestamp);
+            }
+
+            // ${DATE} in name
+            if (Product.Name.Contains("${DATE}"))
+            {
+                Product.Name = Product.Name.Replace("${DATE}", DynamicVersion.Date);
+            }
+
+            // ${DATETIME} in name
+            if (Product.Name.Contains("${DATETIME}"))
+            {
+                Product.Name = Product.Name.Replace("${DATETIME}", DynamicVersion.DateTimeStamp);
+            }
+
+            // ${version} in name - uses the already-resolved version value
+            if (Product.Name.Contains("${version}") && !string.IsNullOrEmpty(Product.Version))
+            {
+                Product.Name = Product.Name.Replace("${version}", Product.Version);
+            }
         }
     }
 

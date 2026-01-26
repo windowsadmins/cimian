@@ -64,21 +64,21 @@ public class CodeSigner
         }
 
         // Build PowerShell command to sign the script
-        // Note: Using EKU filter for code signing instead of -CodeSigningCert parameter
-        // for better compatibility across PowerShell versions
+        // Note: Accept certificates with code signing EKU OR no EKU (universal certificates)
+        // A certificate with no EnhancedKeyUsageList can be used for any purpose
         var getCertCommand = !string.IsNullOrEmpty(certThumbprint)
-            ? $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Thumbprint -eq '{certThumbprint}' -and $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3' }}"
-            : $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3' }}";
+            ? $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Thumbprint -eq '{certThumbprint}' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') }}"
+            : $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') }}";
 
-        var psCommand = $@"
-$cert = {getCertCommand} | Select-Object -First 1
-if (-not $cert) {{
-    $cert = Get-ChildItem -Path Cert:\\LocalMachine\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3' }} | Select-Object -First 1
-}}
-if (-not $cert) {{
+        var psCommand = @"
+$cert = " + getCertCommand + @" | Select-Object -First 1
+if (-not $cert) {
+    $cert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object { $_.Subject -like '*" + certSubject + @"*' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') } | Select-Object -First 1
+}
+if (-not $cert) {
     throw 'Code signing certificate not found'
-}}
-Set-AuthenticodeSignature -FilePath '{scriptPath}' -Certificate $cert -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
+}
+Set-AuthenticodeSignature -FilePath '" + scriptPath + @"' -Certificate $cert -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
 ";
 
         var result = RunPowerShellCommand(psCommand);
@@ -276,29 +276,75 @@ Set-AuthenticodeSignature -FilePath '{scriptPath}' -Certificate $cert -HashAlgor
 
     /// <summary>
     /// Runs a PowerShell command and returns the result.
+    /// Uses a temp script file instead of inline command to ensure proper provider loading.
+    /// Uses pwsh.exe (PowerShell 7+) which includes the Certificate provider by default.
     /// </summary>
     private (bool Success, string Output, string Error) RunPowerShellCommand(string command)
     {
-        var psi = new ProcessStartInfo
+        // Write command to temp file to avoid complex escaping and ensure proper provider loading
+        var tempScript = Path.Combine(Path.GetTempPath(), $"cimipkg_sign_{Guid.NewGuid():N}.ps1");
+        try
         {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{command.Replace("\"", "\\\"")}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+            File.WriteAllText(tempScript, command, Encoding.UTF8);
 
-        using var process = Process.Start(psi);
-        if (process == null)
+            // Use pwsh.exe (PowerShell 7+) which has the Certificate provider built-in
+            // Fall back to powershell.exe if pwsh is not available
+            var powershellPath = FindPowerShellExecutable();
+            
+            var psi = new ProcessStartInfo
+            {
+                FileName = powershellPath,
+                Arguments = $"-ExecutionPolicy Bypass -File \"{tempScript}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                return (false, "", "Failed to start PowerShell process");
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            return (process.ExitCode == 0, output, error);
+        }
+        finally
         {
-            return (false, "", "Failed to start PowerShell process");
+            // Cleanup temp script
+            try { File.Delete(tempScript); } catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>
+    /// Finds the appropriate PowerShell executable.
+    /// Prefers pwsh.exe (PowerShell 7+) which has built-in Certificate provider.
+    /// </summary>
+    private static string FindPowerShellExecutable()
+    {
+        // Check for PowerShell 7+ (pwsh.exe) first
+        var pwshPath = Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\PowerShell\7\pwsh.exe");
+        if (File.Exists(pwshPath))
+        {
+            return pwshPath;
         }
 
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        // Try finding pwsh in PATH
+        var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(';') ?? Array.Empty<string>();
+        foreach (var dir in pathDirs)
+        {
+            var pwshInPath = Path.Combine(dir, "pwsh.exe");
+            if (File.Exists(pwshInPath))
+            {
+                return pwshInPath;
+            }
+        }
 
-        return (process.ExitCode == 0, output, error);
+        // Fallback to Windows PowerShell
+        return "powershell.exe";
     }
 }
