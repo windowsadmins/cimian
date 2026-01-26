@@ -171,7 +171,73 @@ public class InstallerService
             $"sbin-installer installation started for {item.Name}");
 
         // Build command arguments (matches Go)
-        var args = $"--pkg \"{packagePath}\" --target {target} --verbose";
+        var argsBuilder = new StringBuilder($"--pkg \"{packagePath}\" --target {target} --verbose");
+
+        // Process flags from pkginfo (similar to MSI/EXE flag handling)
+        // Supports: temp-dir, --temp-dir, temp-dir=C:\path, --temp-dir=C:\path
+        if (item.Installer?.Flags != null)
+        {
+            foreach (var flag in item.Installer.Flags)
+            {
+                var trimmedFlag = flag?.Trim();
+                if (string.IsNullOrEmpty(trimmedFlag))
+                    continue;
+
+                // If user already provided dashes, preserve their exact format
+                if (trimmedFlag.StartsWith("--") || trimmedFlag.StartsWith("-"))
+                {
+                    if (trimmedFlag.Contains('='))
+                    {
+                        // User used = format (e.g., "--temp-dir=C:\path"), split for sbin-installer
+                        var parts = trimmedFlag.Split('=', 2);
+                        argsBuilder.Append($" {parts[0]} \"{parts[1]}\"");
+                    }
+                    else if (trimmedFlag.Contains(' '))
+                    {
+                        // User used space format (e.g., "--temp-dir C:\path")
+                        var parts = trimmedFlag.Split(' ', 2);
+                        argsBuilder.Append($" {parts[0]} \"{parts[1].Trim()}\"");
+                    }
+                    else
+                    {
+                        // Single flag without value (e.g., "--verbose")
+                        argsBuilder.Append($" {trimmedFlag}");
+                    }
+                }
+                else
+                {
+                    // User provided without dashes - add -- prefix (sbin-installer convention)
+                    string key, val = "";
+                    if (trimmedFlag.Contains('='))
+                    {
+                        var parts = trimmedFlag.Split('=', 2);
+                        key = parts[0];
+                        val = parts[1];
+                    }
+                    else if (trimmedFlag.Contains(' '))
+                    {
+                        var parts = trimmedFlag.Split(' ', 2);
+                        key = parts[0];
+                        val = parts[1].Trim();
+                    }
+                    else
+                    {
+                        key = trimmedFlag;
+                    }
+
+                    if (!string.IsNullOrEmpty(val))
+                    {
+                        argsBuilder.Append($" --{key} \"{val}\"");
+                    }
+                    else
+                    {
+                        argsBuilder.Append($" --{key}");
+                    }
+                }
+            }
+        }
+
+        var args = argsBuilder.ToString();
 
         // Use configured timeout or default to 30 minutes
         var timeoutMinutes = _config.InstallerTimeout > 0 
