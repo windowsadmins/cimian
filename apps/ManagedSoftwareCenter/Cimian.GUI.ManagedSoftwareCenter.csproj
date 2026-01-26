@@ -10,6 +10,11 @@
     <AssemblyName>ManagedSoftwareCenter</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     
+    <!-- Platform target must match runtime identifier -->
+    <PlatformTarget Condition="'$(RuntimeIdentifier)' == 'win-arm64'">ARM64</PlatformTarget>
+    <PlatformTarget Condition="'$(RuntimeIdentifier)' == 'win-x64'">x64</PlatformTarget>
+    <PlatformTarget Condition="'$(RuntimeIdentifier)' == ''">AnyCPU</PlatformTarget>
+    
     <!-- Self-contained deployment -->
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
