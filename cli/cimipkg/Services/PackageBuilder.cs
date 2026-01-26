@@ -325,17 +325,9 @@ install_location: C:\
             }
 
             // Prepare build-info.yaml with signature
-            var buildInfoSrc = Path.Combine(projectDir, "build-info.yaml");
-            var buildInfoContent = File.ReadAllText(buildInfoSrc);
-
-            // Apply placeholder replacement
-            if (envVars.Count > 0)
-            {
-                buildInfoContent = _scriptProcessor.ReplacePlaceholdersYaml(buildInfoContent, envVars);
-                _logger.LogInformation("Applied placeholder replacement to build-info.yaml");
-            }
-
-            var buildInfoForSigning = _yamlDeserializer.Deserialize<BuildInfo>(buildInfoContent);
+            // Use the already-substituted buildInfo object (which has ${TIMESTAMP} etc resolved)
+            // instead of re-reading from disk which would have the unsubstituted values
+            var buildInfoForSigning = buildInfo;
 
             // Create package signature if certificate provided
             if (!string.IsNullOrEmpty(buildInfo.SigningCertificate) ||
