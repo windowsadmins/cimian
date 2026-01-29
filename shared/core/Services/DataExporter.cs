@@ -56,6 +56,42 @@ public class DataExporter
         _baseDir = baseDir;
     }
 
+    #region Status Normalization
+
+    /// <summary>
+    /// Normalizes session/action statuses to standard item statuses
+    /// Session statuses (completed, success, failed) -> Item statuses (Installed, Error, Warning, Pending)
+    /// </summary>
+    public static string NormalizeItemStatus(string sessionStatus)
+    {
+        if (string.IsNullOrEmpty(sessionStatus))
+            return "Pending";
+
+        return sessionStatus.ToLowerInvariant() switch
+        {
+            // SUCCESS: Session completed successfully -> Item is Installed
+            "completed" or "success" or "installed" or "ok" => "Installed",
+            // ERROR: Session failed -> Item has Error
+            "failed" or "error" or "fail" => "Error",
+            // WARNING: Session has warnings -> Item has Warning
+            "warning" or "warn" => "Warning",
+            // PENDING: Item needs action
+            "pending" or "pending install" or "pending update" or "skipped" or "not installed" => "Pending",
+            // REMOVED: Item was uninstalled
+            "removed" or "uninstalled" => "Removed",
+            // NOT AVAILABLE: Item not in catalog
+            "not available" => "Not Available",
+            // Default: check if already normalized, otherwise treat as Pending
+            _ => sessionStatus switch
+            {
+                "Installed" or "Error" or "Warning" or "Pending" or "Removed" or "Not Available" => sessionStatus,
+                _ => "Pending"
+            }
+        };
+    }
+
+    #endregion
+
     #region Session Package Tracking
 
     /// <summary>
@@ -398,18 +434,21 @@ public class DataExporter
 
         foreach (var pkg in packagesInfo)
         {
+            // Normalize status: convert session statuses (completed/success) to item statuses (Installed)
+            var normalizedStatus = NormalizeItemStatus(pkg.Status);
+
             var record = new ItemRecord
             {
                 Id = GeneratePackageId(pkg.Name),
                 ItemName = pkg.Name,
                 DisplayName = pkg.DisplayName,
                 ItemType = pkg.ItemType,
-                CurrentStatus = pkg.Status,
+                CurrentStatus = normalizedStatus,  // NORMALIZED STATUS - maps completed/success to Installed
                 LatestVersion = pkg.Version,
                 InstalledVersion = pkg.InstalledVersion,
                 LastUpdate = now,
                 LastAttemptTime = now,
-                LastAttemptStatus = pkg.Status,
+                LastAttemptStatus = normalizedStatus,  // NORMALIZED attempt status
                 Type = "cimian"
             };
 
