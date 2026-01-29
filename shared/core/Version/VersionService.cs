@@ -6,7 +6,7 @@ namespace Cimian.Core.Version;
 /// Version comparison and normalization service
 /// Migrated from Go: pkg/version/version.go and pkg/status/status.go (IsOlderVersion)
 /// 
-/// CRITICAL: This must produce identical results to the Go implementation for all version formats:
+/// This must produce identical results to the Go implementation for all version formats:
 /// - Semantic versions (1.0.0, 1.2.3-beta)
 /// - Windows build numbers (10.0.19045, 10.0.22621)
 /// - Chrome-style versions (139.0.7258.139)
