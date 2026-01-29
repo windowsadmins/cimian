@@ -294,6 +294,40 @@ func (exp *DataExporter) RecordItemWarning(itemName string, warningMsg string) {
 	}
 }
 
+// NormalizeItemStatus maps session/action statuses to standard item statuses
+// Session statuses (completed, success, failed) -> Item statuses (Installed, Error, Warning, Pending)
+func NormalizeItemStatus(sessionStatus string) string {
+	switch strings.ToLower(sessionStatus) {
+	// SUCCESS: Session completed successfully -> Item is Installed
+	case "completed", "success", "installed", "ok":
+		return "Installed"
+	// ERROR: Session failed -> Item has Error
+	case "failed", "error", "fail":
+		return "Error"
+	// WARNING: Session has warnings -> Item has Warning
+	case "warning", "warn":
+		return "Warning"
+	// PENDING: Item needs action
+	case "pending", "pending install", "pending update", "skipped", "not installed":
+		return "Pending"
+	// REMOVED: Item was uninstalled
+	case "removed", "uninstalled":
+		return "Removed"
+	// NOT AVAILABLE: Item not in catalog
+	case "not available":
+		return "Not Available"
+	// Default: pass through for already-normalized statuses
+	default:
+		// If it's already a proper item status, keep it
+		switch sessionStatus {
+		case "Installed", "Error", "Warning", "Pending", "Removed", "Not Available":
+			return sessionStatus
+		}
+		// Unknown status -> treat as Pending for safety
+		return "Pending"
+	}
+}
+
 // loadCimianConfiguration loads the current Cimian configuration for session enhancement
 func (exp *DataExporter) loadCimianConfiguration() *SessionConfig {
 	cfg, err := config.LoadConfig()
@@ -1410,19 +1444,22 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 		// Try to get install count from registry (historical data)
 		installCount := exp.getInstallCountFromRegistry(pkgInfo.Name)
 
+		// Normalize status: convert session statuses (completed/success) to item statuses (Installed)
+		normalizedStatus := NormalizeItemStatus(pkgInfo.Status)
+
 		// Create item record with ACTUAL status and version information from current session
 		item := ItemRecord{
 			ID:                  strings.ToLower(strings.ReplaceAll(pkgInfo.Name, " ", "")),
 			ItemName:            pkgInfo.Name,
 			DisplayName:         displayName,
 			ItemType:            pkgInfo.ItemType,
-			CurrentStatus:       pkgInfo.Status,                            // ACTUAL STATUS - not hardcoded "Pending"
+			CurrentStatus:       normalizedStatus,                          // NORMALIZED STATUS - maps completed/success to Installed
 			LatestVersion:       pkgInfo.Version,                           // ACTUAL VERSION from catalog/manifest
 			InstalledVersion:    pkgInfo.InstalledVersion,                  // ACTUAL INSTALLED VERSION if available
 			LastSeenInSession:   time.Now().Format("2006-01-02T15:04:05Z"), // Mark as seen in current session
 			LastSuccessfulTime:  "",                                        // Not needed for real-time fleet monitoring
 			LastAttemptTime:     time.Now().Format("2006-01-02T15:04:05Z"), // Current session attempt
-			LastAttemptStatus:   pkgInfo.Status,                            // Current attempt status
+			LastAttemptStatus:   normalizedStatus,                          // NORMALIZED attempt status
 			LastUpdate:          time.Now().Format("2006-01-02T15:04:05Z"),
 			InstallCount:        installCount, // Historical install count from registry
 			UpdateCount:         0,
@@ -1438,7 +1475,8 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 		items = append(items, item)
 		logging.Debug("Added current session package info to items",
 			"package", pkgInfo.Name,
-			"status", pkgInfo.Status,
+			"status", normalizedStatus,
+			"rawStatus", pkgInfo.Status,
 			"version", pkgInfo.Version,
 			"itemType", pkgInfo.ItemType)
 	}
