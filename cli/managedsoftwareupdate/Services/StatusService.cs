@@ -103,7 +103,7 @@ public class StatusService
 
         try
         {
-            // CRITICAL: For CimianTools (self-update), check running version first
+            // For CimianTools (self-update), check running version first
             // This prevents attempting to "downgrade" to older catalog versions
             if (IsCimianPackage(item))
             {
