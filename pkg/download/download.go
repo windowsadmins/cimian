@@ -3,6 +3,7 @@
 package download
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/windowsadmins/cimian/pkg/config"
@@ -34,10 +36,23 @@ func (e NonRetryableError) Unwrap() error {
 }
 
 const (
-	CacheExpirationDays = 30
-	Timeout             = 10 * time.Minute  // Increased back to 10 minutes for large files
-	LargeFileThreshold  = 100 * 1024 * 1024 // 100MB threshold for large files
+	CacheExpirationDays       = 30
+	DefaultTimeout            = 10 * time.Minute  // Default timeout for regular files
+	LargeFileThreshold        = 100 * 1024 * 1024 // 100MB threshold for large files
+	HeadRequestTimeout        = 30 * time.Second  // Timeout for HEAD request
+	MinBandwidthBytesPerSec   = 50 * 1024         // 50KB/s minimum bandwidth before stall detection
+	StallCheckInterval        = 30 * time.Second  // Check for stalls every 30 seconds
+	MaxStallDuration          = 2 * time.Minute   // Max time with no progress before retry
+	BytesPerMinuteForTimeout  = 50 * 1024 * 1024  // 50MB/min assumed minimum speed for timeout calc
 )
+
+// downloadProgress tracks download progress for bandwidth monitoring
+type downloadProgress struct {
+	bytesDownloaded int64
+	lastCheckBytes  int64
+	lastCheckTime   time.Time
+	stalled         bool
+}
 
 // DownloadFile retrieves a file from `url` and saves it to the correct local path.
 // If the URL indicates a catalog or manifest, it goes in the corresponding folder.
@@ -164,10 +179,46 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 		}
 	}
 
-	// 8) Start the retry logic - but only for network/download errors, not logical errors
+	// 8) Perform HEAD request first to get Content-Length and calculate proper timeout
+	var totalSize int64
+	var supportsResume bool
+	timeout := DefaultTimeout
+
+	headClient := &http.Client{Timeout: HeadRequestTimeout}
+	headReq, err := utils.NewAuthenticatedRequest("HEAD", url, nil)
+	if err == nil {
+		headResp, err := headClient.Do(headReq)
+		if err == nil {
+			defer headResp.Body.Close()
+			if headResp.StatusCode == http.StatusOK {
+				if contentLength := headResp.Header.Get("Content-Length"); contentLength != "" {
+					totalSize = parseContentLength(contentLength)
+				}
+				// Check if server supports range requests for resume
+				supportsResume = headResp.Header.Get("Accept-Ranges") == "bytes"
+				
+				// Calculate dynamic timeout based on file size
+				// Formula: 2 minute base + 1 minute per 50MB (assumes 50MB/min minimum bandwidth)
+				if totalSize > 0 {
+					calculatedTimeout := 2*time.Minute + time.Duration(totalSize/BytesPerMinuteForTimeout)*time.Minute
+					if calculatedTimeout > timeout {
+						timeout = calculatedTimeout
+						logging.Debug("Large file detected, timeout adjusted",
+							"size_mb", totalSize/(1024*1024),
+							"calculated_timeout_minutes", int(timeout.Minutes()),
+							"supports_resume", supportsResume)
+					}
+				}
+			}
+		} else {
+			logging.Debug("HEAD request failed, proceeding with default timeout", "error", err)
+		}
+	}
+
+	// 9) Start the retry logic with resume support
 	configRetry := retry.RetryConfig{
-		MaxRetries:      3,
-		InitialInterval: time.Second,
+		MaxRetries:      5, // Increased retries since we support resume
+		InitialInterval: 2 * time.Second,
 		Multiplier:      2.0,
 	}
 
@@ -176,14 +227,34 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 
 	var downloadErr error
 	downloadErr = retry.Retry(configRetry, func() error {
-		logging.Debug("Starting download", "url", url, "destination", dest)
+		// Check for existing partial download
+		var startByte int64 = 0
+		
+		if supportsResume {
+			if info, err := os.Stat(tempDest); err == nil && info.Size() > 0 {
+				startByte = info.Size()
+				logging.Info("Resuming partial download",
+					"file", filepath.Base(dest),
+					"existing_bytes", startByte,
+					"total_bytes", totalSize,
+					"percent_complete", fmt.Sprintf("%.1f%%", float64(startByte)/float64(totalSize)*100))
+			}
+		}
 
-		// Remove any existing temp file from previous failed attempts
-		os.Remove(tempDest)
+		logging.Debug("Starting download", "url", url, "destination", dest, "resume_from", startByte)
 
-		out, err := os.Create(tempDest)
+		// Open file for append if resuming, create new otherwise
+		var out *os.File
+		var err error
+		if startByte > 0 {
+			out, err = os.OpenFile(tempDest, os.O_APPEND|os.O_WRONLY, 0644)
+		} else {
+			// Remove any existing temp file if not resuming
+			os.Remove(tempDest)
+			out, err = os.Create(tempDest)
+		}
 		if err != nil {
-			return fmt.Errorf("failed to create temporary download file: %v", err)
+			return fmt.Errorf("failed to create/open download file: %v", err)
 		}
 		defer out.Close()
 
@@ -192,44 +263,50 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 			return fmt.Errorf("failed to prepare HTTP request: %v", err)
 		}
 
-		// Configure HTTP client with better connection pooling and timeouts
+		// Add Range header for resume
+		if startByte > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startByte))
+		}
+
+		// Create context with calculated timeout
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		// Configure HTTP client WITHOUT Timeout (context handles it)
 		transport := &http.Transport{
 			DisableKeepAlives:     false,
 			MaxIdleConns:          10,
 			IdleConnTimeout:       30 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
 		}
 		client := &http.Client{
-			Timeout:   Timeout,
 			Transport: transport,
+			// No Timeout set here - context handles overall timeout
 		}
+		
 		resp, err := client.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to perform HTTP request: %v", err)
 		}
 		defer resp.Body.Close()
 
-		// Calculate dynamic timeout based on content length for future requests
-		timeout := Timeout // default 10 minutes
-		if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
-			if size := parseContentLength(contentLength); size > 0 {
-				// Calculate timeout: 1 minute base + 1 minute per 50MB
-				// This gives: 100MB = ~3min, 500MB = ~11min, 1GB = ~21min
-				calculatedTimeout := time.Minute + time.Duration(size/(50*1024*1024))*time.Minute
-				if calculatedTimeout > timeout {
-					timeout = calculatedTimeout
-					logging.Debug("Large file detected",
-						"size_mb", size/(1024*1024),
-						"calculated_timeout_minutes", int(timeout.Minutes()))
-				}
-			}
+		// Handle resume response codes
+		expectedStatus := http.StatusOK
+		if startByte > 0 {
+			expectedStatus = http.StatusPartialContent
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			// Provide more specific error messages for common HTTP status codes
-			// 404 errors should NOT be retried as they indicate the resource doesn't exist
+		if resp.StatusCode != expectedStatus && resp.StatusCode != http.StatusOK {
+			// Handle specific status codes
 			switch resp.StatusCode {
+			case http.StatusRequestedRangeNotSatisfiable:
+				// Server doesn't have the range we requested, start over
+				logging.Warn("Range not satisfiable, restarting download from beginning")
+				os.Remove(tempDest)
+				return fmt.Errorf("range request failed, will retry from beginning")
 			case 404:
 				return NonRetryableError{Err: fmt.Errorf("file not found (404): resource may have been moved or deleted")}
 			case 403:
@@ -243,30 +320,35 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 			}
 		}
 
-		// Track expected content length for validation
+		// Determine expected size for this response
 		var expectedSize int64
-		if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+		if totalSize > 0 {
+			expectedSize = totalSize - startByte
+		} else if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
 			expectedSize = parseContentLength(contentLength)
 		}
 
-		// Copy with optional waterfall progress tracking for -vvv mode
+		// Copy with bandwidth monitoring and stall detection
 		var written int64
+		fileName := filepath.Base(dest)
 		
 		if verbosity >= 3 && expectedSize > 0 {
-			// Waterfall progress for very verbose mode
-			fileName := filepath.Base(dest)
-			written, err = copyWithWaterfallProgress(out, resp.Body, expectedSize, fileName)
+			// Waterfall progress for very verbose mode with bandwidth monitoring
+			written, err = copyWithBandwidthMonitoring(out, resp.Body, expectedSize, fileName, true)
 		} else {
-			// Simple copy without progress tracking
-			written, err = io.Copy(out, resp.Body)
+			// Bandwidth monitoring without visual progress
+			written, err = copyWithBandwidthMonitoring(out, resp.Body, expectedSize, fileName, false)
 		}
+		
 		if err != nil {
+			// If stall detected, the partial file remains for resume
 			return fmt.Errorf("failed to write downloaded data: %v", err)
 		}
 
 		// Validate file size if Content-Length was provided
-		if expectedSize > 0 && written != expectedSize {
-			return fmt.Errorf("incomplete download: expected %d bytes, got %d bytes", expectedSize, written)
+		actualTotal := startByte + written
+		if totalSize > 0 && actualTotal != totalSize {
+			return fmt.Errorf("incomplete download: expected %d bytes, got %d bytes", totalSize, actualTotal)
 		}
 
 		// Ensure data is flushed to disk
@@ -274,7 +356,7 @@ func DownloadFile(url, unusedDest string, cfg *config.Configuration, verbosity i
 			return fmt.Errorf("failed to sync file to disk: %v", err)
 		}
 
-		logging.Debug("Download completed to temp file", "tempFile", tempDest, "size", written)
+		logging.Debug("Download completed to temp file", "tempFile", tempDest, "size", actualTotal)
 		return nil
 	})
 
@@ -614,6 +696,167 @@ func validateNupkgFile(path string) error {
 	}
 
 	return nil
+}
+
+// copyWithBandwidthMonitoring copies data with bandwidth monitoring and stall detection
+// Returns early with an error if download stalls to allow retry with resume
+func copyWithBandwidthMonitoring(dst io.Writer, src io.Reader, totalSize int64, fileName string, showProgress bool) (int64, error) {
+	const bufSize = 64 * 1024 // 64KB buffer for better throughput
+	const progressInterval = 100 * time.Millisecond
+	const bandwidthLogInterval = 10 * time.Second // Log bandwidth every 10 seconds
+	
+	buf := make([]byte, bufSize)
+	var written int64
+	var bytesWritten atomic.Int64
+	
+	startTime := time.Now()
+	lastProgressUpdate := time.Now()
+	lastBandwidthLog := time.Now()
+	lastBandwidthBytes := int64(0)
+	
+	// Stall detection state
+	lastStallCheckBytes := int64(0)
+	lastStallCheckTime := time.Now()
+	stallWarningIssued := false
+	
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = fmt.Errorf("invalid write result")
+				}
+			}
+			written += int64(nw)
+			bytesWritten.Store(written)
+			
+			if ew != nil {
+				return written, ew
+			}
+			if nr != nw {
+				return written, io.ErrShortWrite
+			}
+			
+			now := time.Now()
+			
+			// Bandwidth logging every 10 seconds
+			if now.Sub(lastBandwidthLog) >= bandwidthLogInterval {
+				bytesInPeriod := written - lastBandwidthBytes
+				periodSeconds := now.Sub(lastBandwidthLog).Seconds()
+				currentSpeed := float64(bytesInPeriod) / periodSeconds
+				overallSpeed := float64(written) / now.Sub(startTime).Seconds()
+				
+				var etaStr string
+				if overallSpeed > 0 && totalSize > 0 {
+					remaining := totalSize - written
+					etaSeconds := float64(remaining) / overallSpeed
+					etaStr = formatDuration(time.Duration(etaSeconds * float64(time.Second)))
+				}
+				
+				percentComplete := float64(0)
+				if totalSize > 0 {
+					percentComplete = float64(written) / float64(totalSize) * 100
+				}
+				
+				logging.Debug("Download progress",
+					"file", fileName,
+					"downloaded_mb", written/(1024*1024),
+					"total_mb", totalSize/(1024*1024),
+					"percent", fmt.Sprintf("%.1f%%", percentComplete),
+					"current_speed", formatSpeed(currentSpeed),
+					"avg_speed", formatSpeed(overallSpeed),
+					"eta", etaStr)
+				
+				lastBandwidthLog = now
+				lastBandwidthBytes = written
+			}
+			
+			// Stall detection every StallCheckInterval
+			if now.Sub(lastStallCheckTime) >= StallCheckInterval {
+				bytesInPeriod := written - lastStallCheckBytes
+				periodSeconds := now.Sub(lastStallCheckTime).Seconds()
+				currentSpeed := float64(bytesInPeriod) / periodSeconds
+				
+				if currentSpeed < float64(MinBandwidthBytesPerSec) {
+					if stallWarningIssued {
+						// Second consecutive stall - fail to trigger resume
+						logging.Warn("Download stalled, will retry with resume",
+							"file", fileName,
+							"stall_duration", now.Sub(lastStallCheckTime).String(),
+							"bytes_in_period", bytesInPeriod,
+							"speed_bytes_sec", int(currentSpeed),
+							"downloaded_so_far", written)
+						return written, fmt.Errorf("download stalled (<%d KB/s for %v), partial file preserved for resume",
+							MinBandwidthBytesPerSec/1024, MaxStallDuration)
+					} else {
+						// First stall warning
+						logging.Warn("Download speed critically low, monitoring for stall",
+							"file", fileName,
+							"speed_bytes_sec", int(currentSpeed),
+							"threshold_bytes_sec", MinBandwidthBytesPerSec)
+						stallWarningIssued = true
+					}
+				} else {
+					// Reset stall warning if speed recovered
+					stallWarningIssued = false
+				}
+				
+				lastStallCheckBytes = written
+				lastStallCheckTime = now
+			}
+			
+			// Visual progress update (if enabled)
+			if showProgress && totalSize > 0 && now.Sub(lastProgressUpdate) >= progressInterval {
+				percentage := int((written * 100) / totalSize)
+				elapsed := now.Sub(startTime)
+				
+				var speed string
+				var eta string
+				if elapsed.Seconds() > 0 {
+					bytesPerSecond := float64(written) / elapsed.Seconds()
+					speed = formatSpeed(bytesPerSecond)
+					
+					if bytesPerSecond > 0 && written < totalSize {
+						remainingBytes := totalSize - written
+						etaSeconds := float64(remainingBytes) / bytesPerSecond
+						eta = formatDuration(time.Duration(etaSeconds * float64(time.Second)))
+					}
+				}
+				
+				waterfallBar := generateWaterfallBar(percentage, fileName, speed, eta)
+				fmt.Printf("\r%s", waterfallBar)
+				
+				lastProgressUpdate = now
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				return written, er
+			}
+			break
+		}
+	}
+	
+	// Final progress line if showing progress
+	if showProgress && totalSize > 0 {
+		elapsed := time.Since(startTime)
+		speed := formatSpeed(float64(written) / elapsed.Seconds())
+		waterfallBar := generateWaterfallBar(100, fileName, speed, "")
+		fmt.Printf("\r%s\n", waterfallBar)
+	}
+	
+	// Log completion
+	elapsed := time.Since(startTime)
+	avgSpeed := float64(written) / elapsed.Seconds()
+	logging.Info("Download completed",
+		"file", fileName,
+		"size_mb", written/(1024*1024),
+		"duration", elapsed.Round(time.Second).String(),
+		"avg_speed", formatSpeed(avgSpeed))
+	
+	return written, nil
 }
 
 // copyWithWaterfallProgress copies data with waterfall progress display for -vvv mode
