@@ -1047,7 +1047,12 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					"item", item.Name, "path", install.Path, "hash", install.MD5Checksum)
 			}
 
-			if install.Version != "" {
+			// Use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
+			expectedVersion := install.Version
+			if expectedVersion == "" {
+				expectedVersion = item.Version
+			}
+			if expectedVersion != "" {
 				fileVersion, err := getFileVersion(install.Path)
 				if err != nil || fileVersion == "" {
 					if hashVerificationPassed {
@@ -1058,23 +1063,23 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 							"item", item.Name, "path", install.Path, "error", err)
 						return true, nil
 					}
-				} else if IsOlderVersion(install.Version, fileVersion) {
+				} else if IsOlderVersion(expectedVersion, fileVersion) {
 					// Installed version is NEWER than catalog - skip installation
 					logging.Info("Installed version is newer than catalog version - skipping installation",
 						"item", item.Name, "path", install.Path,
 						"installedVersion", fileVersion,
-						"catalogVersion", install.Version)
-				} else if IsOlderVersion(fileVersion, install.Version) {
+						"catalogVersion", expectedVersion)
+				} else if IsOlderVersion(fileVersion, expectedVersion) {
 					if hashVerificationPassed {
 						logging.Info("File version appears outdated, but hash verification passed - accepting installation",
 							"item", item.Name, "path", install.Path,
 							"fileVersion", fileVersion,
-							"expectedVersion", install.Version)
+							"expectedVersion", expectedVersion)
 					} else {
 						logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
 							"item", item.Name, "path", install.Path,
 							"fileVersion", fileVersion,
-							"expectedVersion", install.Version,
+							"expectedVersion", expectedVersion,
 						)
 						return true, nil
 					}
@@ -1255,7 +1260,12 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 				}
 			}
 
-			if install.Version != "" {
+			// Use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
+			expectedVersion := install.Version
+			if expectedVersion == "" {
+				expectedVersion = item.Version
+			}
+			if expectedVersion != "" {
 				fileVersion, err := getFileVersionQuiet(install.Path, quiet)
 				if err != nil || fileVersion == "" {
 					if hashVerificationPassed {
@@ -1270,20 +1280,20 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 						}
 						return true, nil
 					}
-				} else if IsOlderVersion(fileVersion, install.Version) {
+				} else if IsOlderVersion(fileVersion, expectedVersion) {
 					if hashVerificationPassed {
 						if !quiet {
 							logging.Info("File version appears outdated, but hash verification passed - accepting installation",
 								"item", item.Name, "path", install.Path,
 								"fileVersion", fileVersion,
-								"expectedVersion", install.Version)
+								"expectedVersion", expectedVersion)
 						}
 					} else {
 						if !quiet {
 							logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
 								"item", item.Name, "path", install.Path,
 								"fileVersion", fileVersion,
-								"expectedVersion", install.Version,
+								"expectedVersion", expectedVersion,
 							)
 						}
 						return true, nil
