@@ -343,6 +343,33 @@ public class StatusService
                             // Go parity: File exists but no hash specified
                             ConsoleLogger.Debug($"File exists (no hash check) item: {item.Name} path: {installItem.Path}");
                         }
+
+                        // Check version if specified in installs array
+                        if (!string.IsNullOrEmpty(installItem.Version))
+                        {
+                            var fileVersion = GetFileVersion(installItem.Path);
+                            if (!string.IsNullOrEmpty(fileVersion))
+                            {
+                                var comparison = CatalogService.CompareVersions(installItem.Version, fileVersion);
+                                if (comparison > 0)
+                                {
+                                    // Catalog version is newer - update needed
+                                    ConsoleLogger.Info($"Installs array verification failed - file version outdated item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {installItem.Version}");
+                                    result.Status = "pending";
+                                    result.NeedsAction = true;
+                                    result.IsUpdate = true;
+                                    result.Reason = $"Version outdated: {fileVersion} -> {installItem.Version}";
+                                    result.ReasonCode = StatusReasonCode.VersionOutdated;
+                                    result.DetectionMethod = DetectionMethod.File;
+                                    return result;
+                                }
+                                else if (comparison < 0)
+                                {
+                                    // Installed version is newer than catalog - skip
+                                    ConsoleLogger.Info($"Installed version is newer than catalog version - skipping installation item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {installItem.Version}");
+                                }
+                            }
+                        }
                     }
                     break;
 
@@ -367,24 +394,65 @@ public class StatusService
                     break;
 
                 case "msi":
-                    if (!string.IsNullOrEmpty(installItem.ProductCode))
+                    // Use robust MSI detection with both ProductCode and UpgradeCode
+                    // This handles auto-updating apps (Chrome, etc.) where ProductCode changes each version
+                    var catalogVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
+                    var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
+                        installItem.ProductCode, installItem.UpgradeCode, catalogVersion);
+
+                    // If MSI detection failed, try registry lookup using item's display_name or name as fallback
+                    // This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update)
+                    if (!msiInstalled)
                     {
-                        ConsoleLogger.Debug($"Checking MSI product code: {installItem.ProductCode}");
-                        var (msiInstalled, msiVersion) = CheckMsiProductWithVersion(installItem.ProductCode);
-                        if (!msiInstalled)
+                        var displayNameToSearch = !string.IsNullOrEmpty(item.DisplayName) ? item.DisplayName : item.Name;
+                        var fallbackVersion = FindVersionByDisplayName(displayNameToSearch);
+                        if (!string.IsNullOrEmpty(fallbackVersion))
                         {
-                            ConsoleLogger.Info($"MSI product not installed item: {item.Name} productCode: {installItem.ProductCode}");
-                            var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
-                            result.Status = "pending";
-                            result.NeedsAction = true;
-                            result.IsUpdate = hasRegistryEntry;
-                            result.Reason = $"MSI product not installed: {installItem.ProductCode}";
-                            result.ReasonCode = StatusReasonCode.ProductCodeMissing;
-                            result.DetectionMethod = DetectionMethod.Msi;
-                            return result;
+                            msiInstalled = true;
+                            msiInstalledVersion = fallbackVersion;
+                            ConsoleLogger.Info($"Found app via display_name fallback item: {item.Name} displayName: {displayNameToSearch} installedVersion: {fallbackVersion}");
+                            
+                            // Check version match
+                            if (!string.IsNullOrEmpty(catalogVersion))
+                            {
+                                var comparison = CatalogService.CompareVersions(catalogVersion, fallbackVersion);
+                                msiVersionMatch = comparison <= 0;
+                            }
+                            else
+                            {
+                                msiVersionMatch = true;
+                            }
                         }
-                        ConsoleLogger.Debug($"Found MSI product in registry productCode: {installItem.ProductCode} version: {msiVersion}");
-                        ConsoleLogger.Info($"MSI verification passed item: {item.Name} productCode: {installItem.ProductCode} version: {msiVersion}");
+                    }
+
+                    if (!msiInstalled)
+                    {
+                        ConsoleLogger.Info($"MSI product not installed item: {item.Name} productCode: {installItem.ProductCode} upgradeCode: {installItem.UpgradeCode}");
+                        var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
+                        result.Status = "pending";
+                        result.NeedsAction = true;
+                        result.IsUpdate = hasRegistryEntry;
+                        result.Reason = $"MSI product not installed";
+                        result.ReasonCode = StatusReasonCode.ProductCodeMissing;
+                        result.DetectionMethod = DetectionMethod.Msi;
+                        return result;
+                    }
+                    else if (!msiVersionMatch)
+                    {
+                        ConsoleLogger.Info($"MSI version outdated item: {item.Name} installedVersion: {msiInstalledVersion} catalogVersion: {catalogVersion}");
+                        result.Status = "pending";
+                        result.NeedsAction = true;
+                        result.IsUpdate = true;
+                        result.InstalledVersion = msiInstalledVersion;
+                        result.Reason = $"MSI version outdated: {msiInstalledVersion} -> {catalogVersion}";
+                        result.ReasonCode = StatusReasonCode.VersionOutdated;
+                        result.DetectionMethod = DetectionMethod.Msi;
+                        return result;
+                    }
+                    else
+                    {
+                        ConsoleLogger.Info($"MSI verification passed - version current or newer item: {item.Name} installedVersion: {msiInstalledVersion} catalogVersion: {catalogVersion}");
+                        result.InstalledVersion = msiInstalledVersion;
                     }
                     break;
             }
@@ -415,6 +483,273 @@ public class StatusService
             }
         }
         return (false, null);
+    }
+
+    /// <summary>
+    /// Converts a standard GUID format to Windows Installer packed GUID format.
+    /// Example: {C1DFDF69-5945-32F2-A35E-EE94C99C7CF4} -> 96FDFD1C5495F232A3E5EE499CC9C74F
+    /// </summary>
+    private static string PackGuid(string guid)
+    {
+        // Remove braces and hyphens
+        guid = guid.Replace("{", "").Replace("}", "").Replace("-", "").ToUpperInvariant();
+        
+        if (guid.Length != 32)
+            return string.Empty;
+        
+        // Packed format reverses specific sections
+        var result = new char[32];
+        
+        // Section 1: first 8 chars, reversed in pairs
+        result[0] = guid[6]; result[1] = guid[7];
+        result[2] = guid[4]; result[3] = guid[5];
+        result[4] = guid[2]; result[5] = guid[3];
+        result[6] = guid[0]; result[7] = guid[1];
+        
+        // Section 2: next 4 chars, reversed in pairs
+        result[8] = guid[10]; result[9] = guid[11];
+        result[10] = guid[8]; result[11] = guid[9];
+        
+        // Section 3: next 4 chars, reversed in pairs  
+        result[12] = guid[14]; result[13] = guid[15];
+        result[14] = guid[12]; result[15] = guid[13];
+        
+        // Section 4+5: remaining 16 chars, reversed in pairs
+        for (int i = 16; i < 32; i += 2)
+        {
+            result[i] = guid[i + 1];
+            result[i + 1] = guid[i];
+        }
+        
+        return new string(result);
+    }
+
+    /// <summary>
+    /// Finds any installed product with the given UpgradeCode and returns its version.
+    /// Essential for auto-updating apps (Chrome, etc.) where ProductCode changes each version.
+    /// </summary>
+    private (bool installed, string? version) FindMsiByUpgradeCode(string upgradeCode)
+    {
+        if (string.IsNullOrEmpty(upgradeCode))
+            return (false, null);
+
+        var packedUpgradeCode = PackGuid(upgradeCode);
+        if (string.IsNullOrEmpty(packedUpgradeCode))
+        {
+            ConsoleLogger.Debug($"Failed to pack UpgradeCode GUID upgradeCode: {upgradeCode}");
+            return (false, null);
+        }
+
+        try
+        {
+            // Check installer UpgradeCodes registry
+            var upgradeCodePath = $@"SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UpgradeCodes\{packedUpgradeCode}";
+            using var upgradeKey = Registry.LocalMachine.OpenSubKey(upgradeCodePath);
+            
+            if (upgradeKey == null)
+            {
+                ConsoleLogger.Debug($"UpgradeCode not found in registry upgradeCode: {upgradeCode} packedCode: {packedUpgradeCode}");
+                return (false, null);
+            }
+
+            var valueNames = upgradeKey.GetValueNames();
+            if (valueNames.Length == 0)
+            {
+                ConsoleLogger.Debug($"No products found under UpgradeCode upgradeCode: {upgradeCode}");
+                return (false, null);
+            }
+
+            ConsoleLogger.Debug($"Found products under UpgradeCode upgradeCode: {upgradeCode} productCount: {valueNames.Length}");
+
+            // Search uninstall registry for matching products
+            var uninstallPaths = new[]
+            {
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+            };
+
+            foreach (var basePath in uninstallPaths)
+            {
+                using var baseKey = Registry.LocalMachine.OpenSubKey(basePath);
+                if (baseKey == null) continue;
+
+                foreach (var subkeyName in baseKey.GetSubKeyNames())
+                {
+                    using var prodKey = baseKey.OpenSubKey(subkeyName);
+                    if (prodKey == null) continue;
+
+                    var version = prodKey.GetValue("DisplayVersion")?.ToString();
+                    if (string.IsNullOrEmpty(version)) continue;
+
+                    // Check if this product's packed code matches our UpgradeCode values
+                    var packedProductCode = PackGuid(subkeyName);
+                    foreach (var valueName in valueNames)
+                    {
+                        if (string.Equals(valueName, packedProductCode, StringComparison.OrdinalIgnoreCase))
+                        {
+                            ConsoleLogger.Info($"Found installed product via UpgradeCode lookup upgradeCode: {upgradeCode} productCode: {subkeyName} version: {version}");
+                            return (true, version);
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"Error during UpgradeCode lookup: {ex.Message}");
+        }
+
+        return (false, null);
+    }
+
+    /// <summary>
+    /// Performs robust MSI detection using both ProductCode and UpgradeCode.
+    /// Handles auto-updating apps where ProductCode changes each version but UpgradeCode stays stable.
+    /// Returns: (installed, versionMatch, installedVersion)
+    /// </summary>
+    private (bool installed, bool versionMatch, string? installedVersion) CheckMsiWithUpgradeCode(
+        string? productCode, string? upgradeCode, string catalogVersion)
+    {
+        // First try ProductCode lookup (faster, exact match)
+        if (!string.IsNullOrEmpty(productCode))
+        {
+            var (installed, installedVersion) = CheckMsiProductWithVersion(productCode);
+            if (installed && !string.IsNullOrEmpty(installedVersion))
+            {
+                ConsoleLogger.Debug($"Found MSI via ProductCode productCode: {productCode} installedVersion: {installedVersion}");
+
+                if (string.IsNullOrEmpty(catalogVersion))
+                    return (true, true, installedVersion);
+
+                // Compare versions - skip if installed >= catalog
+                var comparison = CatalogService.CompareVersions(catalogVersion, installedVersion);
+                if (comparison <= 0)
+                {
+                    ConsoleLogger.Info($"MSI version current or newer - no action needed productCode: {productCode} installedVersion: {installedVersion} catalogVersion: {catalogVersion}");
+                    return (true, true, installedVersion);
+                }
+                else
+                {
+                    ConsoleLogger.Info($"MSI version outdated - update available productCode: {productCode} installedVersion: {installedVersion} catalogVersion: {catalogVersion}");
+                    return (true, false, installedVersion);
+                }
+            }
+        }
+
+        // ProductCode not found - try UpgradeCode (handles auto-updated apps)
+        if (!string.IsNullOrEmpty(upgradeCode))
+        {
+            var (installed, installedVersion) = FindMsiByUpgradeCode(upgradeCode);
+            if (installed && !string.IsNullOrEmpty(installedVersion))
+            {
+                ConsoleLogger.Debug($"Found MSI via UpgradeCode upgradeCode: {upgradeCode} installedVersion: {installedVersion}");
+
+                if (string.IsNullOrEmpty(catalogVersion))
+                    return (true, true, installedVersion);
+
+                // Compare versions - skip if installed >= catalog
+                var comparison = CatalogService.CompareVersions(catalogVersion, installedVersion);
+                if (comparison <= 0)
+                {
+                    ConsoleLogger.Info($"MSI found via UpgradeCode - version current or newer, skipping installation upgradeCode: {upgradeCode} installedVersion: {installedVersion} catalogVersion: {catalogVersion}");
+                    return (true, true, installedVersion);
+                }
+                else
+                {
+                    ConsoleLogger.Info($"MSI found via UpgradeCode - version outdated, update available upgradeCode: {upgradeCode} installedVersion: {installedVersion} catalogVersion: {catalogVersion}");
+                    return (true, false, installedVersion);
+                }
+            }
+        }
+
+        ConsoleLogger.Debug($"MSI not found via ProductCode or UpgradeCode productCode: {productCode} upgradeCode: {upgradeCode}");
+        return (false, false, null);
+    }
+
+    /// <summary>
+    /// Search the Windows uninstall registry for an app by its display name.
+    /// This is a fallback for apps that were installed via EXE installer instead of MSI.
+    /// Returns the installed version or null if not found.
+    /// </summary>
+    private string? FindVersionByDisplayName(string displayName)
+    {
+        if (string.IsNullOrEmpty(displayName))
+            return null;
+
+        var uninstallPaths = new[]
+        {
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+        };
+
+        foreach (var basePath in uninstallPaths)
+        {
+            try
+            {
+                using var baseKey = Registry.LocalMachine.OpenSubKey(basePath);
+                if (baseKey == null) continue;
+
+                foreach (var subkeyName in baseKey.GetSubKeyNames())
+                {
+                    using var subKey = baseKey.OpenSubKey(subkeyName);
+                    if (subKey == null) continue;
+
+                    var regDisplayName = subKey.GetValue("DisplayName")?.ToString();
+                    var regVersion = subKey.GetValue("DisplayVersion")?.ToString();
+
+                    if (string.IsNullOrEmpty(regDisplayName) || string.IsNullOrEmpty(regVersion))
+                        continue;
+
+                    // Exact match
+                    if (string.Equals(regDisplayName, displayName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ConsoleLogger.Debug($"Found exact display name match in registry displayName: {displayName} registryName: {regDisplayName} version: {regVersion}");
+                        return regVersion;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Debug($"Error searching registry path {basePath}: {ex.Message}");
+            }
+        }
+
+        // Try partial match (registry name contains our display name or vice versa)
+        foreach (var basePath in uninstallPaths)
+        {
+            try
+            {
+                using var baseKey = Registry.LocalMachine.OpenSubKey(basePath);
+                if (baseKey == null) continue;
+
+                foreach (var subkeyName in baseKey.GetSubKeyNames())
+                {
+                    using var subKey = baseKey.OpenSubKey(subkeyName);
+                    if (subKey == null) continue;
+
+                    var regDisplayName = subKey.GetValue("DisplayName")?.ToString();
+                    var regVersion = subKey.GetValue("DisplayVersion")?.ToString();
+
+                    if (string.IsNullOrEmpty(regDisplayName) || string.IsNullOrEmpty(regVersion))
+                        continue;
+
+                    // Partial match - either contains the other
+                    if (regDisplayName.Contains(displayName, StringComparison.OrdinalIgnoreCase) ||
+                        displayName.Contains(regDisplayName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ConsoleLogger.Debug($"Found partial display name match in registry displayName: {displayName} registryName: {regDisplayName} version: {regVersion}");
+                        return regVersion;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Debug($"Error searching registry path {basePath}: {ex.Message}");
+            }
+        }
+
+        ConsoleLogger.Debug($"No registry entry found for display name: {displayName}");
+        return null;
     }
 
     /// <summary>

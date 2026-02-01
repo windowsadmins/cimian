@@ -302,10 +302,16 @@ public class UpdateEngine : IDisposable
             // Print hierarchy and tables in checkonly mode (matches Go behavior - always shows this)
             if (_checkOnly)
             {
-                PrintManifestHierarchy(manifestItems);
-                PrintManagedInstallsTable(manifestItems, toInstall, toUpdate, catalogMap);
-                PrintManagedUpdatesTable(manifestItems, toUpdate, catalogMap);
-                PrintManagedUninstallsTable(manifestItems, toUninstall, catalogMap);
+                // Go parity: When --item filter is active, display only filtered items
+                // (Go filters manifestItems early via itemFilter.Apply)
+                var displayItems = itemFilterService.HasFilter 
+                    ? itemFilterService.FilterManifestItems(manifestItems) 
+                    : manifestItems;
+                    
+                PrintManifestHierarchy(displayItems);
+                PrintManagedInstallsTable(displayItems, toInstall, toUpdate, catalogMap);
+                PrintManagedUpdatesTable(displayItems, toUpdate, catalogMap);
+                PrintManagedUninstallsTable(displayItems, toUninstall, catalogMap);
             }
 
             // Print summary
