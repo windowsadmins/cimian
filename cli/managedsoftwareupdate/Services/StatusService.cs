@@ -344,21 +344,22 @@ public class StatusService
                             ConsoleLogger.Debug($"File exists (no hash check) item: {item.Name} path: {installItem.Path}");
                         }
 
-                        // Check version if specified in installs array
-                        if (!string.IsNullOrEmpty(installItem.Version))
+                        // Check version - use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
+                        var expectedVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
+                        if (!string.IsNullOrEmpty(expectedVersion))
                         {
                             var fileVersion = GetFileVersion(installItem.Path);
                             if (!string.IsNullOrEmpty(fileVersion))
                             {
-                                var comparison = CatalogService.CompareVersions(installItem.Version, fileVersion);
+                                var comparison = CatalogService.CompareVersions(expectedVersion, fileVersion);
                                 if (comparison > 0)
                                 {
                                     // Catalog version is newer - update needed
-                                    ConsoleLogger.Info($"Installs array verification failed - file version outdated item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {installItem.Version}");
+                                    ConsoleLogger.Info($"Installs array verification failed - file version outdated item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {expectedVersion}");
                                     result.Status = "pending";
                                     result.NeedsAction = true;
                                     result.IsUpdate = true;
-                                    result.Reason = $"Version outdated: {fileVersion} -> {installItem.Version}";
+                                    result.Reason = $"Version outdated: {fileVersion} -> {expectedVersion}";
                                     result.ReasonCode = StatusReasonCode.VersionOutdated;
                                     result.DetectionMethod = DetectionMethod.File;
                                     return result;
@@ -366,7 +367,7 @@ public class StatusService
                                 else if (comparison < 0)
                                 {
                                     // Installed version is newer than catalog - skip
-                                    ConsoleLogger.Info($"Installed version is newer than catalog version - skipping installation item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {installItem.Version}");
+                                    ConsoleLogger.Info($"Installed version is newer than catalog version - skipping installation item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {expectedVersion}");
                                 }
                             }
                         }
