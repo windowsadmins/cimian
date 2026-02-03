@@ -4,7 +4,6 @@ package utils
 
 import (
 	"fmt"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,19 +15,16 @@ type LiteralString string
 func (ls LiteralString) MarshalYAML() (interface{}, error) {
 	value := string(ls)
 
-	// Create a yaml.Node with literal style for all non-empty strings
+	// For non-empty strings, return a properly formatted yaml.Node
 	if value != "" {
-		// Convert escaped sequences to actual characters to make content more literal-friendly
-		value = strings.ReplaceAll(value, "\\n", "\n")
-		value = strings.ReplaceAll(value, "\\r", "\r")
-		value = strings.ReplaceAll(value, "\\t", "\t")
-
-		// Always use LiteralStyle to preserve block formatting
+		// The value already contains actual newlines from unmarshal
+		// Let yaml.v3 decide the best style automatically
+		// by not setting Style explicitly
 		node := &yaml.Node{
 			Kind:  yaml.ScalarNode,
 			Tag:   "!!str",
 			Value: value,
-			Style: yaml.LiteralStyle,
+			// Style not set - let encoder choose based on content
 		}
 		return node, nil
 	}

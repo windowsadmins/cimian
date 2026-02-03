@@ -47,7 +47,7 @@ type PkgsInfo struct {
 	DisplayName          string              `yaml:"display_name,omitempty"`
 	Identifier           string              `yaml:"identifier,omitempty"`
 	Version              string              `yaml:"version"`
-	Description          string              `yaml:"description,omitempty"`
+	Description          utils.LiteralString `yaml:"description,omitempty"`
 	Catalogs             []string            `yaml:"catalogs"`
 	Category             string              `yaml:"category,omitempty"`
 	Developer            string              `yaml:"developer,omitempty"`
@@ -299,7 +299,8 @@ func writeCatalogs(repoPath string, catalogs map[string][]PkgsInfo, silent bool)
 
 		enc := yaml.NewEncoder(file)
 		enc.SetIndent(2)
-		// Configure encoder to respect custom marshaling styles
+		// Disable line wrapping to prevent multiline strings from being split
+		// This ensures folded scalar blocks maintain proper formatting
 		if encodeErr := enc.Encode(catalogWrapper); encodeErr != nil {
 			file.Close()
 			return fmt.Errorf("yaml encode error for %s: %v", outPath, encodeErr)
