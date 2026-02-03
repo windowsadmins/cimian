@@ -173,6 +173,14 @@ public class InstallerService
         // Build command arguments (matches Go)
         var argsBuilder = new StringBuilder($"--pkg \"{packagePath}\" --target {target} --verbose");
 
+        // Add temp-dir if specified in pkginfo (helps avoid MAX_PATH 260 char limit issues)
+        // Priority: per-package temp_dir > flags containing temp-dir
+        if (!string.IsNullOrWhiteSpace(item.Installer?.TempDir))
+        {
+            argsBuilder.Append($" --temp-dir \"{item.Installer.TempDir}\"");
+            ConsoleLogger.Debug($"Using per-package temp directory: {item.Installer.TempDir}");
+        }
+
         // Process flags from pkginfo (similar to MSI/EXE flag handling)
         // Supports: temp-dir, --temp-dir, temp-dir=C:\path, --temp-dir=C:\path
         if (item.Installer?.Flags != null)
