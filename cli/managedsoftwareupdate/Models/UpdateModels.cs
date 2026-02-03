@@ -414,6 +414,13 @@ public class InstallerInfo
     public long? Size { get; set; }
 
     /// <summary>
+    /// Custom temporary directory for package extraction
+    /// Use shorter paths like C:\Temp to avoid Windows MAX_PATH (260 char) limit issues
+    /// </summary>
+    [YamlMember(Alias = "temp_dir")]
+    public string? TempDir { get; set; }
+
+    /// <summary>
     /// Gets all command-line arguments combined (switches + flags + args)
     /// Normalizes switches and flags to ensure proper prefixes:
     /// - Switches: ensures / prefix (accepts both "VERYSILENT" and "/VERYSILENT")
