@@ -1047,7 +1047,12 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 					"item", item.Name, "path", install.Path, "hash", install.MD5Checksum)
 			}
 
-			if install.Version != "" {
+			// Use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
+			expectedVersion := install.Version
+			if expectedVersion == "" {
+				expectedVersion = item.Version
+			}
+			if expectedVersion != "" {
 				fileVersion, err := getFileVersion(install.Path)
 				if err != nil || fileVersion == "" {
 					if hashVerificationPassed {
@@ -1058,17 +1063,23 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 							"item", item.Name, "path", install.Path, "error", err)
 						return true, nil
 					}
-				} else if IsOlderVersion(fileVersion, install.Version) {
+				} else if IsOlderVersion(expectedVersion, fileVersion) {
+					// Installed version is NEWER than catalog - skip installation
+					logging.Info("Installed version is newer than catalog version - skipping installation",
+						"item", item.Name, "path", install.Path,
+						"installedVersion", fileVersion,
+						"catalogVersion", expectedVersion)
+				} else if IsOlderVersion(fileVersion, expectedVersion) {
 					if hashVerificationPassed {
 						logging.Info("File version appears outdated, but hash verification passed - accepting installation",
 							"item", item.Name, "path", install.Path,
 							"fileVersion", fileVersion,
-							"expectedVersion", install.Version)
+							"expectedVersion", expectedVersion)
 					} else {
 						logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
 							"item", item.Name, "path", install.Path,
 							"fileVersion", fileVersion,
-							"expectedVersion", install.Version,
+							"expectedVersion", expectedVersion,
 						)
 						return true, nil
 					}
@@ -1106,71 +1117,74 @@ func checkInstalls(item catalog.Item, installType string) (bool, error) {
 				return true, nil
 			}
 		} else if strings.ToLower(install.Type) == "msi" || install.ProductCode != "" || install.UpgradeCode != "" {
-			// Handle MSI verification via product_code or upgrade_code
-			// This provides proper MSI verification within the installs array
-			productCode := install.ProductCode
-			if productCode == "" && install.UpgradeCode != "" {
-				// If no product_code but upgrade_code is available, use it
-				// Note: upgrade_code verification would need additional registry logic
-				logging.Debug("Using upgrade_code for MSI verification",
-					"item", item.Name, "upgradeCode", install.UpgradeCode)
-				productCode = install.UpgradeCode
+			// Handle MSI verification via product_code and upgrade_code
+			// Uses UpgradeCode as fallback for auto-updating apps (Chrome, etc.)
+			// where ProductCode changes each version but UpgradeCode stays stable
+
+			// Use item.Version as the catalog version for comparison
+			catalogVersion := item.Version
+			if install.Version != "" {
+				catalogVersion = install.Version
 			}
 
-			if productCode != "" {
-				installed, versionMatch := false, false
-				installedVersion := findMsiVersion(productCode)
+			installed, versionMatch, installedVersion := checkMsiWithUpgradeCode(
+				install.ProductCode, install.UpgradeCode, catalogVersion)
 
+			// If MSI detection failed, try registry lookup using item's display_name or name as fallback
+			// This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update)
+			if !installed {
+				// Try item.DisplayName first, then item.Name as fallback
+				displayNameToSearch := item.DisplayName
+				if displayNameToSearch == "" {
+					displayNameToSearch = item.Name
+				}
+				installedVersion = findVersionByDisplayName(displayNameToSearch)
 				if installedVersion != "" {
 					installed = true
-					logging.Debug("MSI product found in registry",
-						"item", item.Name, "productCode", productCode, "installedVersion", installedVersion)
-
-					// Check version if required
-					if install.Version != "" {
-						versionMatch = !IsOlderVersion(installedVersion, install.Version)
-						logging.Debug("MSI version comparison",
-							"item", item.Name, "installedVersion", installedVersion,
-							"requiredVersion", install.Version, "versionMatch", versionMatch)
-					} else {
-						// No version requirement, just presence is enough
+					logging.Info("Found app via display_name fallback",
+						"item", item.Name,
+						"displayName", displayNameToSearch,
+						"installedVersion", installedVersion)
+					// Check version match
+					if catalogVersion != "" && !IsOlderVersion(installedVersion, catalogVersion) {
 						versionMatch = true
+					} else {
+						versionMatch = false
 					}
-				} else {
-					logging.Debug("MSI product not found in registry",
-						"item", item.Name, "productCode", productCode)
 				}
+			}
 
-				// Apply MSI verification logic based on install type
-				if installType == "uninstall" {
-					if installed {
-						logging.Info("MSI product present, uninstall required",
-							"item", item.Name, "productCode", productCode)
-						return true, nil
-					} else {
-						logging.Info("MSI product not found, item may already be uninstalled",
-							"item", item.Name, "productCode", productCode)
-						return false, nil
-					}
+			// Apply MSI verification logic based on install type
+			if installType == "uninstall" {
+				if installed {
+					logging.Info("MSI product present, uninstall required",
+						"item", item.Name, "installedVersion", installedVersion)
+					return true, nil
 				} else {
-					// install/update logic
-					if !installed {
-						logging.Info("Installs array verification failed - MSI product not installed, installation needed",
-							"item", item.Name, "productCode", productCode)
-						return true, nil
-					} else if !versionMatch {
-						logging.Info("Installs array verification failed - MSI version outdated, update needed",
-							"item", item.Name, "productCode", productCode,
-							"installedVersion", installedVersion, "requiredVersion", install.Version)
-						return true, nil
-					} else {
-						logging.Info("MSI verification passed",
-							"item", item.Name, "productCode", productCode, "version", installedVersion)
-					}
+					logging.Info("MSI product not found, item may already be uninstalled",
+						"item", item.Name)
+					return false, nil
 				}
 			} else {
-				logging.Warn("MSI install item has no product_code or upgrade_code",
-					"item", item.Name, "installType", install.Type)
+				// install/update logic
+				if !installed {
+					logging.Info("Installs array verification failed - MSI product not installed, installation needed",
+						"item", item.Name,
+						"productCode", install.ProductCode,
+						"upgradeCode", install.UpgradeCode)
+					return true, nil
+				} else if !versionMatch {
+					logging.Info("Installs array verification failed - MSI version outdated, update needed",
+						"item", item.Name,
+						"installedVersion", installedVersion,
+						"catalogVersion", catalogVersion)
+					return true, nil
+				} else {
+					logging.Info("MSI verification passed - version current or newer, skipping",
+						"item", item.Name,
+						"installedVersion", installedVersion,
+						"catalogVersion", catalogVersion)
+				}
 			}
 		}
 	}
@@ -1246,7 +1260,12 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 				}
 			}
 
-			if install.Version != "" {
+			// Use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
+			expectedVersion := install.Version
+			if expectedVersion == "" {
+				expectedVersion = item.Version
+			}
+			if expectedVersion != "" {
 				fileVersion, err := getFileVersionQuiet(install.Path, quiet)
 				if err != nil || fileVersion == "" {
 					if hashVerificationPassed {
@@ -1261,20 +1280,20 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 						}
 						return true, nil
 					}
-				} else if IsOlderVersion(fileVersion, install.Version) {
+				} else if IsOlderVersion(fileVersion, expectedVersion) {
 					if hashVerificationPassed {
 						if !quiet {
 							logging.Info("File version appears outdated, but hash verification passed - accepting installation",
 								"item", item.Name, "path", install.Path,
 								"fileVersion", fileVersion,
-								"expectedVersion", install.Version)
+								"expectedVersion", expectedVersion)
 						}
 					} else {
 						if !quiet {
 							logging.Info("Installs array verification failed - file version outdated, reinstallation needed",
 								"item", item.Name, "path", install.Path,
 								"fileVersion", fileVersion,
-								"expectedVersion", install.Version,
+								"expectedVersion", expectedVersion,
 							)
 						}
 						return true, nil
@@ -1323,89 +1342,85 @@ func checkInstallsQuiet(item catalog.Item, installType string, quiet bool) (bool
 				return true, nil
 			}
 		} else if strings.ToLower(install.Type) == "msi" || install.ProductCode != "" || install.UpgradeCode != "" {
-			// Handle MSI verification via product_code or upgrade_code (quiet mode)
-			// This provides proper MSI verification within the installs array
-			productCode := install.ProductCode
-			if productCode == "" && install.UpgradeCode != "" {
-				// If no product_code but upgrade_code is available, use it
-				if !quiet {
-					logging.Debug("Using upgrade_code for MSI verification",
-						"item", item.Name, "upgradeCode", install.UpgradeCode)
-				}
-				productCode = install.UpgradeCode
+			// Handle MSI verification via product_code and upgrade_code
+			// Uses UpgradeCode as fallback for auto-updating apps (Chrome, etc.)
+			// where ProductCode changes each version but UpgradeCode stays stable
+
+			// Use item.Version as the catalog version for comparison
+			catalogVersion := item.Version
+			if install.Version != "" {
+				catalogVersion = install.Version
 			}
 
-			if productCode != "" {
-				installed, versionMatch := false, false
-				installedVersion := findMsiVersion(productCode)
+			installed, versionMatch, installedVersion := checkMsiWithUpgradeCode(
+				install.ProductCode, install.UpgradeCode, catalogVersion)
 
+			// If MSI detection failed, try registry lookup using item's display_name or name as fallback
+			// This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update)
+			if !installed {
+				// Try item.DisplayName first, then item.Name as fallback
+				displayNameToSearch := item.DisplayName
+				if displayNameToSearch == "" {
+					displayNameToSearch = item.Name
+				}
+				installedVersion = findVersionByDisplayName(displayNameToSearch)
 				if installedVersion != "" {
 					installed = true
 					if !quiet {
-						logging.Debug("MSI product found in registry",
-							"item", item.Name, "productCode", productCode, "installedVersion", installedVersion)
+						logging.Info("Found app via display_name fallback",
+							"item", item.Name,
+							"displayName", displayNameToSearch,
+							"installedVersion", installedVersion)
 					}
-
-					// Check version if required
-					if install.Version != "" {
-						versionMatch = !IsOlderVersion(installedVersion, install.Version)
-						if !quiet {
-							logging.Debug("MSI version comparison",
-								"item", item.Name, "installedVersion", installedVersion,
-								"requiredVersion", install.Version, "versionMatch", versionMatch)
-						}
-					} else {
-						// No version requirement, just presence is enough
+					// Check version match
+					if catalogVersion != "" && !IsOlderVersion(installedVersion, catalogVersion) {
 						versionMatch = true
+					} else {
+						versionMatch = false
 					}
+				}
+			}
+
+			// Apply MSI verification logic based on install type
+			if installType == "uninstall" {
+				if installed {
+					if !quiet {
+						logging.Info("MSI product present, uninstall required",
+							"item", item.Name, "installedVersion", installedVersion)
+					}
+					return true, nil
 				} else {
 					if !quiet {
-						logging.Debug("MSI product not found in registry",
-							"item", item.Name, "productCode", productCode)
+						logging.Info("MSI product not found, item may already be uninstalled",
+							"item", item.Name)
 					}
-				}
-
-				// Apply MSI verification logic based on install type
-				if installType == "uninstall" {
-					if installed {
-						if !quiet {
-							logging.Info("MSI product present, uninstall required",
-								"item", item.Name, "productCode", productCode)
-						}
-						return true, nil
-					} else {
-						if !quiet {
-							logging.Info("MSI product not found, item may already be uninstalled",
-								"item", item.Name, "productCode", productCode)
-						}
-						return false, nil
-					}
-				} else {
-					// install/update logic
-					if !installed {
-						if !quiet {
-							logging.Info("Installs array verification failed - MSI product not installed, installation needed",
-								"item", item.Name, "productCode", productCode)
-						}
-						return true, nil
-					} else if !versionMatch {
-						if !quiet {
-							logging.Info("Installs array verification failed - MSI version outdated, update needed",
-								"item", item.Name, "productCode", productCode,
-								"installedVersion", installedVersion, "requiredVersion", install.Version)
-						}
-						return true, nil
-					} else {
-						if !quiet {
-							logging.Info("MSI verification passed",
-								"item", item.Name, "productCode", productCode, "version", installedVersion)
-						}
-					}
+					return false, nil
 				}
 			} else {
-				if !quiet {
-					logging.Warn("MSI install item has no product_code or upgrade_code",
-						"item", item.Name, "installType", install.Type)
+				// install/update logic
+				if !installed {
+					if !quiet {
+						logging.Info("Installs array verification failed - MSI product not installed, installation needed",
+							"item", item.Name,
+							"productCode", install.ProductCode,
+							"upgradeCode", install.UpgradeCode)
+					}
+					return true, nil
+				} else if !versionMatch {
+					if !quiet {
+						logging.Info("Installs array verification failed - MSI version outdated, update needed",
+							"item", item.Name,
+							"installedVersion", installedVersion,
+							"catalogVersion", catalogVersion)
+					}
+					return true, nil
+				} else {
+					if !quiet {
+						logging.Info("MSI verification passed - version current or newer, skipping",
+							"item", item.Name,
+							"installedVersion", installedVersion,
+							"catalogVersion", catalogVersion)
+					}
 				}
 			}
 		}
@@ -1588,6 +1603,71 @@ func checkMsiProductCode(productCode, checkVersion string) (bool, bool) {
 	return true, versionMatch
 }
 
+// checkMsiWithUpgradeCode performs robust MSI detection using both ProductCode and UpgradeCode.
+// This handles auto-updating apps (like Chrome) where ProductCode changes each version but UpgradeCode stays stable.
+// Returns: (installed bool, versionMatch bool, installedVersion string)
+func checkMsiWithUpgradeCode(productCode, upgradeCode, catalogVersion string) (bool, bool, string) {
+	// First try ProductCode lookup (faster, exact match)
+	if productCode != "" {
+		installedVersion := findMsiVersion(productCode)
+		if installedVersion != "" {
+			logging.Debug("Found MSI via ProductCode",
+				"productCode", productCode, "installedVersion", installedVersion)
+
+			if catalogVersion == "" {
+				return true, true, installedVersion
+			}
+
+			// Compare versions - skip if installed >= catalog
+			if !IsOlderVersion(installedVersion, catalogVersion) {
+				logging.Info("MSI version current or newer - no action needed",
+					"productCode", productCode,
+					"installedVersion", installedVersion,
+					"catalogVersion", catalogVersion)
+				return true, true, installedVersion
+			} else {
+				logging.Info("MSI version outdated - update available",
+					"productCode", productCode,
+					"installedVersion", installedVersion,
+					"catalogVersion", catalogVersion)
+				return true, false, installedVersion
+			}
+		}
+	}
+
+	// ProductCode not found - try UpgradeCode (handles auto-updated apps)
+	if upgradeCode != "" {
+		installed, installedVersion := findMsiByUpgradeCode(upgradeCode)
+		if installed && installedVersion != "" {
+			logging.Debug("Found MSI via UpgradeCode",
+				"upgradeCode", upgradeCode, "installedVersion", installedVersion)
+
+			if catalogVersion == "" {
+				return true, true, installedVersion
+			}
+
+			// Compare versions - skip if installed >= catalog
+			if !IsOlderVersion(installedVersion, catalogVersion) {
+				logging.Info("MSI found via UpgradeCode - version current or newer, skipping installation",
+					"upgradeCode", upgradeCode,
+					"installedVersion", installedVersion,
+					"catalogVersion", catalogVersion)
+				return true, true, installedVersion
+			} else {
+				logging.Info("MSI found via UpgradeCode - version outdated, update available",
+					"upgradeCode", upgradeCode,
+					"installedVersion", installedVersion,
+					"catalogVersion", catalogVersion)
+				return true, false, installedVersion
+			}
+		}
+	}
+
+	logging.Debug("MSI not found via ProductCode or UpgradeCode",
+		"productCode", productCode, "upgradeCode", upgradeCode)
+	return false, false, ""
+}
+
 // findMsiVersion retrieves the DisplayVersion from registry for the MSI productCode
 // Checks both 64-bit and 32-bit registry locations
 func findMsiVersion(productCode string) string {
@@ -1611,6 +1691,174 @@ func findMsiVersion(productCode string) string {
 
 	logging.Debug("MSI product not found in either registry location",
 		"productCode", productCode, "checkedPaths", []string{regPath64, regPath32})
+	return ""
+}
+
+// packGuid converts a standard GUID format to Windows Installer packed GUID format.
+// Example: {C1DFDF69-5945-32F2-A35E-EE94C99C7CF4} -> 96FDFD1C5495F232A3E5EE499CC9C74F
+func packGuid(guid string) string {
+	// Remove braces and hyphens
+	guid = strings.ReplaceAll(guid, "{", "")
+	guid = strings.ReplaceAll(guid, "}", "")
+	guid = strings.ReplaceAll(guid, "-", "")
+	guid = strings.ToUpper(guid)
+
+	if len(guid) != 32 {
+		return ""
+	}
+
+	// Packed format reverses specific sections:
+	// Original: AABBCCDD-EEFF-GGHH-IIJJ-KKLLMMNNOOPP (without hyphens: AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPP)
+	// Packed:   DDCCBBAA-FFEE-HHGG-JJII-LLKKNNMMPPOO (reversed in pairs within each section)
+	result := ""
+	// Section 1: first 8 chars, reversed in pairs
+	result += string(guid[6]) + string(guid[7]) + string(guid[4]) + string(guid[5]) + string(guid[2]) + string(guid[3]) + string(guid[0]) + string(guid[1])
+	// Section 2: next 4 chars, reversed in pairs
+	result += string(guid[10]) + string(guid[11]) + string(guid[8]) + string(guid[9])
+	// Section 3: next 4 chars, reversed in pairs
+	result += string(guid[14]) + string(guid[15]) + string(guid[12]) + string(guid[13])
+	// Section 4+5: remaining 16 chars, reversed in pairs (8 pairs)
+	for i := 16; i < 32; i += 2 {
+		result += string(guid[i+1]) + string(guid[i])
+	}
+
+	return result
+}
+
+// findMsiByUpgradeCode finds any installed product with the given UpgradeCode and returns its version.
+// This is essential for apps that auto-update (like Chrome) where ProductCode changes each version.
+// Returns (installed bool, version string)
+func findMsiByUpgradeCode(upgradeCode string) (bool, string) {
+	if upgradeCode == "" {
+		return false, ""
+	}
+
+	packedUpgradeCode := packGuid(upgradeCode)
+	if packedUpgradeCode == "" {
+		logging.Debug("Failed to pack UpgradeCode GUID",
+			"upgradeCode", upgradeCode)
+		return false, ""
+	}
+
+	// Check installer UpgradeCodes registry
+	// HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UpgradeCodes\{PackedGUID}
+	upgradeCodePath := fmt.Sprintf("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\UpgradeCodes\\%s", packedUpgradeCode)
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, upgradeCodePath, registry.ENUMERATE_SUB_KEYS|registry.QUERY_VALUE)
+	if err != nil {
+		logging.Debug("UpgradeCode not found in registry",
+			"upgradeCode", upgradeCode, "packedCode", packedUpgradeCode, "path", upgradeCodePath)
+		return false, ""
+	}
+	defer k.Close()
+
+	// The UpgradeCode key contains values where the value names are packed ProductCodes
+	valueNames, err := k.ReadValueNames(-1)
+	if err != nil || len(valueNames) == 0 {
+		logging.Debug("No products found under UpgradeCode",
+			"upgradeCode", upgradeCode)
+		return false, ""
+	}
+
+	logging.Debug("Found products under UpgradeCode",
+		"upgradeCode", upgradeCode, "productCount", len(valueNames))
+
+	// Try to find version from any of the registered product codes
+	// Check the uninstall registry for display name and version
+	uninstallPaths := []string{
+		"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+		"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+	}
+
+	for _, basePath := range uninstallPaths {
+		baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, basePath, registry.ENUMERATE_SUB_KEYS)
+		if err != nil {
+			continue
+		}
+
+		subkeys, err := baseKey.ReadSubKeyNames(-1)
+		baseKey.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, subkey := range subkeys {
+			subkeyPath := basePath + "\\" + subkey
+			prodKey, err := registry.OpenKey(registry.LOCAL_MACHINE, subkeyPath, registry.QUERY_VALUE)
+			if err != nil {
+				continue
+			}
+
+			// Check if this product has our UpgradeCode (stored as a registry value)
+			prodUpgradeCode, _, _ := prodKey.GetStringValue("ModifyPath")
+			if prodUpgradeCode == "" {
+				// Try reading version directly - we found a candidate
+				version, _, _ := prodKey.GetStringValue("DisplayVersion")
+				prodKey.Close()
+
+				if version != "" {
+					// Verify this is actually our product by checking if the packed product code matches
+					packedProductCode := packGuid(subkey)
+					for _, valueName := range valueNames {
+						if strings.EqualFold(valueName, packedProductCode) {
+							logging.Info("Found installed product via UpgradeCode lookup",
+								"upgradeCode", upgradeCode,
+								"productCode", subkey,
+								"version", version)
+							return true, version
+						}
+					}
+				}
+			}
+			prodKey.Close()
+		}
+	}
+
+	// Fallback: try to find by display name search in uninstall registry
+	logging.Debug("No version found via UpgradeCode registry enumeration",
+		"upgradeCode", upgradeCode)
+	return false, ""
+}
+
+// findVersionByDisplayName searches the Windows uninstall registry for an app by its display name.
+// This is a fallback for apps that were installed via EXE installer instead of MSI.
+// Returns the installed version or empty string if not found.
+func findVersionByDisplayName(displayName string) string {
+	if displayName == "" {
+		return ""
+	}
+
+	// Ensure RegistryItems is populated
+	if len(RegistryItems) == 0 {
+		var err error
+		RegistryItems, err = getUninstallKeys()
+		if err != nil {
+			logging.Debug("Failed to get uninstall keys for display name lookup",
+				"displayName", displayName, "error", err)
+			return ""
+		}
+	}
+
+	// Search for exact or partial match
+	for _, regItem := range RegistryItems {
+		if strings.EqualFold(regItem.Name, displayName) {
+			logging.Debug("Found exact display name match in registry",
+				"displayName", displayName, "registryName", regItem.Name, "version", regItem.Version)
+			return regItem.Version
+		}
+	}
+
+	// Try partial match (registry name contains our display name or vice versa)
+	for _, regItem := range RegistryItems {
+		if strings.Contains(strings.ToLower(regItem.Name), strings.ToLower(displayName)) ||
+			strings.Contains(strings.ToLower(displayName), strings.ToLower(regItem.Name)) {
+			logging.Debug("Found partial display name match in registry",
+				"displayName", displayName, "registryName", regItem.Name, "version", regItem.Version)
+			return regItem.Version
+		}
+	}
+
+	logging.Debug("No registry entry found for display name",
+		"displayName", displayName)
 	return ""
 }
 
