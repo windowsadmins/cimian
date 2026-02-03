@@ -81,4 +81,30 @@ public class ItemFilterService
     /// Gets the items in the filter
     /// </summary>
     public IReadOnlySet<string> Items => _items;
+
+    /// <summary>
+    /// Filters a list of ManifestItems to only include those matching the filter.
+    /// If no filter is set, returns all items unchanged.
+    /// (Go parity: Apply in filter.go - filters manifestItems early)
+    /// </summary>
+    public List<ManifestItem> FilterManifestItems(List<ManifestItem> items)
+    {
+        if (!_hasFilter)
+        {
+            return items;
+        }
+
+        var filtered = items.Where(item => _items.Contains(item.Name)).ToList();
+        
+        if (filtered.Count > 0)
+        {
+            ConsoleLogger.Info($"Filtered manifest to {filtered.Count} item(s) via --item: [{string.Join(", ", filtered.Select(i => i.Name))}]");
+        }
+        else if (items.Count > 0)
+        {
+            ConsoleLogger.Warn($"No manifest items match --item filter: [{string.Join(", ", _items)}]");
+        }
+
+        return filtered;
+    }
 }
