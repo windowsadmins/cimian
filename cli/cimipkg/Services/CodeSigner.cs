@@ -322,29 +322,13 @@ Set-AuthenticodeSignature -FilePath '" + scriptPath + @"' -Certificate $cert -Ha
 
     /// <summary>
     /// Finds the appropriate PowerShell executable.
-    /// Prefers pwsh.exe (PowerShell 7+) which has built-in Certificate provider.
+    /// Uses Windows PowerShell (powershell.exe) which has the Certificate provider available by default.
+    /// Note: PowerShell Core (pwsh.exe) requires explicit Import-Module Microsoft.PowerShell.Security for Cert: drive.
     /// </summary>
     private static string FindPowerShellExecutable()
     {
-        // Check for PowerShell 7+ (pwsh.exe) first
-        var pwshPath = Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\PowerShell\7\pwsh.exe");
-        if (File.Exists(pwshPath))
-        {
-            return pwshPath;
-        }
-
-        // Try finding pwsh in PATH
-        var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(';') ?? Array.Empty<string>();
-        foreach (var dir in pathDirs)
-        {
-            var pwshInPath = Path.Combine(dir, "pwsh.exe");
-            if (File.Exists(pwshInPath))
-            {
-                return pwshInPath;
-            }
-        }
-
-        // Fallback to Windows PowerShell
+        // Use Windows PowerShell for certificate operations since it has Cert: provider by default
+        // PowerShell Core (pwsh) would require explicit Import-Module Microsoft.PowerShell.Security
         return "powershell.exe";
     }
 }
