@@ -82,6 +82,7 @@ type InstallerItem struct {
 	Flags       []string `yaml:"flags,omitempty" json:"flags,omitempty"`
 	Arguments   []string `yaml:"arguments"`
 	ProductCode string   `yaml:"product_code,omitempty"`
+	TempDir     string   `yaml:"temp_dir,omitempty" json:"temp_dir,omitempty"` // Custom temp directory for extraction (avoids MAX_PATH issues)
 }
 
 // InstallCheck holds data for checking installation state.

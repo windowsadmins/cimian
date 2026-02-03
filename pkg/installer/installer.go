@@ -130,6 +130,20 @@ func runSbinInstaller(packagePath string, item catalog.Item, cfg *config.Configu
 		target = cfg.GetSbinInstallerTargetRoot()
 	}
 
+	// Determine temp directory: per-package override > global config > system default
+	tempDir := ""
+	if item.Installer.TempDir != "" {
+		tempDir = item.Installer.TempDir
+		logging.Debug("Using per-package temp directory", "item", item.Name, "temp_dir", tempDir)
+	} else if cfg != nil && cfg.GetPkgExtractTempPath() != "" {
+		configTempPath := cfg.GetPkgExtractTempPath()
+		// Only use if it's not the system default (avoid unnecessary arg)
+		if configTempPath != os.TempDir() {
+			tempDir = configTempPath
+			logging.Debug("Using global config temp directory", "item", item.Name, "temp_dir", tempDir)
+		}
+	}
+
 	logging.Info("Installing package with sbin-installer", "item", item.Name, "package", packagePath, "target", target)
 
 	// Build command arguments
@@ -137,6 +151,12 @@ func runSbinInstaller(packagePath string, item catalog.Item, cfg *config.Configu
 		"--pkg", packagePath,
 		"--target", target,
 		"--verbose", // Always use verbose for better logging
+	}
+
+	// Add temp-dir if configured (helps avoid MAX_PATH 260 char limit issues)
+	if tempDir != "" {
+		cmdArgs = append(cmdArgs, "--temp-dir", tempDir)
+		logging.Debug("Using custom temp directory for extraction", "item", item.Name, "temp_dir", tempDir)
 	}
 
 	// Create context with timeout
