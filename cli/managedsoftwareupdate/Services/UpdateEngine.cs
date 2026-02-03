@@ -209,7 +209,7 @@ public class UpdateEngine : IDisposable
                 }
 
                 // Reload configuration after preflight - preflight script may have updated config
-                // This is critical: preflight sets SoftwareRepoURL, ClientIdentifier, etc.
+                // preflight sets SoftwareRepoURL, ClientIdentifier, etc.
                 _config = _configService.LoadConfig();
                 
                 // Apply verbosity settings again after reload
