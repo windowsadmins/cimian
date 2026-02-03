@@ -69,6 +69,9 @@ public static class StatusReasonCode
     /// <summary>File/package hash doesn't match expected</summary>
     public const string HashMismatch = "hash_mismatch";
 
+    /// <summary>Installed version is outdated, update needed</summary>
+    public const string VersionOutdated = "version_outdated";
+
     /// <summary>One or more dependencies not installed</summary>
     public const string DependencyMissing = "dependency_missing";
 
