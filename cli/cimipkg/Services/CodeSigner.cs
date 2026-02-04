@@ -71,6 +71,8 @@ public class CodeSigner
             : $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') }}";
 
         var psCommand = @"
+# Ensure Certificate provider is loaded (required when launched from .NET without console)
+Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
 $cert = " + getCertCommand + @" | Select-Object -First 1
 if (-not $cert) {
     $cert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object { $_.Subject -like '*" + certSubject + @"*' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') } | Select-Object -First 1
