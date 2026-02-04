@@ -212,6 +212,34 @@ public class CatalogBuilder
     }
 
     /// <summary>
+    /// Normalizes line endings in multiline string fields to prevent extra blank lines
+    /// Converts \r\n (Windows) to \n (Unix) to avoid YamlDotNet creating extra lines with folded scalar style
+    /// </summary>
+    private static void NormalizeLineEndings(PkgsInfo pkg)
+    {
+        if (pkg.Description != null)
+            pkg.Description = pkg.Description.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        if (pkg.PreinstallScript != null)
+            pkg.PreinstallScript = pkg.PreinstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        if (pkg.PostinstallScript != null)
+            pkg.PostinstallScript = pkg.PostinstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        if (pkg.PreuninstallScript != null)
+            pkg.PreuninstallScript = pkg.PreuninstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        if (pkg.PostuninstallScript != null)
+            pkg.PostuninstallScript = pkg.PostuninstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        if (pkg.InstallCheckScript != null)
+            pkg.InstallCheckScript = pkg.InstallCheckScript.Replace("\r\n", "\n").Replace("\r", "\n");
+        
+        if (pkg.UninstallCheckScript != null)
+            pkg.UninstallCheckScript = pkg.UninstallCheckScript.Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
+    /// <summary>
     /// Writes catalog files to the repository
     /// </summary>
     public void WriteCatalogs(string repoPath, Dictionary<string, List<PkgsInfo>> catalogs, bool silent = false)
@@ -238,6 +266,12 @@ public class CatalogBuilder
         foreach (var (catName, items) in catalogs)
         {
             var outPath = Path.Combine(catalogDir, catName + ".yaml");
+
+            // Normalize line endings to prevent extra blank lines in YAML output
+            foreach (var item in items)
+            {
+                NormalizeLineEndings(item);
+            }
 
             var catalogWrapper = new CatalogFile { Items = items };
             var yaml = _serializer.Serialize(catalogWrapper);
