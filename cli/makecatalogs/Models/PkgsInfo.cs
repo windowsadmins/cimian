@@ -52,6 +52,12 @@ public class InstallItem
 
     [YamlMember(Alias = "version")]
     public string? Version { get; set; }
+
+    [YamlMember(Alias = "product_code")]
+    public string? ProductCode { get; set; }
+
+    [YamlMember(Alias = "upgrade_code")]
+    public string? UpgradeCode { get; set; }
 }
 
 /// <summary>
