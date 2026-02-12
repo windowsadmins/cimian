@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -542,13 +543,54 @@ func findMatchingItemInAllCatalog(repoPath string, newItemName string) (*PkgsInf
 	}
 
 	newNameLower := strings.ToLower(strings.TrimSpace(newItemName))
+	var bestMatch *PkgsInfo
 	for i := range wrap.Items {
 		existingNameLower := strings.ToLower(strings.TrimSpace(wrap.Items[i].Name))
 		if existingNameLower == newNameLower {
-			return &wrap.Items[i], true, nil
+			if bestMatch == nil || compareVersionStrings(wrap.Items[i].Version, bestMatch.Version) > 0 {
+				bestMatch = &wrap.Items[i]
+			}
 		}
 	}
+	if bestMatch != nil {
+		return bestMatch, true, nil
+	}
 	return nil, false, nil
+}
+
+// compareVersionStrings compares two version strings and returns:
+// -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+func compareVersionStrings(v1, v2 string) int {
+	if v1 == v2 {
+		return 0
+	}
+
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var p1, p2 int
+
+		if i < len(parts1) {
+			p1, _ = strconv.Atoi(parts1[i])
+		}
+		if i < len(parts2) {
+			p2, _ = strconv.Atoi(parts2[i])
+		}
+
+		if p1 < p2 {
+			return -1
+		} else if p1 > p2 {
+			return 1
+		}
+	}
+
+	return 0
 }
 
 // getInstallerPathInteractive prompts the user for an installer path if none
@@ -681,6 +723,11 @@ func cimianImport(
 		metadata.ID = parsePackageName(filepath.Base(packagePath))
 	}
 
+	// Detect architecture from filename before template application
+	// This must be preserved even if a template overrides the architecture
+	filenameArch := detectArchFromFilename(filepath.Base(packagePath))
+	hasFilenameArch := filenameArch != ""
+
 	// Step 3: see if item already in All.yaml
 	existingPkg, found, err := findMatchingItemInAllCatalog(conf.RepoPath, metadata.ID)
 	if err != nil {
@@ -752,6 +799,15 @@ func cimianImport(
 			}
 			if len(existingPkg.Catalogs) > 0 {
 				conf.DefaultCatalog = existingPkg.Catalogs[0]
+			}
+
+			// Restore filename-detected architecture after template application
+			// The filename arch (e.g. "x64" from CimianTools-x64-...) takes priority
+			// over the template's arch (which may be for a different architecture)
+			if hasFilenameArch {
+				logger.Printf("Restoring architecture to '%s' from filename (template had: %s)", filenameArch, strings.Join(metadata.SupportedArch, ","))
+				metadata.Architecture = filenameArch
+				metadata.SupportedArch = []string{filenameArch}
 			}
 		}
 	}
