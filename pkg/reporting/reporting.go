@@ -1481,6 +1481,98 @@ func (exp *DataExporter) GenerateCurrentItemsFromPackagesInfo(packagesInfo []Ses
 			"itemType", pkgInfo.ItemType)
 	}
 
+	// INSTALL LOOP DETECTION: Enrich items with historical event data
+	// The current session snapshot alone cannot detect loops — we must examine
+	// past sessions to find packages that keep getting reinstalled every run.
+	// This is critical for catching cases like SbinInstaller where the installer
+	// succeeds (exit 0) but the installcheck keeps failing (e.g. stale MD5 in pkginfo),
+	// causing an unnecessary reinstall every hour — wasting bandwidth and CPU.
+	recentSessions, sessErr := exp.getRecentSessions(7) // Last 7 days of sessions
+	if sessErr == nil && len(recentSessions) > 0 {
+		// Build per-package event history from recent sessions
+		packageHistory := make(map[string][]ItemAttempt) // key: lowercase package name
+
+		for _, sessionDir := range recentSessions {
+			events, err := exp.GenerateEventsTable(sessionDir, 0) // All events in session
+			if err != nil {
+				continue
+			}
+			for _, event := range events {
+				pkgName := event.Package
+				if pkgName == "" {
+					pkgName = exp.extractPackageFromMessage(event.Message)
+				}
+				if pkgName == "" {
+					continue
+				}
+				// Only track install/update actions for loop detection
+				if event.EventType != "install" && event.EventType != "update" {
+					continue
+				}
+				key := strings.ToLower(pkgName)
+				attempt := ItemAttempt{
+					SessionID: sessionDir,
+					Timestamp: event.Timestamp,
+					Action:    event.EventType,
+					Status:    exp.normalizeStatus(event.Status, event.Level, event.Error),
+					Version:   event.Version,
+				}
+				packageHistory[key] = append(packageHistory[key], attempt)
+			}
+		}
+
+		// Enrich each item with historical data and run loop detection
+		for i := range items {
+			key := strings.ToLower(items[i].ItemName)
+			history, hasHistory := packageHistory[key]
+			if !hasHistory || len(history) == 0 {
+				continue
+			}
+
+			// Keep last 10 attempts
+			if len(history) > 10 {
+				history = history[len(history)-10:]
+			}
+
+			// Count actual installs from event history
+			installCount := 0
+			failureCount := 0
+			for _, attempt := range history {
+				if attempt.Action == "install" || attempt.Action == "update" {
+					installCount++
+					if attempt.Status == "Failed" {
+						failureCount++
+					}
+				}
+			}
+			items[i].InstallCount = installCount
+			items[i].FailureCount = failureCount
+			items[i].RecentAttempts = history
+
+			// Run install loop detection
+			loopDetected, loopDetails := exp.detectInstallLoopEnhanced(history, items[i].ItemName)
+			items[i].InstallLoopDetected = loopDetected
+			if loopDetected {
+				items[i].LoopDetails = loopDetails
+				items[i].CurrentStatus = "Install Loop"
+				if loopDetails != nil && loopDetails.SuspectedCause != "" {
+					items[i].LastWarning = fmt.Sprintf("Install loop detected: %s - %s", loopDetails.SuspectedCause, loopDetails.Recommendation)
+				} else {
+					items[i].LastWarning = "Install loop detected"
+				}
+				items[i].WarningCount++
+				logging.Warn("Install loop detected for package",
+					"package", items[i].ItemName,
+					"install_count", installCount,
+					"criteria", loopDetails.DetectionCriteria,
+					"cause", loopDetails.SuspectedCause)
+			}
+		}
+		logging.Info("Enriched items with historical event data for loop detection", "sessionsAnalyzed", len(recentSessions))
+	} else if sessErr != nil {
+		logging.Warn("Could not load session history for loop detection", "error", sessErr)
+	}
+
 	// Sort items by name for consistent output
 	sort.Slice(items, func(i, j int) bool {
 		return strings.ToLower(items[i].ItemName) < strings.ToLower(items[j].ItemName)
@@ -2840,7 +2932,7 @@ func (exp *DataExporter) detectInstallLoop(attempts []ItemAttempt) bool {
 			if attemptTime.After(cutoffTime) {
 				if attempt.Action == "install" || attempt.Action == "update" {
 					installAttempts++
-					if attempt.Status == "success" {
+					if strings.EqualFold(attempt.Status, "success") || strings.EqualFold(attempt.Status, "completed") {
 						successCount++
 					}
 				}
@@ -2848,11 +2940,18 @@ func (exp *DataExporter) detectInstallLoop(attempts []ItemAttempt) bool {
 		}
 	}
 
-	// Detect loop: 3+ install attempts in recent history with less than 50% success rate
+	// Detect loop: 3+ install attempts in recent history
 	// This indicates the item keeps trying to install but isn't staying installed
 	if installAttempts >= 3 {
 		successRate := float64(successCount) / float64(installAttempts)
-		return successRate < 0.5 // Less than 50% success rate indicates a loop
+		// Scenario A: Repeated failures (<50% success rate)
+		if successRate < 0.5 {
+			return true
+		}
+		// Scenario B: Successful reinstall loop (100% success but keeps reinstalling)
+		if successCount == installAttempts {
+			return true
+		}
 	}
 
 	return false
@@ -3360,7 +3459,7 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 			if attemptTime.After(cutoffTime) {
 				if attempt.Action == "install" || attempt.Action == "update" {
 					installAttempts++
-					if attempt.Status == "success" {
+					if strings.EqualFold(attempt.Status, "success") || strings.EqualFold(attempt.Status, "completed") {
 						successCount++
 					}
 					if i == 0 {
@@ -3422,6 +3521,27 @@ func (exp *DataExporter) detectInstallLoopEnhanced(attempts []ItemAttempt, packa
 		}
 	}
 
+	// Scenario 4: Successful reinstall loop — installer succeeds every run but
+	// installcheck keeps failing (e.g. stale MD5 hash, wrong version comparison,
+	// or broken detection script). The package gets reinstalled every scheduled
+	// run even though nothing changed. This wastes bandwidth, CPU, and network.
+	if !isLoop && installAttempts >= 3 && successCount == installAttempts {
+		// All attempts were successful installs — this should NEVER happen for
+		// the same package across 3+ sessions unless installcheck is broken.
+		// A properly installed package should not need reinstalling.
+		uniqueSessions := make(map[string]bool)
+		for _, attempt := range attempts {
+			if attempt.SessionID != "" && (attempt.Action == "install" || attempt.Action == "update") {
+				uniqueSessions[attempt.SessionID] = true
+			}
+		}
+
+		if len(uniqueSessions) >= 3 {
+			detectionCriteria = fmt.Sprintf("successful_reinstall_loop_%d_installs_across_%d_sessions", installAttempts, len(uniqueSessions))
+			isLoop = true
+		}
+	}
+
 	if isLoop {
 		// Create enhanced loop details
 		loopDetails := &InstallLoopDetail{
@@ -3444,7 +3564,7 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 	for _, attempt := range attempts {
 		if attempt.Version != "" && attempt.Action == "install" {
 			versionCounts[attempt.Version]++
-			if attempt.Status == "success" {
+			if strings.EqualFold(attempt.Status, "success") || strings.EqualFold(attempt.Status, "completed") {
 				successfulReinstalls++
 			}
 		}
@@ -3460,9 +3580,9 @@ func (exp *DataExporter) analyzeSuspectedCause(attempts []ItemAttempt, packageNa
 	failureCount := 0
 	successCount := 0
 	for _, attempt := range attempts {
-		if attempt.Status == "failed" {
+		if strings.EqualFold(attempt.Status, "failed") {
 			failureCount++
-		} else if attempt.Status == "success" {
+		} else if strings.EqualFold(attempt.Status, "success") || strings.EqualFold(attempt.Status, "completed") {
 			successCount++
 		}
 	}
@@ -3515,7 +3635,7 @@ func (exp *DataExporter) getLoopRecommendation(attempts []ItemAttempt, packageNa
 	// Cause-specific recommendations
 	switch {
 	case strings.Contains(suspectedCause, "installer_reports_success_but_app_not_detected"):
-		return "Verify installer exit codes and app detection logic in pkginfo; check if silent install parameters are correct"
+		return "Check pkginfo installs array: MD5 hash or version may be stale/mismatched causing installcheck to always fail; regenerate with makepkginfo"
 
 	case strings.Contains(suspectedCause, "adobe_licensing_or_creative_cloud"):
 		return "Clear Adobe licensing cache, restart Creative Cloud services, or temporarily disable real-time AV scanning"
