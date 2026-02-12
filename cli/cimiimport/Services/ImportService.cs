@@ -102,7 +102,6 @@ public class ImportService
                     // Restore the detected architecture from filename if it was detected
                     if (hasFilenameArch)
                     {
-                        Console.WriteLine($"Restoring architecture to '{filenameArch}' from filename (was: {string.Join(",", metadata.SupportedArch)})");
                         metadata.Architecture = filenameArch;
                         metadata.SupportedArch = [filenameArch];
                     }
@@ -113,7 +112,6 @@ public class ImportService
         // Step 4: Let user override fields (skip in non-interactive mode)
         if (!noInteractive)
         {
-            Console.WriteLine($"DEBUG: Before PromptForMetadata, SupportedArch = [{string.Join(",", metadata.SupportedArch)}]");
             metadata = PromptForMetadata(packagePath, metadata, config);
         }
 
@@ -304,7 +302,8 @@ public class ImportService
     }
 
     /// <summary>
-    /// Finds a matching item in All.yaml catalog.
+    /// Finds the latest version of a matching item in All.yaml catalog.
+    /// When multiple versions exist for the same name, returns the highest version.
     /// </summary>
     private (PkgsInfo?, bool) FindMatchingItemInAllCatalog(string repoPath, string newItemName)
     {
@@ -323,14 +322,52 @@ public class ImportService
             var catalog = _deserializer.Deserialize<AllCatalog>(yaml);
 
             var newNameLower = newItemName.Trim().ToLowerInvariant();
-            var match = catalog?.Items?.FirstOrDefault(i => 
-                i.Name.Trim().ToLowerInvariant() == newNameLower);
+            var matches = catalog?.Items?
+                .Where(i => i.Name.Trim().ToLowerInvariant() == newNameLower)
+                .ToList();
 
-            return (match, match != null);
+            if (matches == null || matches.Count == 0)
+                return (null, false);
+
+            // Return the item with the highest version
+            var best = matches
+                .OrderByDescending(i => i.Version, new VersionComparer())
+                .First();
+
+            return (best, true);
         }
         catch
         {
             return (null, false);
+        }
+    }
+
+    /// <summary>
+    /// Compares dot-separated version strings numerically.
+    /// e.g. "2026.01.28" > "2025.11.27"
+    /// </summary>
+    private class VersionComparer : IComparer<string>
+    {
+        public int Compare(string? x, string? y)
+        {
+            if (x == y) return 0;
+            if (x is null) return -1;
+            if (y is null) return 1;
+
+            var parts1 = x.Split('.');
+            var parts2 = y.Split('.');
+            var maxLen = Math.Max(parts1.Length, parts2.Length);
+
+            for (int i = 0; i < maxLen; i++)
+            {
+                int p1 = i < parts1.Length && int.TryParse(parts1[i], out var v1) ? v1 : 0;
+                int p2 = i < parts2.Length && int.TryParse(parts2[i], out var v2) ? v2 : 0;
+
+                if (p1 < p2) return -1;
+                if (p1 > p2) return 1;
+            }
+
+            return 0;
         }
     }
 
