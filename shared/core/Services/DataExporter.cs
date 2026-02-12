@@ -425,12 +425,80 @@ public class DataExporter
     }
 
     /// <summary>
-    /// Generates item records from current session packages info
+    /// Generates item records from current session packages info, enriched with historical
+    /// event data for accurate install loop detection.
     /// </summary>
     public List<ItemRecord> GenerateCurrentItemsFromPackagesInfo(List<SessionPackageInfo> packagesInfo)
     {
         var records = new List<ItemRecord>();
         var now = DateTime.UtcNow.ToString("o");
+
+        // Build historical event data from recent sessions for loop detection
+        var packageHistory = new Dictionary<string, List<ItemAttempt>>(StringComparer.OrdinalIgnoreCase);
+        var packageInstallCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var packageFailureCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var recentSessions = GetRecentSessions(7); // Last 7 days of sessions
+            foreach (var sessionDir in recentSessions)
+            {
+                var eventsPath = Path.Combine(_baseDir, sessionDir, "events.jsonl");
+                if (!File.Exists(eventsPath))
+                    continue;
+
+                foreach (var line in File.ReadLines(eventsPath))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    try
+                    {
+                        var eventData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(line);
+                        if (eventData == null)
+                            continue;
+
+                        var packageName = eventData.TryGetValue("package", out var p) ? p.GetString() : null;
+                        if (string.IsNullOrEmpty(packageName))
+                            continue;
+
+                        var action = eventData.TryGetValue("action", out var a) ? a.GetString() : "";
+                        var status = eventData.TryGetValue("status", out var s) ? s.GetString() : "";
+                        var timestamp = eventData.TryGetValue("timestamp", out var ts) ? ts.GetString() : "";
+                        var version = eventData.TryGetValue("version", out var v) ? v.GetString() : "";
+
+                        if (!packageHistory.ContainsKey(packageName))
+                            packageHistory[packageName] = new List<ItemAttempt>();
+
+                        packageHistory[packageName].Add(new ItemAttempt
+                        {
+                            SessionId = sessionDir,
+                            Timestamp = timestamp ?? "",
+                            Action = action ?? "",
+                            Status = status ?? "",
+                            Version = version
+                        });
+
+                        // Track counts
+                        if (string.Equals(action, "install", StringComparison.OrdinalIgnoreCase))
+                        {
+                            packageInstallCounts[packageName] = packageInstallCounts.GetValueOrDefault(packageName) + 1;
+
+                            if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
+                                packageFailureCounts[packageName] = packageFailureCounts.GetValueOrDefault(packageName) + 1;
+                        }
+                    }
+                    catch
+                    {
+                        // Skip malformed event lines
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // If historical data fails, continue with current session data only
+        }
 
         foreach (var pkg in packagesInfo)
         {
@@ -455,13 +523,24 @@ public class DataExporter
             if (!string.IsNullOrEmpty(pkg.ErrorMessage))
             {
                 record.LastError = pkg.ErrorMessage;
-                record.FailureCount = 1;
             }
 
             if (!string.IsNullOrEmpty(pkg.WarningMessage))
             {
                 record.LastWarning = pkg.WarningMessage;
                 record.WarningCount = 1;
+            }
+
+            // Enrich with historical data for loop detection
+            if (packageHistory.TryGetValue(pkg.Name, out var history) && history.Count > 0)
+            {
+                record.InstallCount = packageInstallCounts.GetValueOrDefault(pkg.Name);
+                record.FailureCount = packageFailureCounts.GetValueOrDefault(pkg.Name);
+                record.RecentAttempts = history.TakeLast(5).ToList();
+
+                var (loopDetected, loopDetails) = DetectInstallLoopEnhanced(history, pkg.Name);
+                record.InstallLoopDetected = loopDetected;
+                record.LoopDetails = loopDetails;
             }
 
             records.Add(record);
@@ -1262,26 +1341,85 @@ public class DataExporter
         if (attempts.Count < 3)
             return (false, null);
 
-        // Check for repeated installs
-        var installAttempts = attempts.Where(a => a.Action == "install").ToList();
+        // Case-insensitive action matching for install attempts
+        var installAttempts = attempts.Where(a => 
+            string.Equals(a.Action, "install", StringComparison.OrdinalIgnoreCase)).ToList();
         if (installAttempts.Count < 3)
             return (false, null);
 
-        // Check if multiple installs happened in recent sessions
+        // Scenario 1: High failure rate (original detection)
         var recentInstalls = installAttempts.TakeLast(5).ToList();
         var uniqueSessions = recentInstalls.Select(a => a.SessionId).Distinct().Count();
+        var successCount = recentInstalls.Count(a => 
+            string.Equals(a.Status, "success", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(a.Status, "completed", StringComparison.OrdinalIgnoreCase));
+        var failureCount = recentInstalls.Count(a => 
+            string.Equals(a.Status, "failed", StringComparison.OrdinalIgnoreCase));
 
-        if (recentInstalls.Count >= 3 && uniqueSessions >= 3)
+        if (recentInstalls.Count >= 3 && uniqueSessions >= 3 && failureCount > successCount)
         {
             var suspectedCause = AnalyzeSuspectedCause(attempts, packageName);
             var recommendation = GetLoopRecommendation(attempts, packageName);
 
             return (true, new InstallLoopDetail
             {
-                DetectionCriteria = $"Package installed {recentInstalls.Count} times across {uniqueSessions} sessions",
+                DetectionCriteria = $"Package failed {failureCount}/{recentInstalls.Count} installs across {uniqueSessions} sessions",
                 LoopStartSession = recentInstalls.First().SessionId,
                 SuspectedCause = suspectedCause,
                 Recommendation = recommendation
+            });
+        }
+
+        // Scenario 2: Same version reinstalled multiple times
+        var versionGroups = installAttempts.GroupBy(a => a.Version ?? "unknown").ToList();
+        foreach (var group in versionGroups)
+        {
+            var versionAttempts = group.ToList();
+            var versionUniqueSessions = versionAttempts.Select(a => a.SessionId).Distinct().Count();
+            if (versionAttempts.Count >= 3 && versionUniqueSessions >= 3)
+            {
+                return (true, new InstallLoopDetail
+                {
+                    DetectionCriteria = $"Same version '{group.Key}' installed {versionAttempts.Count} times across {versionUniqueSessions} sessions",
+                    LoopStartSession = versionAttempts.First().SessionId,
+                    SuspectedCause = AnalyzeSuspectedCause(attempts, packageName),
+                    Recommendation = GetLoopRecommendation(attempts, packageName)
+                });
+            }
+        }
+
+        // Scenario 3: Rapid consecutive attempts (within 1 hour)
+        if (installAttempts.Count >= 3)
+        {
+            for (int i = 0; i <= installAttempts.Count - 3; i++)
+            {
+                if (DateTime.TryParse(installAttempts[i].Timestamp, out var first) &&
+                    DateTime.TryParse(installAttempts[i + 2].Timestamp, out var third))
+                {
+                    if ((third - first).TotalHours <= 1)
+                    {
+                        return (true, new InstallLoopDetail
+                        {
+                            DetectionCriteria = $"3 install attempts within {(third - first).TotalMinutes:F0} minutes",
+                            LoopStartSession = installAttempts[i].SessionId,
+                            SuspectedCause = AnalyzeSuspectedCause(attempts, packageName),
+                            Recommendation = GetLoopRecommendation(attempts, packageName)
+                        });
+                    }
+                }
+            }
+        }
+
+        // Scenario 4: Successful reinstall loop - installer succeeds every run but
+        // installcheck keeps failing (e.g., stale MD5/version in pkginfo)
+        if (successCount >= 3 && uniqueSessions >= 3)
+        {
+            return (true, new InstallLoopDetail
+            {
+                DetectionCriteria = $"Package successfully installed {successCount} times across {uniqueSessions} sessions (installcheck keeps failing)",
+                LoopStartSession = recentInstalls.First().SessionId,
+                SuspectedCause = "installer_reports_success_but_app_not_detected",
+                Recommendation = "Check pkginfo installs array: MD5 hash or version may be stale/mismatched causing installcheck to always fail; regenerate with makepkginfo"
             });
         }
 
@@ -1290,8 +1428,13 @@ public class DataExporter
 
     private static string AnalyzeSuspectedCause(List<ItemAttempt> attempts, string packageName)
     {
-        var successfulInstalls = attempts.Count(a => a.Action == "install" && a.Status == "success");
-        var failedInstalls = attempts.Count(a => a.Action == "install" && a.Status == "failed");
+        var successfulInstalls = attempts.Count(a => 
+            string.Equals(a.Action, "install", StringComparison.OrdinalIgnoreCase) && 
+            (string.Equals(a.Status, "success", StringComparison.OrdinalIgnoreCase) || 
+             string.Equals(a.Status, "completed", StringComparison.OrdinalIgnoreCase)));
+        var failedInstalls = attempts.Count(a => 
+            string.Equals(a.Action, "install", StringComparison.OrdinalIgnoreCase) && 
+            string.Equals(a.Status, "failed", StringComparison.OrdinalIgnoreCase));
 
         if (successfulInstalls >= 2)
             return "installer_reports_success_but_app_not_detected";
@@ -1299,6 +1442,7 @@ public class DataExporter
         if (failedInstalls >= 2 && successfulInstalls == 0)
         {
             var nameLower = packageName.ToLowerInvariant();
+            // Check for common package-specific causes
             if (nameLower.Contains("adobe"))
                 return "adobe_licensing_or_creative_cloud_conflict";
             if (nameLower.Contains("office") || nameLower.Contains("microsoft"))
@@ -1321,7 +1465,7 @@ public class DataExporter
         return suspectedCause switch
         {
             "installer_reports_success_but_app_not_detected" =>
-                "Verify installer exit codes and app detection logic in pkginfo; check if silent install parameters are correct",
+                "Check pkginfo installs array: MD5 hash or version may be stale/mismatched causing installcheck to always fail; regenerate with makepkginfo",
             "adobe_licensing_or_creative_cloud_conflict" =>
                 "Clear Adobe licensing cache, restart Creative Cloud services, or temporarily disable real-time AV scanning",
             "microsoft_installer_service_or_office_conflict" =>
