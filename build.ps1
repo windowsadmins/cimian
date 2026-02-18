@@ -664,7 +664,6 @@ function Publish-Binary {
         '--self-contained', $IsSelfContained.ToString().ToLower(),
         '--output', $OutputPath,
         '-p:PublishSingleFile=true',
-        '-p:PublishReadyToRun=true',
         '-p:EnableCompressionInSingleFile=true',
         '-p:IncludeSourceRevisionInInformationalVersion=false',
         '--verbosity', 'minimal'

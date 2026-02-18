@@ -18,6 +18,8 @@
     <!-- Self-contained deployment -->
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>true</PublishReadyToRun>
     
     <!-- Version info -->
     <Version>1.0.0</Version>
