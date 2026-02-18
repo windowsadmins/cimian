@@ -1543,7 +1543,7 @@ public class UpdateEngine : IDisposable
         {
             var name = item.Name;
             var version = "Unknown";
-            var status = "Uninstalled";
+            var status = "Removed";
             
             // Get catalog version
             if (catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem))
@@ -1560,9 +1560,9 @@ public class UpdateEngine : IDisposable
             packageStatuses.Add((name, version, status));
         }
         
-        // Sort: Uninstalled first, then Pending Removal
+        // Sort: Removed first, then Pending Removal
         packageStatuses = packageStatuses
-            .OrderBy(p => p.Status == "Uninstalled" ? 0 : 1)
+            .OrderBy(p => p.Status == "Removed" ? 0 : 1)
             .ThenBy(p => p.Name)
             .ToList();
         
