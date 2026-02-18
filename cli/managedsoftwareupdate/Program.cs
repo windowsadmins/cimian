@@ -548,25 +548,14 @@ public class Program
             return 0;
         }
 
-        // Clear the flag file
-        var flagFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Cimian", "Flags", "selfupdate.pending");
-
-        try
+        if (SelfUpdateService.ClearSelfUpdateFlag())
         {
-            if (File.Exists(flagFile))
-            {
-                File.Delete(flagFile);
-                ConsoleLogger.Success($"Cleared pending update: {metadata.Item} v{metadata.Version}");
-            }
+            ConsoleLogger.Success($"Cleared pending update: {metadata.Item} v{metadata.Version}");
             return 0;
         }
-        catch (Exception ex)
-        {
-            ConsoleLogger.Error($"Failed to clear self-update: {ex.Message}");
-            return 1;
-        }
+
+        ConsoleLogger.Error("Failed to clear self-update flag");
+        return 1;
     }
 
     private static int RestartCimianWatcherService()
