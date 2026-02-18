@@ -174,6 +174,29 @@
                   Directory="INSTALLDIR"
                   ExeCommand="&quot;[INSTALLDIR]cimiimport.exe&quot; --config-auto" />
 
+    <!-- Install scheduled tasks after file deployment -->
+    <CustomAction Id="InstallScheduledTasks"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="INSTALLDIR"
+                  ExeCommand="powershell.exe -ExecutionPolicy Bypass -NoProfile -File &quot;[INSTALLDIR]install-tasks.ps1&quot;" />
+
+    <!-- Install and start CimianWatcher service after file deployment -->
+    <CustomAction Id="InstallCimianWatcherService"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; install" />
+
+    <CustomAction Id="StartCimianWatcherService"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
+                  Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]cimiwatcher.exe&quot; start" />
+
     <!-- Schedule the Custom Actions -->
     <InstallExecuteSequence>
       <!-- Force stop processes before file operations (new reliable approach) -->
@@ -182,6 +205,11 @@
 
       <!-- Run configuration import for new installations -->
       <Custom Action="RunCimiImport" After="InstallFiles" Condition="NOT CONFIGFILE" />
+
+      <!-- Install scheduled tasks and start CimianWatcher service after files are installed -->
+      <Custom Action="InstallScheduledTasks" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="InstallCimianWatcherService" After="InstallScheduledTasks" Condition="NOT REMOVE" />
+      <Custom Action="StartCimianWatcherService" After="InstallCimianWatcherService" Condition="NOT REMOVE" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->

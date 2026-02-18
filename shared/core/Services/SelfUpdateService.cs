@@ -130,6 +130,7 @@ public static class SelfUpdateService
         if (!File.Exists(metadata.LocalFile))
         {
             ConsoleLogger.Error($"Installer file not found: {metadata.LocalFile}");
+            ClearSelfUpdateFlag();
             return false;
         }
 
@@ -139,6 +140,13 @@ public static class SelfUpdateService
             ConsoleLogger.Error("Failed to create backup before self-update");
             return false;
         }
+
+        // Clear the flag file BEFORE running the installer.
+        // The MSI's custom action will taskkill cimiwatcher.exe during install,
+        // so we must clear the flag now to prevent an infinite self-update loop
+        // on service restart.
+        ClearSelfUpdateFlag();
+        ConsoleLogger.Info("Cleared self-update flag (pre-install)");
 
         // Execute the update based on installer type
         bool success = metadata.InstallerType.ToLowerInvariant() switch
@@ -165,6 +173,9 @@ public static class SelfUpdateService
             {
                 ConsoleLogger.Error("Rollback failed!");
             }
+            // Re-schedule the self-update for retry on next service restart
+            ScheduleSelfUpdate(metadata.Item, metadata.Version,
+                metadata.InstallerType, metadata.LocalFile);
         }
 
         return success;
