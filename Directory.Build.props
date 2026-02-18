@@ -11,6 +11,7 @@
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>partial</TrimMode>
     <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
