@@ -16,13 +16,14 @@ public class ConfigurationService
 
     public ConfigurationService()
     {
+        // Use NullNamingConvention to match Go's PascalCase YAML keys (yaml:"RepoPath" etc.)
         _deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .WithNamingConvention(NullNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
             .Build();
 
         _serializer = new SerializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
+            .WithNamingConvention(NullNamingConvention.Instance)
             .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
             .Build();
     }
@@ -68,7 +69,7 @@ public class ConfigurationService
             {
                 var existingYaml = File.ReadAllText(ConfigPath);
                 var rawDeserializer = new DeserializerBuilder()
-                    .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                    .WithNamingConvention(NullNamingConvention.Instance)
                     .Build();
                 existingConfig = rawDeserializer.Deserialize<Dictionary<string, object>>(existingYaml);
             }
@@ -80,13 +81,13 @@ public class ConfigurationService
 
         existingConfig ??= new Dictionary<string, object>();
 
-        // Update only the fields managed by cimiimport
-        existingConfig["repo_path"] = config.RepoPath;
-        existingConfig["cloud_provider"] = config.CloudProvider;
-        existingConfig["cloud_bucket"] = config.CloudBucket;
-        existingConfig["default_catalog"] = config.DefaultCatalog;
-        existingConfig["default_arch"] = config.DefaultArch;
-        existingConfig["open_imported_yaml"] = config.OpenImportedYaml;
+        // Update only the fields managed by cimiimport (PascalCase keys matching Go config)
+        existingConfig["RepoPath"] = config.RepoPath;
+        existingConfig["CloudProvider"] = config.CloudProvider;
+        existingConfig["CloudBucket"] = config.CloudBucket;
+        existingConfig["DefaultCatalog"] = config.DefaultCatalog;
+        existingConfig["DefaultArch"] = config.DefaultArch;
+        existingConfig["OpenImportedYaml"] = config.OpenImportedYaml;
 
         var yaml = _serializer.Serialize(existingConfig);
         File.WriteAllText(ConfigPath, yaml);
