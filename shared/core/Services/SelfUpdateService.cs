@@ -107,6 +107,110 @@ public static class SelfUpdateService
     }
 
     /// <summary>
+    /// Launches the installer as a fully detached process so CimianWatcher can exit
+    /// cleanly before the installer replaces its binary.  The caller should call
+    /// Environment.Exit(0) immediately after this returns true.
+    ///
+    /// Flow: backup → clear flag → spawn detached installer → return true → caller exits.
+    /// Windows SCM restarts CimianWatcher after the installer completes.
+    /// </summary>
+    public static bool LaunchDetachedSelfUpdate(Action<string> log)
+    {
+        if (!IsSelfUpdatePending())
+        {
+            log("No self-update pending. Nothing to do.");
+            return false;
+        }
+
+        var (pending, metadata, error) = GetSelfUpdateStatus();
+        if (error != null || metadata == null)
+        {
+            log($"Failed to read self-update metadata: {error}");
+            return false;
+        }
+
+        log($"Launching detached self-update: {metadata.Item} v{metadata.Version}");
+
+        if (!File.Exists(metadata.LocalFile))
+        {
+            log($"Installer file not found: {metadata.LocalFile}");
+            ClearSelfUpdateFlag();
+            return false;
+        }
+
+        if (!CreateBackup())
+        {
+            log("Failed to create backup before self-update");
+            return false;
+        }
+
+        // Clear the flag BEFORE launching the installer to prevent an infinite loop.
+        ClearSelfUpdateFlag();
+        log("Cleared self-update flag (pre-install)");
+
+        // Build the installer command based on type.
+        string fileName;
+        string arguments;
+
+        switch (metadata.InstallerType.ToLowerInvariant())
+        {
+            case "msi":
+            {
+                var logFile = Path.Combine(
+                    @"C:\ProgramData\ManagedInstalls\logs",
+                    $"selfupdate-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+                Directory.CreateDirectory(Path.GetDirectoryName(logFile)!);
+                fileName = "msiexec.exe";
+                arguments = $"/i \"{metadata.LocalFile}\" /quiet /norestart /l*v \"{logFile}\" REINSTALLMODE=vamus REINSTALL=ALL";
+                break;
+            }
+            case "pkg":
+            case "nupkg":
+            {
+                const string sbinInstaller = @"C:\Program Files\sbin\installer.exe";
+                if (!File.Exists(sbinInstaller))
+                {
+                    log($"sbin-installer not found at: {sbinInstaller}");
+                    return false;
+                }
+                fileName = sbinInstaller;
+                arguments = $"--pkg \"{metadata.LocalFile}\" --target / --verbose";
+                break;
+            }
+            default:
+                log($"Unsupported installer type for self-update: {metadata.InstallerType}");
+                return false;
+        }
+
+        try
+        {
+            // UseShellExecute=true creates a fully detached process — it survives the parent exit.
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    UseShellExecute = true,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                }
+            };
+
+            process.Start();
+            log($"Detached installer process started (PID {process.Id}). CimianWatcher will now exit.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log($"Failed to launch detached installer: {ex.Message}");
+            // Re-schedule so we retry on next SCM restart.
+            ScheduleSelfUpdate(metadata.Item, metadata.Version, metadata.InstallerType, metadata.LocalFile);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Performs the actual self-update (called during service restart)
     /// </summary>
     public static bool PerformSelfUpdate()

@@ -238,38 +238,35 @@ public class FileWatcherService : BackgroundService
     }
 
     /// <summary>
-    /// Checks for pending self-updates and executes them on service start.
-    /// Port of Go cimiwatcher checkAndPerformSelfUpdate()
+    /// Checks for pending self-updates and, if one is found, launches the installer as a
+    /// detached process then exits immediately so the installer can replace CimianWatcher's
+    /// own binary without contending with the running service.  Windows SCM will restart the
+    /// service after the installer (and postinstall.ps1) complete.
     /// </summary>
     private void CheckAndPerformSelfUpdate()
     {
         try
         {
-            var (pending, metadata, error) = SelfUpdateService.GetSelfUpdateStatus();
-            
-            if (error != null)
-            {
-                _logger.LogError("Failed to check self-update status: {Error}", error);
-                return;
-            }
-
-            if (!pending || metadata == null)
+            if (!SelfUpdateService.IsSelfUpdatePending())
             {
                 _logger.LogInformation("No self-update pending");
                 return;
             }
 
-            _logger.LogInformation("Self-update detected, executing update for {Item} v{Version}", 
-                metadata.Item, metadata.Version);
+            _logger.LogInformation("Self-update pending — launching detached installer and exiting");
 
-            // Perform the self-update
-            if (SelfUpdateService.PerformSelfUpdate())
+            bool launched = SelfUpdateService.LaunchDetachedSelfUpdate(msg => _logger.LogInformation("{Msg}", msg));
+
+            if (launched)
             {
-                _logger.LogInformation("Self-update completed successfully");
+                // Exit now so the installer can replace our binary.
+                // Windows SCM will restart CimianWatcher once the new binary is in place.
+                _logger.LogInformation("Exiting CimianWatcher to allow self-update to proceed");
+                Environment.Exit(0);
             }
             else
             {
-                _logger.LogError("Self-update failed");
+                _logger.LogError("Failed to launch detached self-update installer");
             }
         }
         catch (Exception ex)
