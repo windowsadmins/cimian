@@ -174,14 +174,26 @@ public class InstallerMetadata
 
 /// <summary>
 /// Cimian import configuration.
+/// Keys match PascalCase naming from Go config (yaml:"RepoPath" etc.)
 /// </summary>
 public class ImportConfiguration
 {
+    [YamlMember(Alias = "RepoPath")]
     public string RepoPath { get; set; } = "";
+
+    [YamlMember(Alias = "CloudProvider")]
     public string CloudProvider { get; set; } = "none";
+
+    [YamlMember(Alias = "CloudBucket")]
     public string CloudBucket { get; set; } = "";
+
+    [YamlMember(Alias = "DefaultCatalog")]
     public string DefaultCatalog { get; set; } = "Development";
+
+    [YamlMember(Alias = "DefaultArch")]
     public string DefaultArch { get; set; } = "x64,arm64";
+
+    [YamlMember(Alias = "OpenImportedYaml")]
     public bool OpenImportedYaml { get; set; } = true;
 }
 
