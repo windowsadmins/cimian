@@ -651,7 +651,8 @@ function Publish-Binary {
         [string]$ProjectPath,
         [string]$RuntimeIdentifier,
         [string]$OutputPath,
-        [bool]$IsSelfContained = $true
+        [bool]$IsSelfContained = $true,
+        [string]$BuildVersion = ''
     )
     
     $config = if ($Dev) { 'Debug' } else { $Configuration }
@@ -669,6 +670,12 @@ function Publish-Binary {
         '--verbosity', 'minimal'
     )
     
+    if ($BuildVersion) {
+        $publishArgs += "-p:Version=$BuildVersion"
+        $publishArgs += "-p:AssemblyVersion=$BuildVersion"
+        $publishArgs += "-p:FileVersion=$BuildVersion"
+    }
+    
     Write-BuildLog "Publishing $ToolName for $RuntimeIdentifier..."
     & dotnet @publishArgs
     
@@ -680,7 +687,10 @@ function Publish-Binary {
 }
 
 function Build-AllBinaries {
-    param([string]$SingleBinary)
+    param(
+        [string]$SingleBinary,
+        [string]$BuildVersion = ''
+    )
     
     $archs = if ($Architecture -eq 'both') { @('x64', 'arm64') } elseif ($Architecture -eq 'x64') { @('x64') } else { @('arm64') }
     $runtimeMap = @{ 'x64' = 'win-x64'; 'arm64' = 'win-arm64' }
@@ -720,7 +730,7 @@ function Build-AllBinaries {
             $csproj = $csprojFiles[0].FullName
             $isSelfContained = ($toolInfo.Type -eq 'GUI')
             
-            Publish-Binary -ToolName $tool -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $isSelfContained
+            Publish-Binary -ToolName $tool -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $isSelfContained -BuildVersion $BuildVersion
         }
     }
     
@@ -741,7 +751,7 @@ function Build-AllBinaries {
             foreach ($arch in $archs) {
                 $runtime = $runtimeMap[$arch]
                 $outputPath = Join-Path $OutputDir $arch
-                Publish-Binary -ToolName $appName -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $true
+                Publish-Binary -ToolName $appName -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $true -BuildVersion $BuildVersion
             }
         }
     }
@@ -1493,15 +1503,15 @@ try {
         # Build solution first
         Build-Solution
         
-        # Build binaries
+        # Build binaries (pass consistent version to all builds)
         if ($Binary) {
-            Build-AllBinaries -SingleBinary $Binary
+            Build-AllBinaries -SingleBinary $Binary -BuildVersion $version.Full
         }
         elseif ($Binaries) {
-            Build-AllBinaries
+            Build-AllBinaries -BuildVersion $version.Full
         }
         else {
-            Build-AllBinaries
+            Build-AllBinaries -BuildVersion $version.Full
         }
     }
     
@@ -1539,8 +1549,8 @@ try {
             }
         }
         
-        # .pkg packages (if -PkgOnly or -PackageOnly)
-        if ($PkgOnly -or $PackageOnly) {
+        # .pkg packages (always created in full builds)
+        if (-not $MsiOnly -and -not $NupkgOnly) {
             foreach ($arch in $archs) {
                 $pkgPath = Build-PkgPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint
             }
