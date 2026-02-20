@@ -13,6 +13,9 @@ namespace Cimian.Core.Services;
 /// - verbose 4+ (-vvvv): debug2 messages
 /// 
 /// Errors and warnings are ALWAYS shown to console regardless of verbosity.
+/// 
+/// When a SessionLogger is attached via SetSessionLogger(), all output is also
+/// written to the per-session run.log and reports/run.log for external monitoring.
 /// </summary>
 public static class ConsoleLogger
 {
@@ -42,11 +45,39 @@ public static class ConsoleLogger
     public static bool UseIndentation { get; set; } = false;
 
     /// <summary>
+    /// Optional SessionLogger reference for writing to log files.
+    /// When set, all console output is also written to the session run.log.
+    /// </summary>
+    private static SessionLogger? _sessionLogger;
+
+    /// <summary>
+    /// Attach a SessionLogger so all console output also routes to log files.
+    /// Call this after creating the SessionLogger in UpdateEngine.
+    /// </summary>
+    public static void SetSessionLogger(SessionLogger? logger)
+    {
+        _sessionLogger = logger;
+    }
+
+    /// <summary>
+    /// Write a message to the session logger if attached.
+    /// Strips ANSI color codes before writing to log files.
+    /// </summary>
+    private static void LogToSession(string level, string message)
+    {
+        if (_sessionLogger == null) return;
+        // Strip ANSI escape sequences for clean log file output
+        var clean = System.Text.RegularExpressions.Regex.Replace(message, @"\x1b\[[0-9;]*m", "");
+        _sessionLogger.Log(level, clean);
+    }
+
+    /// <summary>
     /// Log a plain message (always shown) - no color
     /// </summary>
     public static void Log(string message = "")
     {
         Console.WriteLine(message);
+        LogToSession("INFO", message);
     }
 
     /// <summary>
@@ -59,6 +90,7 @@ public static class ConsoleLogger
         {
             Console.WriteLine(message);
         }
+        LogToSession("INFO", message);
     }
 
     /// <summary>
@@ -71,6 +103,7 @@ public static class ConsoleLogger
         {
             Console.WriteLine($"{ColorCyan}    {message}{ColorReset}");
         }
+        LogToSession("DEBUG", message);
     }
 
     /// <summary>
@@ -83,6 +116,7 @@ public static class ConsoleLogger
         {
             Console.WriteLine($"{ColorCyan}    {message}{ColorReset}");
         }
+        LogToSession("DEBUG", message);
     }
 
     /// <summary>
@@ -100,6 +134,7 @@ public static class ConsoleLogger
         {
             Console.WriteLine($"{ColorCyan}    {message}{ColorReset}");
         }
+        LogToSession("TRACE", message);
     }
 
     /// <summary>
@@ -113,6 +148,7 @@ public static class ConsoleLogger
     public static void Success(string message)
     {
         Console.WriteLine($"{ColorGreen}{message}{ColorReset}");
+        LogToSession("INFO", message);
     }
 
     /// <summary>
@@ -121,6 +157,7 @@ public static class ConsoleLogger
     public static void Warn(string message)
     {
         Console.WriteLine($"{ColorYellow}{message}{ColorReset}");
+        LogToSession("WARN", message);
     }
 
     /// <summary>
@@ -129,6 +166,7 @@ public static class ConsoleLogger
     public static void Error(string message)
     {
         Console.Error.WriteLine($"{ColorRed}{message}{ColorReset}");
+        LogToSession("ERROR", message);
     }
 
     /// <summary>
