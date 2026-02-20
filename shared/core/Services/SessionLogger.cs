@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Cimian.Core.Models;
 
 namespace Cimian.Core.Services;
 
@@ -435,6 +436,19 @@ public class SessionLogger : IDisposable
         }
     }
 
+    // Current session items for items.json generation (set by UpdateEngine)
+    private List<SessionPackageInfo> _currentSessionItems = new();
+
+    /// <summary>
+    /// Sets the current session's managed items data for items.json generation.
+    /// Called by UpdateEngine after IdentifyActions builds status tables.
+    /// Go parity: DataExporter.SetCurrentSessionPackagesInfo()
+    /// </summary>
+    public void SetCurrentSessionItems(List<SessionPackageInfo> items)
+    {
+        _currentSessionItems = items ?? new List<SessionPackageInfo>();
+    }
+
     /// <summary>
     /// Generates report files for external tools
     /// </summary>
@@ -447,6 +461,9 @@ public class SessionLogger : IDisposable
 
             // Generate events.json - recent events
             GenerateEventsReport();
+
+            // Generate items.json - current managed items snapshot
+            GenerateItemsReport();
         }
         catch (Exception ex)
         {
@@ -535,6 +552,73 @@ public class SessionLogger : IDisposable
 
         var eventsReportPath = Path.Combine(ReportsDir, "events.json");
         File.WriteAllText(eventsReportPath, JsonSerializer.Serialize(allEvents, JsonOptions));
+    }
+
+    /// <summary>
+    /// Generates the items.json report file - current snapshot of all managed items.
+    /// Go parity: DataExporter.GenerateCurrentItemsFromPackagesInfo()
+    /// Excludes MDM profiles/apps (managed externally by Device Management Service).
+    /// </summary>
+    private void GenerateItemsReport()
+    {
+        if (_currentSessionItems.Count == 0)
+            return;
+
+        var items = new List<Cimian.Core.Models.ItemRecord>();
+        var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+
+        foreach (var pkg in _currentSessionItems)
+        {
+            // Skip Device Management Service-managed items (profiles and apps)
+            if (string.Equals(pkg.ItemType, "managedprofile", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(pkg.ItemType, "managedapp", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var displayName = !string.IsNullOrEmpty(pkg.DisplayName) ? pkg.DisplayName : pkg.Name;
+            var normalizedStatus = NormalizeItemStatus(pkg.Status);
+
+            items.Add(new Cimian.Core.Models.ItemRecord
+            {
+                Id = pkg.Name.ToLowerInvariant().Replace(" ", ""),
+                ItemName = pkg.Name,
+                DisplayName = displayName,
+                ItemType = pkg.ItemType,
+                CurrentStatus = normalizedStatus,
+                LatestVersion = pkg.Version,
+                InstalledVersion = pkg.InstalledVersion,
+                LastSeenInSession = now,
+                LastAttemptTime = now,
+                LastAttemptStatus = normalizedStatus,
+                LastUpdate = now,
+                LastError = pkg.ErrorMessage ?? "",
+                LastWarning = pkg.WarningMessage
+            });
+        }
+
+        var itemsPath = Path.Combine(ReportsDir, "items.json");
+        File.WriteAllText(itemsPath, JsonSerializer.Serialize(items, JsonOptions));
+    }
+
+    /// <summary>
+    /// Normalizes session/action statuses to standard item statuses.
+    /// Go parity: NormalizeItemStatus() in reporting.go
+    /// </summary>
+    private static string NormalizeItemStatus(string status)
+    {
+        return (status ?? "").ToLowerInvariant() switch
+        {
+            "completed" or "success" or "installed" or "ok" => "Installed",
+            "failed" or "error" or "fail" => "Error",
+            "warning" or "warn" => "Warning",
+            "pending" or "pending install" or "pending update" or "skipped" or "not installed" => "Pending",
+            "removed" or "uninstalled" => "Removed",
+            "not available" => "Not Available",
+            _ => status switch
+            {
+                "Installed" or "Error" or "Warning" or "Pending" or "Removed" or "Not Available" => status,
+                _ => "Pending"
+            }
+        };
     }
 
     /// <summary>
