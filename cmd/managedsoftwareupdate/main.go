@@ -3243,6 +3243,9 @@ func printEnhancedManagedItemsSnapshot(toInstall, toUninstall, toUpdate []catalo
 
 		for _, item := range managedUninstalls {
 			status := getPackageStatusDisplayQuiet(item, toInstall, toUpdate, localCatalogMap, cfg.CachePath)
+			if status == "Installed" {
+				status = "Removed"
+			}
 			
 			// Look up the actual catalog version
 			version := "Unknown"
