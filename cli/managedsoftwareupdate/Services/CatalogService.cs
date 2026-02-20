@@ -287,6 +287,10 @@ public class CatalogService
     /// <summary>
     /// Compares two version strings
     /// Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+    /// Normalizes version strings before comparison to handle formats like:
+    ///   "5.2.3 (git 68d178c)" → "5.2.3"
+    ///   "2025, 0, 408, 54890" → "2025.0.408.54890"
+    ///   "InternalName" → unparseable, returns 0 (equal) to avoid false positives
     /// </summary>
     public static int CompareVersions(string v1, string v2)
     {
@@ -294,8 +298,19 @@ public class CatalogService
         if (string.IsNullOrEmpty(v1)) return -1;
         if (string.IsNullOrEmpty(v2)) return 1;
 
-        var parts1 = v1.Split('.', '-', '_');
-        var parts2 = v2.Split('.', '-', '_');
+        // Normalize both versions before comparison
+        var norm1 = NormalizeVersionString(v1);
+        var norm2 = NormalizeVersionString(v2);
+
+        // If either version normalized to empty/null, it was unparseable — treat as equal
+        if (string.IsNullOrEmpty(norm1) || string.IsNullOrEmpty(norm2))
+            return 0;
+
+        // Quick equality check after normalization
+        if (norm1 == norm2) return 0;
+
+        var parts1 = norm1.Split('.');
+        var parts2 = norm2.Split('.');
 
         var maxLen = Math.Max(parts1.Length, parts2.Length);
 
@@ -309,6 +324,58 @@ public class CatalogService
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Normalizes a version string to a canonical dot-separated numeric format.
+    /// Handles: parenthetical metadata, comma-separated versions, non-version strings.
+    /// Returns null if the string is not a recognizable version.
+    /// </summary>
+    private static string? NormalizeVersionString(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return null;
+
+        var v = version.Trim();
+
+        // Strip everything from first parenthesis onward: "5.2.3 (git 68d178c)" → "5.2.3"
+        var parenIndex = v.IndexOf('(');
+        if (parenIndex > 0)
+            v = v[..parenIndex].Trim();
+
+        // Replace comma+optional space with dot: "2025, 0, 408, 54890" → "2025.0.408.54890"
+        v = System.Text.RegularExpressions.Regex.Replace(v, @",\s*", ".");
+
+        // Now split and validate — each part should be numeric or a known prerelease tag
+        var parts = v.Split('.', '-', '_');
+        var validParts = new System.Collections.Generic.List<string>();
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (string.IsNullOrEmpty(trimmed))
+                continue;
+            // Accept numeric parts
+            if (int.TryParse(trimmed, out _))
+            {
+                validParts.Add(trimmed);
+                continue;
+            }
+            // Accept known prerelease tags
+            var lower = trimmed.ToLowerInvariant();
+            if (lower.StartsWith("alpha") || lower.StartsWith("beta") || lower.StartsWith("rc") || lower.StartsWith("release"))
+            {
+                validParts.Add(trimmed);
+                continue;
+            }
+            // Non-numeric, non-tag part — stop here (trailing metadata)
+            break;
+        }
+
+        // If no valid parts found, this isn't a recognizable version
+        if (validParts.Count == 0)
+            return null;
+
+        return string.Join(".", validParts);
     }
 
     private static int ParseVersionPart(string part)
