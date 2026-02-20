@@ -927,7 +927,8 @@ func ProcessInstallWithDependencies(itemName string, catalogsMap map[int]map[str
 			logging.Debug("Not script-only item in ProcessInstallWithDependencies", "item", item.Name)
 			localFile, err := downloadItemFile(item, cfg, 0, nil)
 			if err != nil {
-				return fmt.Errorf("failed to download item %s: %v", itemName, err)
+				logging.Warn("Failed to download item", "item", item.Name, "error", err)
+				return WarningError{Message: fmt.Sprintf("failed to download item %s: %v", itemName, err)}
 			}
 			installerInstall(item, "install", localFile, cachePath, checkOnly, cfg)
 		}
@@ -1287,9 +1288,9 @@ func processInstallWithAdvancedLogic(itemName string, catalogsMap map[int]map[st
 				logging.Debug("About to call downloadItemFile", "item", item.Name)
 				localFile, err := downloadItemFile(item, cfg, verbosity, reporter)
 				if err != nil {
-					logging.Error("downloadItemFile failed", "item", item.Name, "error", err)
+					logging.Warn("Failed to download item", "item", item.Name, "error", err)
 					logging.Debug("downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "FAILED")
-					return fmt.Errorf("failed to download item %s: %v", itemName, err)
+					return WarningError{Message: fmt.Sprintf("failed to download item %s: %v", itemName, err)}
 				}
 				logging.Debug("downloadItemFile returned", "item", item.Name, "localFile", localFile, "error", "<nil>")
 
