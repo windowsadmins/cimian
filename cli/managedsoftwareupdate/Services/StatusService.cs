@@ -321,6 +321,8 @@ public class StatusService
                         }
 
                         // File exists - check hash if specified (md5checksum field may contain MD5, SHA1, or SHA256)
+                        // Go parity: hashVerificationPassed means hash is authoritative - version mismatches are informational only
+                        var hashVerificationPassed = false;
                         if (!string.IsNullOrEmpty(installItem.Md5Checksum))
                         {
                             ConsoleLogger.Debug($"Verifying hash for: {installItem.Path}");
@@ -336,6 +338,7 @@ public class StatusService
                                 result.DetectionMethod = DetectionMethod.File;
                                 return result;
                             }
+                            hashVerificationPassed = true;
                             ConsoleLogger.Info($"Hash verification passed item: {item.Name} path: {installItem.Path} hash: {actualHash}");
                         }
                         else
@@ -345,6 +348,7 @@ public class StatusService
                         }
 
                         // Check version - use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
+                        // Go parity: When hash verification passed, version mismatches are informational only (hash is authoritative)
                         var expectedVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
                         if (!string.IsNullOrEmpty(expectedVersion))
                         {
@@ -354,21 +358,46 @@ public class StatusService
                                 var comparison = CatalogService.CompareVersions(expectedVersion, fileVersion);
                                 if (comparison > 0)
                                 {
-                                    // Catalog version is newer - update needed
-                                    ConsoleLogger.Info($"Installs array verification failed - file version outdated item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {expectedVersion}");
-                                    result.Status = "pending";
-                                    result.NeedsAction = true;
-                                    result.IsUpdate = true;
-                                    result.Reason = $"Version outdated: {fileVersion} -> {expectedVersion}";
-                                    result.ReasonCode = StatusReasonCode.VersionOutdated;
-                                    result.DetectionMethod = DetectionMethod.File;
-                                    return result;
+                                    if (hashVerificationPassed)
+                                    {
+                                        // Go parity: Hash passed but file version appears outdated - hash is authoritative, accept
+                                        ConsoleLogger.Info($"File version appears outdated, but hash verification passed - accepting installation item: {item.Name} path: {installItem.Path} fileVersion: {fileVersion} expectedVersion: {expectedVersion}");
+                                    }
+                                    else
+                                    {
+                                        // No hash verification - version mismatch means update needed
+                                        ConsoleLogger.Info($"Installs array verification failed - file version outdated item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {expectedVersion}");
+                                        result.Status = "pending";
+                                        result.NeedsAction = true;
+                                        result.IsUpdate = true;
+                                        result.Reason = $"Version outdated: {fileVersion} -> {expectedVersion}";
+                                        result.ReasonCode = StatusReasonCode.VersionOutdated;
+                                        result.DetectionMethod = DetectionMethod.File;
+                                        return result;
+                                    }
                                 }
                                 else if (comparison < 0)
                                 {
                                     // Installed version is newer than catalog - skip
                                     ConsoleLogger.Info($"Installed version is newer than catalog version - skipping installation item: {item.Name} path: {installItem.Path} installedVersion: {fileVersion} catalogVersion: {expectedVersion}");
                                 }
+                            }
+                            else if (!hashVerificationPassed)
+                            {
+                                // Go parity: No file version metadata and no hash - action needed
+                                ConsoleLogger.Info($"File version metadata unavailable and no hash verification - action needed item: {item.Name} path: {installItem.Path}");
+                                result.Status = "pending";
+                                result.NeedsAction = true;
+                                result.IsUpdate = true;
+                                result.Reason = $"No file version metadata available for {installItem.Path}";
+                                result.ReasonCode = StatusReasonCode.VersionOutdated;
+                                result.DetectionMethod = DetectionMethod.File;
+                                return result;
+                            }
+                            else
+                            {
+                                // Go parity: No file version but hash passed - accept
+                                ConsoleLogger.Info($"File version metadata unavailable but hash verification passed - accepting installation item: {item.Name} path: {installItem.Path}");
                             }
                         }
                     }
@@ -1185,7 +1214,14 @@ public class StatusService
         try
         {
             var versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
-            return versionInfo.FileVersion;
+            var version = versionInfo.FileVersion;
+            
+            // Validate that the returned string is actually a version number.
+            // FileVersionInfo can return metadata fields like "InternalName" on some builds.
+            if (!string.IsNullOrEmpty(version) && version.Any(char.IsDigit))
+                return version;
+            
+            return null;
         }
         catch
         {
