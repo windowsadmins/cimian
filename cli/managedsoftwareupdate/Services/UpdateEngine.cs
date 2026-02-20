@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
 
+using SessionPackageInfo = Cimian.Core.Models.SessionPackageInfo;
+
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
 /// <summary>
@@ -159,6 +161,9 @@ public class UpdateEngine : IDisposable
             ["client_identifier"] = _config.ClientIdentifier
         });
         
+        // Bridge ConsoleLogger → SessionLogger so all output goes to log files
+        ConsoleLogger.SetSessionLogger(_sessionLogger);
+        
         // Pass session logger to services for structured logging
         _installerService.SetSessionLogger(_sessionLogger);
         
@@ -197,11 +202,8 @@ public class UpdateEngine : IDisposable
                 ReportDetail("Running preflight script...");
                 var (preflightSuccess, preflightOutput) = await _scriptService.RunPreflightAsync(cancellationToken);
                 
-                // Print preflight output in verbose mode
-                if (_verbosity >= 1 && !string.IsNullOrWhiteSpace(preflightOutput))
-                {
-                    Console.WriteLine(preflightOutput);
-                }
+                // Note: ExecuteScriptFileAsync already streams output to console in real-time.
+                // Do NOT print preflightOutput again here or the output appears twice.
                 
                 if (!preflightSuccess)
                 {
@@ -324,6 +326,9 @@ public class UpdateEngine : IDisposable
                 _sessionLogger?.Log("INFO", "Check-only mode - no actions performed");
                 ReportStatus("Check complete");
                 ReportPercent(100);
+                
+                // Collect items data for items.json report (Go parity: SetCurrentSessionPackagesInfo)
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
                 
                 // End session for check-only
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 0, 0, manifestItems);
@@ -468,6 +473,9 @@ public class UpdateEngine : IDisposable
                 ReportStatus("Complete");
                 ReportPercent(100);
                 
+                // Collect items data for items.json report
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
                 return 0;
@@ -477,6 +485,9 @@ public class UpdateEngine : IDisposable
                 ConsoleLogger.Warn("Some operations failed");
                 _sessionLogger?.Log("WARN", "Some operations failed");
                 ReportError("Some operations failed");
+                
+                // Collect items data for items.json report
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
                 
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
@@ -504,6 +515,8 @@ public class UpdateEngine : IDisposable
         }
         finally
         {
+            // Detach ConsoleLogger from SessionLogger before disposing
+            ConsoleLogger.SetSessionLogger(null);
             // Always send quit and dispose resources
             _statusReporter?.Dispose();
             _sessionLogger?.Dispose();
@@ -1615,6 +1628,81 @@ public class UpdateEngine : IDisposable
     #endregion
 
     #region Session Logging Helpers
+
+    /// <summary>
+    /// Collects current session items data and passes to SessionLogger for items.json generation.
+    /// Go parity: main.go lines 3308-3430 where SessionPackageInfo is collected for each manifest item.
+    /// Excludes MDM profiles/apps (managed externally) - those are filtered by SessionLogger.
+    /// </summary>
+    private void CollectSessionItems(
+        List<ManifestItem> manifestItems,
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        List<CatalogItem> toUninstall,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        if (_sessionLogger == null) return;
+
+        var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+        var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+        var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+
+        var items = new List<SessionPackageInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var mi in manifestItems)
+        {
+            if (string.IsNullOrEmpty(mi.Name) || !seen.Add(mi.Name))
+                continue;
+
+            var action = mi.Action?.ToLowerInvariant() ?? "install";
+            var key = mi.Name.ToLowerInvariant();
+
+            // Determine item type (Go parity: determineItemType mapping)
+            var itemType = action switch
+            {
+                "install" => "managed_installs",
+                "update" => "managed_updates",
+                "uninstall" => "managed_uninstalls",
+                "profile" => "managedprofile",
+                "app" => "managedapp",
+                _ => "managed_installs"
+            };
+
+            var version = "";
+            var displayName = mi.Name;
+            if (catalogMap.TryGetValue(key, out var catItem))
+            {
+                version = catItem.Version;
+                if (!string.IsNullOrEmpty(catItem.DisplayName))
+                    displayName = catItem.DisplayName;
+            }
+
+            // Determine status
+            string status;
+            if (toInstallNames.Contains(key))
+                status = "Pending Install";
+            else if (toUpdateNames.Contains(key))
+                status = "Pending Update";
+            else if (toUninstallNames.Contains(key))
+                status = "Pending Removal";
+            else if (action == "uninstall")
+                status = "Removed";
+            else
+                status = "Installed";
+
+            items.Add(new SessionPackageInfo
+            {
+                Name = mi.Name,
+                Version = version,
+                Status = status,
+                ItemType = itemType,
+                DisplayName = displayName
+            });
+        }
+
+        _sessionLogger.SetCurrentSessionItems(items);
+    }
 
     /// <summary>
     /// Ends the session with a summary of operations performed
