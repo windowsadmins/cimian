@@ -326,6 +326,12 @@ public class CatalogItem
     [YamlMember(Alias = "installcheck_script")]
     public string? InstallcheckScript { get; set; }
 
+    [YamlMember(Alias = "install_script")]
+    public string? InstallScript { get; set; }
+
+    [YamlMember(Alias = "uninstall_script")]
+    public string? UninstallScript { get; set; }
+
     [YamlMember(Alias = "preinstall_script")]
     public string? PreinstallScript { get; set; }
 
