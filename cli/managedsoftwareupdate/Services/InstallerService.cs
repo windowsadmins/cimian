@@ -590,12 +590,14 @@ public class InstallerService
             // Legacy Chocolatey (explicit request)
             "chocolatey" => await InstallChocolateyAsync(item, localFile, cancellationToken),
             
+            // nopkg / script-only: no installer binary, run install_script directly
+            "nopkg" or "script" => await InstallScriptOnlyAsync(item, cancellationToken),
+            
             // Standard installers
             "msi" => await InstallMsiAsync(item, localFile, cancellationToken),
             "exe" => await InstallExeAsync(item, localFile, cancellationToken),
             "msix" or "appx" => await InstallMsixAsync(item, localFile, cancellationToken),
             "powershell" or "ps1" => await InstallPowerShellAsync(item, localFile, cancellationToken),
-            "script" => await InstallScriptOnlyAsync(item, cancellationToken),
             _ => await InstallExeAsync(item, localFile, cancellationToken) // Default to EXE
         };
 
@@ -663,6 +665,11 @@ public class InstallerService
                 "powershell" or "ps1" => await UninstallPowerShellAsync(uninstaller, cancellationToken),
                 _ => await UninstallMsiAsync(uninstaller, cancellationToken)
             };
+        }
+        else if (!string.IsNullOrWhiteSpace(item.UninstallScript))
+        {
+            ConsoleLogger.Info($"Running uninstall_script for {item.Name}...");
+            result = await _scriptService.ExecuteScriptAsync(item.UninstallScript, cancellationToken);
         }
 
         if (!result.Success)
@@ -861,9 +868,15 @@ public class InstallerService
         CatalogItem item,
         CancellationToken cancellationToken)
     {
-        // Script-only item - preinstall/postinstall already handled
-        await Task.CompletedTask;
-        return (true, "Script-only installation completed");
+        if (string.IsNullOrWhiteSpace(item.InstallScript))
+        {
+            ConsoleLogger.Warn($"nopkg item '{item.Name}' has no install_script defined");
+            return (true, "No install_script defined; nothing to run");
+        }
+
+        ConsoleLogger.Info($"Running install_script for {item.Name}...");
+        _sessionLogger?.Log("INFO", $"Executing install_script for {item.Name}");
+        return await _scriptService.ExecuteScriptAsync(item.InstallScript, cancellationToken);
     }
 
     private async Task<(bool Success, string Output)> UninstallMsiAsync(
