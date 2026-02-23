@@ -200,6 +200,21 @@ public class DownloadService
                     }
                 }
 
+                // Verify hash before finalizing
+                if (!string.IsNullOrEmpty(expectedHash))
+                {
+                    var downloadedHash = CalculateSHA256(tempPath);
+                    if (!downloadedHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        ConsoleLogger.Warn($"Hash mismatch after download expected: {expectedHash.Substring(0, 12)}... got: {downloadedHash.Substring(0, 12)}...");
+                        try { File.Delete(tempPath); } catch { /* ignore */ }
+                        throw new InvalidOperationException($"Hash mismatch: expected {expectedHash}, got {downloadedHash}");
+                    }
+                }
+
+                // Move temp file to final path
+                File.Move(tempPath, localPath, overwrite: true);
+
                 ConsoleLogger.Detail($"    File saved successfully file: {localPath}");
                 return true;
             }
