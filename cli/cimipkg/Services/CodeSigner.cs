@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -51,11 +52,13 @@ public class CodeSigner
     }
 
     /// <summary>
-    /// Signs a single PowerShell script using Authenticode.
+    /// Signs a single PowerShell script using signtool.exe directly.
+    /// Uses signtool instead of PowerShell's Set-AuthenticodeSignature to avoid
+    /// Cert: drive availability issues when launched as a subprocess from .NET.
     /// </summary>
     /// <param name="scriptPath">Path to the script to sign.</param>
     /// <param name="certSubject">Certificate subject name.</param>
-    /// <param name="certThumbprint">Certificate thumbprint (optional).</param>
+    /// <param name="certThumbprint">Certificate thumbprint (optional, takes precedence).</param>
     public void SignPowerShellScript(string scriptPath, string? certSubject, string? certThumbprint)
     {
         if (!File.Exists(scriptPath))
@@ -63,30 +66,54 @@ public class CodeSigner
             throw new FileNotFoundException("Script file not found.", scriptPath);
         }
 
-        // Build PowerShell command to sign the script
-        // Note: Accept certificates with code signing EKU OR no EKU (universal certificates)
-        // A certificate with no EnhancedKeyUsageList can be used for any purpose
-        var getCertCommand = !string.IsNullOrEmpty(certThumbprint)
-            ? $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Thumbprint -eq '{certThumbprint}' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') }}"
-            : $"Get-ChildItem -Path Cert:\\CurrentUser\\My | Where-Object {{ $_.Subject -like '*{certSubject}*' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') }}";
+        var signtoolPath = FindSignTool();
 
-        var psCommand = @"
-# Ensure Certificate provider is loaded (required when launched from .NET without console)
-Import-Module Microsoft.PowerShell.Security -ErrorAction SilentlyContinue
-$cert = " + getCertCommand + @" | Select-Object -First 1
-if (-not $cert) {
-    $cert = Get-ChildItem -Path Cert:\LocalMachine\My | Where-Object { $_.Subject -like '*" + certSubject + @"*' -and ($_.EnhancedKeyUsageList.Count -eq 0 -or $_.EnhancedKeyUsageList.ObjectId -contains '1.3.6.1.5.5.7.3.3') } | Select-Object -First 1
-}
-if (-not $cert) {
-    throw 'Code signing certificate not found'
-}
-Set-AuthenticodeSignature -FilePath '" + scriptPath + @"' -Certificate $cert -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'
-";
+        // Build signtool arguments matching the Go implementation
+        var args = new StringBuilder("sign ");
 
-        var result = RunPowerShellCommand(psCommand);
-        if (!result.Success)
+        if (!string.IsNullOrEmpty(certThumbprint))
         {
-            throw new InvalidOperationException($"Failed to sign script {scriptPath}: {result.Error}");
+            args.Append($"/sha1 {certThumbprint} ");
+            _logger.LogDebug("Signing {Script} with thumbprint: {Thumbprint}", Path.GetFileName(scriptPath), certThumbprint);
+        }
+        else if (!string.IsNullOrEmpty(certSubject))
+        {
+            args.Append($"/n \"{certSubject}\" ");
+            _logger.LogDebug("Signing {Script} with certificate: {Subject}", Path.GetFileName(scriptPath), certSubject);
+        }
+        else
+        {
+            throw new InvalidOperationException($"No certificate specified for {scriptPath}");
+        }
+
+        args.Append("/fd SHA256 ");
+        args.Append("/tr http://timestamp.digicert.com ");
+        args.Append("/td SHA256 ");
+        args.Append($"\"{scriptPath}\"");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = signtoolPath,
+            Arguments = args.ToString(),
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process == null)
+        {
+            throw new InvalidOperationException("Failed to start signtool.exe process");
+        }
+
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Failed to sign script {scriptPath}: {error}{output}");
         }
 
         _logger.LogDebug("Signed script: {ScriptPath}", scriptPath);
@@ -277,60 +304,59 @@ Set-AuthenticodeSignature -FilePath '" + scriptPath + @"' -Certificate $cert -Ha
     }
 
     /// <summary>
-    /// Runs a PowerShell command and returns the result.
-    /// Uses a temp script file instead of inline command to ensure proper provider loading.
-    /// Uses pwsh.exe (PowerShell 7+) which includes the Certificate provider by default.
+    /// Finds signtool.exe in Windows SDK paths.
+    /// Searches common SDK installation directories for the signing tool.
     /// </summary>
-    private (bool Success, string Output, string Error) RunPowerShellCommand(string command)
+    private static string FindSignTool()
     {
-        // Write command to temp file to avoid complex escaping and ensure proper provider loading
-        var tempScript = Path.Combine(Path.GetTempPath(), $"cimipkg_sign_{Guid.NewGuid():N}.ps1");
-        try
+        // Check if signtool is on PATH first
+        var pathResult = FindOnPath("signtool.exe");
+        if (pathResult != null)
+            return pathResult;
+
+        // Search Windows SDK directories
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var sdkRoot = Path.Combine(programFilesX86, "Windows Kits", "10", "bin");
+
+        if (Directory.Exists(sdkRoot))
         {
-            File.WriteAllText(tempScript, command, Encoding.UTF8);
+            // Get version directories, sorted descending to prefer newest SDK
+            var versionDirs = Directory.GetDirectories(sdkRoot, "10.*")
+                .OrderByDescending(d => d)
+                .ToArray();
 
-            // Use pwsh.exe (PowerShell 7+) which has the Certificate provider built-in
-            // Fall back to powershell.exe if pwsh is not available
-            var powershellPath = FindPowerShellExecutable();
-            
-            var psi = new ProcessStartInfo
+            foreach (var versionDir in versionDirs)
             {
-                FileName = powershellPath,
-                Arguments = $"-ExecutionPolicy Bypass -File \"{tempScript}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process == null)
-            {
-                return (false, "", "Failed to start PowerShell process");
+                // Try x64 first, then x86
+                foreach (var arch in new[] { "x64", "x86" })
+                {
+                    var signtoolPath = Path.Combine(versionDir, arch, "signtool.exe");
+                    if (File.Exists(signtoolPath))
+                        return signtoolPath;
+                }
             }
-
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-
-            return (process.ExitCode == 0, output, error);
         }
-        finally
-        {
-            // Cleanup temp script
-            try { File.Delete(tempScript); } catch { /* ignore */ }
-        }
+
+        throw new FileNotFoundException(
+            "signtool.exe not found. Install a Windows 10/11 SDK or ensure signtool.exe is on PATH.");
     }
 
     /// <summary>
-    /// Finds the appropriate PowerShell executable.
-    /// Uses Windows PowerShell (powershell.exe) which has the Certificate provider available by default.
-    /// Note: PowerShell Core (pwsh.exe) requires explicit Import-Module Microsoft.PowerShell.Security for Cert: drive.
+    /// Finds an executable on the system PATH.
     /// </summary>
-    private static string FindPowerShellExecutable()
+    private static string? FindOnPath(string executable)
     {
-        // Use Windows PowerShell for certificate operations since it has Cert: provider by default
-        // PowerShell Core (pwsh) would require explicit Import-Module Microsoft.PowerShell.Security
-        return "powershell.exe";
+        var pathVar = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(pathVar))
+            return null;
+
+        foreach (var dir in pathVar.Split(Path.PathSeparator))
+        {
+            var fullPath = Path.Combine(dir, executable);
+            if (File.Exists(fullPath))
+                return fullPath;
+        }
+
+        return null;
     }
 }
