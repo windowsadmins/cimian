@@ -61,13 +61,16 @@ public static class ConsoleLogger
 
     /// <summary>
     /// Write a message to the session logger if attached.
-    /// Strips ANSI color codes before writing to log files.
+    /// Strips ANSI color codes and Unicode box-drawing characters before writing to log files.
     /// </summary>
     private static void LogToSession(string level, string message)
     {
         if (_sessionLogger == null) return;
         // Strip ANSI escape sequences for clean log file output
         var clean = System.Text.RegularExpressions.Regex.Replace(message, @"\x1b\[[0-9;]*m", "");
+        // Replace Unicode box-drawing and symbol characters with ASCII equivalents for log compatibility
+        clean = clean.Replace("├", "+").Replace("└", "+").Replace("─", "-").Replace("│", "|")
+                      .Replace("→", "->").Replace("✓", "[OK]").Replace("✗", "[FAIL]");
         _sessionLogger.Log(level, clean);
     }
 
