@@ -127,6 +127,9 @@ public class UpdateEngine : IDisposable
         _verbosity = verbosity;
         _showStatus = showStatus;
 
+        // Track session duration for run.log summary
+        var sessionStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
         // Set global verbosity for ConsoleLogger (Munki-style clean output)
         ConsoleLogger.Verbosity = verbosity;
 
@@ -176,11 +179,8 @@ public class UpdateEngine : IDisposable
             ReportStatus("Checking for updates...");
             ReportDetail("Initializing...");
 
-            // Print verbose header if enabled
-            if (_verbosity >= 1)
-            {
-                PrintVerboseHeader();
-            }
+            // Go parity: Always print header to run.log; console display is gated by verbosity
+            PrintVerboseHeader();
 
             // Check admin privileges
             if (!StatusService.IsAdministrator())
@@ -199,6 +199,9 @@ public class UpdateEngine : IDisposable
             // Run preflight unless skipped
             if (!skipPreflight && !_config.NoPreflight)
             {
+                LogInfo("----------------------------------------------------------------------");
+                LogInfo("PREFLIGHT EXECUTION");
+                LogInfo("----------------------------------------------------------------------");
                 ReportDetail("Running preflight script...");
                 var (preflightSuccess, preflightOutput) = await _scriptService.RunPreflightAsync(cancellationToken);
                 
@@ -234,12 +237,12 @@ public class UpdateEngine : IDisposable
                 _installerService.SetSessionLogger(_sessionLogger);
             }
 
-            // Get manifest items
-            if (_verbosity >= 1)
-            {
-                PrintSystemConfiguration();
-            }
+            // Go parity: Always log system configuration to run.log
+            PrintSystemConfiguration();
             
+            LogInfo("----------------------------------------------------------------------");
+            LogInfo("MANIFEST RETRIEVAL");
+            LogInfo("----------------------------------------------------------------------");
             ReportDetail("Retrieving manifests...");
             LogInfo("Retrieving manifests...");
             List<ManifestItem> manifestItems;
@@ -269,6 +272,9 @@ public class UpdateEngine : IDisposable
             _allManifestItems = manifestItems;
 
             // Download and load catalogs
+            LogInfo("----------------------------------------------------------------------");
+            LogInfo("CATALOG LOADING");
+            LogInfo("----------------------------------------------------------------------");
             ReportDetail("Loading catalogs...");
             LogInfo("Loading catalogs...");
             var catalogMap = await _catalogService.LoadCatalogsAsync();
@@ -280,6 +286,9 @@ public class UpdateEngine : IDisposable
             _downloadService.ValidateAndCleanCache();
 
             // Identify actions needed
+            LogInfo("----------------------------------------------------------------------");
+            LogInfo("STATUS CHECKING");
+            LogInfo("----------------------------------------------------------------------");
             var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
 
             // Apply --item filter if specified (Go parity: pkg/filter)
@@ -322,8 +331,12 @@ public class UpdateEngine : IDisposable
             // Exit if check-only mode
             if (_checkOnly)
             {
+                sessionStopwatch.Stop();
+                LogInfo("----------------------------------------------------------------------");
+                LogInfo("SESSION COMPLETE");
+                LogInfo($"Total duration: {sessionStopwatch.Elapsed.TotalSeconds:F1}s");
+                LogInfo("----------------------------------------------------------------------");
                 LogInfo("Check-only mode - no actions performed");
-                _sessionLogger?.Log("INFO", "Check-only mode - no actions performed");
                 ReportStatus("Check complete");
                 ReportPercent(100);
                 
@@ -450,6 +463,9 @@ public class UpdateEngine : IDisposable
             // Run postflight unless skipped
             if (!skipPostflight && !_config.NoPostflight)
             {
+                LogInfo("----------------------------------------------------------------------");
+                LogInfo("POSTFLIGHT EXECUTION");
+                LogInfo("----------------------------------------------------------------------");
                 _sessionLogger?.Log("INFO", "Running postflight script...");
                 var (postflightSuccess, postflightOutput) = await _scriptService.RunPostflightAsync(cancellationToken);
                 if (!postflightSuccess)
@@ -466,6 +482,11 @@ public class UpdateEngine : IDisposable
             }
 
             // Print final status
+            sessionStopwatch.Stop();
+            LogInfo("----------------------------------------------------------------------");
+            LogInfo("SESSION COMPLETE");
+            LogInfo($"Total duration: {sessionStopwatch.Elapsed.TotalSeconds:F1}s");
+            LogInfo("----------------------------------------------------------------------");
             if (installSuccess && uninstallSuccess)
             {
                 LogSuccess("All operations completed successfully");
@@ -737,8 +758,12 @@ public class UpdateEngine : IDisposable
 
         // Download all items first (including potential dependencies)
         // Note: Dependencies not in this list will be downloaded on-demand during processing
+        LogInfo("----------------------------------------------------------------------");
+        LogInfo("DOWNLOADING PACKAGES");
+        LogInfo("----------------------------------------------------------------------");
         ReportStatus("Downloading...");
         ReportDetail($"Downloading {items.Count} items...");
+        LogInfo($"Downloading {items.Count} items...");
         var downloadedPaths = await _downloadService.DownloadItemsAsync(items, null, cancellationToken);
 
         // Track installed and scheduled items for dependency checking
@@ -749,6 +774,9 @@ public class UpdateEngine : IDisposable
 
         // Process each item with full dependency handling
         // This is Go parity: ProcessInstallWithDependencies from process.go
+        LogInfo("----------------------------------------------------------------------");
+        LogInfo("INSTALLING PACKAGES");
+        LogInfo("----------------------------------------------------------------------");
         ReportStatus("Installing...");
         foreach (var item in items)
         {
@@ -1113,12 +1141,14 @@ public class UpdateEngine : IDisposable
                 Directory.Delete(_config.CatalogsPath, true);
             }
             Directory.CreateDirectory(_config.CatalogsPath);
+            LogDebug($"Cleaned and recreated directory dirPath: {_config.CatalogsPath}");
 
             if (Directory.Exists(_config.ManifestsPath))
             {
                 Directory.Delete(_config.ManifestsPath, true);
             }
             Directory.CreateDirectory(_config.ManifestsPath);
+            LogDebug($"Cleaned and recreated directory dirPath: {_config.ManifestsPath}");
         }
         catch (Exception ex)
         {
