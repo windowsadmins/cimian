@@ -122,24 +122,35 @@ namespace Cimian.Status.Services
             try
             {
                 if (!Directory.Exists(_logsBaseDirectory))
-                {
                     return string.Empty;
+
+                // New format: day dirs (YYYY-MM-DD) containing time subdirs (HHMM)
+                var dayDirs = Directory.GetDirectories(_logsBaseDirectory)
+                    .Where(d =>
+                    {
+                        var n = Path.GetFileName(d);
+                        return n.Length == 10 && n[4] == '-' && n[7] == '-';
+                    })
+                    .OrderByDescending(d => Path.GetFileName(d));
+
+                foreach (var dayDir in dayDirs)
+                {
+                    var latest = Directory.GetDirectories(dayDir)
+                        .OrderByDescending(d => Path.GetFileName(d))
+                        .FirstOrDefault();
+                    if (latest != null)
+                        return latest;
                 }
 
-                // Find directories matching the timestamped format: YYYY-MM-DD-HHMMss
-                var sessionDirectories = Directory.GetDirectories(_logsBaseDirectory)
-                    .Where(d => 
+                // Legacy flat format (YYYY-MM-DD-HHMMss)
+                return Directory.GetDirectories(_logsBaseDirectory)
+                    .Where(d =>
                     {
-                        var dirName = Path.GetFileName(d);
-                        return dirName.Length == 17 && 
-                               dirName[4] == '-' && 
-                               dirName[7] == '-' && 
-                               dirName[10] == '-';
+                        var n = Path.GetFileName(d);
+                        return n.Length == 17 && n[4] == '-' && n[7] == '-' && n[10] == '-';
                     })
                     .OrderByDescending(d => Path.GetFileName(d))
-                    .ToArray();
-
-                return sessionDirectories.FirstOrDefault() ?? string.Empty;
+                    .FirstOrDefault() ?? string.Empty;
             }
             catch (Exception ex)
             {

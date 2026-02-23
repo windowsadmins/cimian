@@ -6,13 +6,14 @@ using Cimian.Core.Models;
 namespace Cimian.Core.Services;
 
 /// <summary>
-/// SessionLogger provides structured logging with timestamped directories
+/// SessionLogger provides structured logging with day-nested timestamped directories
 /// compatible with external monitoring and reporting tools.
 /// Ported from Go: pkg/logging/logging.go and pkg/logging/events.go
 /// 
 /// Features:
-/// - Timestamped subdirectories (YYYY-MM-DD-HHMMss format)
+/// - Day-nested directories: logs/YYYY-MM-DD/HHMM/ for easy navigation
 /// - Creates session.json, events.jsonl, install.log, and run.log files
+/// - 7-day rolling retention with automatic cleanup
 /// - Writes reports to C:\ProgramData\ManagedInstalls\reports
 /// - Structured data formats for external tool integration
 /// </summary>
@@ -21,9 +22,8 @@ public class SessionLogger : IDisposable
     private const string BaseLogsDir = @"C:\ProgramData\ManagedInstalls\logs";
     private const string ReportsDir = @"C:\ProgramData\ManagedInstalls\reports";
 
-    // Retention policy defaults (matches Go logging/events.go)
+    // Retention policy: 30-day rolling window (~220MB at typical usage)
     private const int DefaultMaxAgeDays = 30;
-    private const int DefaultKeepRecentSessions = 50;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -76,11 +76,29 @@ public class SessionLogger : IDisposable
         _sessionStart = DateTime.Now;
         _runType = runType;
         
-        // Generate session ID in YYYY-MM-DD-HHMMss format (matches Go)
-        _sessionId = _sessionStart.ToString("yyyy-MM-dd-HHmmss");
+        // Generate session ID as YYYY-MM-DD-HHMM for reports
+        _sessionId = _sessionStart.ToString("yyyy-MM-dd-HHmm");
         
-        // Create session directory
-        _sessionDir = Path.Combine(BaseLogsDir, _sessionId);
+        // Create day-nested directory: logs/YYYY-MM-DD/HHMM/
+        var dayDir = Path.Combine(BaseLogsDir, _sessionStart.ToString("yyyy-MM-dd"));
+        var timeDir = _sessionStart.ToString("HHmm");
+        _sessionDir = Path.Combine(dayDir, timeDir);
+        
+        // Handle rare same-minute collision by appending suffix
+        if (Directory.Exists(_sessionDir))
+        {
+            for (var i = 2; i <= 9; i++)
+            {
+                var candidate = Path.Combine(dayDir, $"{timeDir}_{i}");
+                if (!Directory.Exists(candidate))
+                {
+                    _sessionDir = candidate;
+                    _sessionId = $"{_sessionStart:yyyy-MM-dd}-{timeDir}_{i}";
+                    break;
+                }
+            }
+        }
+        
         Directory.CreateDirectory(_sessionDir);
         
         // Ensure reports directory exists
@@ -360,8 +378,8 @@ public class SessionLogger : IDisposable
     }
 
     /// <summary>
-    /// Performs log retention cleanup based on age and count policies.
-    /// Matches Go: cleanupOldLogs() and performRetentionCleanup()
+    /// Performs 7-day rolling retention cleanup.
+    /// Removes day directories older than retention window and cleans up any legacy flat-format sessions.
     /// </summary>
     private void PerformRetentionCleanup()
     {
@@ -370,32 +388,33 @@ public class SessionLogger : IDisposable
             if (!Directory.Exists(BaseLogsDir))
                 return;
 
-            var sessionDirs = Directory.GetDirectories(BaseLogsDir)
-                .Select(d => new DirectoryInfo(d))
-                .Where(d => IsSessionDirectory(d.Name))
-                .OrderByDescending(d => d.Name) // Newest first (timestamped format)
-                .ToList();
+            var cutoff = DateTime.Now.AddDays(-DefaultMaxAgeDays);
 
-            var now = DateTime.Now;
-            var maxAge = TimeSpan.FromDays(DefaultMaxAgeDays);
-            var deleted = new HashSet<string>();
-
-            // Delete directories beyond the keep count
-            for (var i = DefaultKeepRecentSessions; i < sessionDirs.Count; i++)
+            foreach (var entry in Directory.GetDirectories(BaseLogsDir))
             {
-                TryDeleteSessionDirectory(sessionDirs[i].FullName);
-                deleted.Add(sessionDirs[i].Name);
-            }
+                var dirName = Path.GetFileName(entry);
 
-            // Delete directories older than max age
-            foreach (var dir in sessionDirs)
-            {
-                if (deleted.Contains(dir.Name))
-                    continue;
-
-                if (now - dir.CreationTime > maxAge)
+                // New format: day directories (YYYY-MM-DD, 10 chars)
+                if (IsDayDirectory(dirName))
                 {
-                    TryDeleteSessionDirectory(dir.FullName);
+                    if (DateTime.TryParseExact(dirName, "yyyy-MM-dd", null,
+                            System.Globalization.DateTimeStyles.None, out var dayDate)
+                        && dayDate < cutoff.Date)
+                    {
+                        TryDeleteSessionDirectory(entry);
+                    }
+                    continue;
+                }
+
+                // Legacy flat format (YYYY-MM-DD-HHMMss, 17 chars) — clean up old sessions
+                if (IsLegacySessionDirectory(dirName))
+                {
+                    if (DateTime.TryParseExact(dirName, "yyyy-MM-dd-HHmmss", null,
+                            System.Globalization.DateTimeStyles.None, out var legacyDate)
+                        && legacyDate < cutoff)
+                    {
+                        TryDeleteSessionDirectory(entry);
+                    }
                 }
             }
         }
@@ -406,19 +425,39 @@ public class SessionLogger : IDisposable
     }
 
     /// <summary>
-    /// Checks if a directory name matches the session timestamp format (YYYY-MM-DD-HHMMss)
+    /// Checks if a directory name is a day directory (YYYY-MM-DD)
     /// </summary>
-    private static bool IsSessionDirectory(string name)
+    private static bool IsDayDirectory(string name)
     {
-        // Format: 2024-01-15-143022 (17 chars, 3 dashes)
-        if (name.Length != 17)
-            return false;
+        return name.Length == 10 && name[4] == '-' && name[7] == '-'
+            && DateTime.TryParseExact(name, "yyyy-MM-dd", null,
+                System.Globalization.DateTimeStyles.None, out _);
+    }
 
-        if (name.Count(c => c == '-') != 3)
-            return false;
+    /// <summary>
+    /// Checks if a directory name is a time-of-day session (HHMM or HHMM_N for collisions)
+    /// </summary>
+    private static bool IsTimeSessionDirectory(string name)
+    {
+        // Primary: 4-digit HHMM (e.g. "1430")
+        if (name.Length == 4 && int.TryParse(name, out var hhmm))
+            return hhmm >= 0 && hhmm <= 2359;
 
-        // Basic validation - check if it looks like a timestamp
-        return name[4] == '-' && name[7] == '-' && name[10] == '-';
+        // Collision suffix: HHMM_N (e.g. "1430_2")
+        if (name.Length == 6 && name[4] == '_' && char.IsDigit(name[5]))
+            return int.TryParse(name[..4], out var hhmm2) && hhmm2 >= 0 && hhmm2 <= 2359;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if a directory name is a legacy flat-format session (YYYY-MM-DD-HHMMss)
+    /// </summary>
+    private static bool IsLegacySessionDirectory(string name)
+    {
+        return name.Length == 17 && name[4] == '-' && name[7] == '-' && name[10] == '-'
+            && DateTime.TryParseExact(name, "yyyy-MM-dd-HHmmss", null,
+                System.Globalization.DateTimeStyles.None, out _);
     }
 
     /// <summary>
@@ -472,36 +511,58 @@ public class SessionLogger : IDisposable
     }
 
     /// <summary>
+    /// Enumerates all session directories (both new nested and legacy flat format),
+    /// returning full paths ordered newest-first.
+    /// </summary>
+    private static IEnumerable<string> EnumerateAllSessionDirs()
+    {
+        if (!Directory.Exists(BaseLogsDir))
+            yield break;
+
+        // New format: day dirs containing time subdirs
+        var dayDirs = Directory.GetDirectories(BaseLogsDir)
+            .Where(d => IsDayDirectory(Path.GetFileName(d)))
+            .OrderByDescending(d => Path.GetFileName(d));
+
+        foreach (var dayDir in dayDirs)
+        {
+            var timeDirs = Directory.GetDirectories(dayDir)
+                .Where(d => IsTimeSessionDirectory(Path.GetFileName(d)))
+                .OrderByDescending(d => Path.GetFileName(d));
+
+            foreach (var timeDir in timeDirs)
+                yield return timeDir;
+        }
+
+        // Legacy flat format for backward compatibility
+        var legacyDirs = Directory.GetDirectories(BaseLogsDir)
+            .Where(d => IsLegacySessionDirectory(Path.GetFileName(d)))
+            .OrderByDescending(d => Path.GetFileName(d));
+
+        foreach (var dir in legacyDirs)
+            yield return dir;
+    }
+
+    /// <summary>
     /// Generates the sessions.json report file
     /// </summary>
     private void GenerateSessionsReport()
     {
         var sessions = new List<SessionData>();
 
-        // Collect recent sessions (last 3 days)
-        if (Directory.Exists(BaseLogsDir))
+        foreach (var dir in EnumerateAllSessionDirs().Take(100))
         {
-            var sessionDirs = Directory.GetDirectories(BaseLogsDir)
-                .Where(d => IsValidSessionDir(Path.GetFileName(d)))
-                .OrderByDescending(d => Path.GetFileName(d))
-                .Take(100); // Limit to 100 sessions
-
-            foreach (var dir in sessionDirs)
+            var sessionPath = Path.Combine(dir, "session.json");
+            if (File.Exists(sessionPath))
             {
-                var sessionPath = Path.Combine(dir, "session.json");
-                if (File.Exists(sessionPath))
+                try
                 {
-                    try
-                    {
-                        var json = File.ReadAllText(sessionPath);
-                        var session = JsonSerializer.Deserialize<SessionData>(json, JsonOptions);
-                        if (session != null)
-                        {
-                            sessions.Add(session);
-                        }
-                    }
-                    catch { /* Skip invalid session files */ }
+                    var json = File.ReadAllText(sessionPath);
+                    var session = JsonSerializer.Deserialize<SessionData>(json, JsonOptions);
+                    if (session != null)
+                        sessions.Add(session);
                 }
+                catch { /* Skip invalid session files */ }
             }
         }
 
@@ -515,38 +576,26 @@ public class SessionLogger : IDisposable
     private void GenerateEventsReport()
     {
         var allEvents = new List<LogEvent>();
-
-        // Collect events from recent sessions (last 48 hours)
         var cutoff = DateTime.Now.AddHours(-48);
 
-        if (Directory.Exists(BaseLogsDir))
+        foreach (var dir in EnumerateAllSessionDirs().Take(10))
         {
-            var sessionDirs = Directory.GetDirectories(BaseLogsDir)
-                .Where(d => IsValidSessionDir(Path.GetFileName(d)))
-                .OrderByDescending(d => Path.GetFileName(d))
-                .Take(10); // Last 10 sessions
-
-            foreach (var dir in sessionDirs)
+            var eventsPath = Path.Combine(dir, "events.jsonl");
+            if (File.Exists(eventsPath))
             {
-                var eventsPath = Path.Combine(dir, "events.jsonl");
-                if (File.Exists(eventsPath))
+                try
                 {
-                    try
+                    foreach (var line in File.ReadLines(eventsPath))
                     {
-                        foreach (var line in File.ReadLines(eventsPath))
+                        if (!string.IsNullOrWhiteSpace(line))
                         {
-                            if (!string.IsNullOrWhiteSpace(line))
-                            {
-                                var evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions);
-                                if (evt != null && evt.Timestamp >= cutoff)
-                                {
-                                    allEvents.Add(evt);
-                                }
-                            }
+                            var evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions);
+                            if (evt != null && evt.Timestamp >= cutoff)
+                                allEvents.Add(evt);
                         }
                     }
-                    catch { /* Skip invalid event files */ }
                 }
+                catch { /* Skip invalid event files */ }
             }
         }
 
@@ -622,19 +671,12 @@ public class SessionLogger : IDisposable
     }
 
     /// <summary>
-    /// Checks if a directory name is a valid session directory (YYYY-MM-DD-HHmmss format)
+    /// Returns the latest session directory (new nested or legacy flat format).
+    /// Used by external consumers to find the most recent log session.
     /// </summary>
-    private static bool IsValidSessionDir(string dirName)
+    public static string? GetLatestSessionDir()
     {
-        // Format: YYYY-MM-DD-HHmmss (17 characters)
-        if (dirName.Length != 17) return false;
-        if (dirName[4] != '-' || dirName[7] != '-' || dirName[10] != '-') return false;
-        return DateTime.TryParseExact(
-            dirName,
-            "yyyy-MM-dd-HHmmss",
-            null,
-            System.Globalization.DateTimeStyles.None,
-            out _);
+        return EnumerateAllSessionDirs().FirstOrDefault();
     }
 
     /// <summary>

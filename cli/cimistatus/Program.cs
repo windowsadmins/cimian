@@ -331,15 +331,33 @@ class Program
     {
         try
         {
+            if (!Directory.Exists(logsDir))
+                return null;
+
+            // New format: day dirs (YYYY-MM-DD) containing time subdirs (HHMM)
+            var dayDirs = Directory.GetDirectories(logsDir)
+                .Where(d =>
+                {
+                    var n = Path.GetFileName(d);
+                    return n.Length == 10 && n[4] == '-' && n[7] == '-';
+                })
+                .OrderByDescending(d => Path.GetFileName(d));
+
+            foreach (var dayDir in dayDirs)
+            {
+                var latest = Directory.GetDirectories(dayDir)
+                    .OrderByDescending(d => Path.GetFileName(d))
+                    .FirstOrDefault();
+                if (latest != null)
+                    return latest;
+            }
+
+            // Legacy flat format (YYYY-MM-DD-HHMMss)
             return Directory.GetDirectories(logsDir)
                 .Where(d =>
                 {
-                    var dirName = Path.GetFileName(d);
-                    // Match format: YYYY-MM-DD-HHMMss (17 chars)
-                    return dirName.Length == 17 &&
-                           dirName[4] == '-' &&
-                           dirName[7] == '-' &&
-                           dirName[10] == '-';
+                    var n = Path.GetFileName(d);
+                    return n.Length == 17 && n[4] == '-' && n[7] == '-' && n[10] == '-';
                 })
                 .OrderByDescending(d => Path.GetFileName(d))
                 .FirstOrDefault();
