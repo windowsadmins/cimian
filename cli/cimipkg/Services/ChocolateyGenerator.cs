@@ -282,12 +282,33 @@ Write-Host ""Installation completed with exit code: $($process.ExitCode)""
         sb.AppendLine("# Copy payload to install location");
         sb.AppendLine($@"$installLocation = ""{EscapePowerShellString(buildInfo.InstallLocation)}""");
         sb.AppendLine(@"
-if (-not (Test-Path $installLocation)) {
-    New-Item -ItemType Directory -Path $installLocation -Force | Out-Null
+if ($installLocation -and -not ($installLocation -match '^[A-Za-z]:\\?$')) {
+    New-Item -ItemType Directory -Force -Path $installLocation | Out-Null
 }
 
 Write-Host ""Copying payload to: $installLocation""
-Copy-Item -Path ""$payloadDir\*"" -Destination $installLocation -Recurse -Force
+Get-ChildItem -Path $payloadRoot -Recurse | ForEach-Object {
+    $fullName = $_.FullName
+    $fullName = [Management.Automation.WildcardPattern]::Escape($fullName)
+    $relative = $fullName.Substring($payloadRoot.Length).TrimStart('\','/')
+    $dest     = Join-Path $installLocation $relative
+
+    if ($_.PSIsContainer) {
+        if (-not ($dest -match '^[A-Za-z]:\\?$')) {
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        }
+    } else {
+        $parentDir = Split-Path $dest -Parent
+        if ($parentDir -and -not ($parentDir -match '^[A-Za-z]:\\?$') -and -not (Test-Path -LiteralPath $parentDir)) {
+            New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+        }
+        Copy-Item -LiteralPath $fullName -Destination $dest -Force
+        if (-not (Test-Path -LiteralPath $dest)) {
+            Write-Error ""Failed to copy $fullName""
+            exit 1
+        }
+    }
+}
 Write-Host ""Payload copied successfully""
 ");
     }
