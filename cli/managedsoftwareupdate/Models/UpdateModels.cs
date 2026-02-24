@@ -353,10 +353,73 @@ public class CatalogItem
     [YamlMember(Alias = "uninstallable")]
     public bool Uninstallable { get; set; } = true;
 
+    [YamlMember(Alias = "install_window")]
+    public InstallWindow? InstallWindow { get; set; }
+
     [YamlMember(Alias = "installs")]
     public List<InstallCheckItem> Installs { get; set; } = new();
 
     public bool IsUninstallable() => Uninstallable && (Uninstaller.Count > 0 || Check.Registry.Name != null);
+}
+
+/// <summary>
+/// Defines a time window during which installation is allowed.
+/// If omitted, no time restriction applies.
+/// </summary>
+public class InstallWindow
+{
+    [YamlMember(Alias = "start")]
+    public string Start { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "end")]
+    public string End { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "weekdays")]
+    public List<string>? Weekdays { get; set; }
+
+    /// <summary>
+    /// Returns true if the given time falls within this install window.
+    /// Start is inclusive, end is exclusive. Overnight wrapping (start > end) is supported.
+    /// If Weekdays is set, the day of week must also match.
+    /// </summary>
+    public bool IsWithinWindow(DateTime now)
+    {
+        if (!TimeSpan.TryParse(Start, out var startTime) || !TimeSpan.TryParse(End, out var endTime))
+            return true; // Invalid config = no restriction (fail-open)
+
+        // Check weekday filter
+        if (Weekdays is { Count: > 0 })
+        {
+            var dayAbbrev = now.DayOfWeek switch
+            {
+                DayOfWeek.Monday => "Mon",
+                DayOfWeek.Tuesday => "Tue",
+                DayOfWeek.Wednesday => "Wed",
+                DayOfWeek.Thursday => "Thu",
+                DayOfWeek.Friday => "Fri",
+                DayOfWeek.Saturday => "Sat",
+                DayOfWeek.Sunday => "Sun",
+                _ => ""
+            };
+            if (!Weekdays.Any(d => d.Equals(dayAbbrev, StringComparison.OrdinalIgnoreCase)))
+                return false;
+        }
+
+        var timeOfDay = now.TimeOfDay;
+
+        if (startTime <= endTime)
+        {
+            // Normal window: e.g. 04:00-06:00
+            return timeOfDay >= startTime && timeOfDay < endTime;
+        }
+        else
+        {
+            // Overnight wrap: e.g. 22:00-06:00
+            return timeOfDay >= startTime || timeOfDay < endTime;
+        }
+    }
+
+    public override string ToString() => $"{Start}-{End}";
 }
 
 /// <summary>
@@ -408,6 +471,13 @@ public class InstallerInfo
     public List<string> Flags { get; set; } = new();
 
     /// <summary>
+    /// Subcommands placed before flags/switches (e.g., ["install"])
+    /// Used by EXE installers that require a verb/subcommand like: setup.exe install --silent
+    /// </summary>
+    [YamlMember(Alias = "subcommand")]
+    public List<string> Subcommand { get; set; } = new();
+
+    /// <summary>
     /// Generic command-line arguments
     /// </summary>
     [YamlMember(Alias = "args")]
@@ -427,8 +497,9 @@ public class InstallerInfo
     public string? TempDir { get; set; }
 
     /// <summary>
-    /// Gets all command-line arguments combined (switches + flags + args)
+    /// Gets all command-line arguments combined (subcommand + switches + flags + args)
     /// Normalizes switches and flags to ensure proper prefixes:
+    /// - Subcommand: placed first, passed through as-is (e.g., "install")
     /// - Switches: ensures / prefix (accepts both "VERYSILENT" and "/VERYSILENT")
     /// - Flags: ensures - or -- prefix (accepts both "quiet" and "--quiet")
     /// - Args: passed through as-is
@@ -436,6 +507,9 @@ public class InstallerInfo
     public List<string> GetAllArgs()
     {
         var allArgs = new List<string>();
+        
+        // Subcommands go first (e.g., "install" before any flags)
+        allArgs.AddRange(Subcommand);
         
         // Process switches - ensure / prefix
         foreach (var sw in Switches)
@@ -526,14 +600,21 @@ public class UninstallerInfo
     public List<string> Flags { get; set; } = new();
 
     /// <summary>
+    /// Subcommands placed before flags/switches (e.g., ["uninstall"])
+    /// </summary>
+    [YamlMember(Alias = "subcommand")]
+    public List<string> Subcommand { get; set; } = new();
+
+    /// <summary>
     /// Generic command-line arguments
     /// </summary>
     [YamlMember(Alias = "args")]
     public List<string> Args { get; set; } = new();
 
     /// <summary>
-    /// Gets all command-line arguments combined (switches + flags + args)
+    /// Gets all command-line arguments combined (subcommand + switches + flags + args)
     /// Normalizes switches and flags to ensure proper prefixes:
+    /// - Subcommand: placed first, passed through as-is
     /// - Switches: ensures / prefix (accepts both "SILENT" and "/SILENT")
     /// - Flags: ensures - or -- prefix (accepts both "force" and "--force")
     /// - Args: passed through as-is
@@ -541,6 +622,9 @@ public class UninstallerInfo
     public List<string> GetAllArgs()
     {
         var allArgs = new List<string>();
+        
+        // Subcommands go first
+        allArgs.AddRange(Subcommand);
         
         // Process switches - ensure / prefix
         foreach (var sw in Switches)
