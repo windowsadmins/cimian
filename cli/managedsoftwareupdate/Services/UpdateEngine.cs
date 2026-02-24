@@ -359,6 +359,33 @@ public class UpdateEngine : IDisposable
                 return 0;
             }
 
+            // Filter out items outside their install_window (applies to installs, updates, and uninstalls)
+            var deferredItems = new List<CatalogItem>();
+            var now = DateTime.Now;
+            foreach (var list in new[] { toInstall, toUpdate, toUninstall })
+            {
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    var item = list[i];
+                    if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
+                    {
+                        LogInfo($"Deferred: {item.Name} v{item.Version} (outside install window {item.InstallWindow})");
+                        _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: outside install window {item.InstallWindow}");
+                        _sessionLogger?.LogStatusCheck(
+                            item.Name, item.Version, "deferred",
+                            $"Outside install window {item.InstallWindow}",
+                            Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
+                            Cimian.Core.Models.DetectionMethod.None, null, false);
+                        deferredItems.Add(item);
+                        list.RemoveAt(i);
+                    }
+                }
+            }
+            if (deferredItems.Count > 0)
+            {
+                LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
+            }
+
             // Perform installations
             var installSuccess = true;
             var successCount = 0;
@@ -1476,11 +1503,18 @@ public class UpdateEngine : IDisposable
             {
                 status = "Pending Update";
             }
+
+            // Annotate items deferred by install_window
+            if (catalogItem?.InstallWindow != null 
+                && !catalogItem.InstallWindow.IsWithinWindow(DateTime.Now) && status.StartsWith("Pending"))
+            {
+                status = $"Deferred ({catalogItem.InstallWindow})";
+            }
             
             packageStatuses.Add((name, version, status));
         }
         
-        // Sort: Installed first, then Pending Install, then Pending Update
+        // Sort: Installed first, then Pending Install, then Pending Update, then Deferred
         var statusPriority = new Dictionary<string, int>
         {
             { "Installed", 1 },
@@ -1542,13 +1576,20 @@ public class UpdateEngine : IDisposable
             {
                 status = "Pending Update";
             }
+
+            // Annotate items deferred by install_window
+            if (catalogItem?.InstallWindow != null
+                && !catalogItem.InstallWindow.IsWithinWindow(DateTime.Now) && status.StartsWith("Pending"))
+            {
+                status = $"Deferred ({catalogItem.InstallWindow})";
+            }
             
             packageStatuses.Add((name, version, status));
         }
         
-        // Sort: Installed first, then Pending Update
+        // Sort: Installed first, then Pending Update, then Deferred
         packageStatuses = packageStatuses
-            .OrderBy(p => p.Status == "Installed" ? 0 : 1)
+            .OrderBy(p => p.Status == "Installed" ? 0 : p.Status.StartsWith("Pending") ? 1 : 2)
             .ThenBy(p => p.Name)
             .ToList();
         

@@ -410,4 +410,138 @@ public class UpdateModelsTests
     }
 
     #endregion
+
+    #region InstallWindow Tests
+
+    [Fact]
+    public void InstallWindow_NormalWindow_WithinReturnsTrue()
+    {
+        var window = new InstallWindow { Start = "04:00", End = "06:00" };
+        // 5:00 AM is within 04:00-06:00
+        var inside = new DateTime(2026, 2, 23, 5, 0, 0); // Monday
+        Assert.True(window.IsWithinWindow(inside));
+    }
+
+    [Fact]
+    public void InstallWindow_NormalWindow_OutsideReturnsFalse()
+    {
+        var window = new InstallWindow { Start = "04:00", End = "06:00" };
+        // 8:00 AM is outside 04:00-06:00
+        var outside = new DateTime(2026, 2, 23, 8, 0, 0);
+        Assert.False(window.IsWithinWindow(outside));
+    }
+
+    [Fact]
+    public void InstallWindow_ExactStart_IsInclusive()
+    {
+        var window = new InstallWindow { Start = "04:00", End = "06:00" };
+        var atStart = new DateTime(2026, 2, 23, 4, 0, 0);
+        Assert.True(window.IsWithinWindow(atStart));
+    }
+
+    [Fact]
+    public void InstallWindow_ExactEnd_IsExclusive()
+    {
+        var window = new InstallWindow { Start = "04:00", End = "06:00" };
+        var atEnd = new DateTime(2026, 2, 23, 6, 0, 0);
+        Assert.False(window.IsWithinWindow(atEnd));
+    }
+
+    [Fact]
+    public void InstallWindow_OvernightWrap_LateNightReturnsTrue()
+    {
+        var window = new InstallWindow { Start = "22:00", End = "06:00" };
+        // 23:00 is within 22:00-06:00
+        var lateNight = new DateTime(2026, 2, 23, 23, 0, 0);
+        Assert.True(window.IsWithinWindow(lateNight));
+    }
+
+    [Fact]
+    public void InstallWindow_OvernightWrap_EarlyMorningReturnsTrue()
+    {
+        var window = new InstallWindow { Start = "22:00", End = "06:00" };
+        // 3:00 AM is within 22:00-06:00
+        var earlyMorning = new DateTime(2026, 2, 24, 3, 0, 0);
+        Assert.True(window.IsWithinWindow(earlyMorning));
+    }
+
+    [Fact]
+    public void InstallWindow_OvernightWrap_MiddayReturnsFalse()
+    {
+        var window = new InstallWindow { Start = "22:00", End = "06:00" };
+        // 12:00 PM is outside 22:00-06:00
+        var midday = new DateTime(2026, 2, 23, 12, 0, 0);
+        Assert.False(window.IsWithinWindow(midday));
+    }
+
+    [Fact]
+    public void InstallWindow_WeekdayFilter_MatchingDayReturnsTrue()
+    {
+        var window = new InstallWindow
+        {
+            Start = "04:00", End = "06:00",
+            Weekdays = new List<string> { "Mon", "Tue", "Wed", "Thu", "Fri" }
+        };
+        // Monday 5:00 AM
+        var monday = new DateTime(2026, 2, 23, 5, 0, 0); // Feb 23, 2026 is Monday
+        Assert.True(window.IsWithinWindow(monday));
+    }
+
+    [Fact]
+    public void InstallWindow_WeekdayFilter_NonMatchingDayReturnsFalse()
+    {
+        var window = new InstallWindow
+        {
+            Start = "04:00", End = "06:00",
+            Weekdays = new List<string> { "Mon", "Tue", "Wed", "Thu", "Fri" }
+        };
+        // Saturday 5:00 AM — day doesn't match
+        var saturday = new DateTime(2026, 2, 28, 5, 0, 0); // Feb 28, 2026 is Saturday
+        Assert.False(window.IsWithinWindow(saturday));
+    }
+
+    [Fact]
+    public void InstallWindow_NoWeekdays_AllDaysAllowed()
+    {
+        var window = new InstallWindow { Start = "04:00", End = "06:00" };
+        // Saturday 5:00 AM — no weekday filter, so allowed
+        var saturday = new DateTime(2026, 2, 28, 5, 0, 0);
+        Assert.True(window.IsWithinWindow(saturday));
+    }
+
+    [Fact]
+    public void InstallWindow_WeekdaysCaseInsensitive()
+    {
+        var window = new InstallWindow
+        {
+            Start = "04:00", End = "06:00",
+            Weekdays = new List<string> { "mon", "TUE" }
+        };
+        var monday = new DateTime(2026, 2, 23, 5, 0, 0);
+        Assert.True(window.IsWithinWindow(monday));
+    }
+
+    [Fact]
+    public void InstallWindow_InvalidTimes_FailsOpen()
+    {
+        var window = new InstallWindow { Start = "invalid", End = "also-invalid" };
+        // Invalid config should fail-open (return true = no restriction)
+        Assert.True(window.IsWithinWindow(DateTime.Now));
+    }
+
+    [Fact]
+    public void InstallWindow_Null_CatalogItemHasNoRestriction()
+    {
+        var item = new CatalogItem { Name = "Test", Version = "1.0" };
+        Assert.Null(item.InstallWindow);
+    }
+
+    [Fact]
+    public void InstallWindow_ToString_FormatsCorrectly()
+    {
+        var window = new InstallWindow { Start = "04:00", End = "06:00" };
+        Assert.Equal("04:00-06:00", window.ToString());
+    }
+
+    #endregion
 }
