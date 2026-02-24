@@ -2110,8 +2110,10 @@ func runEXEInstaller(item catalog.Item, localFile string, cfg *config.Configurat
 	installerPath := localFile
 	args := []string{}
 
-	// Handle optional verb
-	if item.Installer.Verb != "" {
+	// Handle subcommand array (preferred) or legacy verb (single string)
+	if len(item.Installer.Subcommand) > 0 {
+		args = append(args, item.Installer.Subcommand...)
+	} else if item.Installer.Verb != "" {
 		args = append(args, item.Installer.Verb)
 	}
 

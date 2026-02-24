@@ -77,7 +77,8 @@ type InstallerItem struct {
 	Type        string   `yaml:"type"`
 	Location    string   `yaml:"location"`
 	Hash        string   `yaml:"hash"`
-	Verb        string   `yaml:"verb,omitempty" json:"verb,omitempty"`
+	Verb        string   `yaml:"verb,omitempty" json:"verb,omitempty"`           // Deprecated: use subcommand instead
+	Subcommand  []string `yaml:"subcommand,omitempty" json:"subcommand,omitempty"` // Subcommands placed before flags/switches (e.g., ["install"])
 	Switches    []string `yaml:"switches,omitempty" json:"switches,omitempty"`
 	Flags       []string `yaml:"flags,omitempty" json:"flags,omitempty"`
 	Arguments   []string `yaml:"arguments"`
