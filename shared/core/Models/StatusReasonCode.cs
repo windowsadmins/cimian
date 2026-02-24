@@ -90,6 +90,9 @@ public static class StatusReasonCode
     /// <summary>Waiting for maintenance window</summary>
     public const string ScheduleWaiting = "schedule_waiting";
 
+    /// <summary>Deferred due to install_window time restriction</summary>
+    public const string DeferredInstallWindow = "deferred_install_window";
+
     /// <summary>Insufficient disk space for installation</summary>
     public const string DiskSpace = "disk_space";
 
