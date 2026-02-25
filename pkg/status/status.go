@@ -1668,6 +1668,18 @@ func checkMsiWithUpgradeCode(productCode, upgradeCode, catalogVersion string) (b
 	return false, false, ""
 }
 
+// FindMsiVersionByProductCode is a public wrapper around findMsiVersion for use by other packages.
+// Returns the installed DisplayVersion for the given MSI ProductCode, or empty string if not found.
+func FindMsiVersionByProductCode(productCode string) string {
+	return findMsiVersion(productCode)
+}
+
+// FindMsiInstalledByUpgradeCode is a public wrapper around findMsiByUpgradeCode for use by other packages.
+// Returns (installed, version) for the given MSI UpgradeCode.
+func FindMsiInstalledByUpgradeCode(upgradeCode string) (bool, string) {
+	return findMsiByUpgradeCode(upgradeCode)
+}
+
 // findMsiVersion retrieves the DisplayVersion from registry for the MSI productCode
 // Checks both 64-bit and 32-bit registry locations
 func findMsiVersion(productCode string) string {

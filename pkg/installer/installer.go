@@ -631,25 +631,67 @@ func verifyInstallationBeforeRegistry(item catalog.Item, cfg *config.Configurati
 
 	// Check each install item directly (avoid CheckStatus to prevent architecture issues)
 	for _, install := range item.Installs {
-		if install.Type == "file" {
+		switch install.Type {
+		case "file":
 			logging.Debug("Verifying install file exists", "item", item.Name, "path", install.Path)
 			if _, err := os.Stat(install.Path); os.IsNotExist(err) {
 				logging.Warn("Installation verification failed - expected file not found", 
 					"item", item.Name, "missingPath", install.Path)
 				return false
 			}
-		} else if install.Type == "directory" {
+		case "directory":
 			logging.Debug("Verifying install directory exists", "item", item.Name, "path", install.Path)
 			if _, err := os.Stat(install.Path); os.IsNotExist(err) {
 				logging.Warn("Installation verification failed - expected directory not found", 
 					"item", item.Name, "missingPath", install.Path)
 				return false
 			}
+		case "msi":
+			// Verify MSI was actually registered by Windows Installer via ProductCode or UpgradeCode
+			logging.Debug("Verifying MSI registration in Windows Installer",
+				"item", item.Name, "productCode", install.ProductCode, "upgradeCode", install.UpgradeCode)
+			
+			msiFound := false
+			
+			// Try ProductCode first (faster, exact match)
+			if install.ProductCode != "" {
+				version := status.FindMsiVersionByProductCode(install.ProductCode)
+				if version != "" {
+					logging.Debug("MSI verification via ProductCode successful",
+						"item", item.Name, "productCode", install.ProductCode, "version", version)
+					msiFound = true
+				}
+			}
+			
+			// Fall back to UpgradeCode (handles changing ProductCodes across versions)
+			if !msiFound && install.UpgradeCode != "" {
+				installed, version := status.FindMsiInstalledByUpgradeCode(install.UpgradeCode)
+				if installed && version != "" {
+					logging.Debug("MSI verification via UpgradeCode successful",
+						"item", item.Name, "upgradeCode", install.UpgradeCode, "version", version)
+					msiFound = true
+				}
+			}
+			
+			if !msiFound {
+				logging.Warn("Installation verification failed - MSI not registered in Windows Installer",
+					"item", item.Name, "productCode", install.ProductCode, "upgradeCode", install.UpgradeCode)
+				
+				logging.LogEventEntry("install", "verification_failed", logging.StatusError,
+					"MSI installer reported success but product is not registered in Windows Installer",
+					logging.WithContext("item", item.Name),
+					logging.WithContext("product_code", install.ProductCode),
+					logging.WithContext("upgrade_code", install.UpgradeCode),
+					logging.WithContext("issue_type", "msi_not_registered"))
+				return false
+			}
+		default:
+			logging.Debug("Unknown install type in verification, skipping",
+				"item", item.Name, "type", install.Type)
 		}
-		// Add more install types as needed (registry checks, etc.)
 	}
 
-	logging.Debug("Installation verification successful - all expected files/directories found", "item", item.Name)
+	logging.Debug("Installation verification successful - all checks passed", "item", item.Name)
 	return true
 }
 
