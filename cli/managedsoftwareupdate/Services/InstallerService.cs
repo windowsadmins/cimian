@@ -764,16 +764,34 @@ public class InstallerService
         string localFile,
         CancellationToken cancellationToken)
     {
-        // Get all args (switches + flags + args combined)
+        ConsoleLogger.Detail($"EXE installer path: {localFile}");
+        
+        // Log parsed installer fields
+        if (!string.IsNullOrEmpty(item.Installer.Subcommand))
+            ConsoleLogger.Detail($"Subcommand: {item.Installer.Subcommand}");
+        if (item.Installer.Switches.Count > 0)
+            ConsoleLogger.Detail($"Switches: {string.Join(", ", item.Installer.Switches)}");
+        if (item.Installer.Flags.Count > 0)
+            ConsoleLogger.Detail($"Flags: {string.Join(", ", item.Installer.Flags)}");
+        if (item.Installer.Args.Count > 0)
+            ConsoleLogger.Detail($"Args: {string.Join(", ", item.Installer.Args)}");
+
+        // Get all args (subcommand + switches + flags + args combined)
         var allArgs = item.Installer.GetAllArgs();
-        var args = allArgs.Count > 0
-            ? allArgs
-            : new List<string> { "/S", "/silent", "/quiet", "/SILENT", "/VERYSILENT", "/qn" };
+        var usingDefaults = false;
+        if (allArgs.Count == 0)
+        {
+            allArgs = new List<string> { "/S", "/silent", "/quiet", "/SILENT", "/VERYSILENT", "/qn" };
+            usingDefaults = true;
+        }
+        
+        var argString = string.Join(" ", allArgs);
+        ConsoleLogger.Detail($"Command: \"{localFile}\" {argString}{(usingDefaults ? " (default silent flags)" : "")}");
 
         var startInfo = new ProcessStartInfo
         {
             FileName = localFile,
-            Arguments = string.Join(" ", args),
+            Arguments = argString,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -963,6 +981,11 @@ public class InstallerService
         var output = new StringBuilder();
         var timeout = TimeSpan.FromSeconds(_config.InstallerTimeout);
 
+        ConsoleLogger.Detail($"Launching process: {startInfo.FileName}");
+        if (!string.IsNullOrEmpty(startInfo.Arguments))
+            ConsoleLogger.Detail($"Arguments: {startInfo.Arguments}");
+        ConsoleLogger.Detail($"Timeout: {timeout.TotalMinutes} minutes");
+
         try
         {
             using var process = new Process { StartInfo = startInfo };
@@ -972,6 +995,7 @@ public class InstallerService
                 if (!string.IsNullOrEmpty(e.Data))
                 {
                     output.AppendLine(e.Data);
+                    ConsoleLogger.Detail($"[{itemName}:stdout] {e.Data}");
                 }
             };
             
@@ -980,10 +1004,12 @@ public class InstallerService
                 if (!string.IsNullOrEmpty(e.Data))
                 {
                     output.AppendLine($"ERROR: {e.Data}");
+                    ConsoleLogger.Detail($"[{itemName}:stderr] {e.Data}");
                 }
             };
 
             process.Start();
+            ConsoleLogger.Detail($"Process started with PID {process.Id}");
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
@@ -996,6 +1022,7 @@ public class InstallerService
             }
             catch (OperationCanceledException)
             {
+                ConsoleLogger.Warn($"Process timed out after {timeout.TotalMinutes} minutes, killing PID {process.Id}");
                 try
                 {
                     process.Kill(true);
@@ -1006,6 +1033,7 @@ public class InstallerService
             }
 
             var exitCode = process.ExitCode;
+            ConsoleLogger.Detail($"Process exited with code {exitCode}");
             
             // Common success exit codes
             if (exitCode == 0 || exitCode == 3010) // 3010 = reboot required
