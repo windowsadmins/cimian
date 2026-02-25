@@ -621,10 +621,20 @@ public class InstallerService
             }
         }
 
-        // Register in ManagedInstalls registry (if not already done by pkg handler)
+        // Verify installation before registering (prevents phantom installs)
         if (installerType != "pkg")
         {
-            RegisterInstallation(item);
+            if (VerifyInstallationBeforeRegistry(item))
+            {
+                RegisterInstallation(item);
+            }
+            else
+            {
+                var verifyError = $"Installation verification failed for {item.Name} - installer reported success but product is not registered in Windows Installer";
+                ConsoleLogger.Warn(verifyError);
+                _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", verifyError);
+                return (false, verifyError);
+            }
         }
 
         ConsoleLogger.Success($"Successfully installed {item.Name} v{item.Version}");
@@ -1013,6 +1023,189 @@ public class InstallerService
         {
             return (false, $"Process execution failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Verifies that an installation actually succeeded by checking the installs array.
+    /// For MSI items, verifies the product is registered in Windows Installer via ProductCode/UpgradeCode.
+    /// For file/directory items, checks existence on disk.
+    /// Returns true if verification passes or no installs array is defined.
+    /// </summary>
+    private bool VerifyInstallationBeforeRegistry(CatalogItem item)
+    {
+        if (item.Installs.Count == 0)
+        {
+            // No installs array - skip verification for backward compatibility
+            var installerType = item.Installer.Type?.ToLowerInvariant() ?? "";
+            if (installerType is "nopkg" or "script" or "")
+            {
+                ConsoleLogger.Debug($"No installs array for script-only/nopkg item {item.Name} - expected");
+                return true;
+            }
+            ConsoleLogger.Warn($"No installs array for {item.Name} - cannot verify, assuming success");
+            return true;
+        }
+
+        foreach (var install in item.Installs)
+        {
+            switch (install.Type?.ToLowerInvariant())
+            {
+                case "file":
+                    if (!string.IsNullOrEmpty(install.Path) && !File.Exists(install.Path))
+                    {
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: expected file not found: {install.Path}");
+                        return false;
+                    }
+                    break;
+
+                case "directory":
+                    if (!string.IsNullOrEmpty(install.Path) && !Directory.Exists(install.Path))
+                    {
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: expected directory not found: {install.Path}");
+                        return false;
+                    }
+                    break;
+
+                case "msi":
+                    // Verify MSI was registered by Windows Installer via ProductCode or UpgradeCode
+                    ConsoleLogger.Debug($"Verifying MSI registration for {item.Name}: ProductCode={install.ProductCode} UpgradeCode={install.UpgradeCode}");
+                    var msiFound = false;
+
+                    // Try ProductCode first (faster)
+                    if (!string.IsNullOrEmpty(install.ProductCode))
+                    {
+                        var version = FindMsiVersionByProductCode(install.ProductCode);
+                        if (!string.IsNullOrEmpty(version))
+                        {
+                            ConsoleLogger.Debug($"MSI verification via ProductCode successful for {item.Name}: {version}");
+                            msiFound = true;
+                        }
+                    }
+
+                    // Fall back to UpgradeCode
+                    if (!msiFound && !string.IsNullOrEmpty(install.UpgradeCode))
+                    {
+                        var (installed, version) = FindMsiByUpgradeCodeStatic(install.UpgradeCode);
+                        if (installed && !string.IsNullOrEmpty(version))
+                        {
+                            ConsoleLogger.Debug($"MSI verification via UpgradeCode successful for {item.Name}: {version}");
+                            msiFound = true;
+                        }
+                    }
+
+                    if (!msiFound)
+                    {
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})");
+                        return false;
+                    }
+                    break;
+
+                default:
+                    ConsoleLogger.Debug($"Unknown install type '{install.Type}' for {item.Name}, skipping verification");
+                    break;
+            }
+        }
+
+        ConsoleLogger.Debug($"Installation verification successful for {item.Name}");
+        return true;
+    }
+
+    /// <summary>
+    /// Looks up MSI DisplayVersion by ProductCode in the Uninstall registry (64-bit and 32-bit).
+    /// </summary>
+    private static string? FindMsiVersionByProductCode(string productCode)
+    {
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            try
+            {
+                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var uninstallKey = baseKey.OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{productCode}");
+                var version = uninstallKey?.GetValue("DisplayVersion")?.ToString();
+                if (!string.IsNullOrEmpty(version))
+                    return version;
+            }
+            catch { /* continue to next view */ }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Finds installed product via UpgradeCode using Windows Installer packed GUID lookup.
+    /// Static version for use in installation verification.
+    /// </summary>
+    private static (bool installed, string? version) FindMsiByUpgradeCodeStatic(string upgradeCode)
+    {
+        if (string.IsNullOrEmpty(upgradeCode))
+            return (false, null);
+
+        var packedUpgradeCode = PackGuidStatic(upgradeCode);
+        if (string.IsNullOrEmpty(packedUpgradeCode))
+            return (false, null);
+
+        try
+        {
+            using var upgradeKey = Registry.LocalMachine.OpenSubKey(
+                $@"SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UpgradeCodes\{packedUpgradeCode}");
+            if (upgradeKey == null)
+                return (false, null);
+
+            var valueNames = upgradeKey.GetValueNames();
+            if (valueNames.Length == 0)
+                return (false, null);
+
+            // Search uninstall registry for matching packed ProductCodes
+            foreach (var basePath in new[] {
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" })
+            {
+                using var baseKey = Registry.LocalMachine.OpenSubKey(basePath);
+                if (baseKey == null) continue;
+
+                foreach (var subkeyName in baseKey.GetSubKeyNames())
+                {
+                    using var prodKey = baseKey.OpenSubKey(subkeyName);
+                    var version = prodKey?.GetValue("DisplayVersion")?.ToString();
+                    if (string.IsNullOrEmpty(version)) continue;
+
+                    var packedProductCode = PackGuidStatic(subkeyName);
+                    foreach (var valueName in valueNames)
+                    {
+                        if (string.Equals(valueName, packedProductCode, StringComparison.OrdinalIgnoreCase))
+                            return (true, version);
+                    }
+                }
+            }
+        }
+        catch { /* failed to read registry */ }
+
+        return (false, null);
+    }
+
+    /// <summary>
+    /// Converts a standard GUID to Windows Installer packed GUID format.
+    /// </summary>
+    private static string PackGuidStatic(string guid)
+    {
+        guid = guid.Replace("{", "").Replace("}", "").Replace("-", "").ToUpperInvariant();
+        if (guid.Length != 32)
+            return string.Empty;
+
+        var result = new char[32];
+        // Section 1: first 8 chars, reversed in pairs
+        result[0] = guid[6]; result[1] = guid[7]; result[2] = guid[4]; result[3] = guid[5];
+        result[4] = guid[2]; result[5] = guid[3]; result[6] = guid[0]; result[7] = guid[1];
+        // Section 2: next 4, reversed in pairs
+        result[8] = guid[10]; result[9] = guid[11]; result[10] = guid[8]; result[11] = guid[9];
+        // Section 3: next 4, reversed in pairs
+        result[12] = guid[14]; result[13] = guid[15]; result[14] = guid[12]; result[15] = guid[13];
+        // Section 4+5: remaining 16, reversed in pairs
+        for (int i = 16; i < 32; i += 2)
+        {
+            result[i] = guid[i + 1];
+            result[i + 1] = guid[i];
+        }
+        return new string(result);
     }
 
     private void RegisterInstallation(CatalogItem item)
