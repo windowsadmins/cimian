@@ -26,8 +26,17 @@ public class Installer
     [YamlMember(Alias = "flags")]
     public List<string>? Flags { get; set; }
 
+    [YamlMember(Alias = "subcommand")]
+    public string? Subcommand { get; set; }
+
     [YamlMember(Alias = "arguments")]
     public List<string>? Arguments { get; set; }
+
+    [YamlMember(Alias = "args")]
+    public List<string>? Args { get; set; }
+
+    [YamlMember(Alias = "temp_dir")]
+    public string? TempDir { get; set; }
 
     [YamlMember(Alias = "product_code")]
     public string? ProductCode { get; set; }
@@ -135,9 +144,6 @@ public class PkgsInfo
     [YamlMember(Alias = "installcheck_script")]
     public string? InstallCheckScript { get; set; }
 
-    [YamlMember(Alias = "install_window")]
-    public InstallWindow? InstallWindow { get; set; }
-
     [YamlMember(Alias = "uninstallcheck_script")]
     public string? UninstallCheckScript { get; set; }
 
@@ -158,19 +164,4 @@ public class CatalogFile
 {
     [YamlMember(Alias = "items")]
     public List<PkgsInfo> Items { get; set; } = new();
-}
-
-/// <summary>
-/// Defines a time window during which installation is allowed
-/// </summary>
-public class InstallWindow
-{
-    [YamlMember(Alias = "start")]
-    public string Start { get; set; } = string.Empty;
-
-    [YamlMember(Alias = "end")]
-    public string End { get; set; } = string.Empty;
-
-    [YamlMember(Alias = "weekdays")]
-    public List<string>? Weekdays { get; set; }
 }

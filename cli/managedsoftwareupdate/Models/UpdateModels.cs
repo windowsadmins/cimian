@@ -471,11 +471,11 @@ public class InstallerInfo
     public List<string> Flags { get; set; } = new();
 
     /// <summary>
-    /// Subcommands placed before flags/switches (e.g., ["install"])
+    /// Subcommand placed before flags/switches (e.g., "install")
     /// Used by EXE installers that require a verb/subcommand like: setup.exe install --silent
     /// </summary>
     [YamlMember(Alias = "subcommand")]
-    public List<string> Subcommand { get; set; } = new();
+    public string? Subcommand { get; set; }
 
     /// <summary>
     /// Generic command-line arguments
@@ -508,8 +508,9 @@ public class InstallerInfo
     {
         var allArgs = new List<string>();
         
-        // Subcommands go first (e.g., "install" before any flags)
-        allArgs.AddRange(Subcommand);
+        // Subcommand goes first (e.g., "install" before any flags)
+        if (!string.IsNullOrEmpty(Subcommand))
+            allArgs.Add(Subcommand);
         
         // Process switches - ensure / prefix
         foreach (var sw in Switches)
@@ -600,10 +601,10 @@ public class UninstallerInfo
     public List<string> Flags { get; set; } = new();
 
     /// <summary>
-    /// Subcommands placed before flags/switches (e.g., ["uninstall"])
+    /// Subcommand placed before flags/switches (e.g., "uninstall")
     /// </summary>
     [YamlMember(Alias = "subcommand")]
-    public List<string> Subcommand { get; set; } = new();
+    public string? Subcommand { get; set; }
 
     /// <summary>
     /// Generic command-line arguments
@@ -623,8 +624,9 @@ public class UninstallerInfo
     {
         var allArgs = new List<string>();
         
-        // Subcommands go first
-        allArgs.AddRange(Subcommand);
+        // Subcommand goes first
+        if (!string.IsNullOrEmpty(Subcommand))
+            allArgs.Add(Subcommand);
         
         // Process switches - ensure / prefix
         foreach (var sw in Switches)
