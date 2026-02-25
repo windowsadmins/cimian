@@ -305,7 +305,7 @@ function Get-MsiProperty($name) {
                     metadata.ID = metadata.Title;
                     metadata.Version = ParseVersion(product.Version ?? "1.0.0");
                     metadata.Developer = product.Developer ?? "";
-                    metadata.Description = product.Description ?? "";
+                    metadata.Description = buildInfo.Description ?? product.Description ?? "";
                     
                     // Handle architecture from build-info.yaml
                     // Only use it if architecture wasn't already detected from filename
@@ -502,6 +502,7 @@ function Get-MsiProperty($name) {
 internal class PkgBuildInfo
 {
     public PkgProductInfo? Product { get; set; }
+    public string? Description { get; set; }
     public string? InstallLocation { get; set; }
     public string? PostinstallAction { get; set; }
     public PkgInstallerInfo? Installer { get; set; }
