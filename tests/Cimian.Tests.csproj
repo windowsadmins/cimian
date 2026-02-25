@@ -25,7 +25,6 @@
     <ProjectReference Include="..\shared\core\Cimian.Core.csproj" />
     <ProjectReference Include="..\shared\engine\Cimian.Engine.csproj" />
     <ProjectReference Include="..\shared\infrastructure\Cimian.Infrastructure.csproj" />
-    <ProjectReference Include="..\cli\cimipkg\Cimian.CLI.cimipkg.csproj" />
     <ProjectReference Include="..\cli\manifestutil\Cimian.CLI.manifestutil.csproj" />
     <ProjectReference Include="..\cli\makecatalogs\Cimian.CLI.makecatalogs.csproj" />
     <ProjectReference Include="..\cli\cimiwatcher\Cimian.CLI.cimiwatcher.csproj" />
