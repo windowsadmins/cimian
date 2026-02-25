@@ -99,8 +99,8 @@ public class PackageBuilder
         var packageFormat = options.BuildNupkg ? "nupkg" : "pkg";
         var versionResult = VersionParser.Parse(buildInfo.Product.Version, packageFormat);
 
-        _logger.LogInformation("Original version from YAML: {Original}", versionResult.OriginalVersion);
-        _logger.LogDebug("Normalized version: {Normalized}", versionResult.NormalizedVersion);
+        _logger.LogInformation("Version from timestamp: {Original}", versionResult.OriginalVersion);
+        _logger.LogDebug("Normalized version for package format: {Normalized}", versionResult.NormalizedVersion);
 
         // Update buildInfo with normalized version for .nuspec compatibility
         buildInfo.Product.Version = versionResult.NormalizedVersion;
