@@ -176,34 +176,31 @@ public class StatusService
                 return CheckScriptStatus(item);
             }
 
-            // Go parity: For MSI items without explicit checks, compare version from ManagedInstalls registry
-            // This handles cases like Zoom where no product_code is specified but we have registry version
-            if (item.Installer?.Type?.ToLowerInvariant() == "msi")
+            // For items without explicit checks, compare version from ManagedInstalls registry.
+            // Applies to all install types (pkg, copy, msi, script, nopkg) that Cimian tracks.
+            var registryVersion = GetManagedInstallsVersion(item.Name);
+            if (!string.IsNullOrEmpty(registryVersion))
             {
-                var registryVersion = GetManagedInstallsVersion(item.Name);
-                if (!string.IsNullOrEmpty(registryVersion))
+                // Compare registry version to catalog version
+                var comparison = CatalogService.CompareVersions(item.Version, registryVersion);
+                if (comparison > 0)
                 {
-                    // Compare registry version to catalog version
-                    var comparison = CatalogService.CompareVersions(item.Version, registryVersion);
-                    if (comparison > 0)
-                    {
-                        // Catalog has newer version - update needed
-                        result.Status = "pending";
-                        result.NeedsAction = true;
-                        result.IsUpdate = true;
-                        result.Reason = $"Registry version {registryVersion} < catalog version {item.Version}";
-                        result.ReasonCode = StatusReasonCode.UpdateAvailable;
-                        result.DetectionMethod = DetectionMethod.ManagedInstalls;
-                        result.InstalledVersion = registryVersion;
-                        return result;
-                    }
-                    result.Status = "installed";
-                    result.Reason = $"Registry version {registryVersion} >= catalog version {item.Version}";
-                    result.ReasonCode = StatusReasonCode.VersionMatch;
+                    // Catalog has newer version - update needed
+                    result.Status = "pending";
+                    result.NeedsAction = true;
+                    result.IsUpdate = true;
+                    result.Reason = $"Registry version {registryVersion} < catalog version {item.Version}";
+                    result.ReasonCode = StatusReasonCode.UpdateAvailable;
                     result.DetectionMethod = DetectionMethod.ManagedInstalls;
                     result.InstalledVersion = registryVersion;
                     return result;
                 }
+                result.Status = "installed";
+                result.Reason = $"Registry version {registryVersion} >= catalog version {item.Version}";
+                result.ReasonCode = StatusReasonCode.VersionMatch;
+                result.DetectionMethod = DetectionMethod.ManagedInstalls;
+                result.InstalledVersion = registryVersion;
+                return result;
             }
 
             // Go parity: If no checks are defined and no installs array, 
