@@ -543,5 +543,35 @@ public class UpdateModelsTests
         Assert.Equal("04:00-06:00", window.ToString());
     }
 
+    [Fact]
+    public void InstallWindow_OvernightWrap_AfterMidnight_ChecksPreviousDay()
+    {
+        // Window is Mon 22:00 – Tue 02:00, restricted to Mondays.
+        // At 01:00 Tue the current day is Tuesday, but we're in Monday's overnight window.
+        var window = new InstallWindow
+        {
+            Start = "22:00", End = "02:00",
+            Weekdays = new List<string> { "Mon" }
+        };
+        // Feb 23 2026 is Monday. 01:00 on Feb 24 (Tuesday) is still inside the Mon-night window.
+        var tuesdayEarlyMorning = new DateTime(2026, 2, 24, 1, 0, 0);
+        Assert.True(window.IsWithinWindow(tuesdayEarlyMorning));
+    }
+
+    [Fact]
+    public void InstallWindow_OvernightWrap_AfterMidnight_WrongPreviousDay_ReturnsFalse()
+    {
+        // Window is Fri 22:00 – Sat 02:00, restricted to Fridays.
+        // At 01:00 on a Tuesday (Monday night) it should not match.
+        var window = new InstallWindow
+        {
+            Start = "22:00", End = "02:00",
+            Weekdays = new List<string> { "Fri" }
+        };
+        // Feb 24 2026 is Tuesday. Previous day is Monday — not Friday.
+        var tuesdayEarlyMorning = new DateTime(2026, 2, 24, 1, 0, 0);
+        Assert.False(window.IsWithinWindow(tuesdayEarlyMorning));
+    }
+
     #endregion
 }
