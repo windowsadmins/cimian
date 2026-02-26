@@ -117,6 +117,17 @@ public class Program
             return CleanCache();
         }
 
+        // Handle loop guard flags
+        if (!string.IsNullOrEmpty(options.ClearLoop))
+        {
+            return ClearLoop(options.ClearLoop);
+        }
+
+        if (options.LoopStatus)
+        {
+            return ShowLoopStatus();
+        }
+
         if (options.SelfUpdateStatus)
         {
             return ShowSelfUpdateStatus();
@@ -859,6 +870,58 @@ public class Program
         }
     }
 
+    #region Loop Guard CLI
+
+    private static int ClearLoop(string target)
+    {
+        var loopGuard = new LoopGuard();
+
+        if (string.Equals(target, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            var count = loopGuard.ClearAll();
+            Console.WriteLine($"[SUCCESS] Cleared loop suppression for {count} package(s).");
+            return 0;
+        }
+
+        if (loopGuard.ClearLoop(target))
+        {
+            Console.WriteLine($"[SUCCESS] Cleared loop suppression for '{target}'.");
+            return 0;
+        }
+
+        Console.WriteLine($"[INFO] No loop suppression found for '{target}'.");
+        return 0;
+    }
+
+    private static int ShowLoopStatus()
+    {
+        var loopGuard = new LoopGuard();
+        var suppressed = loopGuard.GetSuppressedPackages();
+
+        if (suppressed.Count == 0)
+        {
+            Console.WriteLine("No packages are currently suppressed by loop guard.");
+            return 0;
+        }
+
+        Console.WriteLine($"{suppressed.Count} package(s) currently suppressed:");
+        Console.WriteLine();
+
+        foreach (var (name, reason, until) in suppressed)
+        {
+            var untilStr = until == DateTime.MaxValue ? "indefinite" : until?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "unknown";
+            Console.WriteLine($"  {name}");
+            Console.WriteLine($"    Reason: {reason}");
+            Console.WriteLine($"    Suppressed until: {untilStr}");
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("Clear with: managedsoftwareupdate --clear-loop <name> or --clear-loop all");
+        return 0;
+    }
+
+    #endregion
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr GetStdHandle(int nStdHandle);
 
@@ -945,6 +1008,13 @@ public class Options
 
     [Option("clean-cache", Required = false, HelpText = "Perform comprehensive cache cleanup and exit")]
     public bool CleanCache { get; set; }
+
+    // Loop guard flags
+    [Option("clear-loop", Required = false, HelpText = "Clear install loop suppression for a package (use 'all' to clear all)")]
+    public string? ClearLoop { get; set; }
+
+    [Option("loop-status", Required = false, HelpText = "Show install loop suppression status and exit")]
+    public bool LoopStatus { get; set; }
 
     // Script control flags
     [Option("no-preflight", Required = false, HelpText = "Skip preflight script execution")]
