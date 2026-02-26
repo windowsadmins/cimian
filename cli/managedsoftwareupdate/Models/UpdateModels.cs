@@ -390,7 +390,13 @@ public class InstallWindow
         // Check weekday filter
         if (Weekdays is { Count: > 0 })
         {
-            var dayAbbrev = now.DayOfWeek switch
+            // For overnight windows (start > end), times after midnight belong to the
+            // previous day's window. Check yesterday's abbreviation in that case.
+            var isOvernight = startTime > endTime;
+            var inAfterMidnightPortion = isOvernight && now.TimeOfDay < endTime;
+            var checkDay = inAfterMidnightPortion ? now.AddDays(-1) : now;
+
+            var dayAbbrev = checkDay.DayOfWeek switch
             {
                 DayOfWeek.Monday => "Mon",
                 DayOfWeek.Tuesday => "Tue",
