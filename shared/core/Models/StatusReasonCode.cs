@@ -111,6 +111,9 @@ public static class StatusReasonCode
     /// <summary>Architecture not supported on this system</summary>
     public const string ArchitectureMismatch = "architecture_mismatch";
 
+    /// <summary>Install suppressed by loop guard — package is in an install loop</summary>
+    public const string LoopSuppressed = "loop_suppressed";
+
     /// <summary>OS version not supported</summary>
     public const string OsVersionMismatch = "os_version_mismatch";
 
@@ -126,6 +129,9 @@ public static class StatusReasonCode
 
     /// <summary>Uninstall process completed successfully</summary>
     public const string UninstallConfirmed = "uninstall_confirmed";
+
+    /// <summary>Installation completed successfully</summary>
+    public const string InstallCompleted = "install_completed";
 
     /// <summary>Script confirmed package removal</summary>
     public const string ScriptConfirmedRemoval = "script_confirmed_removal";
