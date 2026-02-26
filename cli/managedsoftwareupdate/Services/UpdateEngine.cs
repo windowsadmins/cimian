@@ -32,6 +32,7 @@ public class UpdateEngine : IDisposable
     private readonly ScriptService _scriptService;
     private StatusReporter? _statusReporter;
     private SessionLogger? _sessionLogger;
+    private LoopGuard? _loopGuard;
 
     private int _verbosity;
     private bool _isBootstrap;
@@ -126,6 +127,9 @@ public class UpdateEngine : IDisposable
         _isBootstrap = bootstrap || StatusService.IsBootstrapMode();
         _verbosity = verbosity;
         _showStatus = showStatus;
+
+        // Initialize loop guard for install loop prevention
+        _loopGuard = new LoopGuard(_isBootstrap);
 
         // Track session duration for run.log summary
         var sessionStopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -625,6 +629,27 @@ public class UpdateEngine : IDisposable
                     
                     if (status.NeedsAction)
                     {
+                        // Check LoopGuard before adding to install list
+                        if (_loopGuard != null)
+                        {
+                            var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version);
+                            if (suppress)
+                            {
+                                ConsoleLogger.Warn(loopReason);
+                                _sessionLogger?.Log("WARN", loopReason);
+                                _sessionLogger?.LogStatusCheck(
+                                    catalogItem.Name,
+                                    catalogItem.Version,
+                                    "suppressed",
+                                    loopReason,
+                                    Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
+                                    Cimian.Core.Models.DetectionMethod.None,
+                                    status.InstalledVersion,
+                                    false);
+                                break; // Skip this item
+                            }
+                        }
+
                         // Go doesn't distinguish - all items needing action go to toUpdate
                         // unless they are truly new (not in catalog, which we already handled)
                         toUpdate.Add(catalogItem);
@@ -976,9 +1001,12 @@ public class UpdateEngine : IDisposable
                 "completed",
                 $"Successfully installed {item.Name} v{item.Version}",
                 $"Installation completed successfully",
-                Cimian.Core.Models.StatusReasonCode.UninstallConfirmed,
+                Cimian.Core.Models.StatusReasonCode.InstallCompleted,
                 Cimian.Core.Models.DetectionMethod.None,
                 item.Version);
+
+            // Record successful install for loop guard tracking
+            _loopGuard?.RecordAttempt(item.Name, item.Version, success: true);
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -1002,6 +1030,9 @@ public class UpdateEngine : IDisposable
                 Cimian.Core.Models.DetectionMethod.None,
                 null,
                 output);
+
+            // Record failed install for loop guard tracking
+            _loopGuard?.RecordAttempt(item.Name, item.Version, success: false);
             return false;
         }
 

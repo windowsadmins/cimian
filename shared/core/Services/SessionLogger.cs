@@ -605,7 +605,8 @@ public class SessionLogger : IDisposable
 
     /// <summary>
     /// Generates the items.json report file - current snapshot of all managed items.
-    /// Go parity: DataExporter.GenerateCurrentItemsFromPackagesInfo()
+    /// Delegates to DataExporter.GenerateCurrentItemsFromPackagesInfo() for historical
+    /// enrichment including install loop detection and attempt counting.
     /// Excludes MDM profiles/apps (managed externally by Device Management Service).
     /// </summary>
     private void GenerateItemsReport()
@@ -613,20 +614,46 @@ public class SessionLogger : IDisposable
         if (_currentSessionItems.Count == 0)
             return;
 
-        var items = new List<Cimian.Core.Models.ItemRecord>();
+        // Filter out MDM-managed items before passing to DataExporter
+        var cimianItems = _currentSessionItems
+            .Where(pkg => !string.Equals(pkg.ItemType, "managedprofile", StringComparison.OrdinalIgnoreCase) &&
+                          !string.Equals(pkg.ItemType, "managedapp", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (cimianItems.Count == 0)
+            return;
+
+        try
+        {
+            // Use DataExporter for historical enrichment + loop detection
+            var exporter = new DataExporter();
+            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems);
+
+            var itemsPath = Path.Combine(ReportsDir, "items.json");
+            File.WriteAllText(itemsPath, JsonSerializer.Serialize(items, JsonOptions));
+        }
+        catch (Exception ex)
+        {
+            // Fallback to simple generation if DataExporter fails
+            Console.Error.WriteLine($"[WARN] DataExporter enrichment failed, using simple items report: {ex.Message}");
+            GenerateItemsReportSimple(cimianItems);
+        }
+    }
+
+    /// <summary>
+    /// Simple items.json generation without historical enrichment (fallback).
+    /// </summary>
+    private void GenerateItemsReportSimple(List<SessionPackageInfo> items)
+    {
+        var records = new List<Cimian.Core.Models.ItemRecord>();
         var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
 
-        foreach (var pkg in _currentSessionItems)
+        foreach (var pkg in items)
         {
-            // Skip Device Management Service-managed items (profiles and apps)
-            if (string.Equals(pkg.ItemType, "managedprofile", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(pkg.ItemType, "managedapp", StringComparison.OrdinalIgnoreCase))
-                continue;
-
             var displayName = !string.IsNullOrEmpty(pkg.DisplayName) ? pkg.DisplayName : pkg.Name;
             var normalizedStatus = NormalizeItemStatus(pkg.Status);
 
-            items.Add(new Cimian.Core.Models.ItemRecord
+            records.Add(new Cimian.Core.Models.ItemRecord
             {
                 Id = pkg.Name.ToLowerInvariant().Replace(" ", ""),
                 ItemName = pkg.Name,
@@ -645,7 +672,7 @@ public class SessionLogger : IDisposable
         }
 
         var itemsPath = Path.Combine(ReportsDir, "items.json");
-        File.WriteAllText(itemsPath, JsonSerializer.Serialize(items, JsonOptions));
+        File.WriteAllText(itemsPath, JsonSerializer.Serialize(records, JsonOptions));
     }
 
     /// <summary>
