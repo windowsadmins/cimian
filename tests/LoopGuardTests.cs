@@ -13,14 +13,17 @@ public class LoopGuardTests : IDisposable
     private readonly string _tempDir;
     private readonly string _statePath;
     private readonly string _logsDir;
+    private readonly string _cacheDir;
 
     public LoopGuardTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"loopguard_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
-        _statePath = Path.Combine(_tempDir, "loop_state.json");
+        _statePath = Path.Combine(_tempDir, "state.json");
         _logsDir = Path.Combine(_tempDir, "logs");
+        _cacheDir = Path.Combine(_tempDir, "Cache");
         Directory.CreateDirectory(_logsDir);
+        Directory.CreateDirectory(_cacheDir);
     }
 
     public void Dispose()
@@ -31,7 +34,7 @@ public class LoopGuardTests : IDisposable
 
     private LoopGuard CreateGuard(bool isBootstrap = false)
     {
-        return new LoopGuard(_statePath, _logsDir, isBootstrap);
+        return new LoopGuard(_statePath, _logsDir, isBootstrap, _cacheDir);
     }
 
     #region Basic Behavior
@@ -304,6 +307,274 @@ public class LoopGuardTests : IDisposable
 
         var guard = CreateGuard();
         guard.GetPackageState("CheckPkg").Should().BeNull();
+    }
+
+    #endregion
+
+    #region Auto-Clear on Catalog Change
+
+    [Fact]
+    public void VersionChange_AutoClearsSuppression()
+    {
+        var guard = CreateGuard();
+
+        // Get suppressed on version 1.0.0 (rapid-fire)
+        guard.RecordAttempt("VerPkg", "1.0.0", true);
+        guard.RecordAttempt("VerPkg", "1.0.0", true);
+        guard.RecordAttempt("VerPkg", "1.0.0", true);
+
+        guard.ShouldSuppress("VerPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        // Catalog now has version 2.0.0 — pkgsinfo was updated
+        var (suppress, reason) = guard.ShouldSuppress("VerPkg", "2.0.0");
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+        reason.Should().Contain("2.0.0");
+    }
+
+    [Fact]
+    public void VersionChange_ResetsHistory()
+    {
+        var guard = CreateGuard();
+
+        guard.RecordAttempt("ResetPkg", "1.0.0", true);
+        guard.RecordAttempt("ResetPkg", "1.0.0", true);
+        guard.RecordAttempt("ResetPkg", "1.0.0", true);
+
+        // Suppressed on 1.0.0
+        guard.ShouldSuppress("ResetPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        // Auto-clear on version change
+        guard.ShouldSuppress("ResetPkg", "2.0.0");
+
+        // History should be reset — state should show 0 attempts
+        var state = guard.GetPackageState("ResetPkg");
+        state.Should().NotBeNull();
+        state!.AttemptCount.Should().Be(0);
+        state.LastVersion.Should().Be("2.0.0");
+    }
+
+    [Fact]
+    public void SameVersion_DoesNotAutoClear()
+    {
+        var guard = CreateGuard();
+
+        guard.RecordAttempt("SamePkg", "1.0.0", true);
+        guard.RecordAttempt("SamePkg", "1.0.0", true);
+        guard.RecordAttempt("SamePkg", "1.0.0", true);
+
+        // Same version — should stay suppressed
+        guard.ShouldSuppress("SamePkg", "1.0.0").Suppress.Should().BeTrue();
+    }
+
+    [Fact]
+    public void FingerprintChange_AutoClearsSuppression_SameVersion()
+    {
+        var guard = CreateGuard();
+        var fingerprint1 = LoopGuard.ComputeFingerprint("1.0.0|old_script|");
+        var fingerprint2 = LoopGuard.ComputeFingerprint("1.0.0|new_fixed_script|");
+
+        // Get suppressed with fingerprint1
+        guard.RecordAttempt("FpPkg", "1.0.0", true, fingerprint1);
+        guard.RecordAttempt("FpPkg", "1.0.0", true, fingerprint1);
+        guard.RecordAttempt("FpPkg", "1.0.0", true, fingerprint1);
+
+        guard.ShouldSuppress("FpPkg", "1.0.0", fingerprint1).Suppress.Should().BeTrue();
+
+        // Same version but different fingerprint (installcheck_script changed)
+        var (suppress, reason) = guard.ShouldSuppress("FpPkg", "1.0.0", fingerprint2);
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+        reason.Should().Contain("pkgsinfo fields updated");
+    }
+
+    [Fact]
+    public void SameFingerprint_StaysSuppressed()
+    {
+        var guard = CreateGuard();
+        var fingerprint = LoopGuard.ComputeFingerprint("1.0.0|some_script|hash123");
+
+        guard.RecordAttempt("StayPkg", "1.0.0", true, fingerprint);
+        guard.RecordAttempt("StayPkg", "1.0.0", true, fingerprint);
+        guard.RecordAttempt("StayPkg", "1.0.0", true, fingerprint);
+
+        // Same fingerprint — should stay suppressed
+        guard.ShouldSuppress("StayPkg", "1.0.0", fingerprint).Suppress.Should().BeTrue();
+    }
+
+    [Fact]
+    public void FingerprintChange_ResetsHistory()
+    {
+        var guard = CreateGuard();
+        var fingerprint1 = LoopGuard.ComputeFingerprint("1.0.0||old_hash");
+        var fingerprint2 = LoopGuard.ComputeFingerprint("1.0.0||new_hash");
+
+        guard.RecordAttempt("FpResetPkg", "1.0.0", true, fingerprint1);
+        guard.RecordAttempt("FpResetPkg", "1.0.0", true, fingerprint1);
+        guard.RecordAttempt("FpResetPkg", "1.0.0", true, fingerprint1);
+
+        guard.ShouldSuppress("FpResetPkg", "1.0.0", fingerprint1).Suppress.Should().BeTrue();
+
+        // Auto-clear via fingerprint change
+        guard.ShouldSuppress("FpResetPkg", "1.0.0", fingerprint2);
+
+        var state = guard.GetPackageState("FpResetPkg");
+        state.Should().NotBeNull();
+        state!.AttemptCount.Should().Be(0);
+        state.CatalogFingerprint.Should().Be(fingerprint2);
+    }
+
+    [Fact]
+    public void FingerprintVersionChange_ShowsVersionInReason()
+    {
+        var guard = CreateGuard();
+        var fingerprint1 = LoopGuard.ComputeFingerprint("1.0.0|script|hash1");
+        var fingerprint2 = LoopGuard.ComputeFingerprint("2.0.0|script|hash2");
+
+        guard.RecordAttempt("FpVerPkg", "1.0.0", true, fingerprint1);
+        guard.RecordAttempt("FpVerPkg", "1.0.0", true, fingerprint1);
+        guard.RecordAttempt("FpVerPkg", "1.0.0", true, fingerprint1);
+
+        guard.ShouldSuppress("FpVerPkg", "1.0.0", fingerprint1).Suppress.Should().BeTrue();
+
+        // Both version and fingerprint changed
+        var (suppress, reason) = guard.ShouldSuppress("FpVerPkg", "2.0.0", fingerprint2);
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+        reason.Should().Contain("version");
+        reason.Should().Contain("2.0.0");
+    }
+
+    [Fact]
+    public void FingerprintFallback_VersionOnlyWhenNoFingerprint()
+    {
+        var guard = CreateGuard();
+
+        // Record without fingerprint (backward compatibility)
+        guard.RecordAttempt("FallbackPkg", "1.0.0", true);
+        guard.RecordAttempt("FallbackPkg", "1.0.0", true);
+        guard.RecordAttempt("FallbackPkg", "1.0.0", true);
+
+        guard.ShouldSuppress("FallbackPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        // Version change without fingerprint — should still auto-clear
+        var (suppress, reason) = guard.ShouldSuppress("FallbackPkg", "2.0.0");
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+    }
+
+    #endregion
+
+    #region Cache Analysis
+
+    [Fact]
+    public void Cache_HitWhenFileExists()
+    {
+        // Create a cached file
+        File.WriteAllText(Path.Combine(_cacheDir, "CachePkg.exe"), "fake-installer");
+
+        var guard = CreateGuard();
+        var (hasCache, path) = guard.CheckCacheForPackage("CachePkg");
+        hasCache.Should().BeTrue();
+        path.Should().Contain("CachePkg.exe");
+    }
+
+    [Fact]
+    public void Cache_HitInSubdirectory()
+    {
+        var pkgDir = Path.Combine(_cacheDir, "SubPkg");
+        Directory.CreateDirectory(pkgDir);
+        File.WriteAllText(Path.Combine(pkgDir, "installer.msi"), "fake-msi");
+
+        var guard = CreateGuard();
+        var (hasCache, path) = guard.CheckCacheForPackage("SubPkg");
+        hasCache.Should().BeTrue();
+        path.Should().Contain("installer.msi");
+    }
+
+    [Fact]
+    public void Cache_MissWhenNoFile()
+    {
+        var guard = CreateGuard();
+        var (hasCache, _) = guard.CheckCacheForPackage("NoCachePkg");
+        hasCache.Should().BeFalse();
+    }
+
+    [Fact]
+    public void DiagnosticInfo_IncludesCacheStatus()
+    {
+        File.WriteAllText(Path.Combine(_cacheDir, "DiagPkg.exe"), "fake");
+
+        var guard = CreateGuard();
+        guard.RecordAttempt("DiagPkg", "1.0.0", true);
+        guard.RecordAttempt("DiagPkg", "1.0.0", true);
+        guard.RecordAttempt("DiagPkg", "1.0.0", true);
+
+        var diag = guard.GetDiagnosticInfo("DiagPkg");
+        diag.Should().Contain("Cache: HIT");
+        diag.Should().Contain("install/status-check issue");
+    }
+
+    #endregion
+
+    #region State File Format
+
+    [Fact]
+    public void StateFile_UsesNestedCimianStateFormat()
+    {
+        var guard = CreateGuard();
+        guard.RecordAttempt("FmtPkg", "1.0.0", true);
+
+        // Read the state file and verify it has the nested structure
+        var json = File.ReadAllText(_statePath);
+        var doc = JsonDocument.Parse(json);
+
+        // Should have a "loop_guard" wrapper
+        doc.RootElement.TryGetProperty("loop_guard", out var loopGuard).Should().BeTrue();
+        loopGuard.TryGetProperty("packages", out var packages).Should().BeTrue();
+        packages.TryGetProperty("fmtpkg", out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public void StateFile_PersistsCatalogFingerprint()
+    {
+        var fingerprint = LoopGuard.ComputeFingerprint("1.0.0|script|hash");
+        var guard1 = CreateGuard();
+        guard1.RecordAttempt("FpPersistPkg", "1.0.0", true, fingerprint);
+
+        // Second instance should load the fingerprint
+        var guard2 = CreateGuard();
+        var state = guard2.GetPackageState("FpPersistPkg");
+        state.Should().NotBeNull();
+        state!.CatalogFingerprint.Should().Be(fingerprint);
+    }
+
+    #endregion
+
+    #region ComputeFingerprint
+
+    [Fact]
+    public void ComputeFingerprint_DeterministicForSameInput()
+    {
+        var fp1 = LoopGuard.ComputeFingerprint("1.0.0|script_here|hash123");
+        var fp2 = LoopGuard.ComputeFingerprint("1.0.0|script_here|hash123");
+        fp1.Should().Be(fp2);
+    }
+
+    [Fact]
+    public void ComputeFingerprint_DiffersForDifferentInput()
+    {
+        var fp1 = LoopGuard.ComputeFingerprint("1.0.0|old_script|hash123");
+        var fp2 = LoopGuard.ComputeFingerprint("1.0.0|new_script|hash123");
+        fp1.Should().NotBe(fp2);
+    }
+
+    [Fact]
+    public void ComputeFingerprint_Returns16CharHex()
+    {
+        var fp = LoopGuard.ComputeFingerprint("test input");
+        fp.Should().HaveLength(16);
+        fp.Should().MatchRegex("^[0-9a-f]{16}$");
     }
 
     #endregion
