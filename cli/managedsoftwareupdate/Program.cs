@@ -909,10 +909,8 @@ public class Program
 
         foreach (var (name, reason, until) in suppressed)
         {
-            var untilStr = until == DateTime.MaxValue ? "indefinite" : until?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "unknown";
-            Console.WriteLine($"  {name}");
-            Console.WriteLine($"    Reason: {reason}");
-            Console.WriteLine($"    Suppressed until: {untilStr}");
+            // Show full diagnostic info including cache analysis
+            Console.WriteLine(loopGuard.GetDiagnosticInfo(name));
             Console.WriteLine();
         }
 
