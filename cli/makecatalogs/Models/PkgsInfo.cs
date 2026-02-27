@@ -108,6 +108,9 @@ public class PkgsInfo
     [YamlMember(Alias = "installs")]
     public List<InstallItem>? Installs { get; set; }
 
+    [YamlMember(Alias = "blocking_applications")]
+    public List<string>? BlockingApplications { get; set; }
+
     [YamlMember(Alias = "supported_architectures")]
     public List<string>? SupportedArchitectures { get; set; }
 
@@ -147,6 +150,12 @@ public class PkgsInfo
     [YamlMember(Alias = "uninstallcheck_script")]
     public string? UninstallCheckScript { get; set; }
 
+    [YamlMember(Alias = "uninstallable")]
+    public bool? Uninstallable { get; set; }
+
+    [YamlMember(Alias = "install_window")]
+    public InstallWindow? InstallWindow { get; set; }
+
     [YamlMember(Alias = "OnDemand")]
     public bool OnDemand { get; set; }
 
@@ -155,6 +164,21 @@ public class PkgsInfo
     /// </summary>
     [YamlIgnore]
     public string FilePath { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Time window during which installation is allowed
+/// </summary>
+public class InstallWindow
+{
+    [YamlMember(Alias = "start")]
+    public string Start { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "end")]
+    public string End { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "weekdays")]
+    public List<string>? Weekdays { get; set; }
 }
 
 /// <summary>
