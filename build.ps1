@@ -265,12 +265,12 @@ $Global:CSharpTools = @{
     "manifestutil"          = @{ Project = "cli/manifestutil"; Type = "CLI" }
     "repoclean"             = @{ Project = "cli/repoclean"; Type = "CLI" }
     "cimiwatcher"           = @{ Project = "cli/cimiwatcher"; Type = "CLI" }
-    "cimistatus"            = @{ Project = "apps/CimianStatus"; Type = "GUI" }
+    "cimistatus"            = @{ Project = "gui/CimianStatus"; Type = "GUI" }
 }
 
 # GUI Applications (WPF apps that need special handling)
 $Global:GuiApps = @{
-    "ManagedSoftwareCenter" = @{ Project = "apps/ManagedSoftwareCenter"; Type = "GUI" }
+    "ManagedSoftwareCenter" = @{ Project = "gui/ManagedSoftwareCenter"; Type = "GUI" }
 }
 
 #region Certificate and Signing Functions

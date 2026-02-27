@@ -35,9 +35,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.CLI.repoclean", "cli
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "apps", "apps", "{1787FE1D-075E-9E68-7218-25F1BD1BBEAB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.GUI.CimianStatus", "apps\CimianStatus\Cimian.GUI.CimianStatus.csproj", "{E3553E9C-62B7-4B03-87E5-5A707D5903D5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.GUI.CimianStatus", "gui\CimianStatus\Cimian.GUI.CimianStatus.csproj", "{E3553E9C-62B7-4B03-87E5-5A707D5903D5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.GUI.ManagedSoftwareCenter", "apps\ManagedSoftwareCenter\Cimian.GUI.ManagedSoftwareCenter.csproj", "{F121E8F7-6162-4E02-BFE3-698D39DD97B0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cimian.GUI.ManagedSoftwareCenter", "gui\ManagedSoftwareCenter\Cimian.GUI.ManagedSoftwareCenter.csproj", "{F121E8F7-6162-4E02-BFE3-698D39DD97B0}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
