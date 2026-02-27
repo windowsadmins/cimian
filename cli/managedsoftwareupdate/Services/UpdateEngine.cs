@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
 
@@ -58,6 +59,69 @@ public class UpdateEngine : IDisposable
 
         // Enable ANSI color support on Windows console
         EnableAnsiColors();
+    }
+
+    /// <summary>
+    /// Computes a LoopGuard catalog fingerprint from a CatalogItem's install-behavior fields.
+    /// If ANY of these fields change in the pkgsinfo, the fingerprint changes and LoopGuard
+    /// auto-clears suppression — the admin may have fixed the root cause of the loop.
+    ///
+    /// Fields included: version, installcheck_script, installs array, check info,
+    /// installer hash/url/type, install_script, postinstall_script, preinstall_script.
+    /// </summary>
+    private static string ComputeCatalogFingerprint(CatalogItem item)
+    {
+        var sb = new System.Text.StringBuilder(512);
+        sb.Append(item.Version);
+        sb.Append('|');
+        sb.Append(item.InstallcheckScript ?? "");
+        sb.Append('|');
+        sb.Append(item.InstallScript ?? "");
+        sb.Append('|');
+        sb.Append(item.PostinstallScript ?? "");
+        sb.Append('|');
+        sb.Append(item.PreinstallScript ?? "");
+        sb.Append('|');
+        sb.Append(item.Installer?.Hash ?? "");
+        sb.Append('|');
+        sb.Append(item.Installer?.Location ?? "");
+        sb.Append('|');
+        sb.Append(item.Installer?.Type ?? "");
+        sb.Append('|');
+        // Serialize installs array — covers path, md5, version, product_code changes
+        if (item.Installs?.Count > 0)
+        {
+            foreach (var inst in item.Installs)
+            {
+                sb.Append(inst.Type);
+                sb.Append(':');
+                sb.Append(inst.Path ?? "");
+                sb.Append(':');
+                sb.Append(inst.Md5Checksum ?? "");
+                sb.Append(':');
+                sb.Append(inst.Version ?? "");
+                sb.Append(':');
+                sb.Append(inst.ProductCode ?? "");
+                sb.Append(';');
+            }
+        }
+        sb.Append('|');
+        // Serialize check info — covers registry name/version/path and file/script checks
+        sb.Append(item.Check?.Registry?.Name ?? "");
+        sb.Append(':');
+        sb.Append(item.Check?.Registry?.Version ?? "");
+        sb.Append(':');
+        sb.Append(item.Check?.Registry?.Path ?? "");
+        sb.Append(':');
+        sb.Append(item.Check?.File?.Path ?? "");
+        sb.Append(':');
+        sb.Append(item.Check?.File?.Version ?? "");
+        sb.Append(':');
+        sb.Append(item.Check?.File?.Hash ?? "");
+        sb.Append(':');
+        sb.Append(item.Check?.Script ?? "");
+
+        return LoopGuard.ComputeFingerprint(sb.ToString());
     }
 
     /// <summary>
@@ -632,7 +696,8 @@ public class UpdateEngine : IDisposable
                         // Check LoopGuard before adding to install list
                         if (_loopGuard != null)
                         {
-                            var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version);
+                            var fingerprint = ComputeCatalogFingerprint(catalogItem);
+                            var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
                             if (suppress)
                             {
                                 ConsoleLogger.Warn(loopReason);
@@ -1006,7 +1071,7 @@ public class UpdateEngine : IDisposable
                 item.Version);
 
             // Record successful install for loop guard tracking
-            _loopGuard?.RecordAttempt(item.Name, item.Version, success: true);
+            _loopGuard?.RecordAttempt(item.Name, item.Version, success: true, ComputeCatalogFingerprint(item));
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -1032,7 +1097,7 @@ public class UpdateEngine : IDisposable
                 output);
 
             // Record failed install for loop guard tracking
-            _loopGuard?.RecordAttempt(item.Name, item.Version, success: false);
+            _loopGuard?.RecordAttempt(item.Name, item.Version, success: false, ComputeCatalogFingerprint(item));
             return false;
         }
 
