@@ -203,15 +203,15 @@ public class StatusService
                 return result;
             }
 
-            // Go parity: If no checks are defined and no installs array, 
-            // assume item doesn't need action (it may not have verification methods)
-            // Don't fall back to ManagedInstalls registry as Go doesn't do this
-            ConsoleLogger.Debug($"No file tracking needed - registry/product code verification sufficient item: {item.Name}");
-            result.Status = "installed";
-            result.Reason = "No explicit checks defined - assuming installed";
+            // No detection methods defined AND no ManagedInstalls registry receipt found.
+            // This means the item has never been successfully installed by Cimian.
+            // Mark as needing installation so sbin-installer can deploy it.
+            ConsoleLogger.Debug($"No detection methods and no registry receipt found - treating as not installed item: {item.Name}");
+            result.Status = "not-installed";
+            result.NeedsAction = true;
+            result.Reason = "No explicit checks defined and no installation receipt in registry";
             result.ReasonCode = StatusReasonCode.NoChecks;
             result.DetectionMethod = DetectionMethod.None;
-            ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
             return result;
         }
         catch (Exception ex)
