@@ -15,17 +15,6 @@
     <PlatformTarget Condition="'$(RuntimeIdentifier)' == 'win-x64'">x64</PlatformTarget>
     <PlatformTarget Condition="'$(RuntimeIdentifier)' == ''">AnyCPU</PlatformTarget>
     
-    <!-- Override global RuntimeIdentifiers: WPF projects must not do multi-RID solution builds.
-         RID is specified explicitly during dotnet publish (-r win-arm64 / -r win-x64). -->
-    <RuntimeIdentifiers></RuntimeIdentifiers>
-
-    <!-- Suppress auto-generated assembly attribute files to prevent duplicate CS0579 errors.
-         When RuntimeIdentifiers=win-x64;win-arm64 is inherited from Directory.Build.props, the
-         WPF compiler inadvertently includes both inner-build generated files in the same
-         compilation pass. Disabling generation entirely prevents the conflict. -->
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
-
     <!-- Self-contained deployment -->
     <SelfContained>true</SelfContained>
     <PublishSingleFile>false</PublishSingleFile>
