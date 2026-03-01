@@ -18,9 +18,9 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// Migrated from Go pkg/installer (3,308 lines)
 /// 
 /// Supports:
-/// - sbin-installer for .pkg and .nupkg (PRIMARY - matches Go)
 /// - MSI via msiexec.exe
 /// - EXE with silent switches
+/// - sbin-installer for .pkg and .nupkg
 /// - Chocolatey fallback for .nupkg
 /// - MSIX/AppX via PowerShell
 /// - PowerShell scripts
@@ -103,13 +103,6 @@ public class InstallerService
     /// </summary>
     private bool IsSbinInstallerAvailable()
     {
-        // If Chocolatey is forced, don't use sbin-installer
-        if (_config.ForceChocolatey)
-        {
-            ConsoleLogger.Debug("Chocolatey forced via configuration, skipping sbin-installer");
-            return false;
-        }
-
         var sbinPath = DetectSbinInstaller();
         if (string.IsNullOrEmpty(sbinPath))
         {
@@ -410,15 +403,13 @@ public class InstallerService
     }
 
     /// <summary>
-    /// Installs a .nupkg package using sbin-installer with Chocolatey fallback.
-    /// Matches Go: installOrUpgradeNupkgWithSbin() and installOrUpgradePackage()
+    /// Installs a .nupkg package using sbin-installer.
     /// </summary>
     private async Task<(bool Success, string Output)> InstallNupkgWithSbinAsync(
         CatalogItem item,
         string packagePath,
         CancellationToken cancellationToken)
     {
-        // Try sbin-installer first if available
         if (IsSbinInstallerAvailable())
         {
             ConsoleLogger.Info($"[INSTALLER METHOD: sbin-installer] Attempting .nupkg installation: {item.Name}");
@@ -431,13 +422,12 @@ public class InstallerService
                 return result;
             }
 
-            // Log fallback
-            ConsoleLogger.Warn($"[INSTALLER METHOD: sbin-installer → choco] sbin-installer failed, falling back to Chocolatey");
-            _sessionLogger?.Log("WARN", $"sbin-installer failed for {item.Name}, attempting Chocolatey fallback");
+            ConsoleLogger.Warn($"sbin-installer failed for {item.Name}, attempting Chocolatey fallback");
+            _sessionLogger?.Log("WARN", $"sbin-installer failed for {item.Name}: {result.Output}");
         }
 
-        // Fallback to Chocolatey
         ConsoleLogger.Info($"[INSTALLER METHOD: choco] Using Chocolatey for .nupkg installation: {item.Name}");
+        _sessionLogger?.Log("INFO", $"Using Chocolatey for .nupkg installation: {item.Name}");
         return await InstallChocolateyAsync(item, packagePath, cancellationToken);
     }
 
@@ -584,11 +574,8 @@ public class InstallerService
             // PRIMARY: .pkg files use sbin-installer (matches Go behavior)
             "pkg" => await InstallPkgWithSbinAsync(item, localFile, cancellationToken),
             
-            // .nupkg files: try sbin-installer first, fallback to Chocolatey
+            // .nupkg files: sbin-installer
             "nupkg" => await InstallNupkgWithSbinAsync(item, localFile, cancellationToken),
-            
-            // Legacy Chocolatey (explicit request)
-            "chocolatey" => await InstallChocolateyAsync(item, localFile, cancellationToken),
             
             // nopkg / script-only: no installer binary, run install_script directly
             "nopkg" or "script" => await InstallScriptOnlyAsync(item, cancellationToken),
@@ -1422,25 +1409,31 @@ public class InstallerService
         try
         {
             using var archive = ZipFile.OpenRead(packagePath);
-            var fileHashes = new List<string>();
+            // Use SortedDictionary with OrdinalIgnoreCase to match cimipkg's ZipArchiveHelper.CalculateContentHash()
+            var hashes = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using var sha256 = SHA256.Create();
 
-            foreach (var entry in archive.Entries.OrderBy(e => e.FullName))
+            foreach (var entry in archive.Entries)
             {
-                if (entry.FullName.EndsWith("/")) continue; // Skip directories
-                if (entry.Name == "build-info.yaml") continue; // Skip signature file
+                if (string.IsNullOrEmpty(entry.Name)) continue; // Skip directories
+                if (entry.FullName.Equals("build-info.yaml", StringComparison.OrdinalIgnoreCase)) continue;
 
                 using var stream = entry.Open();
-                using var sha256 = SHA256.Create();
                 var hash = sha256.ComputeHash(stream);
-                fileHashes.Add($"{entry.FullName}:{Convert.ToHexString(hash).ToLowerInvariant()}");
+                hashes[entry.FullName] = Convert.ToHexString(hash).ToLowerInvariant();
             }
 
-            // Combine all file hashes
-            using var finalSha = SHA256.Create();
-            var combined = string.Join("\n", fileHashes);
-            var combinedBytes = Encoding.UTF8.GetBytes(combined);
-            var finalHash = finalSha.ComputeHash(combinedBytes);
+            // Combine with pipe separator to match cimipkg format
+            var combined = new StringBuilder();
+            foreach (var kvp in hashes)
+            {
+                combined.Append(kvp.Key);
+                combined.Append(':');
+                combined.Append(kvp.Value);
+                combined.Append('|');
+            }
 
+            var finalHash = sha256.ComputeHash(Encoding.UTF8.GetBytes(combined.ToString()));
             return (Convert.ToHexString(finalHash).ToLowerInvariant(), null);
         }
         catch (Exception ex)
