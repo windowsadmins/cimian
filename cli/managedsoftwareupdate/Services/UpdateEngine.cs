@@ -985,8 +985,6 @@ public class UpdateEngine : IDisposable
 
             foreach (var dep in missingDeps)
             {
-                LogInfo($"Installing required dependency: {dep} (for {itemName})");
-
                 // Parse dependency name (may have version)
                 var (depName, _) = CatalogService.SplitNameAndVersion(dep);
 
@@ -997,6 +995,21 @@ public class UpdateEngine : IDisposable
                     ConsoleLogger.Error($"Required dependency not found in catalog: {depName} (for {itemName})");
                     return false;
                 }
+
+                // Check if the dependency actually needs installation
+                // use the same CheckStatus logic as manifest items
+                var depStatus = _statusService.CheckStatus(depItem, "install", _config.CachePath);
+                if (!depStatus.NeedsAction)
+                {
+                    LogDetail($"Dependency {depName} already installed: {depStatus.Reason}");
+                    if (!installedItems.Contains(depItem.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        installedItems.Add(depItem.Name);
+                    }
+                    continue;
+                }
+
+                LogInfo($"Installing required dependency: {dep} (for {itemName})");
 
                 // Download the dependency if not already downloaded
                 if (!downloadedPaths.ContainsKey(depItem.Name))
