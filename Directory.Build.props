@@ -19,7 +19,7 @@
     <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WarningLevel>5</WarningLevel>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <NoWarn>$(NoWarn);CS1591;CA1416</NoWarn>
     <LangVersion>preview</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
