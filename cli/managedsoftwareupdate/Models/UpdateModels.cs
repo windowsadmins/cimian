@@ -556,9 +556,9 @@ public class InstallerInfo
     }
 
     /// <summary>
-    /// Normalizes a flag to ensure it has a - or -- prefix
-    /// Supports both "quiet" and "--quiet" input formats
-    /// Uses -- for flags longer than 1 character, - for single char
+    /// Normalizes a flag to ensure it has a - or -- prefix.
+    /// Quoted flags (wrapped in single or double quotes) are stripped of quotes and passed through as-is.
+    /// Use quotes to bypass normalization, e.g. '"ALLUSERS=TRUE"' passes as 'ALLUSERS=TRUE' with no prefix.
     /// </summary>
     private static string NormalizeFlag(string flag)
     {
@@ -567,12 +567,16 @@ public class InstallerInfo
         
         var trimmed = flag.Trim();
         
+        // Quoted: strip quotes and pass inner content exactly as written
+        if ((trimmed.StartsWith('"') && trimmed.EndsWith('"')) ||
+            (trimmed.StartsWith('\'') && trimmed.EndsWith('\'')))
+            return trimmed[1..^1];
+        
         // Already has - or -- prefix - use as-is
         if (trimmed.StartsWith('-'))
             return trimmed;
         
-        // Determine prefix based on flag length (single char = -, otherwise --)
-        // Handle flags with = or space (e.g., "mode=silent" -> "--mode=silent")
+        // Determine prefix based on flag name length (single char = -, otherwise --)
         var flagName = trimmed.Split('=', ' ')[0];
         var prefix = flagName.Length == 1 ? "-" : "--";
         
@@ -665,7 +669,9 @@ public class UninstallerInfo
     }
 
     /// <summary>
-    /// Normalizes a flag to ensure it has a - or -- prefix
+    /// Normalizes a flag to ensure it has a - or -- prefix.
+    /// Quoted flags (wrapped in single or double quotes) are stripped of quotes and passed through as-is.
+    /// Use quotes to bypass normalization, e.g. '"ALLUSERS=TRUE"' passes as 'ALLUSERS=TRUE' with no prefix.
     /// </summary>
     private static string NormalizeFlag(string flag)
     {
@@ -673,6 +679,12 @@ public class UninstallerInfo
             return flag;
         
         var trimmed = flag.Trim();
+        
+        // Quoted: strip quotes and pass inner content exactly as written
+        if ((trimmed.StartsWith('"') && trimmed.EndsWith('"')) ||
+            (trimmed.StartsWith('\'') && trimmed.EndsWith('\'')))
+            return trimmed[1..^1];
+        
         if (trimmed.StartsWith('-'))
             return trimmed;
         
