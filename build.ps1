@@ -915,59 +915,46 @@ function Build-NuGetPackage {
         return $null
     }
     
-    $nuspecPath = Join-Path $nuspecDir "nupkg.$Architecture.nuspec"
-    
-    # Create or update nuspec file
-    $nuspecContent = @"
-<?xml version="1.0"?>
-<package>
-  <metadata>
-    <id>CimianTools-$Architecture</id>
-    <version>$($Version.Semantic)</version>
-    <title>Cimian Tools ($Architecture)</title>
-    <authors>WindowsAdmins</authors>
-    <owners>WindowsAdmins</owners>
-    <description>Enterprise Software Deployment System for Windows - $Architecture binaries</description>
-    <projectUrl>https://github.com/windowsadmins/cimian</projectUrl>
-    <license type="expression">MIT</license>
-    <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <tags>deployment;software-management;windows;enterprise;intune</tags>
-  </metadata>
-  <files>
-    <file src="..\..\..\release\$Architecture\*.exe" target="tools" />
-  </files>
-</package>
-"@
+    $nuspecTemplatePath = Join-Path $nuspecDir "nupkg.$Architecture.nuspec"
+    $nuspecPath = Join-Path $nuspecDir "nupkg.$Architecture.tmp.nuspec"
+
+    # Read template and substitute version into a temp file (never modify the tracked template)
+    $nuspecContent = (Get-Content $nuspecTemplatePath -Raw) -replace '\{\{VERSION\}\}', $Version.Semantic
     [System.IO.File]::WriteAllText($nuspecPath, $nuspecContent, [System.Text.Encoding]::UTF8)
-    
+
     $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
-    
+
     # Method 1: Try using nuget.exe directly (simplest, most reliable)
     if (Test-Command "nuget") {
         Write-BuildLog "Using nuget.exe to create package..." "INFO"
         try {
             Push-Location $nuspecDir
-            & nuget pack "nupkg.$Architecture.nuspec" -OutputDirectory $OutputDir -NonInteractive -ForceEnglishOutput 2>&1 | Out-Null
+            & nuget pack "nupkg.$Architecture.tmp.nuspec" -OutputDirectory $OutputDir -NonInteractive -ForceEnglishOutput 2>&1 | Out-Null
             Pop-Location
-            
+
             if ($LASTEXITCODE -eq 0 -and (Test-Path $nupkgOutput)) {
                 Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
-                
+
                 if ($Sign) {
                     Invoke-SignNuget -NupkgPath $nupkgOutput -Thumbprint $Thumbprint
                 }
-                
+
                 return $nupkgOutput
             }
         }
         catch {
             Write-BuildLog "nuget.exe method failed: $_" "DEBUG"
         }
+        finally {
+            Remove-Item $nuspecPath -Force -ErrorAction SilentlyContinue
+        }
     }
     
     # Method 2: Create ZIP-based .nupkg manually (no external tools required)
     Write-BuildLog "Creating NuGet package using ZIP method..." "INFO"
-    
+    # Clean up temp nuspec if Method 1 was skipped (nuget not available)
+    Remove-Item $nuspecPath -Force -ErrorAction SilentlyContinue
+
     try {
         # Create temp directory structure
         $tempDir = Join-Path $nuspecDir "temp_nupkg_$Architecture"
