@@ -555,10 +555,24 @@ public class InstallerService
         {
             ConsoleLogger.Info($"Running preinstall script for {item.Name}...");
             _sessionLogger?.Log("INFO", $"Executing preinstall script for {item.Name}");
-            var preResult = await _scriptService.ExecuteScriptAsync(item.PreinstallScript, cancellationToken);
-            if (!preResult.Success)
+            try
             {
-                var errorMsg = $"Preinstall script failed: {preResult.Output}";
+                var preResult = await _scriptService.ExecuteScriptAsync(item.PreinstallScript, cancellationToken);
+                ConsoleLogger.Debug($"Preinstall script output: {preResult.Output}");
+                if (!preResult.Success)
+                {
+                    var errorMsg = $"Preinstall script failed: {preResult.Output}";
+                    ConsoleLogger.Error($"Preinstall script failed for {item.Name}. Output: {preResult.Output}");
+                    _sessionLogger?.Log("ERROR", $"Preinstall script failed for {item.Name}: {preResult.Output}");
+                    _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
+                    return (false, errorMsg);
+                }
+            }
+            catch (Exception ex)
+            {
+                var errorMsg = $"Preinstall script threw an exception: {ex.Message}";
+                ConsoleLogger.Error($"Exception during preinstall script for {item.Name}: {ex}");
+                _sessionLogger?.Log("ERROR", errorMsg);
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
                 return (false, errorMsg);
             }
