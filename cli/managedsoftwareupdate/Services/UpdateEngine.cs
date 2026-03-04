@@ -357,7 +357,12 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
+            // When --item is specified, the admin is explicitly targeting a package,
+            // so loop suppression is bypassed — the admin is aware it's not an automated loop.
+            var bypassLoopGuard = itemFilterService.HasFilter;
+            if (bypassLoopGuard)
+                ConsoleLogger.Info("Loop suppression bypassed: --item flag indicates explicit admin targeting");
+            var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap, bypassLoopGuard);
 
             // Apply --item filter if specified (Go parity: pkg/filter)
             if (itemFilterService.HasFilter)
@@ -640,7 +645,7 @@ public class UpdateEngine : IDisposable
     }
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall) 
-        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
+        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap, bool bypassLoopGuard = false)
     {
         var toInstall = new List<CatalogItem>();
         var toUpdate = new List<CatalogItem>();
@@ -693,8 +698,9 @@ public class UpdateEngine : IDisposable
                     
                     if (status.NeedsAction)
                     {
-                        // Check LoopGuard before adding to install list
-                        if (_loopGuard != null)
+                        // Check LoopGuard before adding to install list.
+                        // Bypass when --item is used: admin is explicitly targeting the package.
+                        if (_loopGuard != null && !bypassLoopGuard)
                         {
                             var fingerprint = ComputeCatalogFingerprint(catalogItem);
                             var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
