@@ -791,6 +791,14 @@ public class UpdateEngine : IDisposable
                     LogDetail($"    Skipping {updateItemName} - already in manifest");
                     continue;
                 }
+
+                // Skip if the item was explicitly gated out by a conditional whose condition
+                // evaluated to false — update_for must not bypass conditional gates.
+                if (_manifestService.ConditionallyExcludedNames.Contains(updateKey))
+                {
+                    LogDetail($"    Skipping {updateItemName} - excluded by conditional (condition evaluated false)");
+                    continue;
+                }
                 
                 // Get the update item from catalog
                 if (!catalogMap.TryGetValue(updateKey, out var updateItem))
