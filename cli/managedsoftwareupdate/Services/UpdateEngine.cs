@@ -433,30 +433,37 @@ public class UpdateEngine : IDisposable
             }
 
             // Filter out items outside their install_window (applies to installs, updates, and uninstalls)
+            // Bypassed when --item is specified: admin is explicitly targeting that package.
+            var bypassInstallWindow = itemFilterService.HasFilter;
+            if (bypassInstallWindow)
+                ConsoleLogger.Info("Install window bypassed: --item flag indicates explicit admin targeting");
             var deferredItems = new List<CatalogItem>();
             var now = DateTime.Now;
-            foreach (var list in new[] { toInstall, toUpdate, toUninstall })
+            if (!bypassInstallWindow)
             {
-                for (int i = list.Count - 1; i >= 0; i--)
+                foreach (var list in new[] { toInstall, toUpdate, toUninstall })
                 {
-                    var item = list[i];
-                    if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
+                    for (int i = list.Count - 1; i >= 0; i--)
                     {
-                        LogInfo($"Deferred: {item.Name} v{item.Version} (outside install window {item.InstallWindow})");
-                        _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: outside install window {item.InstallWindow}");
-                        _sessionLogger?.LogStatusCheck(
-                            item.Name, item.Version, "deferred",
-                            $"Outside install window {item.InstallWindow}",
-                            Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
-                            Cimian.Core.Models.DetectionMethod.None, null, false);
-                        deferredItems.Add(item);
-                        list.RemoveAt(i);
+                        var item = list[i];
+                        if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
+                        {
+                            LogInfo($"Deferred: {item.Name} v{item.Version} (outside install window {item.InstallWindow})");
+                            _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: outside install window {item.InstallWindow}");
+                            _sessionLogger?.LogStatusCheck(
+                                item.Name, item.Version, "deferred",
+                                $"Outside install window {item.InstallWindow}",
+                                Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
+                                Cimian.Core.Models.DetectionMethod.None, null, false);
+                            deferredItems.Add(item);
+                            list.RemoveAt(i);
+                        }
                     }
                 }
-            }
-            if (deferredItems.Count > 0)
-            {
-                LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
+                if (deferredItems.Count > 0)
+                {
+                    LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
+                }
             }
 
             // Perform installations
@@ -789,14 +796,6 @@ public class UpdateEngine : IDisposable
                 if (existingNames.Contains(updateKey))
                 {
                     LogDetail($"    Skipping {updateItemName} - already in manifest");
-                    continue;
-                }
-
-                // Skip if the item was explicitly gated out by a conditional whose condition
-                // evaluated to false — update_for must not bypass conditional gates.
-                if (_manifestService.ConditionallyExcludedNames.Contains(updateKey))
-                {
-                    LogDetail($"    Skipping {updateItemName} - excluded by conditional (condition evaluated false)");
                     continue;
                 }
                 
