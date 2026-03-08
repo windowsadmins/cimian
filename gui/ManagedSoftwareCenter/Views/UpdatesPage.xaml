@@ -8,6 +8,7 @@
 
     <Page.Resources>
         <converters:StringFormatConverter x:Key="StringFormatConverter" />
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
     </Page.Resources>
 
     <Grid>
@@ -102,6 +103,16 @@
                                             <TextBlock Text="{Binding Version, Converter={StaticResource StringFormatConverter}, ConverterParameter='Version {0}'}" 
                                                        FontSize="12"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock Text="{Binding DeadlineText}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       Visibility="{Binding HasDeadline}"
+                                                       Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding DaysPendingText}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                       Visibility="{Binding HasDaysPendingText, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                       Margin="0,2,0,0"/>
                                         </StackPanel>
 
                                         <!-- Size -->
@@ -166,6 +177,16 @@
                                                            FontSize="12"
                                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"/>
                                             </StackPanel>
+                                            <TextBlock Text="{Binding DeadlineText}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       Visibility="{Binding HasDeadline}"
+                                                       Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding DaysPendingText}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                       Visibility="{Binding HasDaysPendingText, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                       Margin="0,2,0,0"/>
                                         </StackPanel>
 
                                         <!-- Update Badge -->

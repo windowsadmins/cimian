@@ -187,6 +187,48 @@ public class InstallableItem
     public List<string>? Screenshots { get; set; }
 
     /// <summary>
+    /// Alert to display before installing
+    /// </summary>
+    [YamlMember(Alias = "preinstall_alert")]
+    public AlertInfo? PreinstallAlert { get; set; }
+
+    /// <summary>
+    /// Alert to display before uninstalling
+    /// </summary>
+    [YamlMember(Alias = "preuninstall_alert")]
+    public AlertInfo? PreuninstallAlert { get; set; }
+
+    /// <summary>
+    /// Alert to display before upgrading
+    /// </summary>
+    [YamlMember(Alias = "preupgrade_alert")]
+    public AlertInfo? PreupgradeAlert { get; set; }
+
+    /// <summary>
+    /// Date after which this item must be force-installed
+    /// </summary>
+    [YamlMember(Alias = "force_install_after_date")]
+    public DateTime? ForceInstallAfterDate { get; set; }
+
+    /// <summary>
+    /// List of item names that depend on this item
+    /// </summary>
+    [YamlMember(Alias = "dependent_items")]
+    public List<string>? DependentItems { get; set; }
+
+    /// <summary>
+    /// Applications that must be quit before installing
+    /// </summary>
+    [YamlMember(Alias = "blocking_applications")]
+    public List<string>? BlockingApplications { get; set; }
+
+    /// <summary>
+    /// Reason why the item is unavailable (license, OS version, disk space, etc.)
+    /// </summary>
+    [YamlMember(Alias = "note")]
+    public string? Note { get; set; }
+
+    /// <summary>
     /// Whether restart is required after installation
     /// </summary>
     public bool RestartRequired => !string.IsNullOrEmpty(RestartAction) && 
@@ -214,6 +256,9 @@ public class InstallableItem
         ItemStatus.Installing => "Installing...",
         ItemStatus.InstallError => "Install failed",
         ItemStatus.RemovalError => "Removal failed",
+        ItemStatus.Unavailable => "Unavailable",
+        ItemStatus.InstalledNotRemovable => "Installed",
+        ItemStatus.MustBeInstalled => "Required",
         _ => Installed ? "Installed" : ""
     };
 
@@ -222,6 +267,44 @@ public class InstallableItem
     /// </summary>
     [YamlIgnore]
     public BitmapImage? IconImage { get; set; }
+
+    /// <summary>
+    /// Days pending text for UI binding (not serialized)
+    /// </summary>
+    [YamlIgnore]
+    public string? DaysPendingText { get; set; }
+
+    /// <summary>
+    /// Whether days pending text should be shown
+    /// </summary>
+    [YamlIgnore]
+    public bool HasDaysPendingText => !string.IsNullOrEmpty(DaysPendingText);
+
+    /// <summary>
+    /// Whether this item has a force install deadline
+    /// </summary>
+    [YamlIgnore]
+    public bool HasDeadline => ForceInstallAfterDate.HasValue;
+
+    /// <summary>
+    /// Warning text for force_install_after_date
+    /// </summary>
+    [YamlIgnore]
+    public string? DeadlineText
+    {
+        get
+        {
+            if (!ForceInstallAfterDate.HasValue) return null;
+            var remaining = ForceInstallAfterDate.Value - DateTime.Now;
+            if (remaining.TotalDays < 0)
+                return "This item is past its installation deadline!";
+            if (remaining.TotalHours < 1)
+                return "This item must be installed within the hour!";
+            if (remaining.TotalDays < 1)
+                return $"This item must be installed within {(int)remaining.TotalHours} hours";
+            return $"This item must be installed by {ForceInstallAfterDate.Value:g}";
+        }
+    }
 
     /// <summary>
     /// Size in bytes for binding
@@ -268,6 +351,24 @@ public class ProblemItem
 }
 
 /// <summary>
+/// Alert information for pre-install/uninstall/upgrade dialogs
+/// </summary>
+public class AlertInfo
+{
+    [YamlMember(Alias = "alert_title")]
+    public string? AlertTitle { get; set; }
+
+    [YamlMember(Alias = "alert_detail")]
+    public string? AlertDetail { get; set; }
+
+    [YamlMember(Alias = "ok_label")]
+    public string? OkLabel { get; set; }
+
+    [YamlMember(Alias = "cancel_label")]
+    public string? CancelLabel { get; set; }
+}
+
+/// <summary>
 /// Possible status values for installable items
 /// </summary>
 public static class ItemStatus
@@ -284,4 +385,7 @@ public static class ItemStatus
     public const string Installing = "installing";
     public const string InstallError = "install-error";
     public const string RemovalError = "removal-error";
+    public const string Unavailable = "unavailable";
+    public const string InstalledNotRemovable = "installed-not-removable";
+    public const string MustBeInstalled = "must-be-installed";
 }

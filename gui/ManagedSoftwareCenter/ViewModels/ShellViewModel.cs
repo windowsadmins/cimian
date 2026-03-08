@@ -61,9 +61,13 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     private object? _navigationParameter;
 
+    [ObservableProperty]
+    private string? _deadlineWarningText;
+
     public bool HasAvailableSoftware => AvailableCount > 0;
     public bool HasMyItems => MyItemsCount > 0;
     public bool HasUpdates => UpdatesCount > 0;
+    public bool HasDeadlineWarning => !string.IsNullOrEmpty(DeadlineWarningText);
     public string ProgressPercentText => IsProgressIndeterminate ? "" : $"{ProgressPercent}%";
 
     public ShellViewModel(
@@ -183,10 +187,33 @@ public partial class ShellViewModel : ObservableObject
         var selfService = await _selfServiceService.GetAllRequestsAsync();
         MyItemsCount = selfService.ManagedInstalls.Count + selfService.ManagedUninstalls.Count;
 
+        // Check for approaching forced install deadlines
+        var allItems = info.ManagedUpdates.Concat(info.ManagedInstalls);
+        var nextDeadline = allItems
+            .Where(x => x.ForceInstallAfterDate.HasValue)
+            .OrderBy(x => x.ForceInstallAfterDate!.Value)
+            .FirstOrDefault();
+        
+        if (nextDeadline?.ForceInstallAfterDate != null)
+        {
+            var remaining = nextDeadline.ForceInstallAfterDate.Value - DateTime.Now;
+            if (remaining.TotalDays < 1)
+                DeadlineWarningText = $"Urgent: {nextDeadline.GetDisplayName()} must be installed soon!";
+            else if (remaining.TotalDays < 3)
+                DeadlineWarningText = $"{nextDeadline.GetDisplayName()} must be installed by {nextDeadline.ForceInstallAfterDate.Value:g}";
+            else
+                DeadlineWarningText = null;
+        }
+        else
+        {
+            DeadlineWarningText = null;
+        }
+
         // Notify property changes for visibility bindings
         OnPropertyChanged(nameof(HasAvailableSoftware));
         OnPropertyChanged(nameof(HasMyItems));
         OnPropertyChanged(nameof(HasUpdates));
+        OnPropertyChanged(nameof(HasDeadlineWarning));
     }
 
     private async void OnInstallInfoChanged(object? sender, InstallInfo info)

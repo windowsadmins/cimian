@@ -165,6 +165,63 @@
 
                 <!-- Description -->
                 <StackPanel Grid.Row="1" Margin="0,0,0,24">
+                    <!-- Deadline Warning -->
+                    <Border 
+                        x:Name="DeadlineWarning"
+                        Visibility="Collapsed"
+                        Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}"
+                        CornerRadius="8"
+                        Padding="12"
+                        Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon Glyph="&#xE783;" FontSize="16" 
+                                      Foreground="{ThemeResource SystemFillColorCriticalBrush}"/>
+                            <TextBlock 
+                                x:Name="DeadlineText"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Dependency Info -->
+                    <Border 
+                        x:Name="DependencyInfo"
+                        Visibility="Collapsed"
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                        CornerRadius="8"
+                        Padding="12"
+                        Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon Glyph="&#xE946;" FontSize="16" 
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock 
+                                x:Name="DependencyText"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Unavailable Reason -->
+                    <Border 
+                        x:Name="UnavailableInfo"
+                        Visibility="Collapsed"
+                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                        CornerRadius="8"
+                        Padding="12"
+                        Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon Glyph="&#xE7BA;" FontSize="16" 
+                                      Foreground="{ThemeResource SystemFillColorCautionBrush}"/>
+                            <TextBlock 
+                                x:Name="UnavailableText"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
                     <TextBlock 
                         Text="Description" 
                         Style="{StaticResource SubtitleTextBlockStyle}"

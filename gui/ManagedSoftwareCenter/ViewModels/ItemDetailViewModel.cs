@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI;
 using Windows.UI;
+using System.Diagnostics;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 
@@ -19,6 +20,7 @@ public partial class ItemDetailViewModel : ObservableObject
     private readonly ISelfServiceManifestService _selfServiceService;
     private readonly ITriggerService _triggerService;
     private readonly IIconService _iconService;
+    private readonly IAlertService _alertService;
 
     private string _itemName = string.Empty;
 
@@ -65,12 +67,14 @@ public partial class ItemDetailViewModel : ObservableObject
         IInstallInfoService installInfoService,
         ISelfServiceManifestService selfServiceService,
         ITriggerService triggerService,
-        IIconService iconService)
+        IIconService iconService,
+        IAlertService alertService)
     {
         _installInfoService = installInfoService;
         _selfServiceService = selfServiceService;
         _triggerService = triggerService;
         _iconService = iconService;
+        _alertService = alertService;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
     }
@@ -181,8 +185,19 @@ public partial class ItemDetailViewModel : ObservableObject
                 StatusForeground = new SolidColorBrush(Colors.White);
             }
             
-            ShowRemoveButton = Item.Uninstallable;
+            // Prevent removal if other items depend on this one
+            ShowRemoveButton = Item.Uninstallable && (Item.DependentItems == null || Item.DependentItems.Count == 0);
             ShowCancelButton = false;
+        }
+        else if (Item.Status == ItemStatus.Unavailable)
+        {
+            StatusText = "Unavailable";
+            ShowStatusBadge = true;
+            ShowInstallButton = false;
+            ShowRemoveButton = false;
+            ShowCancelButton = false;
+            StatusBackground = new SolidColorBrush(Color.FromArgb(255, 128, 128, 128)); // Gray
+            StatusForeground = new SolidColorBrush(Colors.White);
         }
         else
         {
@@ -199,6 +214,19 @@ public partial class ItemDetailViewModel : ObservableObject
     {
         if (Item == null || !ShowInstallButton) return;
 
+        // Check for pre-install or pre-upgrade alert
+        var alert = Item.Installed ? Item.PreupgradeAlert : Item.PreinstallAlert;
+        if (alert != null)
+        {
+            var defaultTitle = Item.Installed ? "Upgrade Alert" : "Install Alert";
+            if (!await _alertService.ShowAlertAsync(alert, defaultTitle))
+                return;
+        }
+
+        // Check for blocking applications
+        if (!await CheckBlockingAppsAsync(Item))
+            return;
+
         await _selfServiceService.AddInstallRequestAsync(Item.Name);
         await _triggerService.TriggerInstallAsync();
         await UpdateStatusAsync();
@@ -208,6 +236,13 @@ public partial class ItemDetailViewModel : ObservableObject
     private async Task RemoveAsync()
     {
         if (Item == null || !ShowRemoveButton) return;
+
+        // Check for pre-uninstall alert
+        if (Item.PreuninstallAlert != null)
+        {
+            if (!await _alertService.ShowAlertAsync(Item.PreuninstallAlert, "Uninstall Alert"))
+                return;
+        }
 
         await _selfServiceService.AddRemovalRequestAsync(Item.Name);
         await _triggerService.TriggerInstallAsync();
@@ -221,6 +256,28 @@ public partial class ItemDetailViewModel : ObservableObject
 
         await _selfServiceService.RemoveRequestAsync(Item.Name);
         await UpdateStatusAsync();
+    }
+
+    private async Task<bool> CheckBlockingAppsAsync(InstallableItem item)
+    {
+        if (item.BlockingApplications is not { Count: > 0 }) return true;
+
+        var running = new List<string>();
+        foreach (var app in item.BlockingApplications)
+        {
+            var processName = Path.GetFileNameWithoutExtension(app);
+            if (Process.GetProcessesByName(processName).Length > 0)
+                running.Add(app);
+        }
+
+        if (running.Count == 0) return true;
+
+        var appList = string.Join(", ", running);
+        return await _alertService.ShowWarningAsync(
+            "Blocking Applications Running",
+            $"Please quit the following applications before installing:\n\n{appList}",
+            "Install Anyway",
+            "Cancel");
     }
 
     private async void OnInstallInfoChanged(object? sender, InstallInfo info)

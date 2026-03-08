@@ -1,6 +1,7 @@
 // SoftwareViewModel.cs - ViewModel for Software page (browse all optional installs)
 
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
@@ -18,6 +19,7 @@ public partial class SoftwareViewModel : ObservableObject
     private readonly ISelfServiceManifestService _selfServiceService;
     private readonly ITriggerService _triggerService;
     private readonly IIconService _iconService;
+    private readonly IAlertService _alertService;
 
     private List<InstallableItem> _allItems = [];
 
@@ -55,12 +57,14 @@ public partial class SoftwareViewModel : ObservableObject
         IInstallInfoService installInfoService,
         ISelfServiceManifestService selfServiceService,
         ITriggerService triggerService,
-        IIconService iconService)
+        IIconService iconService,
+        IAlertService alertService)
     {
         _installInfoService = installInfoService;
         _selfServiceService = selfServiceService;
         _triggerService = triggerService;
         _iconService = iconService;
+        _alertService = alertService;
 
         // Subscribe to changes
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
@@ -196,6 +200,19 @@ public partial class SoftwareViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallItemAsync(InstallableItem item)
     {
+        // Check for pre-install or pre-upgrade alert
+        var alert = item.Installed ? item.PreupgradeAlert : item.PreinstallAlert;
+        if (alert != null)
+        {
+            var defaultTitle = item.Installed ? "Upgrade Alert" : "Install Alert";
+            if (!await _alertService.ShowAlertAsync(alert, defaultTitle))
+                return;
+        }
+
+        // Check for blocking applications
+        if (!await CheckBlockingAppsAsync(item))
+            return;
+
         // Add to self-service manifest
         await _selfServiceService.AddInstallRequestAsync(item.Name);
         
@@ -213,6 +230,13 @@ public partial class SoftwareViewModel : ObservableObject
     [RelayCommand]
     private async Task RemoveItemAsync(InstallableItem item)
     {
+        // Check for pre-uninstall alert
+        if (item.PreuninstallAlert != null)
+        {
+            if (!await _alertService.ShowAlertAsync(item.PreuninstallAlert, "Uninstall Alert"))
+                return;
+        }
+
         // Add to self-service manifest for removal
         await _selfServiceService.AddRemovalRequestAsync(item.Name);
 
@@ -238,6 +262,28 @@ public partial class SoftwareViewModel : ObservableObject
 
         // Refresh to show updated status
         OnPropertyChanged(nameof(Items));
+    }
+
+    private async Task<bool> CheckBlockingAppsAsync(InstallableItem item)
+    {
+        if (item.BlockingApplications is not { Count: > 0 }) return true;
+
+        var running = new List<string>();
+        foreach (var app in item.BlockingApplications)
+        {
+            var processName = Path.GetFileNameWithoutExtension(app);
+            if (Process.GetProcessesByName(processName).Length > 0)
+                running.Add(app);
+        }
+
+        if (running.Count == 0) return true;
+
+        var appList = string.Join(", ", running);
+        return await _alertService.ShowWarningAsync(
+            "Blocking Applications Running",
+            $"Please quit the following applications before installing:\n\n{appList}",
+            "Install Anyway",
+            "Cancel");
     }
 
     private async void OnInstallInfoChanged(object? sender, InstallInfo info)
