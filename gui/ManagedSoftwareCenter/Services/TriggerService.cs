@@ -87,7 +87,7 @@ public class TriggerService : ITriggerService, IDisposable
         if (exePath == null)
         {
             _logger?.LogError("Could not find managedsoftwareupdate.exe");
-            return;
+            throw new FileNotFoundException("Could not find managedsoftwareupdate.exe. Ensure it is installed at C:\\Program Files\\Cimian\\managedsoftwareupdate.exe or available on PATH.");
         }
 
         _logger?.LogInformation("Running: {Path} {Args}", exePath, arguments);

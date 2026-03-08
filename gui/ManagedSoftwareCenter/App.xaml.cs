@@ -34,6 +34,8 @@ public partial class App : Application
     public App()
     {
         this.InitializeComponent();
+        
+        this.UnhandledException += App_UnhandledException;
 
         // Configure dependency injection
         var services = new ServiceCollection();
@@ -73,14 +75,43 @@ public partial class App : Application
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        s_mainWindow = new MainWindow();
-        s_mainWindow.Activate();
+        try
+        {
+            LogStartup("OnLaunched starting - creating MainWindow...");
+            s_mainWindow = new MainWindow();
+            LogStartup("MainWindow created - activating...");
+            s_mainWindow.Activate();
+            LogStartup("MainWindow activated - initializing services...");
 
-        // Initialize services
-        var notificationService = Services.GetRequiredService<INotificationService>();
-        notificationService.Initialize();
+            // Initialize services
+            var notificationService = Services.GetRequiredService<INotificationService>();
+            notificationService.Initialize();
 
-        var progressClient = Services.GetRequiredService<IProgressPipeClient>();
-        await progressClient.ConnectAsync();
+            var progressClient = Services.GetRequiredService<IProgressPipeClient>();
+            await progressClient.ConnectAsync();
+            LogStartup("OnLaunched complete.");
+        }
+        catch (Exception ex)
+        {
+            LogStartup($"CRASH in OnLaunched: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
+        }
+    }
+
+    private void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+    {
+        LogStartup($"UNHANDLED: {e.Exception.GetType().Name}: {e.Exception.Message}\n{e.Exception.StackTrace}\n");
+        e.Handled = true;
+    }
+
+    private static void LogStartup(string message)
+    {
+        try
+        {
+            var logPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "ManagedInstalls", "msc_crash.log");
+            File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n");
+        }
+        catch { }
     }
 }

@@ -652,6 +652,7 @@ function Publish-Binary {
         [string]$RuntimeIdentifier,
         [string]$OutputPath,
         [bool]$IsSelfContained = $true,
+        [bool]$IsWinUI = $false,
         [string]$BuildVersion = ''
     )
     
@@ -664,11 +665,15 @@ function Publish-Binary {
         '--runtime', $RuntimeIdentifier,
         '--self-contained', $IsSelfContained.ToString().ToLower(),
         '--output', $OutputPath,
-        '-p:PublishSingleFile=true',
-        '-p:EnableCompressionInSingleFile=true',
         '-p:IncludeSourceRevisionInInformationalVersion=false',
         '--verbosity', 'minimal'
     )
+    
+    # WinUI 3 does not support PublishSingleFile without MSIX packaging
+    if (-not $IsWinUI) {
+        $publishArgs += '-p:PublishSingleFile=true'
+        $publishArgs += '-p:EnableCompressionInSingleFile=true'
+    }
     
     if ($BuildVersion) {
         $publishArgs += "-p:Version=$BuildVersion"
@@ -681,6 +686,28 @@ function Publish-Binary {
     
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to publish $ToolName for $RuntimeIdentifier"
+    }
+    
+    # WinUI 3: dotnet publish --output misses .pri and .xbf files needed for XAML
+    if ($IsWinUI) {
+        $projectDir = Split-Path $ProjectPath -Parent
+        $binDir = Join-Path $projectDir "bin\$config\net10.0-windows10.0.19041.0\$RuntimeIdentifier"
+        if (Test-Path $binDir) {
+            # Copy app PRI file (compiled XAML resource index)
+            Get-ChildItem $binDir -Filter "*.pri" | Where-Object { $_.Name -notlike 'Microsoft.*' } | ForEach-Object {
+                Copy-Item $_.FullName $OutputPath -Force
+                Write-BuildLog "Copied PRI: $($_.Name)"
+            }
+            # Copy compiled XAML binaries (.xbf) preserving directory structure
+            Get-ChildItem $binDir -Filter "*.xbf" -Recurse | ForEach-Object {
+                $relativePath = $_.FullName.Substring($binDir.Length + 1)
+                $destPath = Join-Path $OutputPath $relativePath
+                $destDir = Split-Path $destPath -Parent
+                if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+                Copy-Item $_.FullName $destPath -Force
+            }
+            Write-BuildLog "Copied WinUI XAML resources to output" -Level 'SUCCESS'
+        }
     }
     
     Write-BuildLog "$ToolName ($RuntimeIdentifier) built successfully" -Level 'SUCCESS'
@@ -696,16 +723,24 @@ function Build-AllBinaries {
     $runtimeMap = @{ 'x64' = 'win-x64'; 'arm64' = 'win-arm64' }
     
     # Determine tools to build
-    $toolsToBuild = if ($SingleBinary) {
-        if (-not $Global:CSharpTools.ContainsKey($SingleBinary)) {
-            throw "Unknown binary: $SingleBinary. Valid options: $($Global:CSharpTools.Keys -join ', ')"
+    $toolsToBuild = @{}
+    $guiAppsToBuild = @{}
+
+    if ($SingleBinary) {
+        if ($Global:CSharpTools.ContainsKey($SingleBinary)) {
+            $toolsToBuild = @{ $SingleBinary = $Global:CSharpTools[$SingleBinary] }
+        } elseif ($Global:GuiApps.ContainsKey($SingleBinary)) {
+            $guiAppsToBuild = @{ $SingleBinary = $Global:GuiApps[$SingleBinary] }
+        } else {
+            $allNames = ($Global:CSharpTools.Keys + $Global:GuiApps.Keys) -join ', '
+            throw "Unknown binary: $SingleBinary. Valid options: $allNames"
         }
-        @{ $SingleBinary = $Global:CSharpTools[$SingleBinary] }
     } else {
-        $Global:CSharpTools
+        $toolsToBuild = $Global:CSharpTools
+        $guiAppsToBuild = $Global:GuiApps
     }
     
-    Write-BuildLog "Building tools: $($toolsToBuild.Keys -join ', ')"
+    Write-BuildLog "Building tools: $(($toolsToBuild.Keys + $guiAppsToBuild.Keys) -join ', ')"
     Write-BuildLog "Target architectures: $($archs -join ', ')"
     
     foreach ($arch in $archs) {
@@ -732,12 +767,9 @@ function Build-AllBinaries {
             
             Publish-Binary -ToolName $tool -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $isSelfContained -BuildVersion $BuildVersion
         }
-    }
-    
-    # Also build GUI apps if not building single binary
-    if (-not $SingleBinary) {
-        foreach ($appName in $Global:GuiApps.Keys) {
-            $appInfo = $Global:GuiApps[$appName]
+
+        foreach ($appName in $guiAppsToBuild.Keys) {
+            $appInfo = $guiAppsToBuild[$appName]
             $projectPath = Join-Path $RootDir $appInfo.Project
             
             $csprojFiles = Get-ChildItem -Path $projectPath -Filter '*.csproj' -ErrorAction SilentlyContinue
@@ -747,12 +779,7 @@ function Build-AllBinaries {
             }
             
             $csproj = $csprojFiles[0].FullName
-            
-            foreach ($arch in $archs) {
-                $runtime = $runtimeMap[$arch]
-                $outputPath = Join-Path $OutputDir $arch
-                Publish-Binary -ToolName $appName -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $true -BuildVersion $BuildVersion
-            }
+            Publish-Binary -ToolName $appName -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $true -IsWinUI $true -BuildVersion $BuildVersion
         }
     }
     

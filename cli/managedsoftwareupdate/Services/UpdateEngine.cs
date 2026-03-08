@@ -728,10 +728,16 @@ public class UpdateEngine : IDisposable
                             }
                         }
 
-                        // Go doesn't distinguish - all items needing action go to toUpdate
-                        // unless they are truly new (not in catalog, which we already handled)
-                        toUpdate.Add(catalogItem);
-                        ConsoleLogger.Info($"    -> Adding to toUpdate");
+                        if (status.IsUpdate)
+                        {
+                            toUpdate.Add(catalogItem);
+                            ConsoleLogger.Info($"    -> Adding to toUpdate");
+                        }
+                        else
+                        {
+                            toInstall.Add(catalogItem);
+                            ConsoleLogger.Info($"    -> Adding to toInstall");
+                        }
                     }
                     break;
 
