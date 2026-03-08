@@ -59,10 +59,10 @@
                         Width="80" Height="80" 
                         CornerRadius="16"
                         Background="{ThemeResource AccentFillColorDefaultBrush}">
-                        <FontIcon 
-                            Glyph="&#xE74C;" 
-                            FontSize="40"
-                            Foreground="White"/>
+                        <Image 
+                            Source="{Binding Item.IconImage}"
+                            Width="80" Height="80"
+                            Stretch="UniformToFill"/>
                     </Border>
 
                     <!-- Title & Meta -->

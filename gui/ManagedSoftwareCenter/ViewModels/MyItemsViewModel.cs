@@ -3,6 +3,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 
@@ -23,6 +24,7 @@ public class MyItem
     public bool IsRemovalRequest { get; set; }
     public bool CanCancel { get; set; }
     public InstallableItem? CatalogItem { get; set; }
+    public BitmapImage? IconImage { get; set; }
 }
 
 /// <summary>
@@ -33,6 +35,7 @@ public partial class MyItemsViewModel : ObservableObject
     private readonly IInstallInfoService _installInfoService;
     private readonly ISelfServiceManifestService _selfServiceService;
     private readonly ITriggerService _triggerService;
+    private readonly IIconService _iconService;
 
     [ObservableProperty]
     private ObservableCollection<MyItem> _items = [];
@@ -52,11 +55,13 @@ public partial class MyItemsViewModel : ObservableObject
     public MyItemsViewModel(
         IInstallInfoService installInfoService,
         ISelfServiceManifestService selfServiceService,
-        ITriggerService triggerService)
+        ITriggerService triggerService,
+        IIconService iconService)
     {
         _installInfoService = installInfoService;
         _selfServiceService = selfServiceService;
         _triggerService = triggerService;
+        _iconService = iconService;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
     }
@@ -118,6 +123,12 @@ public partial class MyItemsViewModel : ObservableObject
 
             Items = new ObservableCollection<MyItem>(myItems.OrderBy(x => x.DisplayName));
             IsEmpty = Items.Count == 0;
+
+            // Load icons
+            foreach (var item in Items)
+            {
+                item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+            }
             HasPendingActions = Items.Any(x => 
                 x.Status == ItemStatus.InstallRequested || 
                 x.Status == ItemStatus.RemovalRequested);

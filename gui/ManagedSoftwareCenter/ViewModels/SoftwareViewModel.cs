@@ -17,6 +17,7 @@ public partial class SoftwareViewModel : ObservableObject
     private readonly IInstallInfoService _installInfoService;
     private readonly ISelfServiceManifestService _selfServiceService;
     private readonly ITriggerService _triggerService;
+    private readonly IIconService _iconService;
 
     private List<InstallableItem> _allItems = [];
 
@@ -44,14 +45,22 @@ public partial class SoftwareViewModel : ObservableObject
     [ObservableProperty]
     private InstallableItem? _selectedItem;
 
+    [ObservableProperty]
+    private ObservableCollection<InstallableItem> _featuredItems = [];
+
+    [ObservableProperty]
+    private bool _hasFeaturedItems;
+
     public SoftwareViewModel(
         IInstallInfoService installInfoService,
         ISelfServiceManifestService selfServiceService,
-        ITriggerService triggerService)
+        ITriggerService triggerService,
+        IIconService iconService)
     {
         _installInfoService = installInfoService;
         _selfServiceService = selfServiceService;
         _triggerService = triggerService;
+        _iconService = iconService;
 
         // Subscribe to changes
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
@@ -73,6 +82,20 @@ public partial class SoftwareViewModel : ObservableObject
 
             // Update item statuses based on self-service selections
             await UpdateItemStatusesAsync();
+
+            // Load icons for all items
+            await LoadIconsAsync(_allItems);
+
+            // Load featured items
+            var installInfo = await _installInfoService.LoadAsync();
+            var featured = installInfo.FeaturedItems
+                .Select(name => _allItems.FirstOrDefault(i => 
+                    string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)))
+                .Where(item => item != null)
+                .Cast<InstallableItem>()
+                .ToList();
+            FeaturedItems = new ObservableCollection<InstallableItem>(featured);
+            HasFeaturedItems = FeaturedItems.Count > 0;
 
             // Load categories
             var categories = await _installInfoService.GetCategoriesAsync();
@@ -97,6 +120,14 @@ public partial class SoftwareViewModel : ObservableObject
     partial void OnSelectedCategoryChanged(string? value)
     {
         ApplyFilters();
+    }
+
+    private async Task LoadIconsAsync(IEnumerable<InstallableItem> items)
+    {
+        foreach (var item in items)
+        {
+            item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+        }
     }
 
     private void ApplyFilters()

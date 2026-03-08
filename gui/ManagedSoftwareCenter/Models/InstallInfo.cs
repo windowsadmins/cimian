@@ -1,6 +1,7 @@
 // InstallInfo.cs - Models for InstallInfo.yaml (Munki-style catalog cache)
 // Contains information about optional installs, managed installs, updates, and problem items
 
+using Microsoft.UI.Xaml.Media.Imaging;
 using YamlDotNet.Serialization;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Models;
@@ -215,6 +216,12 @@ public class InstallableItem
         ItemStatus.RemovalError => "Removal failed",
         _ => Installed ? "Installed" : ""
     };
+
+    /// <summary>
+    /// Cached icon image for UI binding (not serialized)
+    /// </summary>
+    [YamlIgnore]
+    public BitmapImage? IconImage { get; set; }
 
     /// <summary>
     /// Size in bytes for binding

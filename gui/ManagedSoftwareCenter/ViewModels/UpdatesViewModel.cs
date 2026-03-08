@@ -16,6 +16,7 @@ public partial class UpdatesViewModel : ObservableObject
 {
     private readonly IInstallInfoService _installInfoService;
     private readonly ITriggerService _triggerService;
+    private readonly IIconService _iconService;
 
     [ObservableProperty]
     private ObservableCollection<InstallableItem> _updates = [];
@@ -63,10 +64,12 @@ public partial class UpdatesViewModel : ObservableObject
 
     public UpdatesViewModel(
         IInstallInfoService installInfoService,
-        ITriggerService triggerService)
+        ITriggerService triggerService,
+        IIconService iconService)
     {
         _installInfoService = installInfoService;
         _triggerService = triggerService;
+        _iconService = iconService;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
     }
@@ -115,6 +118,12 @@ public partial class UpdatesViewModel : ObservableObject
                 PendingInstalls.Any(x => 
                     x.RestartAction?.Equals("restart", StringComparison.OrdinalIgnoreCase) == true ||
                     x.RestartAction?.Equals("RequireRestart", StringComparison.OrdinalIgnoreCase) == true);
+
+            // Load icons for all items
+            foreach (var item in Updates.Concat(PendingInstalls).Concat(PendingRemovals))
+            {
+                item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+            }
         }
         finally
         {
