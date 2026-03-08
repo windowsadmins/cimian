@@ -22,46 +22,46 @@ public partial class UpdatesViewModel : ObservableObject
     private readonly IAlertService _alertService;
 
     [ObservableProperty]
-    private ObservableCollection<InstallableItem> _updates = [];
+    public partial ObservableCollection<InstallableItem> Updates { get; set; } = [];
 
     [ObservableProperty]
-    private ObservableCollection<InstallableItem> _pendingInstalls = [];
+    public partial ObservableCollection<InstallableItem> PendingInstalls { get; set; } = [];
 
     [ObservableProperty]
-    private ObservableCollection<InstallableItem> _pendingRemovals = [];
+    public partial ObservableCollection<InstallableItem> PendingRemovals { get; set; } = [];
 
     [ObservableProperty]
-    private ObservableCollection<ProblemItem> _problemItems = [];
+    public partial ObservableCollection<ProblemItem> ProblemItems { get; set; } = [];
 
     [ObservableProperty]
-    private bool _isLoading;
+    public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
-    private bool _isEmpty;
+    public partial bool IsEmpty { get; set; }
 
     [ObservableProperty]
-    private bool _hasUpdates;
+    public partial bool HasUpdates { get; set; }
 
     [ObservableProperty]
-    private bool _hasPendingInstalls;
+    public partial bool HasPendingInstalls { get; set; }
 
     [ObservableProperty]
-    private bool _hasPendingRemovals;
+    public partial bool HasPendingRemovals { get; set; }
 
     [ObservableProperty]
-    private bool _hasProblems;
+    public partial bool HasProblems { get; set; }
 
     [ObservableProperty]
-    private int _totalUpdateCount;
+    public partial int TotalUpdateCount { get; set; }
 
     [ObservableProperty]
-    private bool _requiresRestart;
+    public partial bool RequiresRestart { get; set; }
 
     [ObservableProperty]
-    private InstallableItem? _selectedItem;
+    public partial InstallableItem? SelectedItem { get; set; }
 
     [ObservableProperty]
-    private bool _hasForcedDeadlines;
+    public partial bool HasForcedDeadlines { get; set; }
 
     /// <summary>
     /// True if there is any pending work (installs, updates, or removals)
