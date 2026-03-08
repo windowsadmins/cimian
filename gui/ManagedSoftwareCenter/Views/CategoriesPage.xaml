@@ -68,30 +68,26 @@
                             </StackPanel>
 
                             <!-- Preview icons -->
-                            <StackPanel Grid.Row="1" 
-                                        Orientation="Horizontal" 
-                                        Margin="0,12,0,0">
-                                <Border Width="48" Height="48"
-                                        CornerRadius="8"
-                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                                    <FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </Border>
-                                <Border Width="48" Height="48"
-                                        CornerRadius="8"
-                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                        Margin="12,0,0,0">
-                                    <FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </Border>
-                                <Border Width="48" Height="48"
-                                        CornerRadius="8"
-                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                        Margin="12,0,0,0">
-                                    <FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </Border>
-                            </StackPanel>
+                            <ItemsControl Grid.Row="1" 
+                                          ItemsSource="{Binding PreviewItems}"
+                                          Margin="0,12,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="12"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="48" Height="48"
+                                                CornerRadius="8"
+                                                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                            <Image Source="{Binding IconImage}"
+                                                   Width="48" Height="48"
+                                                   Stretch="UniformToFill"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </Grid>
                     </Border>
                 </DataTemplate>

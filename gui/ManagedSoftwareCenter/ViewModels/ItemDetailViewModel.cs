@@ -18,6 +18,7 @@ public partial class ItemDetailViewModel : ObservableObject
     private readonly IInstallInfoService _installInfoService;
     private readonly ISelfServiceManifestService _selfServiceService;
     private readonly ITriggerService _triggerService;
+    private readonly IIconService _iconService;
 
     private string _itemName = string.Empty;
 
@@ -63,11 +64,13 @@ public partial class ItemDetailViewModel : ObservableObject
     public ItemDetailViewModel(
         IInstallInfoService installInfoService,
         ISelfServiceManifestService selfServiceService,
-        ITriggerService triggerService)
+        ITriggerService triggerService,
+        IIconService iconService)
     {
         _installInfoService = installInfoService;
         _selfServiceService = selfServiceService;
         _triggerService = triggerService;
+        _iconService = iconService;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
     }
@@ -84,6 +87,9 @@ public partial class ItemDetailViewModel : ObservableObject
 
         try
         {
+            // Load icon
+            item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+
             await UpdateStatusAsync();
             
             // Check for screenshots/release notes

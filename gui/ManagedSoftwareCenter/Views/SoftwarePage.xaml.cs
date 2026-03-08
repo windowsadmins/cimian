@@ -325,6 +325,7 @@ public partial class SoftwarePage : Page
         var hasItems = ViewModel.Items?.Count > 0;
         SoftwareGrid.Visibility = hasItems && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = !hasItems && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+        FeaturedSection.Visibility = ViewModel.HasFeaturedItems && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         
         if (!hasItems)
         {
@@ -341,6 +342,7 @@ public partial class SoftwarePage : Page
                 case nameof(ViewModel.IsLoading):
                 case nameof(ViewModel.IsEmpty):
                 case nameof(ViewModel.Items):
+                case nameof(ViewModel.HasFeaturedItems):
                     UpdateUIState();
                     break;
                 case nameof(ViewModel.EmptyMessage):

@@ -40,6 +40,9 @@
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Sync" />
                     </NavigationViewItem.Icon>
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge x:Name="UpdatesBadge" Value="0" Visibility="Collapsed" />
+                    </NavigationViewItem.InfoBadge>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 

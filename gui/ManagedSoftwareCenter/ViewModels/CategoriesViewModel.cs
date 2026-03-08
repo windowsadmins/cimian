@@ -23,6 +23,7 @@ public class CategoryGroup
 public partial class CategoriesViewModel : ObservableObject
 {
     private readonly IInstallInfoService _installInfoService;
+    private readonly IIconService _iconService;
 
     [ObservableProperty]
     private ObservableCollection<CategoryGroup> _categories = [];
@@ -36,9 +37,10 @@ public partial class CategoriesViewModel : ObservableObject
     [ObservableProperty]
     private CategoryGroup? _selectedCategory;
 
-    public CategoriesViewModel(IInstallInfoService installInfoService)
+    public CategoriesViewModel(IInstallInfoService installInfoService, IIconService iconService)
     {
         _installInfoService = installInfoService;
+        _iconService = iconService;
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
     }
 
@@ -80,6 +82,15 @@ public partial class CategoriesViewModel : ObservableObject
 
             Categories = new ObservableCollection<CategoryGroup>(groups.OrderBy(x => x.Name));
             IsEmpty = Categories.Count == 0;
+
+            // Load icons for preview items
+            foreach (var group in Categories)
+            {
+                foreach (var item in group.PreviewItems)
+                {
+                    item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+                }
+            }
         }
         finally
         {

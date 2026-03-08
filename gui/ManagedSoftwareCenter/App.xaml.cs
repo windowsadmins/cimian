@@ -45,6 +45,7 @@ public partial class App : Application
         services.AddSingleton<INotificationService, NotificationService>();
         services.AddSingleton<ITriggerService, TriggerService>();
         services.AddSingleton<ICatalogCacheService, CatalogCacheService>();
+        services.AddSingleton<IIconService, IconService>();
 
         // ViewModels
         services.AddTransient<ShellViewModel>();
