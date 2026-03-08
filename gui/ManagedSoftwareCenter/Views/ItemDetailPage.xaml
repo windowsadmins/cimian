@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ItemDetailPage.xaml - Software Item Detail View (WPF/ModernWpf) -->
+<!-- ItemDetailPage.xaml - Software Item Detail View (WinUI 3) -->
 <Page
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.ItemDetailPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:ui="http://schemas.modernwpf.com/2019">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Grid>
         <Grid.RowDefinitions>
@@ -13,7 +12,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header with Back Button -->
-        <Grid Grid.Row="0" Margin="24,16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+        <Grid Grid.Row="0" Margin="24,16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -24,7 +23,7 @@
                 Click="OnBackClick"
                 VerticalAlignment="Center"
                 Padding="8">
-                <ui:FontIcon Glyph="&#xE72B;" FontSize="16"/>
+                <FontIcon Glyph="&#xE72B;" FontSize="16"/>
             </Button>
 
             <TextBlock 
@@ -59,8 +58,8 @@
                         Grid.Column="0" 
                         Width="80" Height="80" 
                         CornerRadius="16"
-                        Background="{DynamicResource AccentFillColorDefaultBrush}">
-                        <ui:FontIcon 
+                        Background="{ThemeResource AccentFillColorDefaultBrush}">
+                        <FontIcon 
                             Glyph="&#xE74C;" 
                             FontSize="40"
                             Foreground="White"/>
@@ -74,30 +73,30 @@
                         <TextBlock 
                             x:Name="DeveloperText"
                             Style="{StaticResource BodyTextBlockStyle}"
-                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <ui:FontIcon Glyph="&#xE7C3;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <FontIcon Glyph="&#xE7C3;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock 
                                     x:Name="VersionText"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Margin="4,0,0,0"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
-                                <ui:FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock 
                                     x:Name="SizeText"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Margin="4,0,0,0"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
-                                <ui:FontIcon Glyph="&#xE8EC;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <FontIcon Glyph="&#xE8EC;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock 
                                     x:Name="CategoryText"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Margin="4,0,0,0"/>
                             </StackPanel>
                         </StackPanel>
@@ -114,7 +113,7 @@
                             MinWidth="120"
                             Padding="16,8">
                             <StackPanel Orientation="Horizontal">
-                                <ui:FontIcon Glyph="&#xE896;" FontSize="14"/>
+                                <FontIcon Glyph="&#xE896;" FontSize="14"/>
                                 <TextBlock Text="Install" Margin="8,0,0,0"/>
                             </StackPanel>
                         </Button>
@@ -128,7 +127,7 @@
                             Padding="16,8"
                             Margin="0,8,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <ui:FontIcon Glyph="&#xE74D;" FontSize="14"/>
+                                <FontIcon Glyph="&#xE74D;" FontSize="14"/>
                                 <TextBlock Text="Remove" Margin="8,0,0,0"/>
                             </StackPanel>
                         </Button>
@@ -142,7 +141,7 @@
                             Padding="16,8"
                             Margin="0,8,0,0">
                             <StackPanel Orientation="Horizontal">
-                                <ui:FontIcon Glyph="&#xE711;" FontSize="14"/>
+                                <FontIcon Glyph="&#xE711;" FontSize="14"/>
                                 <TextBlock Text="Cancel" Margin="8,0,0,0"/>
                             </StackPanel>
                         </Button>
@@ -154,12 +153,12 @@
                             Padding="12,6"
                             HorizontalAlignment="Center"
                             Visibility="Collapsed"
-                            Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                             Margin="0,8,0,0">
                             <TextBlock 
                                 x:Name="StatusText"
                                 Style="{StaticResource CaptionTextBlockStyle}"
-                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                         </Border>
                     </StackPanel>
                 </Grid>
@@ -174,7 +173,7 @@
                         x:Name="DescriptionText"
                         Style="{StaticResource BodyTextBlockStyle}"
                         TextWrapping="Wrap"
-                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                 </StackPanel>
 
                 <!-- What's New -->
@@ -188,7 +187,7 @@
                         Style="{StaticResource SubtitleTextBlockStyle}"
                         Margin="0,0,0,8"/>
                     <Border 
-                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         CornerRadius="8"
                         Padding="16">
                         <TextBlock 
@@ -217,13 +216,13 @@
 
                         <!-- Version -->
                         <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,12">
-                            <TextBlock Text="Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
                         <!-- Category -->
                         <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
-                            <TextBlock Text="Category" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="Category" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoCategoryText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
@@ -233,13 +232,13 @@
                             Grid.Row="1" Grid.Column="0" 
                             Margin="0,0,0,12"
                             Visibility="Collapsed">
-                            <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InstalledVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
                         <!-- Size -->
                         <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,12">
-                            <TextBlock Text="Download Size" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="Download Size" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoSizeText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
@@ -249,7 +248,7 @@
                             Grid.Row="2" Grid.Column="0" 
                             Margin="0,0,0,12"
                             Visibility="Collapsed">
-                            <TextBlock Text="Developer" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="Developer" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoDeveloperText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
@@ -259,9 +258,9 @@
                             Grid.Row="2" Grid.Column="1" 
                             Margin="0,0,0,12"
                             Visibility="Collapsed">
-                            <TextBlock Text="Restart Required" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock Text="Restart Required" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <StackPanel Orientation="Horizontal">
-                                <ui:FontIcon Glyph="&#xE777;" FontSize="14" Foreground="{DynamicResource SystemFillColorCautionBrush}"/>
+                                <FontIcon Glyph="&#xE777;" FontSize="14" Foreground="{ThemeResource SystemFillColorCautionBrush}"/>
                                 <TextBlock Text="Yes" Style="{StaticResource BodyTextBlockStyle}" Margin="4,0,0,0"/>
                             </StackPanel>
                         </StackPanel>
@@ -271,7 +270,7 @@
         </ScrollViewer>
 
         <!-- Loading -->
-        <ui:ProgressRing 
+        <ProgressRing 
             x:Name="LoadingIndicator"
             Grid.RowSpan="2"
             IsActive="False"

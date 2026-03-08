@@ -1,7 +1,7 @@
-// Cimian Software Center - WPF Application Entry Point
+// Cimian Software Center - WinUI 3 Application Entry Point
 // Self-service software installation for end users
 
-using System.Windows;
+using Microsoft.UI.Xaml;
 using Microsoft.Extensions.DependencyInjection;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
@@ -14,6 +14,7 @@ namespace Cimian.GUI.ManagedSoftwareCenter;
 public partial class App : Application
 {
     private readonly ServiceProvider _services;
+    private static Window? s_mainWindow;
 
     /// <summary>
     /// Gets the current application instance
@@ -25,8 +26,15 @@ public partial class App : Application
     /// </summary>
     public IServiceProvider Services => _services;
 
+    /// <summary>
+    /// Gets the main application window
+    /// </summary>
+    public static Window MainWindow => s_mainWindow!;
+
     public App()
     {
+        this.InitializeComponent();
+
         // Configure dependency injection
         var services = new ServiceCollection();
         
@@ -58,10 +66,11 @@ public partial class App : Application
         return Current.Services.GetRequiredService<T>();
     }
 
-    protected override async void OnStartup(StartupEventArgs e)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        base.OnStartup(e);
-        
+        s_mainWindow = new MainWindow();
+        s_mainWindow.Activate();
+
         // Initialize services
         var notificationService = Services.GetRequiredService<INotificationService>();
         notificationService.Initialize();
