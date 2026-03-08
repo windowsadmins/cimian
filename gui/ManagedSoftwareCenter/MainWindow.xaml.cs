@@ -3,6 +3,8 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Windowing;
+using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 using Cimian.GUI.ManagedSoftwareCenter.Views;
 
@@ -62,6 +64,9 @@ public partial class MainWindow : Window
                 case nameof(ViewModel.NavigateToPage):
                     NavigateToPage(ViewModel.NavigateToPage);
                     break;
+                case nameof(ViewModel.IsObnoxiousMode):
+                    ApplyObnoxiousMode(ViewModel.IsObnoxiousMode);
+                    break;
             }
         });
     }
@@ -103,6 +108,23 @@ public partial class MainWindow : Window
     private void CheckNow_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.RefreshCommand.Execute(null);
+    }
+
+    private async void Help_Click(object sender, RoutedEventArgs e)
+    {
+        var prefs = App.GetService<IPreferencesService>();
+        var helpUrl = prefs.HelpUrl;
+
+        if (!string.IsNullOrEmpty(helpUrl) && Uri.TryCreate(helpUrl, UriKind.Absolute, out var uri)
+            && (uri.Scheme == "https" || uri.Scheme == "http"))
+        {
+            await Windows.System.Launcher.LaunchUriAsync(uri);
+        }
+        else
+        {
+            var alert = App.GetService<IAlertService>();
+            await alert.ShowInfoAsync("Help", "Help isn't available for this application.\n\nContact your systems administrator for assistance.");
+        }
     }
 
     public void NavigateToPage(string? pageTag)
@@ -155,6 +177,28 @@ public partial class MainWindow : Window
         if (ContentFrame.CanGoBack)
         {
             ContentFrame.GoBack();
+        }
+    }
+
+    /// <summary>
+    /// Apply or remove obnoxious mode (always-on-top, prevent close/minimize)
+    /// </summary>
+    private void ApplyObnoxiousMode(bool obnoxious)
+    {
+        var presenter = AppWindow.Presenter as OverlappedPresenter;
+        if (presenter == null) return;
+
+        if (obnoxious)
+        {
+            presenter.IsAlwaysOnTop = true;
+            presenter.IsMinimizable = false;
+            // Move to foreground
+            this.Activate();
+        }
+        else
+        {
+            presenter.IsAlwaysOnTop = false;
+            presenter.IsMinimizable = true;
         }
     }
 }
