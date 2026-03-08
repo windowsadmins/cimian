@@ -18,6 +18,12 @@ public interface IPreferencesService
     string? HelpUrl { get; }
 
     /// <summary>
+    /// Ordered list of sidebar items to show. Supported values: "software", "categories", "myitems", "updates".
+    /// Null means use the default set.
+    /// </summary>
+    List<string>? SidebarItems { get; }
+
+    /// <summary>
     /// Reload preferences from disk
     /// </summary>
     Task ReloadAsync();

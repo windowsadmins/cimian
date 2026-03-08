@@ -3,6 +3,8 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Windowing;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
@@ -73,9 +75,19 @@ public partial class MainWindow : Window
 
     private void NavView_Loaded(object sender, RoutedEventArgs e)
     {
-        // Navigate to Software page by default
-        NavView.SelectedItem = NavView.MenuItems[0];
-        NavigateToPage("software");
+        // Apply custom sidebar configuration from preferences
+        ApplySidebarConfiguration();
+
+        // Apply custom branding
+        _ = ApplyBrandingAsync();
+
+        // Navigate to first page by default
+        if (NavView.MenuItems.Count > 0)
+        {
+            NavView.SelectedItem = NavView.MenuItems[0];
+            if (NavView.MenuItems[0] is NavigationViewItem firstItem)
+                NavigateToPage(firstItem.Tag?.ToString());
+        }
 
         // Load initial data
         _ = ViewModel.InitializeAsync();
@@ -103,6 +115,54 @@ public partial class MainWindow : Window
     {
         // Hide footer content when pane closes
         PaneFooterContent.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Applies custom sidebar configuration from preferences.
+    /// If sidebar_items is set, only shows the specified items in the specified order.
+    /// </summary>
+    private void ApplySidebarConfiguration()
+    {
+        var prefs = App.GetService<IPreferencesService>();
+        var sidebarItems = prefs.SidebarItems;
+        if (sidebarItems == null) return;
+
+        // Build a lookup of the existing XAML-defined nav items by tag
+        var existingItems = new Dictionary<string, NavigationViewItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>())
+        {
+            var tag = item.Tag?.ToString();
+            if (!string.IsNullOrEmpty(tag))
+                existingItems[tag] = item;
+        }
+
+        NavView.MenuItems.Clear();
+        foreach (var tag in sidebarItems)
+        {
+            if (existingItems.TryGetValue(tag, out var navItem))
+                NavView.MenuItems.Add(navItem);
+        }
+    }
+
+    /// <summary>
+    /// Loads and applies custom client branding (app title, sidebar header image).
+    /// </summary>
+    private async Task ApplyBrandingAsync()
+    {
+        var branding = App.GetService<IBrandingService>();
+        await branding.LoadAsync();
+
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!string.IsNullOrEmpty(branding.AppTitle))
+                Title = branding.AppTitle;
+
+            if (branding.SidebarHeaderImage != null)
+            {
+                SidebarHeaderImage.Source = branding.SidebarHeaderImage;
+                SidebarHeaderImage.Visibility = Visibility.Visible;
+            }
+        });
     }
 
     private void CheckNow_Click(object sender, RoutedEventArgs e)
@@ -143,7 +203,10 @@ public partial class MainWindow : Window
 
         if (pageType != null)
         {
-            ContentFrame.Navigate(pageType, ViewModel.NavigationParameter);
+            var transition = pageTag == "detail"
+                ? new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight }
+                : (NavigationTransitionInfo)new EntranceNavigationTransitionInfo();
+            ContentFrame.Navigate(pageType, ViewModel.NavigationParameter, transition);
             
             // Select the corresponding nav item (for non-detail pages)
             if (pageTag != "detail")
@@ -166,7 +229,8 @@ public partial class MainWindow : Window
     public void NavigateToItemDetail(string itemName)
     {
         ViewModel.NavigationParameter = itemName;
-        ContentFrame.Navigate(typeof(ItemDetailPage), itemName);
+        ContentFrame.Navigate(typeof(ItemDetailPage), itemName,
+            new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight });
     }
 
     /// <summary>
@@ -200,5 +264,18 @@ public partial class MainWindow : Window
             presenter.IsAlwaysOnTop = false;
             presenter.IsMinimizable = true;
         }
+    }
+
+    private void Refresh_Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        if (ViewModel.CanRefresh)
+            ViewModel.RefreshCommand.Execute(null);
+    }
+
+    private void Back_Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        NavigateBack();
     }
 }
