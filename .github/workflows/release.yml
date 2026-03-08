@@ -1,0 +1,232 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install NuGet
+        run: |
+          if (-not (Get-Command nuget.exe -ErrorAction SilentlyContinue)) {
+            choco install nuget.commandline --no-progress --yes
+          } else {
+            Write-Host "NuGet is already installed."
+          }
+
+      - name: Install IntuneWinAppUtil
+        run: |
+          if (-not (Get-Command IntuneWinAppUtil.exe -ErrorAction SilentlyContinue)) {
+            choco install intunewinapputil --no-progress --yes
+          } else {
+            Write-Host "IntuneWinAppUtil is already installed."
+          }
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install WiX v6
+        run: |
+          dotnet tool install --global wix --version 6.0.1
+          Write-Host "WiX v6 installed as .NET global tool"
+
+      - name: Verify WiX Installation
+        run: |
+          wix --version
+
+      - name: Set up Go Environment
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.23.0
+
+      - name: Prepare Release Version
+        id: set_version
+        shell: pwsh
+        run: |
+          $currentTime = Get-Date
+          $year = $currentTime.Year - 2000
+          $month = $currentTime.Month.ToString("00")
+          $day = $currentTime.Day.ToString("00")
+          $hhmm = $currentTime.ToString("HHmm")
+          
+          $version = "{0}.{1}.{2}.{3}" -f $year, $month, $day, $hhmm
+          $fullVersion = $currentTime.ToString("yyyy.MM.dd.HHmm")
+          echo "RELEASE_VERSION=$fullVersion" >> $env:GITHUB_ENV
+          echo "SEMANTIC_VERSION=$version" >> $env:GITHUB_ENV
+          
+          # Update the WiX XML with the new version
+          $wxsPath = "build/msi/Cimian.wxs"
+          if (Test-Path $wxsPath) {
+            $wxsContent = Get-Content $wxsPath -Raw
+            $updatedWxsContent = [regex]::Replace($wxsContent, 
+                                             '(<Product Id="\*"\s+UpgradeCode="[^"]+"\s+Name="[^"]+"\s+Version=")([^"]+)(")', 
+                                             "`${1}$version`${3}")
+            Set-Content -Path $wxsPath -Value $updatedWxsContent
+            Write-Host "Updated WiX product version to $version in $wxsPath"
+          } else {
+            Write-Host "WiX file not found at $wxsPath"
+          }
+          
+          # Output the version for GitHub Actions
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Tidy Go Modules
+        shell: pwsh
+        run: |
+          go mod tidy
+
+      - name: Download Go Modules
+        shell: pwsh
+        run: |
+          go mod download
+
+      - name: Build All Binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binaryDirs = Get-ChildItem -Directory -Path cmd/*
+
+          foreach ($dir in $binaryDirs) {
+            $binaryName = $dir.Name
+            Write-Host "Building $binaryName..."
+
+            go build -v -o bin\$binaryName.exe -ldflags=@"
+              -X github.com/windowsadmins/cimian/pkg/version.appName=$binaryName `
+              -X github.com/windowsadmins/cimian/pkg/version.version=$env:RELEASE_VERSION `
+              -X github.com/windowsadmins/cimian/pkg/version.branch=${{ github.ref_name }} `
+              -X github.com/windowsadmins/cimian/pkg/version.buildDate=$(Get-Date -Format s) `
+              -X github.com/windowsadmins/cimian/pkg/version.revision=$(git rev-parse HEAD)
+            "@ ./cmd/$binaryName
+          }
+
+          cd ${{ github.workspace }} # Reset to root after builds
+
+      - name: Package Binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force
+          Get-ChildItem -Path bin/*.exe | ForEach-Object {
+            Copy-Item $_.FullName release/
+          }
+          Compress-Archive -Path release/* -DestinationPath release.zip -Force
+
+      - name: Verify Binaries in Release
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path release/*.exe
+
+      - name: Build MSI Package with WiX v6
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $semanticVersion = $env:SEMANTIC_VERSION
+          Write-Host "SemanticVersion is $semanticVersion"
+          
+          # Create MSI architecture-specific directories
+          New-Item -ItemType Directory -Path "release/msi_x64" -Force
+          
+          # Copy binaries to MSI directory
+          Get-ChildItem -Path release/*.exe | ForEach-Object {
+            Copy-Item $_.FullName "release/msi_x64/"
+          }
+          
+          # Copy config.yaml to MSI directory if it doesn't exist
+          if (-not (Test-Path "release/msi_x64/config.yaml")) {
+            Copy-Item "build/msi/config.yaml" "release/msi_x64/"
+          }
+          
+          # Build MSI with WiX v6 (.NET tool)
+          dotnet build "build/msi/Cimian.wixproj" `
+            -p:ProductVersion=$semanticVersion `
+            -p:BinDir="../../release/msi_x64" `
+            -p:OutputName="Cimian-x64" `
+            --configuration Release `
+            --nologo `
+            --verbosity minimal
+          
+          # Move the built MSI to release directory
+          $builtMsi = "build/msi/bin/x64/Release/Cimian-x64.msi"
+          if (Test-Path $builtMsi) {
+            Move-Item $builtMsi "release/Cimian-$env:RELEASE_VERSION.msi" -Force
+            Write-Host "MSI package built successfully"
+          } else {
+            Write-Error "MSI build failed - output file not found"
+            exit 1
+          }
+
+      - name: Prepare NuGet Package
+        shell: pwsh
+        run: |
+          Copy-Item build/nupkg/nupkg.ps1 -Destination build/nupkg/install.ps1          
+          $version = $env:SEMANTIC_VERSION
+          (Get-Content build/nupkg/nupkg.nuspec) -replace '\$\{\{ env\.SEMANTIC_VERSION \}\}', $version | Set-Content build/nupkg/nupkg.nuspec
+          nuget pack build/nupkg/nupkg.nuspec -OutputDirectory release -BasePath $PWD
+
+      - name: Prepare IntuneWin Package
+        shell: pwsh
+        run: |
+          pwsh build/msi/intunewin.ps1 -SetupFolder release -SetupFile release/Cimian-$env:RELEASE_VERSION.msi -OutputFolder release
+
+      - name: Verify Generated Files
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem release)) {
+            Write-Error "No files generated in release folder!"
+            exit 1
+          }
+          Get-ChildItem release
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          $semanticVersion = $env:SEMANTIC_VERSION
+          
+          # Prepare the release files by renaming them in place during the release step
+          $releaseFiles = Get-ChildItem -Path release/* | ForEach-Object {
+            $newFileName = $_.FullName
+            if ($_.Name -eq "Cimian-$version.msi") {
+              # Already correctly named
+              $newFileName
+            } elseif ($_.Name -eq "Cimian-$version.intunewin") {
+              # Already correctly named
+              $newFileName
+            } elseif ($_.Name -eq "com.github.windowsadmins.cimian.$semanticVersion.nupkg") {
+              $newFileName = Join-Path -Path $_.DirectoryName -ChildPath "Cimian-$version.nupkg"
+              if ($_.FullName -ne $newFileName) {
+                Write-Host "Renaming '$($_.FullName)' to '$newFileName'"
+                Rename-Item -Path $_.FullName -NewName $newFileName
+              }
+            } else {
+              Write-Host "No action taken for '$($_.FullName)'"
+            }
+            return $newFileName -replace '\\', '/'
+          }
+          
+          # Prepare the packages
+          $releaseFiles = @(
+            "release/Cimian-$version.msi",
+            "release/Cimian-$version.intunewin",
+            "release/Cimian-$version.nupkg"
+          )
+      
+          # Publish the release with the selected files and source code
+          gh release create $version @($releaseFiles) `
+            --title "Cimian v$version" `
+            --notes "Automated release for version $version." `
+            --generate-notes

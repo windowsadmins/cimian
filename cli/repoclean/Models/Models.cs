@@ -27,7 +27,7 @@ public class PackageInfo
     public List<string> Catalogs { get; set; } = new();
     public List<string> Requires { get; set; } = new();
     public List<string> UpdateFor { get; set; } = new();
-    public string MinimumMunkiVersion { get; set; } = string.Empty;
+    public string MinimumCimianVersion { get; set; } = string.Empty;
     public string MinimumOsVersion { get; set; } = string.Empty;
     public string MaximumOsVersion { get; set; } = string.Empty;
     public List<string> SupportedArchitectures { get; set; } = new();

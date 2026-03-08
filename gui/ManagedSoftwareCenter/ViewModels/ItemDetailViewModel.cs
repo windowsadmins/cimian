@@ -25,43 +25,43 @@ public partial class ItemDetailViewModel : ObservableObject
     private string _itemName = string.Empty;
 
     [ObservableProperty]
-    private InstallableItem? _item;
+    public partial InstallableItem? Item { get; set; }
 
     [ObservableProperty]
-    private bool _isLoading;
+    public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
-    private bool _notFound;
+    public partial bool NotFound { get; set; }
 
     // Action button visibility
     [ObservableProperty]
-    private bool _showInstallButton;
+    public partial bool ShowInstallButton { get; set; }
 
     [ObservableProperty]
-    private bool _showRemoveButton;
+    public partial bool ShowRemoveButton { get; set; }
 
     [ObservableProperty]
-    private bool _showCancelButton;
+    public partial bool ShowCancelButton { get; set; }
 
     // Status display
     [ObservableProperty]
-    private bool _showStatusBadge;
+    public partial bool ShowStatusBadge { get; set; }
 
     [ObservableProperty]
-    private string _statusText = string.Empty;
+    public partial string StatusText { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private Brush _statusBackground = new SolidColorBrush(Colors.Gray);
+    public partial Brush StatusBackground { get; set; } = new SolidColorBrush(Colors.Gray);
 
     [ObservableProperty]
-    private Brush _statusForeground = new SolidColorBrush(Colors.White);
+    public partial Brush StatusForeground { get; set; } = new SolidColorBrush(Colors.White);
 
     // Screenshots and release notes
     [ObservableProperty]
-    private bool _hasScreenshots;
+    public partial bool HasScreenshots { get; set; }
 
     [ObservableProperty]
-    private bool _hasReleaseNotes;
+    public partial bool HasReleaseNotes { get; set; }
 
     public ItemDetailViewModel(
         IInstallInfoService installInfoService,

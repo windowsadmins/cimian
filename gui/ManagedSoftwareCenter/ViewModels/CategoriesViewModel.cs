@@ -26,16 +26,16 @@ public partial class CategoriesViewModel : ObservableObject
     private readonly IIconService _iconService;
 
     [ObservableProperty]
-    private ObservableCollection<CategoryGroup> _categories = [];
+    public partial ObservableCollection<CategoryGroup> Categories { get; set; } = [];
 
     [ObservableProperty]
-    private bool _isLoading;
+    public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
-    private bool _isEmpty;
+    public partial bool IsEmpty { get; set; }
 
     [ObservableProperty]
-    private CategoryGroup? _selectedCategory;
+    public partial CategoryGroup? SelectedCategory { get; set; }
 
     public CategoriesViewModel(IInstallInfoService installInfoService, IIconService iconService)
     {

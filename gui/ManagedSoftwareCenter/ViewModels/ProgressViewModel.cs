@@ -16,52 +16,52 @@ public partial class ProgressViewModel : ObservableObject
     private readonly ITriggerService _triggerService;
 
     [ObservableProperty]
-    private bool _isVisible;
+    public partial bool IsVisible { get; set; }
 
     [ObservableProperty]
-    private string _currentItemName = string.Empty;
+    public partial string CurrentItemName { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string _statusMessage = string.Empty;
+    public partial string StatusMessage { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private double _progressPercent;
+    public partial double ProgressPercent { get; set; }
 
     [ObservableProperty]
-    private bool _isIndeterminate = true;
+    public partial bool IsIndeterminate { get; set; } = true;
 
     [ObservableProperty]
-    private string _progressText = string.Empty;
+    public partial string ProgressText { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string _detailMessage = string.Empty;
+    public partial string DetailMessage { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private bool _hasDetailMessage;
+    public partial bool HasDetailMessage { get; set; }
 
     [ObservableProperty]
-    private bool _isDownloading;
+    public partial bool IsDownloading { get; set; }
 
     [ObservableProperty]
-    private string _downloadSpeed = string.Empty;
+    public partial string DownloadSpeed { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string _timeRemaining = string.Empty;
+    public partial string TimeRemaining { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private bool _isMultipleItems;
+    public partial bool IsMultipleItems { get; set; }
 
     [ObservableProperty]
-    private double _overallProgressPercent;
+    public partial double OverallProgressPercent { get; set; }
 
     [ObservableProperty]
-    private int _completedCount;
+    public partial int CompletedCount { get; set; }
 
     [ObservableProperty]
-    private int _totalCount;
+    public partial int TotalCount { get; set; }
 
     [ObservableProperty]
-    private bool _canStop;
+    public partial bool CanStop { get; set; }
 
     public ProgressViewModel(IProgressPipeClient progressClient, ITriggerService triggerService)
     {
