@@ -119,6 +119,39 @@ public partial class ItemDetailPage : Page
         // Restart required
         RestartPanel.Visibility = item.RestartRequired ? Visibility.Visible : Visibility.Collapsed;
         
+        // Deadline warning
+        if (item.HasDeadline && item.DeadlineText != null)
+        {
+            DeadlineWarning.Visibility = Visibility.Visible;
+            DeadlineText.Text = item.DeadlineText;
+        }
+        else
+        {
+            DeadlineWarning.Visibility = Visibility.Collapsed;
+        }
+
+        // Dependency info
+        if (item.DependentItems is { Count: > 0 })
+        {
+            DependencyInfo.Visibility = Visibility.Visible;
+            DependencyText.Text = $"Required by: {string.Join(", ", item.DependentItems)}";
+        }
+        else
+        {
+            DependencyInfo.Visibility = Visibility.Collapsed;
+        }
+
+        // Unavailable reason
+        if (item.Status == ItemStatus.Unavailable && !string.IsNullOrEmpty(item.Note))
+        {
+            UnavailableInfo.Visibility = Visibility.Visible;
+            UnavailableText.Text = item.Note;
+        }
+        else
+        {
+            UnavailableInfo.Visibility = Visibility.Collapsed;
+        }
+        
         // Release notes (from ReleaseNotes or Notes)
         var releaseNotes = item.ReleaseNotes ?? item.Notes;
         if (!string.IsNullOrEmpty(releaseNotes))
