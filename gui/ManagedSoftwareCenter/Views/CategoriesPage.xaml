@@ -2,8 +2,7 @@
 <Page
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.CategoriesPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:ui="http://schemas.modernwpf.com/2019">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Grid Margin="24">
         <Grid.RowDefinitions>
@@ -17,7 +16,7 @@
                    Margin="0,0,0,16" />
 
         <!-- Loading indicator -->
-        <ui:ProgressRing x:Name="LoadingIndicator"
+        <ProgressRing x:Name="LoadingIndicator"
                       Grid.Row="1"
                       IsActive="False"
                       HorizontalAlignment="Center"
@@ -29,10 +28,10 @@
                     Visibility="Collapsed"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center">
-            <ui:FontIcon Glyph="&#xE8FD;" FontSize="48" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+            <FontIcon Glyph="&#xE8FD;" FontSize="48" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             <TextBlock Text="No categories available"
                        Style="{StaticResource BodyTextBlockStyle}"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        Margin="0,16,0,0" />
         </StackPanel>
 
@@ -44,9 +43,9 @@
             <ListView.ItemTemplate>
                 <DataTemplate>
                     <Border Margin="0,8" Padding="16" 
-                          Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                          Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                           CornerRadius="8"
-                          BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                          BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                           BorderThickness="1">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -60,11 +59,11 @@
                                            Style="{StaticResource SubtitleTextBlockStyle}" />
                                 <TextBlock Text="{Binding ItemCount}" 
                                            Margin="8,0,0,0"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />
                                 <TextBlock Text="items" 
                                            Margin="4,0,0,0"
-                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />
                             </StackPanel>
 
@@ -74,23 +73,23 @@
                                         Margin="0,12,0,0">
                                 <Border Width="48" Height="48"
                                         CornerRadius="8"
-                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}">
-                                    <ui:FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                              Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                    <FontIcon Glyph="&#xE74C;" FontSize="24" 
+                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 </Border>
                                 <Border Width="48" Height="48"
                                         CornerRadius="8"
-                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                                         Margin="12,0,0,0">
-                                    <ui:FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                              Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <FontIcon Glyph="&#xE74C;" FontSize="24" 
+                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 </Border>
                                 <Border Width="48" Height="48"
                                         CornerRadius="8"
-                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                                         Margin="12,0,0,0">
-                                    <ui:FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                              Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <FontIcon Glyph="&#xE74C;" FontSize="24" 
+                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 </Border>
                             </StackPanel>
                         </Grid>

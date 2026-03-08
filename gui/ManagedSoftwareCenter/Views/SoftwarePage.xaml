@@ -2,20 +2,18 @@
 <Page
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.SoftwarePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:ui="http://schemas.modernwpf.com/2019">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Page.Resources>
         <!-- Category Button Style (pill-shaped like Microsoft Store) -->
         <Style x:Key="CategoryPillButton" TargetType="Button">
-            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
-            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
-            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="16,8" />
             <Setter Property="Margin" Value="4,0" />
             <Setter Property="FontSize" Value="13" />
-            <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -25,16 +23,23 @@
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="16"
                                 Padding="{TemplateBinding Padding}">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver">
+                                        <VisualState.Setters>
+                                            <Setter Target="ButtonBorder.Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                    <VisualState x:Name="Pressed">
+                                        <VisualState.Setters>
+                                            <Setter Target="ButtonBorder.Background" Value="{ThemeResource SubtleFillColorTertiaryBrush}" />
+                                        </VisualState.Setters>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -42,7 +47,7 @@
         
         <!-- Selected Category Button Style -->
         <Style x:Key="CategoryPillButtonSelected" TargetType="Button" BasedOn="{StaticResource CategoryPillButton}">
-            <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+            <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}" />
             <Setter Property="Foreground" Value="White" />
         </Style>
     </Page.Resources>
@@ -70,7 +75,6 @@
                 <Border x:Name="HeroBanner"
                         Grid.Column="0"
                         CornerRadius="12"
-                        ClipToBounds="True"
                         Margin="0,0,12,0">
                     <Grid>
                         <!-- Gradient background (fallback when no image) -->
@@ -84,7 +88,7 @@
                         </Border>
                         
                         <!-- Carousel images container -->
-                        <Grid x:Name="CarouselContainer" ClipToBounds="True">
+                        <Grid x:Name="CarouselContainer">
                             <Image x:Name="BannerImage1" Stretch="UniformToFill" Opacity="1" />
                             <Image x:Name="BannerImage2" Stretch="UniformToFill" Opacity="0" />
                             <Image x:Name="BannerImage3" Stretch="UniformToFill" Opacity="0" />
@@ -114,10 +118,9 @@
                 </Border>
 
                 <!-- Secondary promotional tiles (like Microsoft Store) -->
-                <StackPanel Grid.Column="1" Margin="0,0,0,0">
-                    <Border CornerRadius="8" Height="102" ClipToBounds="True"
-                            Cursor="Hand"
-                            MouseLeftButtonUp="FeaturedButton_Click">
+                <StackPanel Grid.Column="1">
+                    <Border CornerRadius="8" Height="102"
+                            Tapped="FeaturedButton_Click">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                 <GradientStop Color="#26a269" Offset="0"/>
@@ -129,9 +132,8 @@
                             <TextBlock Text="Check out new apps" FontSize="11" Foreground="#B0FFFFFF" />
                         </StackPanel>
                     </Border>
-                    <Border CornerRadius="8" Height="102" Margin="0,16,0,0" ClipToBounds="True"
-                            Cursor="Hand"
-                            MouseLeftButtonUp="UpdatesButton_Click">
+                    <Border CornerRadius="8" Height="102" Margin="0,16,0,0"
+                            Tapped="UpdatesButton_Click">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                 <GradientStop Color="#e66100" Offset="0"/>
@@ -156,12 +158,12 @@
 
             <!-- Search Bar -->
             <Grid Grid.Row="2" Margin="24,16,24,0">
-                <ui:AutoSuggestBox x:Name="SearchBox"
-                                   PlaceholderText="Search apps..."
-                                   QueryIcon="Find"
-                                   TextChanged="SearchBox_TextChanged"
-                                   HorizontalAlignment="Left"
-                                   Width="350" />
+                <AutoSuggestBox x:Name="SearchBox"
+                                PlaceholderText="Search apps..."
+                                QueryIcon="Find"
+                                TextChanged="SearchBox_TextChanged"
+                                HorizontalAlignment="Left"
+                                Width="350" />
             </Grid>
 
             <!-- Section header -->
@@ -170,16 +172,16 @@
                            Text="All apps" 
                            FontSize="20"
                            FontWeight="SemiBold"
-                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                 <TextBlock Text="›" 
                            FontSize="20"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                            Margin="8,0,0,0"
                            VerticalAlignment="Center" />
             </StackPanel>
 
             <!-- Loading indicator -->
-            <ui:ProgressRing x:Name="LoadingIndicator"
+            <ProgressRing x:Name="LoadingIndicator"
                           Grid.Row="4"
                           IsActive="False"
                           HorizontalAlignment="Center"
@@ -192,48 +194,33 @@
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Margin="0,60,0,0">
-                <ui:FontIcon Glyph="&#xE7B8;" FontSize="64" Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                <FontIcon Glyph="&#xE7B8;" FontSize="64" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 <TextBlock x:Name="EmptyMessageText"
                            Text="No apps available"
                            FontSize="16"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                            HorizontalAlignment="Center"
                            Margin="0,16,0,0" />
             </StackPanel>
 
             <!-- Software grid (Microsoft Store style tiles) -->
-            <ItemsControl x:Name="SoftwareGrid"
-                          Grid.Row="4"
-                          ItemsSource="{Binding Items}"
-                          Margin="20,0,20,24"
-                          MinHeight="200"
-                          VerticalAlignment="Top">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
+            <GridView x:Name="SoftwareGrid"
+                      Grid.Row="4"
+                      ItemsSource="{Binding Items}"
+                      IsItemClickEnabled="True"
+                      ItemClick="OnItemClick"
+                      SelectionMode="None"
+                      Margin="20,0,20,24"
+                      MinHeight="200">
+                <GridView.ItemTemplate>
                     <DataTemplate>
                         <!-- Microsoft Store style app tile -->
-                        <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
                                 Width="200" Height="90"
-                                Padding="12"
-                                Margin="4"
-                                Cursor="Hand"
-                                MouseLeftButtonUp="OnItemClick">
-                            <Border.Style>
-                                <Style TargetType="Border">
-                                    <Style.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
-                                        </Trigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Border.Style>
+                                Padding="12">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
@@ -244,10 +231,10 @@
                                 <Border Grid.Column="0" 
                                         Width="56" Height="56"
                                         CornerRadius="8"
-                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                                         Margin="0,0,12,0">
-                                    <ui:FontIcon Glyph="&#xE74C;" FontSize="28" 
-                                              Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    <FontIcon Glyph="&#xE74C;" FontSize="28" 
+                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                               HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                                 </Border>
@@ -257,26 +244,26 @@
                                     <TextBlock Text="{Binding DisplayName, FallbackValue='App Name'}" 
                                                FontSize="13"
                                                FontWeight="SemiBold"
-                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                                TextTrimming="CharacterEllipsis"
                                                MaxWidth="110" />
                                     <TextBlock Text="{Binding Developer, FallbackValue=''}" 
                                                FontSize="11"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                TextTrimming="CharacterEllipsis"
                                                MaxWidth="110"
                                                Margin="0,2,0,0" />
                                     <!-- Status indicator -->
                                     <TextBlock Text="{Binding StatusText, FallbackValue=''}"
                                                FontSize="11"
-                                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"
+                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                                                Margin="0,4,0,0" />
                                 </StackPanel>
                             </Grid>
                         </Border>
                     </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                </GridView.ItemTemplate>
+            </GridView>
         </Grid>
     </ScrollViewer>
 </Page>
