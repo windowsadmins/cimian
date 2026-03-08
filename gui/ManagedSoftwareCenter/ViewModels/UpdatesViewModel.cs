@@ -3,6 +3,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Windows.System.Power;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 
@@ -17,6 +18,8 @@ public partial class UpdatesViewModel : ObservableObject
     private readonly IInstallInfoService _installInfoService;
     private readonly ITriggerService _triggerService;
     private readonly IIconService _iconService;
+    private readonly IUpdateTrackingService _updateTrackingService;
+    private readonly IAlertService _alertService;
 
     [ObservableProperty]
     private ObservableCollection<InstallableItem> _updates = [];
@@ -57,6 +60,9 @@ public partial class UpdatesViewModel : ObservableObject
     [ObservableProperty]
     private InstallableItem? _selectedItem;
 
+    [ObservableProperty]
+    private bool _hasForcedDeadlines;
+
     /// <summary>
     /// True if there is any pending work (installs, updates, or removals)
     /// </summary>
@@ -65,11 +71,15 @@ public partial class UpdatesViewModel : ObservableObject
     public UpdatesViewModel(
         IInstallInfoService installInfoService,
         ITriggerService triggerService,
-        IIconService iconService)
+        IIconService iconService,
+        IUpdateTrackingService updateTrackingService,
+        IAlertService alertService)
     {
         _installInfoService = installInfoService;
         _triggerService = triggerService;
         _iconService = iconService;
+        _updateTrackingService = updateTrackingService;
+        _alertService = alertService;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
     }
@@ -84,12 +94,19 @@ public partial class UpdatesViewModel : ObservableObject
         {
             // Load managed updates (updates to already installed software)
             var updates = await _installInfoService.GetManagedUpdatesAsync();
-            Updates = new ObservableCollection<InstallableItem>(updates.OrderBy(x => x.GetDisplayName()));
+            // Sort: forced deadlines first (earliest deadline on top), then by name
+            Updates = new ObservableCollection<InstallableItem>(
+                updates.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
+                       .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
+                       .ThenBy(x => x.GetDisplayName()));
 
             // Load pending managed installs (from admin manifest)
             var managedInstalls = await _installInfoService.GetManagedInstallsAsync();
             var pending = managedInstalls.Where(x => x.WillBeInstalled || !x.Installed).ToList();
-            PendingInstalls = new ObservableCollection<InstallableItem>(pending.OrderBy(x => x.GetDisplayName()));
+            PendingInstalls = new ObservableCollection<InstallableItem>(
+                pending.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
+                       .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
+                       .ThenBy(x => x.GetDisplayName()));
 
             // Load pending removals
             var removals = await _installInfoService.GetRemovalsAsync();
@@ -107,6 +124,7 @@ public partial class UpdatesViewModel : ObservableObject
             HasProblems = ProblemItems.Count > 0;
             TotalUpdateCount = Updates.Count + PendingInstalls.Count + PendingRemovals.Count;
             IsEmpty = TotalUpdateCount == 0 && !HasProblems;
+            HasForcedDeadlines = Updates.Concat(PendingInstalls).Any(x => x.HasDeadline);
 
             // Notify HasPendingWork changed
             OnPropertyChanged(nameof(HasPendingWork));
@@ -124,6 +142,19 @@ public partial class UpdatesViewModel : ObservableObject
             {
                 item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
             }
+
+            // Track days pending for updates and pending installs
+            var allPending = Updates.Concat(PendingInstalls).ToList();
+            foreach (var item in allPending)
+            {
+                await _updateTrackingService.TrackItemAsync(item.Name);
+                var daysPending = await _updateTrackingService.GetDaysPendingAsync(item.Name);
+                if (daysPending is > 2)
+                {
+                    item.DaysPendingText = $"Pending for {daysPending} days";
+                }
+            }
+            await _updateTrackingService.PruneAsync(allPending.Select(x => x.Name));
         }
         finally
         {
@@ -155,6 +186,9 @@ public partial class UpdatesViewModel : ObservableObject
     {
         if (!HasPendingWork) return;
 
+        // Check battery status before installing
+        if (!await CheckBatteryAsync()) return;
+
         // Trigger installation of all pending updates
         await _triggerService.TriggerInstallAsync();
     }
@@ -162,10 +196,32 @@ public partial class UpdatesViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallUpdateAsync(InstallableItem item)
     {
+        // Check battery status before installing
+        if (!await CheckBatteryAsync()) return;
+
         // For individual update installation
-        // Note: In Munki-style workflow, individual updates are installed by triggering
-        // the full install process, which will install all pending items
         await _triggerService.TriggerInstallAsync();
+    }
+
+    private async Task<bool> CheckBatteryAsync()
+    {
+        try
+        {
+            var status = PowerManager.BatteryStatus;
+            if (status == BatteryStatus.Discharging)
+            {
+                return await _alertService.ShowWarningAsync(
+                    "Running on Battery",
+                    "Your computer is not plugged in. Installing updates on battery power may cause problems if the battery runs out during installation.",
+                    "Install Anyway",
+                    "Cancel");
+            }
+        }
+        catch
+        {
+            // Desktop without battery — no warning needed
+        }
+        return true;
     }
 
     private async void OnInstallInfoChanged(object? sender, InstallInfo info)
