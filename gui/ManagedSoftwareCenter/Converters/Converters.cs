@@ -1,9 +1,7 @@
-// Converters.cs - XAML Value Converters
+// Converters.cs - XAML Value Converters (WinUI 3)
 
-using System;
-using System.Globalization;
-using System.Windows;
-using System.Windows.Data;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Data;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Converters;
 
@@ -12,7 +10,7 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Converters;
 /// </summary>
 public class NullToVisibilityConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (value is string str)
         {
@@ -21,7 +19,7 @@ public class NullToVisibilityConverter : IValueConverter
         return value == null ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
     }
@@ -32,7 +30,7 @@ public class NullToVisibilityConverter : IValueConverter
 /// </summary>
 public class BoolToVisibilityConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (value is bool b)
         {
@@ -41,7 +39,7 @@ public class BoolToVisibilityConverter : IValueConverter
         return Visibility.Collapsed;
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         if (value is Visibility v)
         {
@@ -56,7 +54,7 @@ public class BoolToVisibilityConverter : IValueConverter
 /// </summary>
 public class InverseBoolToVisibilityConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (value is bool b)
         {
@@ -65,7 +63,7 @@ public class InverseBoolToVisibilityConverter : IValueConverter
         return Visibility.Visible;
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
     }
@@ -78,7 +76,7 @@ public class FileSizeConverter : IValueConverter
 {
     private static readonly string[] SizeSuffixes = { "B", "KB", "MB", "GB", "TB" };
 
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         long bytes = 0;
         
@@ -97,7 +95,7 @@ public class FileSizeConverter : IValueConverter
         return $"{adjustedSize:N1} {SizeSuffixes[mag]}";
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
     }
@@ -108,7 +106,7 @@ public class FileSizeConverter : IValueConverter
 /// </summary>
 public class PercentConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (value is double d)
         {
@@ -117,7 +115,7 @@ public class PercentConverter : IValueConverter
         return "0%";
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
     }
@@ -128,16 +126,16 @@ public class PercentConverter : IValueConverter
 /// </summary>
 public class StringFormatConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (parameter is string format && value != null)
         {
-            return string.Format(CultureInfo.CurrentCulture, format, value);
+            return string.Format(System.Globalization.CultureInfo.CurrentCulture, format, value);
         }
         return value?.ToString() ?? string.Empty;
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
     }
@@ -148,7 +146,7 @@ public class StringFormatConverter : IValueConverter
 /// </summary>
 public class StatusToColorConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object Convert(object value, Type targetType, object parameter, string language)
     {
         if (value is string status)
         {
@@ -165,7 +163,7 @@ public class StatusToColorConverter : IValueConverter
         return "#6E6E6E";
     }
 
-    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
     {
         throw new NotImplementedException();
     }
