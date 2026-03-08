@@ -21,6 +21,8 @@
             <Button 
                 Grid.Column="0"
                 Click="OnBackClick"
+                AutomationProperties.Name="Go back"
+                ToolTipService.ToolTip="Go back (Alt+Left)"
                 VerticalAlignment="Center"
                 Padding="8">
                 <FontIcon Glyph="&#xE72B;" FontSize="16"/>
@@ -39,6 +41,7 @@
         <ScrollViewer Grid.Row="1" Padding="24">
             <Grid MaxWidth="800">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -109,6 +112,7 @@
                             x:Name="InstallButton"
                             Style="{StaticResource AccentButtonStyle}"
                             Click="Install_Click"
+                            AutomationProperties.Name="Install this software"
                             Visibility="Collapsed"
                             MinWidth="120"
                             Padding="16,8">
@@ -122,6 +126,7 @@
                         <Button 
                             x:Name="RemoveButton"
                             Click="Remove_Click"
+                            AutomationProperties.Name="Remove this software"
                             Visibility="Collapsed"
                             MinWidth="120"
                             Padding="16,8"
@@ -136,6 +141,7 @@
                         <Button 
                             x:Name="CancelButton"
                             Click="Cancel_Click"
+                            AutomationProperties.Name="Cancel pending action"
                             Visibility="Collapsed"
                             MinWidth="120"
                             Padding="16,8"
@@ -247,15 +253,50 @@
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                         CornerRadius="8"
                         Padding="16">
-                        <TextBlock 
+                        <RichTextBlock 
                             x:Name="ReleaseNotesText"
-                            Style="{StaticResource BodyTextBlockStyle}"
-                            TextWrapping="Wrap"/>
+                            TextWrapping="Wrap"
+                            IsTextSelectionEnabled="True"/>
+                    </Border>
+                </StackPanel>
+
+                <!-- Screenshots Gallery -->
+                <StackPanel 
+                    x:Name="ScreenshotsPanel"
+                    Grid.Row="3" 
+                    Margin="0,0,0,24"
+                    Visibility="Collapsed">
+                    <TextBlock 
+                        Text="Screenshots" 
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        Margin="0,0,0,8"/>
+                    <Border 
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        CornerRadius="8">
+                        <Grid>
+                            <FlipView 
+                                x:Name="ScreenshotFlipView"
+                                Height="400"
+                                Background="Transparent">
+                                <FlipView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Image Source="{Binding}" Stretch="Uniform" />
+                                    </DataTemplate>
+                                </FlipView.ItemTemplate>
+                            </FlipView>
+                            <PipsPager 
+                                x:Name="ScreenshotPips"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Bottom"
+                                Margin="0,0,0,12"
+                                NumberOfPages="0"
+                                SelectedPageIndex="{Binding SelectedIndex, ElementName=ScreenshotFlipView, Mode=TwoWay}" />
+                        </Grid>
                     </Border>
                 </StackPanel>
 
                 <!-- Additional Information -->
-                <StackPanel Grid.Row="3" Margin="0,0,0,24">
+                <StackPanel Grid.Row="4" Margin="0,0,0,24">
                     <TextBlock 
                         Text="Information" 
                         Style="{StaticResource SubtitleTextBlockStyle}"
