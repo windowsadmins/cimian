@@ -250,6 +250,7 @@ public class FileWatcherService : BackgroundService
             if (!SelfUpdateService.IsSelfUpdatePending())
             {
                 _logger.LogInformation("No self-update pending");
+                SelfUpdateService.CleanupStaleBackup();
                 return;
             }
 
