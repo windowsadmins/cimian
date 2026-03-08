@@ -24,34 +24,34 @@ public partial class SoftwareViewModel : ObservableObject
     private List<InstallableItem> _allItems = [];
 
     [ObservableProperty]
-    private ObservableCollection<InstallableItem> _items = [];
+    public partial ObservableCollection<InstallableItem> Items { get; set; } = [];
 
     [ObservableProperty]
-    private ObservableCollection<string> _categories = [];
+    public partial ObservableCollection<string> Categories { get; set; } = [];
 
     [ObservableProperty]
-    private string? _selectedCategory;
+    public partial string? SelectedCategory { get; set; }
 
     [ObservableProperty]
-    private string _searchText = string.Empty;
+    public partial string SearchText { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private bool _isLoading;
+    public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
-    private bool _isEmpty;
+    public partial bool IsEmpty { get; set; }
 
     [ObservableProperty]
-    private string _emptyMessage = "No software available";
+    public partial string EmptyMessage { get; set; } = "No software available";
 
     [ObservableProperty]
-    private InstallableItem? _selectedItem;
+    public partial InstallableItem? SelectedItem { get; set; }
 
     [ObservableProperty]
-    private ObservableCollection<InstallableItem> _featuredItems = [];
+    public partial ObservableCollection<InstallableItem> FeaturedItems { get; set; } = [];
 
     [ObservableProperty]
-    private bool _hasFeaturedItems;
+    public partial bool HasFeaturedItems { get; set; }
 
     public SoftwareViewModel(
         IInstallInfoService installInfoService,

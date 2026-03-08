@@ -231,17 +231,15 @@ public class CatalogService
             var wrapper = _deserializer.Deserialize<CatalogWrapper>(yaml);
             return wrapper?.Items ?? new List<CatalogItem>();
         }
-        catch (Exception ex)
+        catch
         {
-            ConsoleLogger.Warn($"Catalog parsing failed (wrapper): {ex.Message}");
             // Try parsing as a list directly
             try
             {
                 return _deserializer.Deserialize<List<CatalogItem>>(yaml) ?? new List<CatalogItem>();
             }
-            catch (Exception ex2)
+            catch
             {
-                ConsoleLogger.Warn($"Catalog parsing failed (list): {ex2.Message}");
                 return new List<CatalogItem>();
             }
         }

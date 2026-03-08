@@ -25,49 +25,49 @@ public partial class ShellViewModel : ObservableObject
     private readonly IAlertService _alertService;
 
     [ObservableProperty]
-    private int _availableCount;
+    public partial int AvailableCount { get; set; }
 
     [ObservableProperty]
-    private int _myItemsCount;
+    public partial int MyItemsCount { get; set; }
 
     [ObservableProperty]
-    private int _updatesCount;
+    public partial int UpdatesCount { get; set; }
 
     [ObservableProperty]
-    private string _lastCheckedText = "Never checked";
+    public partial string LastCheckedText { get; set; } = "Never checked";
 
     [ObservableProperty]
-    private bool _canRefresh = true;
+    public partial bool CanRefresh { get; set; } = true;
 
     [ObservableProperty]
-    private bool _isInstalling;
+    public partial bool IsInstalling { get; set; }
 
     [ObservableProperty]
-    private string _progressMessage = string.Empty;
+    public partial string ProgressMessage { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private string _progressDetail = string.Empty;
+    public partial string ProgressDetail { get; set; } = string.Empty;
 
     [ObservableProperty]
-    private int _progressPercent;
+    public partial int ProgressPercent { get; set; }
 
     [ObservableProperty]
-    private bool _isProgressIndeterminate;
+    public partial bool IsProgressIndeterminate { get; set; }
 
     [ObservableProperty]
-    private bool _canStopInstall;
+    public partial bool CanStopInstall { get; set; }
 
     [ObservableProperty]
-    private string? _navigateToPage;
+    public partial string? NavigateToPage { get; set; }
 
     [ObservableProperty]
-    private object? _navigationParameter;
+    public partial object? NavigationParameter { get; set; }
 
     [ObservableProperty]
-    private string? _deadlineWarningText;
+    public partial string? DeadlineWarningText { get; set; }
 
     [ObservableProperty]
-    private bool _isObnoxiousMode;
+    public partial bool IsObnoxiousMode { get; set; }
 
     /// <summary>
     /// Raised when a managedsoftwareupdate session completes so pages can reload
