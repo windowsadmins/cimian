@@ -2,9 +2,11 @@
 <Page
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.SoftwarePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:Cimian.GUI.ManagedSoftwareCenter.Converters">
 
     <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <!-- Category Button Style (pill-shaped like Microsoft Store) -->
         <Style x:Key="CategoryPillButton" TargetType="Button">
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
@@ -57,6 +59,8 @@
                   VerticalScrollBarVisibility="Auto">
         <Grid>
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -167,7 +171,71 @@
             </Grid>
 
             <!-- Section header -->
-            <StackPanel Grid.Row="3" Margin="24,24,24,12" Orientation="Horizontal">
+            <!-- Featured Items Section -->
+            <StackPanel x:Name="FeaturedSection"
+                        Grid.Row="3"
+                        Visibility="Collapsed"
+                        Margin="24,24,24,0">
+                <TextBlock Text="Featured" 
+                           FontSize="20"
+                           FontWeight="SemiBold"
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                           Margin="0,0,0,12" />
+                <GridView x:Name="FeaturedGrid"
+                          ItemsSource="{Binding FeaturedItems}"
+                          IsItemClickEnabled="True"
+                          ItemClick="OnItemClick"
+                          SelectionMode="None">
+                    <GridView.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Width="280" Height="100"
+                                    Padding="12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0" 
+                                            Width="64" Height="64"
+                                            CornerRadius="12"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            Margin="0,0,12,0">
+                                        <Image Source="{Binding IconImage}"
+                                               Width="64" Height="64"
+                                               Stretch="UniformToFill" />
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName, FallbackValue='App Name'}" 
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Developer, FallbackValue=''}" 
+                                                   FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   Margin="0,2,0,0" />
+                                        <TextBlock Text="{Binding Description, FallbackValue=''}" 
+                                                   FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="2"
+                                                   Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </GridView.ItemTemplate>
+                </GridView>
+            </StackPanel>
+
+            <!-- Section header -->
+            <StackPanel Grid.Row="4" Margin="24,24,24,12" Orientation="Horizontal">
                 <TextBlock x:Name="SectionHeader"
                            Text="All apps" 
                            FontSize="20"
@@ -182,14 +250,14 @@
 
             <!-- Loading indicator -->
             <ProgressRing x:Name="LoadingIndicator"
-                          Grid.Row="4"
+                          Grid.Row="5"
                           IsActive="False"
                           HorizontalAlignment="Center"
                           VerticalAlignment="Center" />
 
             <!-- Empty state -->
             <StackPanel x:Name="EmptyState"
-                        Grid.Row="4"
+                        Grid.Row="5"
                         Visibility="Collapsed"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
@@ -205,7 +273,7 @@
 
             <!-- Software grid (Microsoft Store style tiles) -->
             <GridView x:Name="SoftwareGrid"
-                      Grid.Row="4"
+                      Grid.Row="5"
                       ItemsSource="{Binding Items}"
                       IsItemClickEnabled="True"
                       ItemClick="OnItemClick"
@@ -227,17 +295,26 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
-                                <!-- App Icon -->
-                                <Border Grid.Column="0" 
-                                        Width="56" Height="56"
-                                        CornerRadius="8"
-                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                        Margin="0,0,12,0">
-                                    <FontIcon Glyph="&#xE74C;" FontSize="28" 
-                                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                              HorizontalAlignment="Center"
-                                              VerticalAlignment="Center" />
-                                </Border>
+                                <!-- App Icon with status overlay -->
+                                <Grid Grid.Column="0" Width="56" Height="56" Margin="0,0,12,0">
+                                    <Border CornerRadius="8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                        <Image Source="{Binding IconImage}"
+                                               Width="56" Height="56"
+                                               Stretch="UniformToFill" />
+                                    </Border>
+                                    <!-- Installed checkmark badge (bottom-right corner) -->
+                                    <Border Width="18" Height="18"
+                                            CornerRadius="9"
+                                            Background="{ThemeResource SystemFillColorSuccessBrush}"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Bottom"
+                                            Margin="0,0,-2,-2"
+                                            Visibility="{Binding Installed, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
 
                                 <!-- App Info -->
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">

@@ -55,6 +55,10 @@ public partial class MainWindow : Window
                 case nameof(ViewModel.CanRefresh):
                     CheckNowButton.IsEnabled = ViewModel.CanRefresh;
                     break;
+                case nameof(ViewModel.UpdatesCount):
+                    UpdatesBadge.Value = ViewModel.UpdatesCount;
+                    UpdatesBadge.Visibility = ViewModel.UpdatesCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+                    break;
                 case nameof(ViewModel.NavigateToPage):
                     NavigateToPage(ViewModel.NavigateToPage);
                     break;
