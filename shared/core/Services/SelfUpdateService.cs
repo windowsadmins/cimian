@@ -535,4 +535,30 @@ public static class SelfUpdateService
             ConsoleLogger.Warn($"Cleanup after self-update had issues: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Removes a stale SelfUpdateBackup directory left behind after a successful
+    /// detached self-update.  In the detached path the installer runs after
+    /// CimianWatcher exits, so CleanupAfterSuccess never executes.  Call this on
+    /// service startup when no self-update is pending — its presence means the
+    /// new version is running and the backup is no longer needed.
+    /// </summary>
+    public static void CleanupStaleBackup()
+    {
+        if (IsSelfUpdatePending())
+            return;
+
+        if (!Directory.Exists(SelfUpdateBackupDir))
+            return;
+
+        try
+        {
+            Directory.Delete(SelfUpdateBackupDir, recursive: true);
+            ConsoleLogger.Info($"Removed stale self-update backup: {SelfUpdateBackupDir}");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to remove stale self-update backup: {ex.Message}");
+        }
+    }
 }
