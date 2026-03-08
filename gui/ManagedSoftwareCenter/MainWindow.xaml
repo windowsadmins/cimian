@@ -23,6 +23,10 @@
                            Loaded="NavView_Loaded"
                            PaneOpening="NavView_PaneOpening"
                            PaneClosing="NavView_PaneClosing">
+
+            <NavigationView.Resources>
+                <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+            </NavigationView.Resources>
             
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Software" Tag="software" AutomationProperties.Name="Software catalog">
@@ -73,16 +77,6 @@
                             AutomationProperties.Name="Check for updates"
                             ToolTipService.ToolTip="Check for updates (Ctrl+R)"
                             HorizontalAlignment="Stretch" />
-                    <Button x:Name="HelpButton"
-                            Click="Help_Click"
-                            AutomationProperties.Name="Open help"
-                            HorizontalAlignment="Stretch"
-                            Margin="0,4,0,0">
-                        <StackPanel Orientation="Horizontal">
-                            <FontIcon Glyph="&#xE897;" FontSize="14"/>
-                            <TextBlock Text="Help" Margin="8,0,0,0"/>
-                        </StackPanel>
-                    </Button>
                 </StackPanel>
             </NavigationView.PaneFooter>
 

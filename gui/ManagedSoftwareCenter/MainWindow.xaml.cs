@@ -24,7 +24,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         // Set window size and center on screen
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1400, 900));
         CenterOnScreen();
 
         // Get ViewModel from DI
@@ -41,8 +41,8 @@ public partial class MainWindow : Window
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
         var displayArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
             windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
-        var x = (displayArea.WorkArea.Width - 1200) / 2;
-        var y = (displayArea.WorkArea.Height - 800) / 2;
+        var x = (displayArea.WorkArea.Width - 1400) / 2;
+        var y = (displayArea.WorkArea.Height - 900) / 2;
         AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
     }
 
@@ -170,22 +170,7 @@ public partial class MainWindow : Window
         ViewModel.RefreshCommand.Execute(null);
     }
 
-    private async void Help_Click(object sender, RoutedEventArgs e)
-    {
-        var prefs = App.GetService<IPreferencesService>();
-        var helpUrl = prefs.HelpUrl;
 
-        if (!string.IsNullOrEmpty(helpUrl) && Uri.TryCreate(helpUrl, UriKind.Absolute, out var uri)
-            && (uri.Scheme == "https" || uri.Scheme == "http"))
-        {
-            await Windows.System.Launcher.LaunchUriAsync(uri);
-        }
-        else
-        {
-            var alert = App.GetService<IAlertService>();
-            await alert.ShowInfoAsync("Help", "Help isn't available for this application.\n\nContact your systems administrator for assistance.");
-        }
-    }
 
     public void NavigateToPage(string? pageTag)
     {

@@ -12,7 +12,7 @@
 
   <PropertyGroup>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
-    <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\..\..\release\$(Platform)</BinDir>
+    <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\..\release\$(Platform)</BinDir>
   </PropertyGroup>
 
   <PropertyGroup>
