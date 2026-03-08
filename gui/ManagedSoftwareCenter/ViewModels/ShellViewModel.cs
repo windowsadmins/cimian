@@ -21,6 +21,8 @@ public partial class ShellViewModel : ObservableObject
     private readonly ITriggerService _triggerService;
     private readonly INotificationService _notificationService;
     private readonly ICatalogCacheService _cacheService;
+    private readonly IPreferencesService _preferencesService;
+    private readonly IAlertService _alertService;
 
     [ObservableProperty]
     private int _availableCount;
@@ -64,6 +66,14 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     private string? _deadlineWarningText;
 
+    [ObservableProperty]
+    private bool _isObnoxiousMode;
+
+    /// <summary>
+    /// Raised when a managedsoftwareupdate session completes so pages can reload
+    /// </summary>
+    public event EventHandler? SessionCompleted;
+
     public bool HasAvailableSoftware => AvailableCount > 0;
     public bool HasMyItems => MyItemsCount > 0;
     public bool HasUpdates => UpdatesCount > 0;
@@ -76,7 +86,9 @@ public partial class ShellViewModel : ObservableObject
         IProgressPipeClient progressClient,
         ITriggerService triggerService,
         INotificationService notificationService,
-        ICatalogCacheService cacheService)
+        ICatalogCacheService cacheService,
+        IPreferencesService preferencesService,
+        IAlertService alertService)
     {
         _installInfoService = installInfoService;
         _selfServiceService = selfServiceService;
@@ -84,6 +96,8 @@ public partial class ShellViewModel : ObservableObject
         _triggerService = triggerService;
         _notificationService = notificationService;
         _cacheService = cacheService;
+        _preferencesService = preferencesService;
+        _alertService = alertService;
 
         // Subscribe to events
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
@@ -133,9 +147,19 @@ public partial class ShellViewModel : ObservableObject
         }
         catch (Exception)
         {
-            // Trigger failed - might not have permission
+            // Trigger failed - might not have permission or can't contact server
             CanRefresh = true;
             IsInstalling = false;
+            try
+            {
+                await _alertService.ShowInfoAsync(
+                    "Update Check Failed",
+                    "Could not check for updates. The update server may be unavailable, or the update tool is not installed.\n\nPlease try again later. If this continues, contact your systems administrator.");
+            }
+            catch
+            {
+                // Dialog might fail during startup
+            }
         }
     }
 
@@ -214,6 +238,30 @@ public partial class ShellViewModel : ObservableObject
         OnPropertyChanged(nameof(HasMyItems));
         OnPropertyChanged(nameof(HasUpdates));
         OnPropertyChanged(nameof(HasDeadlineWarning));
+
+        // Check for obnoxious mode — enter when any item has been pending
+        // longer than AggressiveNotificationDays
+        var threshold = _preferencesService.AggressiveNotificationDays;
+        var overdueItems = allItems.Where(x =>
+            x.ForceInstallAfterDate.HasValue &&
+            x.ForceInstallAfterDate.Value < DateTime.Now).ToList();
+
+        if (overdueItems.Count > 0)
+        {
+            // Forced items are past their deadline — go obnoxious
+            IsObnoxiousMode = true;
+            NavigateToPage = "updates";
+        }
+        else if (UpdatesCount > 0 && threshold > 0)
+        {
+            // Non-forced items: check if pending for too long using DaysPendingText heuristic
+            // The UpdateTrackingService handles the actual tracking; here we check deadlines only
+            IsObnoxiousMode = false;
+        }
+        else
+        {
+            IsObnoxiousMode = false;
+        }
     }
 
     private async void OnInstallInfoChanged(object? sender, InstallInfo info)
@@ -248,7 +296,7 @@ public partial class ShellViewModel : ObservableObject
                 if (message.Error)
                 {
                     IsInstalling = false;
-                    _notificationService.ShowInstallFailed(message.ItemName ?? "Update", message.Message);
+                    _ = ShowErrorRecoveryDialogAsync(message);
                 }
                 break;
                 
@@ -270,17 +318,13 @@ public partial class ShellViewModel : ObservableObject
                 ProgressPercent = 100;
                 IsProgressIndeterminate = false;
                 OnPropertyChanged(nameof(ProgressPercentText));
-                // Refresh data to show updated state
-                _ = RefreshDataAsync();
+                _ = HandleSessionEndAsync();
                 break;
                 
             case ProgressMessageType.Error:
                 IsInstalling = false;
                 CanRefresh = true;
-                if (!string.IsNullOrEmpty(message.ItemName))
-                {
-                    _notificationService.ShowInstallFailed(message.ItemName, message.Detail);
-                }
+                _ = ShowErrorRecoveryDialogAsync(message);
                 break;
                 
             case ProgressMessageType.RestartRequired:
@@ -306,6 +350,62 @@ public partial class ShellViewModel : ObservableObject
         }
         
         CanStopInstall = message.StopButtonEnabled;
+    }
+
+    private async Task ShowErrorRecoveryDialogAsync(ProgressMessage message)
+    {
+        var itemName = message.ItemName ?? "Unknown";
+        var isRemoval = message.Message?.Contains("remov", StringComparison.OrdinalIgnoreCase) == true;
+
+        var title = isRemoval ? "Removal Error" : "Installation Error";
+        var detail = !string.IsNullOrEmpty(message.Detail) ? message.Detail : message.Message;
+        var guidance = isRemoval
+            ? $"The removal of \"{itemName}\" failed.\n\n{detail}\n\nRemoval will be attempted again. If this situation continues, contact your systems administrator."
+            : $"The installation of \"{itemName}\" failed.\n\n{detail}\n\nInstallation will be attempted again. If this situation continues, contact your systems administrator.";
+
+        try
+        {
+            await _alertService.ShowInfoAsync(title, guidance);
+        }
+        catch
+        {
+            // Dialog might fail if window is not ready
+            _notificationService.ShowInstallFailed(itemName, detail);
+        }
+    }
+
+    /// <summary>
+    /// Full session-end handler: clear caches, reload data, notify pages, show completion
+    /// </summary>
+    private async Task HandleSessionEndAsync()
+    {
+        try
+        {
+            // Clear local cache so stale data isn't shown
+            await _cacheService.ClearCacheAsync();
+
+            // Reload preferences in case they changed during update
+            await _preferencesService.ReloadAsync();
+
+            // Full data refresh (loads InstallInfo, updates badges)
+            await RefreshDataAsync();
+
+            // Notify listening pages to reload their data
+            SessionCompleted?.Invoke(this, EventArgs.Empty);
+
+            // Exit obnoxious mode if no more overdue items
+            if (IsObnoxiousMode && UpdatesCount == 0)
+            {
+                IsObnoxiousMode = false;
+            }
+
+            // Show completion notification
+            _notificationService.ShowUpdatesAvailable(0); // "All up to date" if count is 0
+        }
+        catch
+        {
+            // Best-effort session end handling
+        }
     }
 
     private void OnOperationStatusChanged(object? sender, bool isRunning)
