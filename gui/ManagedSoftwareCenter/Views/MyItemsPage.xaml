@@ -66,8 +66,9 @@
                                     CornerRadius="8"
                                     Background="{ThemeResource SubtleFillColorSecondaryBrush}"
                                     Margin="0,0,12,0">
-                                <FontIcon Glyph="&#xE74C;" FontSize="24" 
-                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Image Source="{Binding IconImage}"
+                                       Width="48" Height="48"
+                                       Stretch="UniformToFill" />
                             </Border>
 
                             <!-- Info -->
