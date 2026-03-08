@@ -1,7 +1,7 @@
-// MyItemsPage.xaml.cs - Code-behind for My Items page (WPF/ModernWpf)
+// MyItemsPage.xaml.cs - Code-behind for My Items page (WinUI 3)
 
-using System.Windows;
-using System.Windows.Controls;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Views;
@@ -30,7 +30,7 @@ public partial class MyItemsPage : Page
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -56,7 +56,7 @@ public partial class MyItemsPage : Page
     {
         if (ItemsList.SelectedItem is MyItem item)
         {
-            if (Application.Current is App app && app.MainWindow is MainWindow mainWindow)
+            if (App.MainWindow is MainWindow mainWindow)
             {
                 mainWindow.NavigateToItemDetail(item.Name);
             }
