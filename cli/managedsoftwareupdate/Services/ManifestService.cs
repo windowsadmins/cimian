@@ -27,14 +27,7 @@ public class ManifestService
     private readonly CimianConfig _config;
     private readonly Dictionary<string, string> _itemSources = new();
     private readonly PredicateEngine _predicateEngine;
-    private readonly HashSet<string> _conditionallyExcludedNames = new(StringComparer.OrdinalIgnoreCase);
     private SystemFacts? _systemFacts;
-
-    /// <summary>
-    /// Item names that appeared in conditional blocks where the condition evaluated to false.
-    /// Used by UpdateEngine to prevent update_for injection from bypassing conditional gates.
-    /// </summary>
-    public IReadOnlySet<string> ConditionallyExcludedNames => _conditionallyExcludedNames;
 
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
@@ -213,7 +206,7 @@ public class ManifestService
                         ConsoleLogger.Debug($"Processing catalogs for manifest manifest: {Path.GetFileNameWithoutExtension(manifestName)} catalogs: []");
                     }
 
-                    // Process included manifests (Munki-like behavior)
+                    // Process included manifests
                     if (manifest.IncludedManifests != null)
                     {
                         ConsoleLogger.Debug($"Processing included manifests from {manifestName} count: {manifest.IncludedManifests.Count}");
@@ -336,16 +329,6 @@ public class ManifestService
             else
             {
                 ConsoleLogger.Info($"    Conditional item did not match: {conditional.Condition}");
-                // Track items from false-condition blocks so update_for resolution
-                // cannot inject them back into the work queue, bypassing the gate.
-                if (conditional.ManagedInstalls != null)
-                    foreach (var name in conditional.ManagedInstalls) _conditionallyExcludedNames.Add(name);
-                if (conditional.ManagedUninstalls != null)
-                    foreach (var name in conditional.ManagedUninstalls) _conditionallyExcludedNames.Add(name);
-                if (conditional.ManagedUpdates != null)
-                    foreach (var name in conditional.ManagedUpdates) _conditionallyExcludedNames.Add(name);
-                if (conditional.OptionalInstalls != null)
-                    foreach (var name in conditional.OptionalInstalls) _conditionallyExcludedNames.Add(name);
             }
         }
         

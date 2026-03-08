@@ -3,7 +3,7 @@ using System;
 namespace Cimian.Core.Services;
 
 /// <summary>
-/// Centralized console logging with verbosity control and Munki-style clean output.
+/// Centralized console logging with verbosity control and clean output.
 /// No timestamps, no log level prefixes - just clean colored messages.
 /// Colors indicate the log level visually.
 /// 
@@ -30,7 +30,7 @@ public static class ConsoleLogger
 
     /// <summary>
     /// Current verbosity level. Set this at application startup.
-    /// Matches Munki Swift verbosity (DisplayOptions.verbose):
+    /// Verbosity levels:
     /// 0 = quiet (errors/warnings only)
     /// 1 = normal (-v): info messages shown
     /// 2 = detail (-vv): detail messages shown
@@ -85,7 +85,6 @@ public static class ConsoleLogger
 
     /// <summary>
     /// Log an info message (shown at verbose >= 1, i.e. -v or higher) - no color (default terminal)
-    /// Matches Munki: if verbose > 0 { print }
     /// </summary>
     public static void Info(string message)
     {
@@ -98,7 +97,6 @@ public static class ConsoleLogger
 
     /// <summary>
     /// Log a detail message (shown at verbose >= 2, i.e. -vv or higher) - cyan color (debug level)
-    /// Matches Munki: if verbose > 1 { print("    \(message)") }
     /// </summary>
     public static void Detail(string message)
     {
@@ -111,7 +109,6 @@ public static class ConsoleLogger
 
     /// <summary>
     /// Log a debug1 message (shown at verbose >= 3, i.e. -vvv or higher) - cyan color
-    /// Matches Munki: if verbose > 2 { print("    \(message)") }
     /// </summary>
     public static void Debug(string message)
     {
@@ -129,7 +126,6 @@ public static class ConsoleLogger
 
     /// <summary>
     /// Log a debug2/trace message (shown at verbose >= 4, i.e. -vvvv or higher) - cyan color
-    /// Matches Munki: if verbose > 3 { print("    \(message)") }
     /// </summary>
     public static void Debug2(string message)
     {
@@ -173,7 +169,7 @@ public static class ConsoleLogger
     }
 
     /// <summary>
-    /// Log with indentation - useful for hierarchical output like Munki's style
+    /// Log with indentation - useful for hierarchical output
     /// </summary>
     public static void Indented(string message, int level = 1)
     {
@@ -182,7 +178,7 @@ public static class ConsoleLogger
     }
 
     /// <summary>
-    /// Log a starred item (like Munki's "* Processing manifest item...")
+    /// Log a starred item (e.g. "* Processing manifest item...")
     /// </summary>
     public static void Item(string message)
     {
@@ -190,7 +186,7 @@ public static class ConsoleLogger
     }
 
     /// <summary>
-    /// Log a double-starred item (like Munki's "** Processing conditional_items...")
+    /// Log a double-starred item (e.g. "** Processing conditional_items...")
     /// </summary>
     public static void SubItem(string message)
     {

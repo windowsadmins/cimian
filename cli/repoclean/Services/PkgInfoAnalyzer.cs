@@ -139,7 +139,7 @@ public class PkgInfoAnalyzer : IPkgInfoAnalyzer
                 }
             }
         }
-        // Fallback to Munki format
+        // Fallback to legacy format
         else if (pkgInfo.TryGetValue("installer_item_location", out var packagePath) && packagePath is string pkgPath)
         {
             packageInfo.PackagePath = NormalizePath(pkgPath);
@@ -158,7 +158,7 @@ public class PkgInfoAnalyzer : IPkgInfoAnalyzer
                 packageInfo.UninstallPackagePath = NormalizePath(uninstallLocation);
             }
         }
-        // Fallback to Munki format
+        // Fallback to legacy format
         else if (pkgInfo.TryGetValue("uninstaller_item_location", out var uninstallPath) && uninstallPath is string uninstallPkgPath)
         {
             packageInfo.UninstallPackagePath = NormalizePath(uninstallPkgPath);
@@ -176,9 +176,9 @@ public class PkgInfoAnalyzer : IPkgInfoAnalyzer
         }
 
         // Parse other fields as needed
-        if (pkgInfo.TryGetValue("minimum_munki_version", out var minMunkiVersion) && minMunkiVersion is string minMunki)
+        if (pkgInfo.TryGetValue("minimum_cimian_version", out var minCimianVersion) && minCimianVersion is string minCimian)
         {
-            packageInfo.MinimumMunkiVersion = minMunki;
+            packageInfo.MinimumCimianVersion = minCimian;
         }
 
         if (pkgInfo.TryGetValue("minimum_os_version", out var minOsVersion) && minOsVersion is string minOs)
@@ -288,7 +288,7 @@ public class PkgInfoAnalyzer : IPkgInfoAnalyzer
     private string GenerateMetakey(Dictionary<string, object> pkgInfo)
     {
         var metakey = new StringBuilder();
-        var keysToHash = new[] { "name", "catalogs", "minimum_munki_version", "minimum_os_version", "maximum_os_version", "supported_architectures", "installable_condition" };
+        var keysToHash = new[] { "name", "catalogs", "minimum_cimian_version", "minimum_os_version", "maximum_os_version", "supported_architectures", "installable_condition" };
 
         // Add receipts to hash if uninstall_method is removepackages
         var includeReceipts = pkgInfo.TryGetValue("uninstall_method", out var uninstallMethod) && uninstallMethod.ToString() == "removepackages";

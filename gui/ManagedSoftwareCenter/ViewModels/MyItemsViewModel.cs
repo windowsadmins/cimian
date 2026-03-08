@@ -38,19 +38,19 @@ public partial class MyItemsViewModel : ObservableObject
     private readonly IIconService _iconService;
 
     [ObservableProperty]
-    private ObservableCollection<MyItem> _items = [];
+    public partial ObservableCollection<MyItem> Items { get; set; } = [];
 
     [ObservableProperty]
-    private bool _isLoading;
+    public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
-    private bool _isEmpty;
+    public partial bool IsEmpty { get; set; }
 
     [ObservableProperty]
-    private bool _hasPendingActions;
+    public partial bool HasPendingActions { get; set; }
 
     [ObservableProperty]
-    private MyItem? _selectedItem;
+    public partial MyItem? SelectedItem { get; set; }
 
     public MyItemsViewModel(
         IInstallInfoService installInfoService,

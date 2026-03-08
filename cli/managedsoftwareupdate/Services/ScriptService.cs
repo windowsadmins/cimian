@@ -95,27 +95,15 @@ public class ScriptService
             process.BeginErrorReadLine();
 
             await process.WaitForExitAsync(cancellationToken);
-            // WaitForExitAsync only waits for the process to exit; the async stream
-            // callbacks may still be draining. Calling the synchronous overload ensures
-            // stdout/stderr buffers are fully flushed before we read them.
-            process.WaitForExit();
 
-            var exitCode = process.ExitCode;
-            var stdoutText = output.ToString().TrimEnd();
-            var stderrText = errors.ToString().TrimEnd();
-
-            // Build a labelled combined output so callers can see both streams
-            var parts = new List<string>();
-            if (!string.IsNullOrEmpty(stdoutText))
-                parts.Add(stdoutText);
-            if (!string.IsNullOrEmpty(stderrText))
-                parts.Add($"STDERR: {stderrText}");
-            var combinedOutput = parts.Count > 0
-                ? string.Join(Environment.NewLine, parts)
-                : $"(no output, exit code {exitCode})";
+            var combinedOutput = output.ToString();
+            if (errors.Length > 0)
+            {
+                combinedOutput += Environment.NewLine + errors.ToString();
+            }
 
             // Exit code 0 = success, non-zero = failure
-            return (exitCode == 0, combinedOutput);
+            return (process.ExitCode == 0, combinedOutput);
         }
         catch (Exception ex)
         {

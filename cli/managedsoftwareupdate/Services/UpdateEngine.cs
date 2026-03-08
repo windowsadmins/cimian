@@ -2,8 +2,12 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core.Models;
 using Cimian.Core.Services;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
+using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 using SessionPackageInfo = Cimian.Core.Models.SessionPackageInfo;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -198,7 +202,7 @@ public class UpdateEngine : IDisposable
         // Track session duration for run.log summary
         var sessionStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        // Set global verbosity for ConsoleLogger (Munki-style clean output)
+        // Set global verbosity for ConsoleLogger
         ConsoleLogger.Verbosity = verbosity;
 
         // Initialize status reporter if --show-status is set
@@ -357,12 +361,7 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            // When --item is specified, the admin is explicitly targeting a package,
-            // so loop suppression is bypassed — the admin is aware it's not an automated loop.
-            var bypassLoopGuard = itemFilterService.HasFilter;
-            if (bypassLoopGuard)
-                ConsoleLogger.Info("Loop suppression bypassed: --item flag indicates explicit admin targeting");
-            var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap, bypassLoopGuard);
+            var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
 
             // Apply --item filter if specified (Go parity: pkg/filter)
             if (itemFilterService.HasFilter)
@@ -416,6 +415,9 @@ public class UpdateEngine : IDisposable
                 // Collect items data for items.json report (Go parity: SetCurrentSessionPackagesInfo)
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
                 
+                // Write InstallInfo.yaml for MSC GUI
+                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                
                 // End session for check-only
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 0, 0, manifestItems);
                 return 0;
@@ -433,37 +435,30 @@ public class UpdateEngine : IDisposable
             }
 
             // Filter out items outside their install_window (applies to installs, updates, and uninstalls)
-            // Bypassed when --item is specified: admin is explicitly targeting that package.
-            var bypassInstallWindow = itemFilterService.HasFilter;
-            if (bypassInstallWindow)
-                ConsoleLogger.Info("Install window bypassed: --item flag indicates explicit admin targeting");
             var deferredItems = new List<CatalogItem>();
             var now = DateTime.Now;
-            if (!bypassInstallWindow)
+            foreach (var list in new[] { toInstall, toUpdate, toUninstall })
             {
-                foreach (var list in new[] { toInstall, toUpdate, toUninstall })
+                for (int i = list.Count - 1; i >= 0; i--)
                 {
-                    for (int i = list.Count - 1; i >= 0; i--)
+                    var item = list[i];
+                    if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
                     {
-                        var item = list[i];
-                        if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
-                        {
-                            LogInfo($"Deferred: {item.Name} v{item.Version} (outside install window {item.InstallWindow})");
-                            _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: outside install window {item.InstallWindow}");
-                            _sessionLogger?.LogStatusCheck(
-                                item.Name, item.Version, "deferred",
-                                $"Outside install window {item.InstallWindow}",
-                                Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
-                                Cimian.Core.Models.DetectionMethod.None, null, false);
-                            deferredItems.Add(item);
-                            list.RemoveAt(i);
-                        }
+                        LogInfo($"Deferred: {item.Name} v{item.Version} (outside install window {item.InstallWindow})");
+                        _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: outside install window {item.InstallWindow}");
+                        _sessionLogger?.LogStatusCheck(
+                            item.Name, item.Version, "deferred",
+                            $"Outside install window {item.InstallWindow}",
+                            Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
+                            Cimian.Core.Models.DetectionMethod.None, null, false);
+                        deferredItems.Add(item);
+                        list.RemoveAt(i);
                     }
                 }
-                if (deferredItems.Count > 0)
-                {
-                    LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
-                }
+            }
+            if (deferredItems.Count > 0)
+            {
+                LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
             }
 
             // Perform installations
@@ -604,6 +599,9 @@ public class UpdateEngine : IDisposable
                 // Collect items data for items.json report
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
                 
+                // Write InstallInfo.yaml for MSC GUI (post-install: actions completed)
+                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
                 return 0;
@@ -616,6 +614,9 @@ public class UpdateEngine : IDisposable
                 
                 // Collect items data for items.json report
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                
+                // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
+                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
                 
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
@@ -652,7 +653,7 @@ public class UpdateEngine : IDisposable
     }
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall) 
-        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap, bool bypassLoopGuard = false)
+        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
     {
         var toInstall = new List<CatalogItem>();
         var toUpdate = new List<CatalogItem>();
@@ -705,9 +706,8 @@ public class UpdateEngine : IDisposable
                     
                     if (status.NeedsAction)
                     {
-                        // Check LoopGuard before adding to install list.
-                        // Bypass when --item is used: admin is explicitly targeting the package.
-                        if (_loopGuard != null && !bypassLoopGuard)
+                        // Check LoopGuard before adding to install list
+                        if (_loopGuard != null)
                         {
                             var fingerprint = ComputeCatalogFingerprint(catalogItem);
                             var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
@@ -998,6 +998,8 @@ public class UpdateEngine : IDisposable
 
             foreach (var dep in missingDeps)
             {
+                LogInfo($"Installing required dependency: {dep} (for {itemName})");
+
                 // Parse dependency name (may have version)
                 var (depName, _) = CatalogService.SplitNameAndVersion(dep);
 
@@ -1008,21 +1010,6 @@ public class UpdateEngine : IDisposable
                     ConsoleLogger.Error($"Required dependency not found in catalog: {depName} (for {itemName})");
                     return false;
                 }
-
-                // Check if the dependency actually needs installation
-                // use the same CheckStatus logic as manifest items
-                var depStatus = _statusService.CheckStatus(depItem, "install", _config.CachePath);
-                if (!depStatus.NeedsAction)
-                {
-                    LogDetail($"Dependency {depName} already installed: {depStatus.Reason}");
-                    if (!installedItems.Contains(depItem.Name, StringComparer.OrdinalIgnoreCase))
-                    {
-                        installedItems.Add(depItem.Name);
-                    }
-                    continue;
-                }
-
-                LogInfo($"Installing required dependency: {dep} (for {itemName})");
 
                 // Download the dependency if not already downloaded
                 if (!downloadedPaths.ContainsKey(depItem.Name))
@@ -1329,7 +1316,7 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
-    /// Log a plain message (always shown) - Munki-style clean output
+    /// Log a plain message (always shown)
     /// </summary>
     private void Log(string message = "")
     {
@@ -1929,6 +1916,143 @@ public class UpdateEngine : IDisposable
         };
 
         _sessionLogger.EndSession(status, summary);
+    }
+
+    #endregion
+
+    #region InstallInfo.yaml
+
+    /// <summary>
+    /// Writes InstallInfo.yaml to ManagedInstallDir
+    /// the single source of truth for the MSC GUI.
+    /// enriches each item with full catalog metadata and
+    /// computed status for the GUI to deserialize and render.
+    /// </summary>
+    private void WriteInstallInfo(
+        List<ManifestItem> manifestItems,
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        List<CatalogItem> toUninstall,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        try
+        {
+            var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+            var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+            var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
+
+            var info = new InstallInfoFile
+            {
+                LastCheck = DateTime.Now
+            };
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var mi in manifestItems)
+            {
+                if (string.IsNullOrEmpty(mi.Name) || !seen.Add(mi.Name))
+                    continue;
+
+                var key = mi.Name.ToLowerInvariant();
+                catalogMap.TryGetValue(key, out var cat);
+
+                var action = mi.Action?.ToLowerInvariant() ?? "install";
+
+                switch (action)
+                {
+                    case "install":
+                    case "update":
+                        if (toUpdateNames.Contains(key) || toInstallNames.Contains(key))
+                        {
+                            // Needs action — add to managed_installs
+                            var isUpdate = toUpdateNames.Contains(key);
+                            var item = BuildInstallInfoItem(mi.Name, cat);
+                            item.Status = isUpdate ? "update-available" : "will-be-installed";
+                            item.WillBeInstalled = true;
+                            item.NeedsUpdate = isUpdate;
+
+                            // Try to get installed version from status check
+                            if (cat != null)
+                            {
+                                var status = _statusService.CheckStatus(cat, action, _config.CachePath);
+                                item.InstalledVersion = status.InstalledVersion;
+                            }
+
+                            if (isUpdate)
+                                info.ManagedUpdates.Add(item);
+                            else
+                                info.ManagedInstalls.Add(item);
+                        }
+                        // Items that are already installed and up-to-date are omitted from
+                        // managed_installs/managed_updates (only items needing action are included)
+                        break;
+
+                    case "uninstall":
+                        if (toUninstallNames.Contains(key))
+                        {
+                            var item = BuildInstallInfoItem(mi.Name, cat);
+                            item.Status = "will-be-removed";
+                            item.WillBeRemoved = true;
+                            item.Installed = true;
+                            info.Removals.Add(item);
+                        }
+                        break;
+
+                    case "optional":
+                        // Optional installs always appear — with installed/needs_update booleans
+                        var optItem = BuildInstallInfoItem(mi.Name, cat);
+                        if (cat != null)
+                        {
+                            var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
+                            optItem.Installed = !status.NeedsAction;
+                            optItem.InstalledVersion = status.InstalledVersion;
+                            optItem.NeedsUpdate = status.IsUpdate;
+                            optItem.Status = status.NeedsAction
+                                ? (status.IsUpdate ? "update-available" : "not-installed")
+                                : "installed";
+                        }
+                        else
+                        {
+                            optItem.Status = "not-installed";
+                        }
+                        info.OptionalInstalls.Add(optItem);
+                        break;
+                }
+            }
+
+            // Serialize and write
+            var serializer = new SerializerBuilder()
+                .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
+                .Build();
+
+            var yaml = serializer.Serialize(info);
+            var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? @"C:\ProgramData\ManagedInstalls", "InstallInfo.yaml");
+            File.WriteAllText(path, yaml);
+
+            LogInfo($"Wrote {path}");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to write InstallInfo.yaml: {ex.Message}");
+            _sessionLogger?.Log("WARN", $"Failed to write InstallInfo.yaml: {ex.Message}");
+        }
+    }
+
+    private static InstallInfoItem BuildInstallInfoItem(string name, CatalogItem? cat)
+    {
+        var item = new InstallInfoItem
+        {
+            Name = name,
+            Version = cat?.Version ?? "",
+            DisplayName = cat?.DisplayName,
+            Description = cat?.Description,
+            Category = cat?.Category,
+            Developer = cat?.Developer,
+            InstallerItemSize = cat?.Installer?.Size ?? 0,
+            Uninstallable = cat?.IsUninstallable() ?? false,
+        };
+        return item;
     }
 
     #endregion

@@ -8,7 +8,6 @@ namespace Cimian.CLI.Cimiimport.Services;
 
 /// <summary>
 /// Extracts icons from Windows installer files (EXE, MSI, MSIX, NUPKG) and converts to PNG.
-/// Based on Munki's iconutils approach adapted for Windows.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public class IconExtractor
