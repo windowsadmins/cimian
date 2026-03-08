@@ -88,9 +88,10 @@
                                         <Border Grid.Column="0" 
                                                 Width="40" Height="40" 
                                                 CornerRadius="8"
-                                                Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}">
-                                            <FontIcon Glyph="&#xE710;" FontSize="18" 
-                                                         Foreground="{ThemeResource SystemFillColorSuccessBrush}"/>
+                                                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                            <Image Source="{Binding IconImage}"
+                                                   Width="40" Height="40"
+                                                   Stretch="UniformToFill"/>
                                         </Border>
 
                                         <!-- Details -->
@@ -143,8 +144,10 @@
                                         <Border Grid.Column="0" 
                                                 Width="40" Height="40" 
                                                 CornerRadius="8"
-                                                Background="{ThemeResource AccentFillColorDefaultBrush}">
-                                            <FontIcon Glyph="&#xE895;" FontSize="18" Foreground="White"/>
+                                                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                            <Image Source="{Binding IconImage}"
+                                                   Width="40" Height="40"
+                                                   Stretch="UniformToFill"/>
                                         </Border>
 
                                         <!-- Details -->
@@ -205,9 +208,10 @@
                                         <Border Grid.Column="0" 
                                                 Width="40" Height="40" 
                                                 CornerRadius="8"
-                                                Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}">
-                                            <FontIcon Glyph="&#xE74D;" FontSize="18" 
-                                                         Foreground="{ThemeResource SystemFillColorCriticalBrush}"/>
+                                                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                            <Image Source="{Binding IconImage}"
+                                                   Width="40" Height="40"
+                                                   Stretch="UniformToFill"/>
                                         </Border>
 
                                         <!-- Details -->
