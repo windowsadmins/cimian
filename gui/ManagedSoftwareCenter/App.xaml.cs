@@ -82,13 +82,5 @@ public partial class App : Application
 
         var progressClient = Services.GetRequiredService<IProgressPipeClient>();
         await progressClient.ConnectAsync();
-        
-        // Write to log file to verify server started
-        var logPath = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), 
-            "Cimian", "msc-startup.log");
-        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(logPath)!);
-        await System.IO.File.AppendAllTextAsync(logPath, 
-            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} ProgressServer started on port 19847{Environment.NewLine}");
     }
 }
