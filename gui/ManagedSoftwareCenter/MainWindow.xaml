@@ -6,6 +6,13 @@
     Title="Managed Software Center">
 
     <Grid x:Name="RootGrid">
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="R" Modifiers="Control" Invoked="Refresh_Accelerator"/>
+            <KeyboardAccelerator Key="F5" Invoked="Refresh_Accelerator"/>
+            <KeyboardAccelerator Key="Left" Modifiers="Menu" Invoked="Back_Accelerator"/>
+            <KeyboardAccelerator Key="Back" Invoked="Back_Accelerator"/>
+        </Grid.KeyboardAccelerators>
+
         <!-- Main Content with Navigation -->
         <NavigationView x:Name="NavView"
                            IsBackButtonVisible="Collapsed"
@@ -18,25 +25,25 @@
                            PaneClosing="NavView_PaneClosing">
             
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="Software" Tag="software">
+                <NavigationViewItem Content="Software" Tag="software" AutomationProperties.Name="Software catalog">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE74C;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 
-                <NavigationViewItem Content="Categories" Tag="categories">
+                <NavigationViewItem Content="Categories" Tag="categories" AutomationProperties.Name="Browse by category">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8B7;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 
-                <NavigationViewItem Content="My Items" Tag="myitems">
+                <NavigationViewItem Content="My Items" Tag="myitems" AutomationProperties.Name="My installed items">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Favorite" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
                 
-                <NavigationViewItem Content="Updates" Tag="updates">
+                <NavigationViewItem Content="Updates" Tag="updates" AutomationProperties.Name="Available updates">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Sync" />
                     </NavigationViewItem.Icon>
@@ -45,6 +52,14 @@
                     </NavigationViewItem.InfoBadge>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
+
+            <NavigationView.PaneHeader>
+                <Image x:Name="SidebarHeaderImage" 
+                       Visibility="Collapsed"
+                       Stretch="Uniform"
+                       MaxHeight="80"
+                       Margin="12,8" />
+            </NavigationView.PaneHeader>
 
             <NavigationView.PaneFooter>
                 <StackPanel x:Name="PaneFooterContent" Margin="12,8">
@@ -55,9 +70,12 @@
                     <Button x:Name="CheckNowButton"
                             Content="Check Now"
                             Click="CheckNow_Click"
+                            AutomationProperties.Name="Check for updates"
+                            ToolTipService.ToolTip="Check for updates (Ctrl+R)"
                             HorizontalAlignment="Stretch" />
                     <Button x:Name="HelpButton"
                             Click="Help_Click"
+                            AutomationProperties.Name="Open help"
                             HorizontalAlignment="Stretch"
                             Margin="0,4,0,0">
                         <StackPanel Orientation="Horizontal">

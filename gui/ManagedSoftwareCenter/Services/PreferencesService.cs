@@ -16,6 +16,7 @@ public class PreferencesService : IPreferencesService
 
     public int AggressiveNotificationDays { get; private set; } = 14;
     public string? HelpUrl { get; private set; }
+    public List<string>? SidebarItems { get; private set; }
 
     public PreferencesService()
     {
@@ -41,6 +42,22 @@ public class PreferencesService : IPreferencesService
                 AggressiveNotificationDays = prefs.AggressiveNotificationDays;
 
             HelpUrl = prefs.HelpUrl;
+
+            // Validate sidebar items — only allow known page tags
+            if (prefs.SidebarItems is { Count: > 0 })
+            {
+                var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    { "software", "categories", "myitems", "updates" };
+                var valid = prefs.SidebarItems
+                    .Where(s => allowed.Contains(s))
+                    .Select(s => s.ToLowerInvariant())
+                    .ToList();
+                SidebarItems = valid.Count > 0 ? valid : null;
+            }
+            else
+            {
+                SidebarItems = null;
+            }
         }
         catch
         {
@@ -55,5 +72,8 @@ public class PreferencesService : IPreferencesService
 
         [YamlMember(Alias = "help_url")]
         public string? HelpUrl { get; set; }
+
+        [YamlMember(Alias = "sidebar_items")]
+        public List<string>? SidebarItems { get; set; }
     }
 }
