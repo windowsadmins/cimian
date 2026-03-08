@@ -32,6 +32,7 @@ public partial class UpdatesPage : Page
         if (_shellViewModel != null)
         {
             _shellViewModel.PropertyChanged += ShellViewModel_PropertyChanged;
+            _shellViewModel.SessionCompleted += OnSessionCompleted;
         }
         
         Loaded += async (s, e) =>
@@ -54,6 +55,7 @@ public partial class UpdatesPage : Page
             if (_shellViewModel != null)
             {
                 _shellViewModel.PropertyChanged -= ShellViewModel_PropertyChanged;
+                _shellViewModel.SessionCompleted -= OnSessionCompleted;
             }
         };
     }
@@ -249,5 +251,16 @@ public partial class UpdatesPage : Page
     {
         // Stop the current operation via shell
         _shellViewModel?.StopInstallCommand.Execute(null);
+    }
+
+    private void ViewLog_Click(object sender, RoutedEventArgs e)
+    {
+        var logWindow = new LogWindow();
+        logWindow.Activate();
+    }
+
+    private void OnSessionCompleted(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() => _ = LoadDataAsync());
     }
 }

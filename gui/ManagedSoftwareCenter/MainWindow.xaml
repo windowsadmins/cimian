@@ -56,6 +56,15 @@
                             Content="Check Now"
                             Click="CheckNow_Click"
                             HorizontalAlignment="Stretch" />
+                    <Button x:Name="HelpButton"
+                            Click="Help_Click"
+                            HorizontalAlignment="Stretch"
+                            Margin="0,4,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon Glyph="&#xE897;" FontSize="14"/>
+                            <TextBlock Text="Help" Margin="8,0,0,0"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </NavigationView.PaneFooter>
 
