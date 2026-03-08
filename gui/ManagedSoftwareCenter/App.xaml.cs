@@ -48,6 +48,7 @@ public partial class App : Application
         services.AddSingleton<IIconService, IconService>();
         services.AddSingleton<IAlertService, AlertService>();
         services.AddSingleton<IUpdateTrackingService, UpdateTrackingService>();
+        services.AddSingleton<IPreferencesService, PreferencesService>();
 
         // ViewModels
         services.AddTransient<ShellViewModel>();
