@@ -1,7 +1,7 @@
-// ProgressOverlay.xaml.cs - Code-behind for Progress Overlay control (WPF/ModernWpf)
+// ProgressOverlay.xaml.cs - Code-behind for Progress Overlay control (WinUI 3)
 
-using System.Windows;
-using System.Windows.Controls;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Controls;
@@ -28,7 +28,7 @@ public partial class ProgressOverlay : UserControl
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {

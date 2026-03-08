@@ -1,16 +1,14 @@
-// SoftwarePage.xaml.cs - Code-behind for Software page (WPF/ModernWpf)
+// SoftwarePage.xaml.cs - Code-behind for Software page (WinUI 3)
 // Microsoft Store-style design with banner carousel and category pills
 
 using System.IO;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Media.Imaging;
-using System.Windows.Shapes;
-using System.Windows.Threading;
-using ModernWpf.Controls;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Shapes;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
@@ -20,7 +18,7 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Views;
 /// Software page - browse all available optional software
 /// Microsoft Store-style design with carousel and category pills
 /// </summary>
-public partial class SoftwarePage : System.Windows.Controls.Page
+public partial class SoftwarePage : Page
 {
     public SoftwareViewModel ViewModel { get; }
     
@@ -131,11 +129,7 @@ public partial class SoftwarePage : System.Windows.Controls.Page
             {
                 try
                 {
-                    var bitmap = new BitmapImage();
-                    bitmap.BeginInit();
-                    bitmap.UriSource = new Uri(_brandingImagePaths[i], UriKind.Absolute);
-                    bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                    bitmap.EndInit();
+                    var bitmap = new BitmapImage(new Uri(_brandingImagePaths[i], UriKind.Absolute));
                     _bannerImages[i].Source = bitmap;
                 }
                 catch (Exception ex)
@@ -151,7 +145,7 @@ public partial class SoftwarePage : System.Windows.Controls.Page
         System.Diagnostics.Debug.WriteLine($"Loaded {_brandingImagePaths.Count} branding images");
     }
 
-    private void CarouselTimer_Tick(object? sender, EventArgs e)
+    private void CarouselTimer_Tick(object? sender, object e)
     {
         if (_brandingImagePaths.Count < 2) return;
         
@@ -171,11 +165,17 @@ public partial class SoftwarePage : System.Windows.Controls.Page
         for (int i = 0; i < _bannerImages.Length; i++)
         {
             var targetOpacity = (i == slideIndex) ? 1.0 : 0.0;
-            var animation = new DoubleAnimation(targetOpacity, duration)
+            var storyboard = new Storyboard();
+            var animation = new DoubleAnimation
             {
+                To = targetOpacity,
+                Duration = new Duration(duration),
                 EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut }
             };
-            _bannerImages[i].BeginAnimation(OpacityProperty, animation);
+            Storyboard.SetTarget(animation, _bannerImages[i]);
+            Storyboard.SetTargetProperty(animation, "Opacity");
+            storyboard.Children.Add(animation);
+            storyboard.Begin();
         }
         
         UpdateCarouselIndicators();
@@ -213,8 +213,8 @@ public partial class SoftwarePage : System.Windows.Controls.Page
                 Content = GetCategoryContent(category, isSelected),
                 Tag = category,
                 Style = isSelected
-                    ? (Style)FindResource("CategoryPillButtonSelected")
-                    : (Style)FindResource("CategoryPillButton")
+                    ? (Style)this.Resources["CategoryPillButtonSelected"]
+                    : (Style)this.Resources["CategoryPillButton"]
             };
             
             button.Click += CategoryPill_Click;
@@ -229,8 +229,8 @@ public partial class SoftwarePage : System.Windows.Controls.Page
         
         // Get the appropriate foreground brush for dark/light mode
         var foregroundBrush = isSelected 
-            ? new SolidColorBrush(Colors.White)
-            : (Brush)FindResource("TextFillColorPrimaryBrush");
+            ? new SolidColorBrush(Microsoft.UI.Colors.White)
+            : (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
         
         // Add category icon
         var icon = new FontIcon
@@ -293,27 +293,24 @@ public partial class SoftwarePage : System.Windows.Controls.Page
                 {
                     var isSelected = (string?)btn.Tag == category;
                     btn.Style = isSelected
-                        ? (Style)FindResource("CategoryPillButtonSelected")
-                        : (Style)FindResource("CategoryPillButton");
+                        ? (Style)this.Resources["CategoryPillButtonSelected"]
+                        : (Style)this.Resources["CategoryPillButton"];
                 }
             }
         }
     }
 
-    private void FeaturedButton_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void FeaturedButton_Click(object sender, TappedRoutedEventArgs e)
     {
-        // Navigate to featured items (could filter by featured_items from InstallInfo)
-        // For now, just show all items
         _selectedCategory = "All";
         ViewModel.SelectedCategory = "All";
         SectionHeader.Text = "Featured";
     }
 
-    private void UpdatesButton_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void UpdatesButton_Click(object sender, TappedRoutedEventArgs e)
     {
-        // Navigate to Updates page
-        var mainWindow = Window.GetWindow(this) as MainWindow;
-        mainWindow?.NavigateToPage("updates");
+        if (App.MainWindow is MainWindow mainWindow)
+            mainWindow.NavigateToPage("updates");
     }
 
     #endregion
@@ -337,7 +334,7 @@ public partial class SoftwarePage : System.Windows.Controls.Page
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -373,12 +370,11 @@ public partial class SoftwarePage : System.Windows.Controls.Page
         }
     }
 
-    private void OnItemClick(object sender, MouseButtonEventArgs e)
+    private void OnItemClick(object sender, ItemClickEventArgs e)
     {
-        if (sender is FrameworkElement element && element.DataContext is InstallableItem item)
+        if (e.ClickedItem is InstallableItem item)
         {
-            // Navigate to item detail
-            if (Application.Current is App app && app.MainWindow is MainWindow mainWindow)
+            if (App.MainWindow is MainWindow mainWindow)
             {
                 mainWindow.NavigateToItemDetail(item.Name);
             }

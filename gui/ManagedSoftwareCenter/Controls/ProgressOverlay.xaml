@@ -1,29 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ProgressOverlay.xaml - Installation Progress Overlay Control (WPF/ModernWpf) -->
+<!-- ProgressOverlay.xaml - Installation Progress Overlay Control (WinUI 3) -->
 <UserControl
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Controls.ProgressOverlay"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:ui="http://schemas.modernwpf.com/2019"
     mc:Ignorable="d">
 
     <!-- Semi-transparent backdrop -->
-    <Grid Background="{DynamicResource SmokeFillColorDefaultBrush}">
+    <Grid Background="{ThemeResource SmokeFillColorDefaultBrush}">
         
         <!-- Centered Progress Card -->
         <Border 
-            Background="{DynamicResource AcrylicBackgroundFillColorBaseBrush}"
+            Background="{ThemeResource AcrylicBackgroundFillColorBaseBrush}"
             CornerRadius="16"
             Padding="32"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
             MinWidth="400"
-            MaxWidth="500">
-            <Border.Effect>
-                <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.3"/>
-            </Border.Effect>
+            MaxWidth="500"
+            Translation="0,0,32">
+            <Border.Shadow>
+                <ThemeShadow />
+            </Border.Shadow>
             
             <StackPanel>
                 
@@ -32,8 +32,8 @@
                     <Border 
                         Width="48" Height="48" 
                         CornerRadius="12"
-                        Background="{DynamicResource AccentFillColorDefaultBrush}">
-                        <ui:FontIcon 
+                        Background="{ThemeResource AccentFillColorDefaultBrush}">
+                        <FontIcon 
                             Glyph="&#xE896;" 
                             FontSize="24"
                             Foreground="White"/>
@@ -48,13 +48,13 @@
                         <TextBlock 
                             x:Name="StatusMessageText"
                             Style="{StaticResource CaptionTextBlockStyle}"
-                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </StackPanel>
                 </StackPanel>
 
                 <!-- Progress Bar -->
                 <StackPanel Margin="0,0,0,24">
-                    <ui:ProgressBar 
+                    <ProgressBar 
                         x:Name="MainProgress"
                         Height="8"/>
                     
@@ -62,12 +62,12 @@
                         <TextBlock 
                             x:Name="ProgressText"
                             Style="{StaticResource CaptionTextBlockStyle}"
-                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             HorizontalAlignment="Left"/>
                         <TextBlock 
                             x:Name="PercentText"
                             Style="{StaticResource CaptionTextBlockStyle}"
-                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             HorizontalAlignment="Right"/>
                     </Grid>
                 </StackPanel>
@@ -75,7 +75,7 @@
                 <!-- Detail Message (downloading, extracting, etc.) -->
                 <Border 
                     x:Name="DetailMessageBorder"
-                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     CornerRadius="8"
                     Padding="16"
                     Margin="0,0,0,24"
@@ -90,19 +90,19 @@
                         <!-- Download Speed / ETA -->
                         <StackPanel x:Name="DownloadStatsPanel" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
                             <StackPanel Orientation="Horizontal">
-                                <ui:FontIcon Glyph="&#xE896;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <FontIcon Glyph="&#xE896;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock 
                                     x:Name="DownloadSpeedText"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Margin="4,0,0,0"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
-                                <ui:FontIcon Glyph="&#xE823;" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <FontIcon Glyph="&#xE823;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock 
                                     x:Name="TimeRemainingText"
                                     Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     Margin="4,0,0,0"/>
                             </StackPanel>
                         </StackPanel>
@@ -117,16 +117,16 @@
                     <TextBlock 
                         Text="Overall Progress"
                         Style="{StaticResource CaptionTextBlockStyle}"
-                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                    <ui:ProgressBar 
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <ProgressBar 
                         x:Name="OverallProgress"
                         Height="4"
                         Margin="0,4,0,0"
-                        Background="{DynamicResource ControlStrongFillColorDisabledBrush}"/>
+                        Background="{ThemeResource ControlStrongFillColorDisabledBrush}"/>
                     <TextBlock 
                         x:Name="MultiItemStatusText"
                         Style="{StaticResource CaptionTextBlockStyle}"
-                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Margin="0,4,0,0"/>
                 </StackPanel>
 
@@ -143,7 +143,7 @@
                         Grid.Column="0"
                         Content="Hide"
                         HorizontalAlignment="Left"
-                        ToolTip="Continue in background"/>
+                        ToolTipService.ToolTip="Continue in background"/>
 
                     <!-- Stop Button -->
                     <Button 
@@ -151,7 +151,7 @@
                         Grid.Column="1"
                         Padding="16,8">
                         <StackPanel Orientation="Horizontal">
-                            <ui:FontIcon Glyph="&#xE71A;" FontSize="14"/>
+                            <FontIcon Glyph="&#xE71A;" FontSize="14"/>
                             <TextBlock Text="Stop" Margin="8,0,0,0"/>
                         </StackPanel>
                     </Button>

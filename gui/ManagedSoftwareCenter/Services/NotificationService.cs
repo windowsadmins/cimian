@@ -1,8 +1,9 @@
-// NotificationService.cs - Windows toast notifications for Software Center
-// Uses Microsoft.Toolkit.Uwp.Notifications for native Windows toasts
+// NotificationService.cs - Windows toast notifications for Software Center (WinUI 3)
+// Uses Microsoft.Windows.AppNotifications from WindowsAppSDK
 
 using Microsoft.Extensions.Logging;
-using Microsoft.Toolkit.Uwp.Notifications;
+using Microsoft.Windows.AppNotifications;
+using Microsoft.Windows.AppNotifications.Builder;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 
@@ -12,8 +13,6 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 /// </summary>
 public class NotificationService : INotificationService
 {
-    private const string AppId = "WindowsAdmins.CimianSoftwareCenter";
-
     private readonly ILogger<NotificationService>? _logger;
     private bool _initialized;
 
@@ -29,8 +28,9 @@ public class NotificationService : INotificationService
 
         try
         {
-            // Register for notification activation
-            ToastNotificationManagerCompat.OnActivated += OnNotificationActivated;
+            var manager = AppNotificationManager.Default;
+            manager.NotificationInvoked += OnNotificationInvoked;
+            manager.Register();
             _initialized = true;
             _logger?.LogInformation("Notification service initialized");
         }
@@ -40,9 +40,9 @@ public class NotificationService : INotificationService
         }
     }
 
-    private void OnNotificationActivated(ToastNotificationActivatedEventArgsCompat e)
+    private void OnNotificationInvoked(AppNotificationManager sender, AppNotificationActivatedEventArgs e)
     {
-        var args = ToastArguments.Parse(e.Argument);
+        var args = e.Arguments;
 
         // Handle different actions
         if (args.TryGetValue("action", out var action))
@@ -64,6 +64,7 @@ public class NotificationService : INotificationService
                     // Trigger restart - would need elevation
                     break;
                 case "restartLater":
+                case "dismiss":
                     // Dismiss notification
                     break;
             }
@@ -79,15 +80,16 @@ public class NotificationService : INotificationService
                 ? "1 update available" 
                 : $"{updateCount} updates available";
 
-            new ToastContentBuilder()
+            var builder = new AppNotificationBuilder()
                 .AddArgument("action", "viewUpdates")
                 .AddText(title)
                 .AddText("Open Software Center to install updates.")
-                .AddButton(new ToastButton()
-                    .SetContent("View Updates")
+                .AddButton(new AppNotificationButton("View Updates")
                     .AddArgument("action", "viewUpdates"))
-                .AddButton(new ToastButtonDismiss("Later"))
-                .Show();
+                .AddButton(new AppNotificationButton("Later")
+                    .AddArgument("action", "dismiss"));
+
+            AppNotificationManager.Default.Show(builder.BuildNotification());
 
             _logger?.LogDebug("Showed updates available notification: {Count}", updateCount);
         }
@@ -102,12 +104,13 @@ public class NotificationService : INotificationService
     {
         try
         {
-            new ToastContentBuilder()
+            var builder = new AppNotificationBuilder()
                 .AddArgument("action", "viewItem")
                 .AddArgument("item", itemName)
                 .AddText("Installation complete")
-                .AddText($"{itemName} has been installed successfully.")
-                .Show();
+                .AddText($"{itemName} has been installed successfully.");
+
+            AppNotificationManager.Default.Show(builder.BuildNotification());
 
             _logger?.LogDebug("Showed install complete notification: {Item}", itemName);
         }
@@ -122,7 +125,7 @@ public class NotificationService : INotificationService
     {
         try
         {
-            var builder = new ToastContentBuilder()
+            var builder = new AppNotificationBuilder()
                 .AddArgument("action", "viewItem")
                 .AddArgument("item", itemName)
                 .AddText("Installation failed")
@@ -133,7 +136,7 @@ public class NotificationService : INotificationService
                 builder.AddText(errorMessage);
             }
 
-            builder.Show();
+            AppNotificationManager.Default.Show(builder.BuildNotification());
 
             _logger?.LogDebug("Showed install failed notification: {Item}", itemName);
         }
@@ -148,17 +151,16 @@ public class NotificationService : INotificationService
     {
         try
         {
-            new ToastContentBuilder()
+            var builder = new AppNotificationBuilder()
                 .AddArgument("action", "restart")
                 .AddText("Restart required")
                 .AddText("A restart is required to complete software updates.")
-                .AddButton(new ToastButton()
-                    .SetContent("Restart Now")
+                .AddButton(new AppNotificationButton("Restart Now")
                     .AddArgument("action", "restartNow"))
-                .AddButton(new ToastButton()
-                    .SetContent("Later")
-                    .AddArgument("action", "restartLater"))
-                .Show();
+                .AddButton(new AppNotificationButton("Later")
+                    .AddArgument("action", "restartLater"));
+
+            AppNotificationManager.Default.Show(builder.BuildNotification());
 
             _logger?.LogDebug("Showed restart required notification");
         }
@@ -173,15 +175,16 @@ public class NotificationService : INotificationService
     {
         try
         {
-            new ToastContentBuilder()
+            var builder = new AppNotificationBuilder()
                 .AddArgument("action", "logout")
                 .AddText("Logout required")
                 .AddText("Please log out to complete software updates.")
-                .AddButton(new ToastButton()
-                    .SetContent("Log Out Now")
+                .AddButton(new AppNotificationButton("Log Out Now")
                     .AddArgument("action", "logoutNow"))
-                .AddButton(new ToastButtonDismiss("Later"))
-                .Show();
+                .AddButton(new AppNotificationButton("Later")
+                    .AddArgument("action", "dismiss"));
+
+            AppNotificationManager.Default.Show(builder.BuildNotification());
 
             _logger?.LogDebug("Showed logout required notification");
         }
@@ -196,12 +199,27 @@ public class NotificationService : INotificationService
     {
         try
         {
-            ToastNotificationManagerCompat.History.Clear();
+            AppNotificationManager.Default.RemoveAllAsync().GetAwaiter().GetResult();
             _logger?.LogDebug("Cleared all notifications");
         }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Failed to clear notifications");
+        }
+    }
+
+    /// <summary>
+    /// Unregister notification manager on shutdown
+    /// </summary>
+    public void Shutdown()
+    {
+        try
+        {
+            AppNotificationManager.Default.Unregister();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to unregister notification manager");
         }
     }
 }

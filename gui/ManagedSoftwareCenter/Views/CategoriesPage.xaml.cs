@@ -1,8 +1,7 @@
-// CategoriesPage.xaml.cs - Code-behind for Categories page (WPF/ModernWpf)
+// CategoriesPage.xaml.cs - Code-behind for Categories page (WinUI 3)
 
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Navigation;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Views;
@@ -31,7 +30,7 @@ public partial class CategoriesPage : Page
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -54,8 +53,11 @@ public partial class CategoriesPage : Page
     {
         if (CategoriesList.SelectedItem is CategoryGroup category)
         {
-            // Navigate to Software page with category filter
-            NavigationService?.Navigate(new SoftwarePage(), category.Name);
+            // Navigate to Software page with category filter via MainWindow
+            if (App.MainWindow is MainWindow mainWindow)
+            {
+                mainWindow.NavigateToPage("software");
+            }
             CategoriesList.SelectedItem = null; // Reset selection
         }
     }

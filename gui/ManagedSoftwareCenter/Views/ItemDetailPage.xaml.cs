@@ -1,7 +1,8 @@
-// ItemDetailPage.xaml.cs - Code-behind for Item Detail page (WPF/ModernWpf)
+// ItemDetailPage.xaml.cs - Code-behind for Item Detail page (WinUI 3)
 
-using System.Windows;
-using System.Windows.Controls;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Navigation;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 
@@ -36,14 +37,15 @@ public partial class ItemDetailPage : Page
         };
     }
 
-    public ItemDetailPage(object? parameter) : this()
+    protected override void OnNavigatedTo(NavigationEventArgs e)
     {
-        _navigationParameter = parameter;
+        base.OnNavigatedTo(e);
+        _navigationParameter = e.Parameter;
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -153,9 +155,9 @@ public partial class ItemDetailPage : Page
 
     private void OnBackClick(object sender, RoutedEventArgs e)
     {
-        if (NavigationService?.CanGoBack == true)
+        if (App.MainWindow is MainWindow mainWindow)
         {
-            NavigationService.GoBack();
+            mainWindow.NavigateBack();
         }
     }
 

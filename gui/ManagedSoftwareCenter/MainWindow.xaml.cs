@@ -1,9 +1,8 @@
 // MainWindow.xaml.cs - Main application window with NavigationView shell
 // Implements Munki MSC-style navigation: Software, Categories, My Items, Updates
 
-using System.Windows;
-using System.Windows.Controls;
-using ModernWpf.Controls;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 using Cimian.GUI.ManagedSoftwareCenter.Views;
 
@@ -20,18 +19,33 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        // Set window size and center on screen
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
+        CenterOnScreen();
+
         // Get ViewModel from DI
         ViewModel = App.GetService<ShellViewModel>();
-        DataContext = ViewModel;
+        RootGrid.DataContext = ViewModel;
 
         // Subscribe to ViewModel property changes
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
+    private void CenterOnScreen()
+    {
+        var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
+        var displayArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
+        var x = (displayArea.WorkArea.Width - 1200) / 2;
+        var y = (displayArea.WorkArea.Height - 800) / 2;
+        AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
+    }
+
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         // Update UI based on property changes
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -103,8 +117,7 @@ public partial class MainWindow : Window
 
         if (pageType != null)
         {
-            var page = (System.Windows.Controls.Page)Activator.CreateInstance(pageType)!;
-            ContentFrame.Navigate(page, ViewModel.NavigationParameter);
+            ContentFrame.Navigate(pageType, ViewModel.NavigationParameter);
             
             // Select the corresponding nav item (for non-detail pages)
             if (pageTag != "detail")
@@ -127,8 +140,7 @@ public partial class MainWindow : Window
     public void NavigateToItemDetail(string itemName)
     {
         ViewModel.NavigationParameter = itemName;
-        var page = new ItemDetailPage();
-        ContentFrame.Navigate(page, itemName);
+        ContentFrame.Navigate(typeof(ItemDetailPage), itemName);
     }
 
     /// <summary>
@@ -142,4 +154,3 @@ public partial class MainWindow : Window
         }
     }
 }
-

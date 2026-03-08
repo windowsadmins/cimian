@@ -1,8 +1,8 @@
-// UpdatesPage.xaml.cs - Code-behind for Updates page (WPF/ModernWpf)
+// UpdatesPage.xaml.cs - Code-behind for Updates page (WinUI 3)
 // Munki-style layout with sections for Pending Installs, Updates, Removals, and Problems
 
-using System.Windows;
-using System.Windows.Controls;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
@@ -100,7 +100,7 @@ public partial class UpdatesPage : Page
 
     private void ShellViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -194,7 +194,7 @@ public partial class UpdatesPage : Page
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        Dispatcher.Invoke(() =>
+        DispatcherQueue.TryEnqueue(() =>
         {
             switch (e.PropertyName)
             {
@@ -238,7 +238,7 @@ public partial class UpdatesPage : Page
         // Navigate to item detail when clicked
         if (sender is FrameworkElement fe && fe.DataContext is InstallableItem item)
         {
-            if (Application.Current is App app && app.MainWindow is MainWindow mainWindow)
+            if (App.MainWindow is MainWindow mainWindow)
             {
                 mainWindow.NavigateToItemDetail(item.Name);
             }
