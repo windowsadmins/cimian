@@ -27,6 +27,9 @@ public class InstallInfoFile
     [YamlMember(Alias = "problem_items")]
     public List<InstallInfoProblem> ProblemItems { get; set; } = [];
 
+    [YamlMember(Alias = "processed_installs")]
+    public List<InstallInfoItem> ProcessedInstalls { get; set; } = [];
+
     [YamlMember(Alias = "featured_items")]
     public List<string> FeaturedItems { get; set; } = [];
 

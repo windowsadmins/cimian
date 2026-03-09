@@ -95,19 +95,25 @@ public partial class ItemDetailPage : Page
         DescriptionText.Text = item.Description ?? "";
         
         // Info section
-        InfoVersionText.Text = item.Version ?? "";
         InfoCategoryText.Text = item.Category ?? "";
         InfoSizeText.Text = FormatFileSize(item.InstallerSize);
         
-        // Installed version
-        if (!string.IsNullOrEmpty(item.InstalledVersion))
+        // Installed version — always show; use InstalledVersion if available, fall back to Version
+        var installedVer = !string.IsNullOrEmpty(item.InstalledVersion) ? item.InstalledVersion : item.Version;
+        InstalledVersionText.Text = installedVer ?? "";
+        
+        // Available update — only show when there's a newer catalog version
+        bool hasUpdate = !string.IsNullOrEmpty(item.InstalledVersion) && 
+             !string.IsNullOrEmpty(item.Version) && 
+             !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase);
+        if (hasUpdate)
         {
-            InstalledVersionPanel.Visibility = Visibility.Visible;
-            InstalledVersionText.Text = item.InstalledVersion;
+            InfoVersionPanel.Visibility = Visibility.Visible;
+            InfoVersionText.Text = item.Version ?? "";
         }
         else
         {
-            InstalledVersionPanel.Visibility = Visibility.Collapsed;
+            InfoVersionPanel.Visibility = Visibility.Collapsed;
         }
         
         // Developer
