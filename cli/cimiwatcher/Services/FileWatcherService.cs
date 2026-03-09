@@ -120,12 +120,34 @@ public class FileWatcherService : BackgroundService
 
         _logger.LogInformation("Starting {UpdateType} bootstrap update process", updateType);
 
+        // Read flag file content for optional custom arguments
+        // If the file contains an "Args:" line, use those arguments instead of defaults.
+        // This allows the MSC GUI to request specific modes (--checkonly, --installonly)
+        // without the service guessing.
+        string? customArgs = null;
+        bool suppressCimistatus = false;
         try
         {
-            // Start managedsoftwareupdate
-            // Always include --show-status so any listening GUI (ManagedSoftwareCenter or CimianStatus) 
-            // receives progress updates. The StatusReporter only connects if a GUI is listening on port 19847.
-            var updateArgs = withGUI ? "--auto --show-status -vv" : "--auto --show-status";
+            var content = await File.ReadAllTextAsync(flagFile, cancellationToken);
+            foreach (var line in content.Split('\n'))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("Args:", StringComparison.OrdinalIgnoreCase))
+                {
+                    customArgs = trimmed.Substring("Args:".Length).Trim();
+                    suppressCimistatus = true; // caller manages its own UI
+                    _logger.LogInformation("Custom args from flag file: {Args}", customArgs);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read flag file content, using defaults");
+        }
+
+        try
+        {
+            var updateArgs = customArgs ?? (withGUI ? "--auto --show-status -vv" : "--auto --show-status");
             var updateProcess = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -145,8 +167,8 @@ public class FileWatcherService : BackgroundService
 
             _logger.LogInformation("Started managedsoftwareupdate process (PID: {Pid})", updateProcess.Id);
 
-            // If GUI mode, also launch cimistatus to provide UI monitoring
-            if (withGUI)
+            // If GUI mode and caller didn't suppress cimistatus, launch the status UI
+            if (withGUI && !suppressCimistatus)
             {
                 LaunchCimianStatus();
             }

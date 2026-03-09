@@ -6,15 +6,36 @@
     Title="Managed Software Center">
 
     <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
         <Grid.KeyboardAccelerators>
             <KeyboardAccelerator Key="R" Modifiers="Control" Invoked="Refresh_Accelerator"/>
             <KeyboardAccelerator Key="F5" Invoked="Refresh_Accelerator"/>
             <KeyboardAccelerator Key="Left" Modifiers="Menu" Invoked="Back_Accelerator"/>
-            <KeyboardAccelerator Key="Back" Invoked="Back_Accelerator"/>
+            <KeyboardAccelerator Key="L" Modifiers="Control" Invoked="ViewLog_Accelerator"/>
         </Grid.KeyboardAccelerators>
+
+        <!-- Custom Title Bar -->
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48"
+              Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="AppTitleText"
+                       Grid.Column="0"
+                       Text="Managed Software Center"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       VerticalAlignment="Center"
+                       Margin="16,0,0,0"/>
+        </Grid>
 
         <!-- Main Content with Navigation -->
         <NavigationView x:Name="NavView"
+                           Grid.Row="1"
                            IsBackButtonVisible="Collapsed"
                            IsSettingsVisible="False"
                            PaneDisplayMode="Left"
@@ -69,14 +90,7 @@
                 <StackPanel x:Name="PaneFooterContent" Margin="12,8">
                     <TextBlock x:Name="LastCheckedText"
                                FontSize="12"
-                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
-                               Margin="0,0,0,8" />
-                    <Button x:Name="CheckNowButton"
-                            Content="Check Now"
-                            Click="CheckNow_Click"
-                            AutomationProperties.Name="Check for updates"
-                            ToolTipService.ToolTip="Check for updates (Ctrl+R)"
-                            HorizontalAlignment="Stretch" />
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}" />
                 </StackPanel>
             </NavigationView.PaneFooter>
 

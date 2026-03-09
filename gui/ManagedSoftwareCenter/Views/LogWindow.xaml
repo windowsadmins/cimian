@@ -12,11 +12,9 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Toolbar -->
-        <Grid Grid.Row="0" Padding="12,8" 
-              Background="{ThemeResource LayerFillColorDefaultBrush}"
-              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-              BorderThickness="0,0,0,1">
+        <!-- Integrated Title Bar + Toolbar -->
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="12,8,180,8" Height="48"
+              Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
