@@ -277,6 +277,12 @@ public partial class ShellViewModel : ObservableObject
         CanRefresh = true;
         IsInstalling = false;
 
+        // Always fire SessionCompleted when InstallInfo.yaml changes — this ensures
+        // the Updates page reloads with fresh data even when IsInstalling was already
+        // false (which happens when the ShellExecute/UAC launcher exits before the
+        // actual managedsoftwareupdate process finishes).
+        SessionCompleted?.Invoke(this, EventArgs.Empty);
+
         // Show notification if updates are available
         if (info.ManagedUpdates.Count > 0)
         {
@@ -410,17 +416,24 @@ public partial class ShellViewModel : ObservableObject
 
     private void OnOperationStatusChanged(object? sender, bool isRunning)
     {
-        IsInstalling = isRunning;
-        CanRefresh = !isRunning;
-
         if (isRunning)
         {
-            // Reset progress state
+            // Operation launched — show progress overlay
+            IsInstalling = true;
+            CanRefresh = false;
             ProgressMessage = "Checking for updates...";
             ProgressDetail = string.Empty;
             ProgressPercent = 0;
             IsProgressIndeterminate = true;
             CanStopInstall = false;
+        }
+        else
+        {
+            // isRunning=false only fires here when the launch itself failed (UAC denied,
+            // exe not found). Normal completion is handled by OnInstallInfoChanged or
+            // ProgressMessageType.Complete. Re-enable the button and hide overlay.
+            IsInstalling = false;
+            CanRefresh = true;
         }
     }
 }

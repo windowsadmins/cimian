@@ -23,8 +23,12 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        // Extend content into title bar for integrated dark mode look
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+
         // Set window size and center on screen
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(1400, 900));
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(2100, 1170));
         CenterOnScreen();
 
         // Get ViewModel from DI
@@ -41,8 +45,8 @@ public partial class MainWindow : Window
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
         var displayArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
             windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
-        var x = (displayArea.WorkArea.Width - 1400) / 2;
-        var y = (displayArea.WorkArea.Height - 900) / 2;
+        var x = (displayArea.WorkArea.Width - 2100) / 2;
+        var y = (displayArea.WorkArea.Height - 1170) / 2;
         AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
     }
 
@@ -57,7 +61,6 @@ public partial class MainWindow : Window
                     LastCheckedText.Text = ViewModel.LastCheckedText;
                     break;
                 case nameof(ViewModel.CanRefresh):
-                    CheckNowButton.IsEnabled = ViewModel.CanRefresh;
                     break;
                 case nameof(ViewModel.UpdatesCount):
                     UpdatesBadge.Value = ViewModel.UpdatesCount;
@@ -155,7 +158,10 @@ public partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!string.IsNullOrEmpty(branding.AppTitle))
+            {
                 Title = branding.AppTitle;
+                AppTitleText.Text = branding.AppTitle;
+            }
 
             if (branding.SidebarHeaderImage != null)
             {
@@ -165,10 +171,7 @@ public partial class MainWindow : Window
         });
     }
 
-    private void CheckNow_Click(object sender, RoutedEventArgs e)
-    {
-        ViewModel.RefreshCommand.Execute(null);
-    }
+
 
 
 
@@ -262,5 +265,11 @@ public partial class MainWindow : Window
     {
         args.Handled = true;
         NavigateBack();
+    }
+
+    private void ViewLog_Accelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        LogWindow.GetOrActivate();
     }
 }

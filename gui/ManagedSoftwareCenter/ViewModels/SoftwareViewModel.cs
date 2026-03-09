@@ -78,11 +78,11 @@ public partial class SoftwareViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            // Load optional installs
-            var optionalInstalls = await _installInfoService.GetOptionalInstallsAsync();
-            _allItems = optionalInstalls.ToList();
+            // Load all managed items (optional + processed + managed + updates)
+            var allItems = await _installInfoService.GetAllItemsAsync();
+            _allItems = allItems.ToList();
             
-            System.Diagnostics.Debug.WriteLine($"SoftwareVM: Loaded {_allItems.Count} optional installs");
+            System.Diagnostics.Debug.WriteLine($"SoftwareVM: Loaded {_allItems.Count} items");
 
             // Update item statuses based on self-service selections
             await UpdateItemStatusesAsync();

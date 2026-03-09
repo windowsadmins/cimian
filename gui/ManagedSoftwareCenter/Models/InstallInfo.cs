@@ -49,6 +49,12 @@ public class InstallInfo
     public List<ProblemItem> ProblemItems { get; set; } = [];
 
     /// <summary>
+    /// All managed items that are already installed and up-to-date
+    /// </summary>
+    [YamlMember(Alias = "processed_installs")]
+    public List<InstallableItem> ProcessedInstalls { get; set; } = [];
+
+    /// <summary>
     /// Timestamp when this info was generated
     /// </summary>
     [YamlMember(Alias = "last_check")]
