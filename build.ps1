@@ -284,97 +284,52 @@ function Test-Command {
 function Clean-OldPackages {
     param(
         [string]$OutputDirectory = "release",
-        [string]$KeepCount = 1  # Keep this many latest versions
+        [int]$KeepCount = 1  # Keep this many latest versions
     )
     
     if (-not (Test-Path $OutputDirectory)) {
         return
     }
     
-    Write-BuildLog "Cleaning up old package versions (keeping latest $KeepCount)..." "INFO"
+    Write-BuildLog "Cleaning up old build artifacts (keeping $KeepCount most recent per architecture)..." "INFO"
     
-    # Clean up NuGet packages by architecture
-    foreach ($arch in @('x64', 'arm64')) {
-        $pattern = "CimianTools-$arch.*.nupkg"
-        $packages = Get-ChildItem -Path $OutputDirectory -Filter $pattern -ErrorAction SilentlyContinue | 
-                    Sort-Object LastWriteTime -Descending
-        
-        if ($packages.Count -gt $KeepCount) {
-            $toRemove = $packages | Select-Object -Skip $KeepCount
-            foreach ($pkg in $toRemove) {
+    $totalBytesRemoved = 0L
+    
+    # Helper: remove old files matching a pattern, keeping $KeepCount newest
+    function Remove-OldFiles {
+        param([string]$Directory, [string]$Pattern)
+        $files = Get-ChildItem -Path $Directory -Filter $Pattern -ErrorAction SilentlyContinue |
+                 Sort-Object LastWriteTime -Descending
+        if ($files.Count -gt $KeepCount) {
+            foreach ($file in ($files | Select-Object -Skip $KeepCount)) {
                 try {
-                    Remove-Item -Path $pkg.FullName -Force
-                    Write-BuildLog "Removed old NuGet: $($pkg.Name)" "INFO"
+                    $sizeMB = ($file.Length / 1MB).ToString('F2')
+                    Remove-Item -Path $file.FullName -Force
+                    Write-BuildLog "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                    $script:totalBytesRemoved += $file.Length
                 }
                 catch {
-                    Write-BuildLog "Failed to remove $($pkg.Name): $_" "WARNING"
+                    Write-BuildLog "Failed to remove $($file.Name): $_" "WARNING"
                 }
             }
         }
     }
     
-    # Clean up MSI packages by architecture
     foreach ($arch in @('x64', 'arm64')) {
-        $pattern = "Cimian-*-$arch.msi"
-        $packages = Get-ChildItem -Path $OutputDirectory -Filter $pattern -ErrorAction SilentlyContinue | 
-                    Sort-Object LastWriteTime -Descending
-        
-        if ($packages.Count -gt $KeepCount) {
-            $toRemove = $packages | Select-Object -Skip $KeepCount
-            foreach ($pkg in $toRemove) {
-                try {
-                    Remove-Item -Path $pkg.FullName -Force
-                    Write-BuildLog "Removed old MSI: $($pkg.Name)" "INFO"
-                }
-                catch {
-                    Write-BuildLog "Failed to remove $($pkg.Name): $_" "WARNING"
-                }
-            }
-        }
+        # IntuneWin packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "Cimian-*-$arch.intunewin"
+        # MSI packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "Cimian-*-$arch.msi"
+        # NuGet packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch.*.nupkg"
+        # PKG packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch-*.pkg"
     }
     
-    # Clean up generic MSI (if exists)
-    $genericMsi = Get-ChildItem -Path $OutputDirectory -Filter "Cimian.msi" -ErrorAction SilentlyContinue
-    if ($genericMsi) {
-        # Keep the most recent one
-        $msis = @($genericMsi) + (Get-ChildItem -Path $OutputDirectory -Filter "Cimian-*.msi" -ErrorAction SilentlyContinue)
-        if ($msis.Count -gt 1) {
-            $newest = $msis | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            foreach ($old in ($msis | Where-Object { $_.FullName -ne $newest.FullName })) {
-                if ($old.Name -eq "Cimian.msi") {
-                    try {
-                        Remove-Item -Path $old.FullName -Force
-                        Write-BuildLog "Removed old generic MSI: $($old.Name)" "INFO"
-                    }
-                    catch {
-                        Write-BuildLog "Failed to remove $($old.Name): $_" "WARNING"
-                    }
-                }
-            }
-        }
+    if ($totalBytesRemoved -gt 0) {
+        $freedGB = ($totalBytesRemoved / 1GB).ToString('F2')
+        Write-BuildLog "Freed $freedGB GB by removing old build artifacts" "SUCCESS"
     }
-    
-    # Clean up PKG packages by architecture
-    foreach ($arch in @('x64', 'arm64')) {
-        $pattern = "CimianTools-$arch-*.pkg"
-        $packages = Get-ChildItem -Path $OutputDirectory -Filter $pattern -ErrorAction SilentlyContinue | 
-                    Sort-Object LastWriteTime -Descending
-        
-        if ($packages.Count -gt $KeepCount) {
-            $toRemove = $packages | Select-Object -Skip $KeepCount
-            foreach ($pkg in $toRemove) {
-                try {
-                    Remove-Item -Path $pkg.FullName -Force
-                    Write-BuildLog "Removed old PKG: $($pkg.Name)" "INFO"
-                }
-                catch {
-                    Write-BuildLog "Failed to remove $($pkg.Name): $_" "WARNING"
-                }
-            }
-        }
-    }
-    
-    Write-BuildLog "Package cleanup complete" "SUCCESS"
 }
 
 function Get-SigningCertThumbprint {
@@ -1414,11 +1369,12 @@ function Show-BuildSummary {
     
     # List built files
     if (Test-Path $OutputDir) {
+        $cwdRelease = "." + $OutputDir.Substring($RootDir.Length)
         Write-Host "Built Artifacts:" -ForegroundColor Green
-        Get-ChildItem -Path $OutputDir -Recurse -Include "*.exe","*.msi","*.nupkg","*.pkg","*.intunewin" | ForEach-Object {
+        Get-ChildItem -Path $OutputDir -Recurse -Include "*.msi","*.nupkg","*.pkg","*.intunewin" | Sort-Object Name | ForEach-Object {
             $relativePath = $_.FullName.Replace($OutputDir, '').TrimStart('\')
             $size = [math]::Round($_.Length / 1MB, 1)
-            Write-Host "  • $relativePath ($size MB)" -ForegroundColor White
+            Write-Host "  • $cwdRelease\$relativePath ($size MB)" -ForegroundColor White
         }
     }
     
@@ -1499,6 +1455,9 @@ try {
     
     # Initialize build environment
     Initialize-BuildEnvironment
+    
+    # Clean up stale artifacts from previous builds
+    Clean-OldPackages -OutputDirectory $OutputDir -KeepCount 1
     
     # Clean if requested
     if ($Clean) {
