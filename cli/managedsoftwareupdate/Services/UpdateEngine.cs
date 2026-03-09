@@ -900,7 +900,22 @@ public class UpdateEngine : IDisposable
         ReportStatus("Downloading...");
         ReportDetail($"Downloading {items.Count} items...");
         LogInfo($"Downloading {items.Count} items...");
-        var downloadedPaths = await _downloadService.DownloadItemsAsync(items, null, cancellationToken);
+        var downloadCount = 0;
+        var downloadProgress = new Progress<(string ItemName, double Percent)>(p =>
+        {
+            // Report which item is being downloaded with version info
+            var matchingItem = items.FirstOrDefault(i => i.Name == p.ItemName);
+            var version = matchingItem?.Version;
+            var label = !string.IsNullOrEmpty(version) ? $"{p.ItemName} {version}" : p.ItemName;
+
+            if (p.Percent <= 0)
+            {
+                // Starting a new item download
+                downloadCount++;
+                ReportDetail($"Downloading {label} ({downloadCount}/{items.Count})");
+            }
+        });
+        var downloadedPaths = await _downloadService.DownloadItemsAsync(items, downloadProgress, cancellationToken);
 
         // Track installed and scheduled items for dependency checking
         // Start with items that are already confirmed installed (from status checks)
@@ -920,7 +935,9 @@ public class UpdateEngine : IDisposable
 
             itemIndex++;
             var progressPercent = (itemIndex * 100) / totalItems;
-            ReportDetail($"Installing {item.Name} ({itemIndex}/{totalItems})");
+            var installLabel = !string.IsNullOrEmpty(item.Version)
+                ? $"{item.Name} {item.Version}" : item.Name;
+            ReportDetail($"Installing {installLabel} ({itemIndex}/{totalItems})");
             ReportPercent(progressPercent);
 
             // Skip if already processed (may have been installed as a dependency)
@@ -1989,8 +2006,19 @@ public class UpdateEngine : IDisposable
                             else
                                 info.ManagedInstalls.Add(item);
                         }
-                        // Items that are already installed and up-to-date are omitted from
-                        // managed_installs/managed_updates (only items needing action are included)
+                        else
+                        {
+                            // Already installed and up-to-date — add to processed_installs
+                            var procItem = BuildInstallInfoItem(mi.Name, cat);
+                            procItem.Installed = true;
+                            procItem.Status = "installed";
+                            if (cat != null)
+                            {
+                                var status = _statusService.CheckStatus(cat, action, _config.CachePath);
+                                procItem.InstalledVersion = status.InstalledVersion;
+                            }
+                            info.ProcessedInstalls.Add(procItem);
+                        }
                         break;
 
                     case "uninstall":

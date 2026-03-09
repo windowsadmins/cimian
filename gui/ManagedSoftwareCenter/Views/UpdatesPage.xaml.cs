@@ -187,8 +187,10 @@ public partial class UpdatesPage : Page
         }
         else
         {
-            StatusText.Text = "All software is up to date";
+            StatusText.Text = "No pending updates";
         }
+
+
 
         // Update Install button state
         InstallNowButton.IsEnabled = ViewModel.HasPendingWork;
@@ -235,6 +237,11 @@ public partial class UpdatesPage : Page
         await ViewModel.CheckForUpdatesAsync();
     }
 
+    private async void CheckAgain_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.CheckForUpdatesAsync();
+    }
+
     private void OnItemClick(object sender, RoutedEventArgs e)
     {
         // Navigate to item detail when clicked
@@ -255,8 +262,7 @@ public partial class UpdatesPage : Page
 
     private void ViewLog_Click(object sender, RoutedEventArgs e)
     {
-        var logWindow = new LogWindow();
-        logWindow.Activate();
+        LogWindow.GetOrActivate();
     }
 
     private void OnSessionCompleted(object? sender, EventArgs e)
