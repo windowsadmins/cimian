@@ -76,6 +76,7 @@ public class InstallInfoService : IInstallInfoService, IDisposable
             info.ManagedUpdates ??= [];
             info.FeaturedItems ??= [];
             info.ProblemItems ??= [];
+            info.ProcessedInstalls ??= [];
 
             _cachedInfo = info;
             _cacheTime = DateTime.Now;
@@ -135,11 +136,43 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<string>> GetCategoriesAsync()
+    public async Task<IReadOnlyList<InstallableItem>> GetAllItemsAsync()
     {
         var info = await LoadAsync();
+        // Combine all item lists, deduplicating by name
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allItems = new List<InstallableItem>();
 
-        var categories = info.OptionalInstalls
+        foreach (var item in info.OptionalInstalls)
+        {
+            if (seen.Add(item.Name))
+                allItems.Add(item);
+        }
+        foreach (var item in info.ProcessedInstalls)
+        {
+            if (seen.Add(item.Name))
+                allItems.Add(item);
+        }
+        foreach (var item in info.ManagedInstalls)
+        {
+            if (seen.Add(item.Name))
+                allItems.Add(item);
+        }
+        foreach (var item in info.ManagedUpdates)
+        {
+            if (seen.Add(item.Name))
+                allItems.Add(item);
+        }
+
+        return allItems.AsReadOnly();
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> GetCategoriesAsync()
+    {
+        var allItems = await GetAllItemsAsync();
+
+        var categories = allItems
             .Where(x => !string.IsNullOrWhiteSpace(x.Category))
             .Select(x => x.Category!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -152,9 +185,9 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     /// <inheritdoc />
     public async Task<IReadOnlyList<InstallableItem>> GetItemsByCategoryAsync(string category)
     {
-        var info = await LoadAsync();
+        var allItems = await GetAllItemsAsync();
 
-        var items = info.OptionalInstalls
+        var items = allItems
             .Where(x => string.Equals(x.Category, category, StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => x.GetDisplayName())
             .ToList();
@@ -179,6 +212,11 @@ public class InstallInfoService : IInstallInfoService, IDisposable
         if (item != null) return item;
 
         item = info.ManagedUpdates.FirstOrDefault(x => 
+            string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+        
+        if (item != null) return item;
+
+        item = info.ProcessedInstalls.FirstOrDefault(x => 
             string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
 
         return item;

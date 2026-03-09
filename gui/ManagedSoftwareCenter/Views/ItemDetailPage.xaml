@@ -12,7 +12,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header with Back Button -->
-        <Grid Grid.Row="0" Margin="24,16" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+        <Grid Grid.Row="0" Margin="24,16" Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -38,8 +38,8 @@
         </Grid>
 
         <!-- Main Content -->
-        <ScrollViewer Grid.Row="1" Padding="24">
-            <Grid MaxWidth="800">
+        <ScrollViewer Grid.Row="1" Padding="24,0,24,24">
+            <Grid MaxWidth="900" HorizontalAlignment="Left">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -313,8 +313,8 @@
                         </Grid.RowDefinitions>
 
                         <!-- Version -->
-                        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,12">
-                            <TextBlock Text="Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <StackPanel x:Name="InfoVersionPanel" Grid.Row="0" Grid.Column="0" Margin="0,0,0,12" Visibility="Collapsed">
+                            <TextBlock Text="Available Update" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
@@ -328,8 +328,7 @@
                         <StackPanel 
                             x:Name="InstalledVersionPanel"
                             Grid.Row="1" Grid.Column="0" 
-                            Margin="0,0,0,12"
-                            Visibility="Collapsed">
+                            Margin="0,0,0,12">
                             <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InstalledVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>

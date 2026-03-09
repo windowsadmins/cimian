@@ -40,6 +40,11 @@ public interface IInstallInfoService
     Task<IReadOnlyList<ProblemItem>> GetProblemItemsAsync();
 
     /// <summary>
+    /// Get all items for the Software page (optional + processed + managed + updates)
+    /// </summary>
+    Task<IReadOnlyList<InstallableItem>> GetAllItemsAsync();
+
+    /// <summary>
     /// Get all unique categories
     /// </summary>
     Task<IReadOnlyList<string>> GetCategoriesAsync();

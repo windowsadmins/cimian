@@ -171,9 +171,6 @@ public partial class UpdatesViewModel : ObservableObject
         try
         {
             await _triggerService.TriggerCheckAsync();
-            // Wait a moment for the check to start, then reload
-            await Task.Delay(1000);
-            await LoadAsync();
         }
         finally
         {

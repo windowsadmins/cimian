@@ -38,6 +38,7 @@
                         <Button x:Name="ViewLogButton"
                                 Click="ViewLog_Click"
                                 ToolTipService.ToolTip="View update log"
+                                MinWidth="140"
                                 Height="44">
                             <StackPanel Orientation="Horizontal">
                                 <FontIcon Glyph="&#xE7C3;" FontSize="16"/>
@@ -198,14 +199,8 @@
                                                        Margin="0,2,0,0"/>
                                         </StackPanel>
 
-                                        <!-- Update Badge -->
-                                        <Border Grid.Column="2" 
-                                                VerticalAlignment="Center"
-                                                Background="{ThemeResource AccentFillColorDefaultBrush}"
-                                                CornerRadius="4"
-                                                Padding="8,4">
-                                            <TextBlock Text="Update" FontSize="11" Foreground="White"/>
-                                        </Border>
+                                        <!-- Spacer -->
+                                        <Border Grid.Column="2"/>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -303,17 +298,27 @@
         <StackPanel x:Name="EmptyState"
                     Visibility="Collapsed"
                     HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
+                    VerticalAlignment="Center"
+                    Spacing="8">
             <FontIcon Glyph="&#xE930;" FontSize="64"
-                         Foreground="{ThemeResource SystemFillColorSuccessBrush}"/>
-            <TextBlock Text="All software is up to date"
+                         Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                         HorizontalAlignment="Center"/>
+            <TextBlock Text="Your software is up to date."
                        Style="{StaticResource SubtitleTextBlockStyle}"
                        HorizontalAlignment="Center"
-                       Margin="0,16,0,4"/>
-            <TextBlock Text="No pending updates, installs, or removals."
+                       Margin="0,16,0,0"/>
+            <TextBlock Text="There is no new software for your computer at this time."
                        Style="{StaticResource BodyTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        HorizontalAlignment="Center"/>
+            <Button x:Name="CheckAgainButton"
+                    Content="CHECK AGAIN"
+                    Style="{StaticResource AccentButtonStyle}"
+                    Click="CheckAgain_Click"
+                    MinWidth="140"
+                    Height="44"
+                    HorizontalAlignment="Center"
+                    Margin="0,16,0,0"/>
         </StackPanel>
 
         <!-- Loading Indicator -->
