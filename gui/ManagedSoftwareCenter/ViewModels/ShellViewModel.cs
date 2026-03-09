@@ -2,6 +2,7 @@
 // Manages navigation, progress overlay, and global state
 
 using System.ComponentModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
@@ -102,6 +103,7 @@ public partial class ShellViewModel : ObservableObject
         // Subscribe to events
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
         _progressClient.ProgressReceived += OnProgressReceived;
+        _progressClient.ConnectionChanged += OnProgressConnectionChanged;
         _triggerService.OperationStatusChanged += OnOperationStatusChanged;
     }
 
@@ -113,8 +115,41 @@ public partial class ShellViewModel : ObservableObject
         // Start watching for changes
         _installInfoService.StartWatching();
 
+        // Detect if managedsoftwareupdate is already running (e.g., launched by
+        // cimiwatcher before MSC started).  If so, enter the progress overlay
+        // immediately — the StatusReporter inside MSU will auto-reconnect to
+        // our ProgressServer on its next SendMessage call.
+        if (IsManagedSoftwareUpdateRunning())
+        {
+            IsInstalling = true;
+            CanRefresh = false;
+            ProgressMessage = "Update in progress...";
+            ProgressDetail = "Waiting for status...";
+            ProgressPercent = 0;
+            IsProgressIndeterminate = true;
+            CanStopInstall = false;
+        }
+
         // Load initial data
         await RefreshDataAsync();
+    }
+
+    /// <summary>
+    /// Returns true if a managedsoftwareupdate process is currently running.
+    /// </summary>
+    private static bool IsManagedSoftwareUpdateRunning()
+    {
+        try
+        {
+            var procs = Process.GetProcessesByName("managedsoftwareupdate");
+            var running = procs.Length > 0;
+            foreach (var p in procs) p.Dispose();
+            return running;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     [RelayCommand]
@@ -411,6 +446,34 @@ public partial class ShellViewModel : ObservableObject
         catch
         {
             // Best-effort session end handling
+        }
+    }
+
+    /// <summary>
+    /// Called when managedsoftwareupdate connects to or disconnects from our
+    /// ProgressServer.  Handles the "pick-up" scenario: MSU was already running
+    /// when MSC launched, and MSU auto-reconnected on its next status message.
+    /// </summary>
+    private void OnProgressConnectionChanged(object? sender, bool connected)
+    {
+        if (connected && !IsInstalling)
+        {
+            // MSU just connected — enter progress mode
+            IsInstalling = true;
+            CanRefresh = false;
+            ProgressMessage = "Update in progress...";
+            ProgressDetail = string.Empty;
+            ProgressPercent = 0;
+            IsProgressIndeterminate = true;
+            CanStopInstall = false;
+        }
+        else if (!connected && IsInstalling)
+        {
+            // MSU disconnected without sending a Complete/Quit — session may
+            // have ended abruptly.  Reload data and reset state.
+            IsInstalling = false;
+            CanRefresh = true;
+            _ = HandleSessionEndAsync();
         }
     }
 
