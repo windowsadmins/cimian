@@ -114,9 +114,14 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                     }
                     finally
                     {
+                        var wasConnected = _isConnected;
                         await CleanupClientAsync();
                         _isConnected = false;
-                        ConnectionChanged?.Invoke(this, false);
+                        if (wasConnected)
+                        {
+                            Log("Client disconnected");
+                            ConnectionChanged?.Invoke(this, false);
+                        }
                     }
                 }
             }

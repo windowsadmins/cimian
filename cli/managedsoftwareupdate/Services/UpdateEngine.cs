@@ -1088,6 +1088,18 @@ public class UpdateEngine : IDisposable
         // Get downloaded file path (may be null for script-only items)
         downloadedPaths.TryGetValue(item.Name, out var localFile);
 
+        // Guard: file-based installer types must have a valid downloaded file
+        var installerType = (item.Installer?.Type ?? "").ToLowerInvariant();
+        var requiresFile = installerType is not ("nopkg" or "script");
+        if (requiresFile && string.IsNullOrEmpty(localFile))
+        {
+            var msg = $"Download missing for {item.Name} — cannot install {installerType} without a local file";
+            ConsoleLogger.Error(msg);
+            _sessionLogger?.Log("ERROR", msg);
+            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", msg);
+            return false;
+        }
+
         var (success, output) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
 
         if (success)
