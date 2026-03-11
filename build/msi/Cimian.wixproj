@@ -17,6 +17,9 @@
 
   <PropertyGroup>
     <DefineConstants>BIN_DIR=$(BinDir);ProductVersion=$(ProductVersion)</DefineConstants>
+    <!-- Suppress ICE03 (Invalid Language Id) which fires on harvested binaries with non-standard
+         language metadata (Go exes, native assemblies, etc.), and ICE61 (upgrade version range). -->
+    <SuppressIces>ICE03;ICE61</SuppressIces>
   </PropertyGroup>
 
   <ItemGroup>
