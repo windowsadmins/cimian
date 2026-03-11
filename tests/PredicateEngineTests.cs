@@ -552,6 +552,253 @@ public class PredicateEngineTests
 
     #endregion
 
+    #region GPU Predicate Tests
+
+    [Theory]
+    [InlineData("gpu_names CONTAINS 'GeForce RTX 2060'", true)]
+    [InlineData("gpu_names CONTAINS 'RTX 2060'", true)]
+    [InlineData("gpu_names CONTAINS 'NVIDIA'", true)]
+    [InlineData("gpu_names CONTAINS 'Quadro'", false)]
+    [InlineData("gpu_names CONTAINS 'GTX 1080'", false)]
+    public async Task EvaluateCondition_GpuNames_ContainsCheck(string condition, bool expected)
+    {
+        var facts = CreateFacts(
+            gpuNames: new[] { "NVIDIA GeForce RTX 2060", "Intel UHD Graphics 630" });
+        var result = await _engine.EvaluateConditionAsync(condition, facts);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuNames_Gtx1080Match()
+    {
+        var facts = CreateFacts(
+            gpuNames: new[] { "NVIDIA GeForce GTX 1080", "Intel HD Graphics 530" });
+        
+        var result = await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'GTX 1080'", facts);
+        result.Should().BeTrue();
+
+        var result2 = await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'GeForce RTX'", facts);
+        result2.Should().BeFalse("GTX 1080 should not match GeForce RTX pattern");
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuNames_QuadroMatch()
+    {
+        var facts = CreateFacts(
+            gpuNames: new[] { "NVIDIA RTX A4000", "Intel UHD Graphics 770" });
+        
+        var rtxA = await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'RTX A'", facts);
+        rtxA.Should().BeTrue();
+
+        var quadro = await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'Quadro'", facts);
+        quadro.Should().BeFalse("RTX A4000 is not a Quadro");
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuNames_NoNvidiaOnlyIntegrated()
+    {
+        var facts = CreateFacts(
+            gpuNames: new[] { "Intel UHD Graphics 630" });
+
+        var result = await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'NVIDIA'", facts);
+        result.Should().BeFalse("Intel integrated should not match NVIDIA");
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuDriverVersion_Comparison()
+    {
+        var facts = CreateFacts(gpuDriverVersion: "32.0.15.9174");
+        
+        var result = await _engine.EvaluateConditionAsync("gpu_driver_version == '32.0.15.9174'", facts);
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuVramGb_NumericComparison()
+    {
+        var facts = CreateFacts(gpuVramGb: 6);
+        
+        var result = await _engine.EvaluateConditionAsync("gpu_vram_gb >= 6", facts);
+        result.Should().BeTrue();
+
+        var result2 = await _engine.EvaluateConditionAsync("gpu_vram_gb >= 8", facts);
+        result2.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuWithArch_CombinedCondition()
+    {
+        var facts = CreateFacts(
+            arch: "x64",
+            gpuNames: new[] { "NVIDIA GeForce RTX 2060" });
+        
+        var result = await _engine.EvaluateConditionAsync(
+            "gpu_names CONTAINS 'RTX 2060' AND arch == 'x64'", facts);
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_CoreDriversQuadroOrRtxA_Condition()
+    {
+        // This is the exact condition that will be used in CoreDrivers.yaml
+        var condition = "gpu_names CONTAINS 'Quadro' OR gpu_names CONTAINS 'RTX A'";
+
+        var factsQuadro = CreateFacts(gpuNames: new[] { "NVIDIA Quadro RTX 5000" });
+        (await _engine.EvaluateConditionAsync(condition, factsQuadro)).Should().BeTrue("Quadro should match");
+
+        var factsRtxA = CreateFacts(gpuNames: new[] { "NVIDIA RTX A4000" });
+        (await _engine.EvaluateConditionAsync(condition, factsRtxA)).Should().BeTrue("RTX A should match");
+
+        var factsGeforce = CreateFacts(gpuNames: new[] { "NVIDIA GeForce RTX 2060" });
+        (await _engine.EvaluateConditionAsync(condition, factsGeforce)).Should().BeFalse("GeForce should not match Quadro/RTX A");
+    }
+
+    #endregion
+
+    #region CPU Predicate Tests
+
+    [Theory]
+    [InlineData("Intel", true)]
+    [InlineData("AMD", false)]
+    [InlineData("Qualcomm", false)]
+    public async Task EvaluateCondition_CpuManufacturer_Equals(string manufacturer, bool expected)
+    {
+        var facts = CreateFacts(cpuManufacturer: "Intel");
+        var result = await _engine.EvaluateConditionAsync($"cpu_manufacturer == '{manufacturer}'", facts);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_CpuCores_NumericComparison()
+    {
+        var facts = CreateFacts(cpuCores: 8, cpuLogicalCores: 16);
+        
+        (await _engine.EvaluateConditionAsync("cpu_cores >= 8", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("cpu_cores >= 16", facts)).Should().BeFalse();
+        (await _engine.EvaluateConditionAsync("cpu_logical_cores >= 16", facts)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_CpuName_ContainsSnapdragon()
+    {
+        var facts = CreateFacts(cpuName: "Snapdragon X Elite", cpuManufacturer: "Qualcomm");
+        
+        (await _engine.EvaluateConditionAsync("cpu_name CONTAINS 'Snapdragon'", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("cpu_manufacturer == 'Qualcomm'", facts)).Should().BeTrue();
+    }
+
+    #endregion
+
+    #region NPU Predicate Tests
+
+    [Fact]
+    public async Task EvaluateCondition_NpuAvailable_BooleanCheck()
+    {
+        var factsWithNpu = CreateFacts(npuAvailable: true, npuName: "Qualcomm Hexagon NPU");
+        (await _engine.EvaluateConditionAsync("npu_available == true", factsWithNpu)).Should().BeTrue();
+
+        var factsNoNpu = CreateFacts(npuAvailable: false);
+        (await _engine.EvaluateConditionAsync("npu_available == true", factsNoNpu)).Should().BeFalse();
+        (await _engine.EvaluateConditionAsync("npu_available == false", factsNoNpu)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_NpuName_ContainsHexagon()
+    {
+        var facts = CreateFacts(npuAvailable: true, npuName: "Qualcomm Hexagon NPU");
+        (await _engine.EvaluateConditionAsync("npu_name CONTAINS 'Hexagon'", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("npu_name CONTAINS 'Intel'", facts)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region RAM Predicate Tests
+
+    [Fact]
+    public async Task EvaluateCondition_RamTotalGb_WorkstationTargeting()
+    {
+        var facts = CreateFacts(ramTotalGb: 32, ramType: "DDR4");
+        
+        (await _engine.EvaluateConditionAsync("ram_total_gb >= 32", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("ram_total_gb >= 64", facts)).Should().BeFalse();
+        (await _engine.EvaluateConditionAsync("ram_type == 'DDR4'", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("ram_type == 'DDR5'", facts)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Storage Predicate Tests
+
+    [Fact]
+    public async Task EvaluateCondition_StorageType_NvmeTargeting()
+    {
+        var facts = CreateFacts(storageType: "NVMe", storageCapacityGb: 1024);
+        
+        (await _engine.EvaluateConditionAsync("storage_type == 'NVMe'", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("storage_type == 'SSD'", facts)).Should().BeFalse();
+        (await _engine.EvaluateConditionAsync("storage_capacity_gb >= 1000", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("storage_capacity_gb >= 2000", facts)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Real-World CoreDrivers Scenario Tests
+
+    [Fact]
+    public async Task EvaluateCondition_CoreDrivers_RenderFarmRtx2060()
+    {
+        // Render farm machine with RTX 2060
+        var facts = CreateFacts(
+            hostname: "RENDER-001",
+            arch: "x64",
+            gpuNames: new[] { "NVIDIA GeForce RTX 2060", "Intel UHD Graphics 630" },
+            gpuDriverVersion: "32.0.15.9174",
+            ramTotalGb: 32,
+            ramType: "DDR4");
+
+        // Should match GeForce RTX condition
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'GeForce RTX'", facts)).Should().BeTrue();
+        // Should NOT match GTX 1080 condition
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'GTX 1080'", facts)).Should().BeFalse();
+        // Should NOT match Quadro condition
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'Quadro' OR gpu_names CONTAINS 'RTX A'", facts)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_CoreDrivers_Gtx1080Machine()
+    {
+        // Machine with GTX 1080
+        var facts = CreateFacts(
+            hostname: "A3035",
+            arch: "x64",
+            gpuNames: new[] { "NVIDIA GeForce GTX 1080" });
+
+        // Should match GTX 1080 condition
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'GTX 1080'", facts)).Should().BeTrue();
+        // Should NOT match GeForce RTX (GTX != RTX)
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'GeForce RTX'", facts)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_CoreDrivers_Arm64Surface()
+    {
+        // ARM64 Surface with Qualcomm Adreno
+        var facts = CreateFacts(
+            arch: "arm64",
+            machineType: "laptop",
+            machineModel: "Surface Pro 11th Edition",
+            gpuNames: new[] { "Qualcomm Adreno GPU" });
+
+        // Should match ARM64 Surface Qualcomm condition
+        (await _engine.EvaluateConditionAsync(
+            "arch == 'arm64' AND machine_type == 'laptop' AND machine_model CONTAINS 'Surface'", facts))
+            .Should().BeTrue();
+        // Should NOT match any NVIDIA conditions
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'NVIDIA'", facts)).Should().BeFalse();
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private static SystemFacts CreateFacts(
@@ -562,7 +809,20 @@ public class PredicateEngineTests
         string machineType = "desktop",
         string joinedType = "workgroup",
         string machineModel = "Generic PC",
-        string[]? catalogs = null)
+        string[]? catalogs = null,
+        string[]? gpuNames = null,
+        string gpuDriverVersion = "",
+        long gpuVramGb = 0,
+        string cpuName = "",
+        string cpuManufacturer = "",
+        int cpuCores = 0,
+        int cpuLogicalCores = 0,
+        string npuName = "",
+        bool npuAvailable = false,
+        int ramTotalGb = 0,
+        string ramType = "",
+        string storageType = "",
+        long storageCapacityGb = 0)
     {
         return new SystemFacts
         {
@@ -573,7 +833,20 @@ public class PredicateEngineTests
             MachineType = machineType,
             JoinedType = joinedType,
             MachineModel = machineModel,
-            Catalogs = catalogs?.ToList() ?? new List<string>()
+            Catalogs = catalogs?.ToList() ?? new List<string>(),
+            GpuNames = gpuNames?.ToList() ?? new List<string>(),
+            GpuDriverVersion = gpuDriverVersion,
+            GpuVramGb = gpuVramGb,
+            CpuName = cpuName,
+            CpuManufacturer = cpuManufacturer,
+            CpuCores = cpuCores,
+            CpuLogicalCores = cpuLogicalCores,
+            NpuName = npuName,
+            NpuAvailable = npuAvailable,
+            RamTotalGb = ramTotalGb,
+            RamType = ramType,
+            StorageType = storageType,
+            StorageCapacityGb = storageCapacityGb
         };
     }
 
