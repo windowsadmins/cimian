@@ -158,6 +158,94 @@ public class SystemFacts
     /// </summary>
     public DateTime CollectedAt { get; set; } = DateTime.UtcNow;
 
+    // --- GPU Facts ---
+
+    /// <summary>
+    /// List of GPU names from Win32_VideoController (e.g., "NVIDIA GeForce RTX 2060", "Intel UHD Graphics 630")
+    /// Maps to 'gpu_names' / 'gpu_name' fact keys (used with CONTAINS, ANY)
+    /// </summary>
+    public List<string> GpuNames { get; set; } = new();
+
+    /// <summary>
+    /// Driver version of the primary (discrete) GPU
+    /// Maps to 'gpu_driver_version' fact key
+    /// </summary>
+    public string GpuDriverVersion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// VRAM of primary GPU in GB (rounded to common sizes: 1, 2, 4, 6, 8, 12, 16, 24)
+    /// Maps to 'gpu_vram_gb' fact key
+    /// </summary>
+    public long GpuVramGb { get; set; }
+
+    // --- CPU Facts (predicate-friendly shortcuts from ProcessorInfo) ---
+
+    /// <summary>
+    /// Cleaned processor name (e.g., "Core i9-13900K", "Snapdragon X Elite")
+    /// Maps to 'cpu_name' fact key
+    /// </summary>
+    public string CpuName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// CPU manufacturer (Intel, AMD, Qualcomm, ARM)
+    /// Maps to 'cpu_manufacturer' fact key
+    /// </summary>
+    public string CpuManufacturer { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Physical core count
+    /// Maps to 'cpu_cores' fact key
+    /// </summary>
+    public int CpuCores { get; set; }
+
+    /// <summary>
+    /// Logical processor count (including hyperthreading)
+    /// Maps to 'cpu_logical_cores' fact key
+    /// </summary>
+    public int CpuLogicalCores { get; set; }
+
+    // --- NPU Facts ---
+
+    /// <summary>
+    /// NPU name if present (e.g., "Qualcomm Hexagon NPU", "Intel NPU")
+    /// Maps to 'npu_name' fact key
+    /// </summary>
+    public string NpuName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether an NPU is detected on this system
+    /// Maps to 'npu_available' fact key
+    /// </summary>
+    public bool NpuAvailable { get; set; }
+
+    // --- RAM Facts ---
+
+    /// <summary>
+    /// Total RAM in GB rounded to common sizes (8, 16, 32, 64, 128)
+    /// Maps to 'ram_total_gb' fact key
+    /// </summary>
+    public int RamTotalGb { get; set; }
+
+    /// <summary>
+    /// RAM type (DDR3, DDR4, DDR5, LPDDR4, LPDDR5)
+    /// Maps to 'ram_type' fact key
+    /// </summary>
+    public string RamType { get; set; } = string.Empty;
+
+    // --- Storage Facts ---
+
+    /// <summary>
+    /// Primary drive type (NVMe, SSD, HDD)
+    /// Maps to 'storage_type' fact key
+    /// </summary>
+    public string StorageType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Primary drive capacity in GB
+    /// Maps to 'storage_capacity_gb' fact key
+    /// </summary>
+    public long StorageCapacityGb { get; set; }
+
     /// <summary>
     /// Additional custom facts that can be added by plugins or extensions
     /// </summary>
@@ -187,6 +275,29 @@ public class SystemFacts
             "battery_state" => BatteryState,
             "date" => Date,
             "catalogs" => Catalogs,
+            
+            // GPU facts
+            "gpu_names" or "gpu_name" => GpuNames,
+            "gpu_driver_version" => GpuDriverVersion,
+            "gpu_vram_gb" => GpuVramGb,
+            
+            // CPU facts
+            "cpu_name" => CpuName,
+            "cpu_manufacturer" => CpuManufacturer,
+            "cpu_cores" => CpuCores,
+            "cpu_logical_cores" => CpuLogicalCores,
+            
+            // NPU facts
+            "npu_name" => NpuName,
+            "npu_available" => NpuAvailable,
+            
+            // RAM facts
+            "ram_total_gb" => RamTotalGb,
+            "ram_type" => RamType,
+            
+            // Storage facts
+            "storage_type" => StorageType,
+            "storage_capacity_gb" => StorageCapacityGb,
             
             // Legacy mappings
             "operatingsystem" => OperatingSystem,
