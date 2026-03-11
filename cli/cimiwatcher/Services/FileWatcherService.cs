@@ -145,6 +145,22 @@ public class FileWatcherService : BackgroundService
             _logger.LogWarning(ex, "Could not read flag file content, using defaults");
         }
 
+        // Delete the flag file immediately after reading it, BEFORE launching MSU.
+        // MSC's TriggerService polls for this deletion as the "acknowledged" signal.
+        // If we wait until after MSU finishes, MSC's 30s timeout expires and throws.
+        try
+        {
+            if (File.Exists(flagFile))
+            {
+                File.Delete(flagFile);
+                _logger.LogInformation("Consumed {UpdateType} flag file (acknowledged)", updateType);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not delete {UpdateType} flag file early", updateType);
+        }
+
         try
         {
             var updateArgs = customArgs ?? (withGUI ? "--auto --show-status -vv" : "--auto --show-status");
@@ -186,19 +202,7 @@ public class FileWatcherService : BackgroundService
                     updateType, updateProcess.ExitCode);
             }
 
-            // Clean up the flag file after completion
-            try
-            {
-                if (File.Exists(flagFile))
-                {
-                    File.Delete(flagFile);
-                    _logger.LogInformation("Removed {UpdateType} flag file after completion", updateType);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to remove {UpdateType} flag file", updateType);
-            }
+            // Flag file already deleted above (before launching MSU)
         }
         catch (Exception ex)
         {

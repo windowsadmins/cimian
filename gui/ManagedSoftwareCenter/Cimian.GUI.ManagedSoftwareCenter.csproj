@@ -30,6 +30,7 @@
     <Product>Managed Software Center</Product>
     <Company>Cimian</Company>
     <Description>Self-service software installation for managed Windows devices</Description>
+    <ApplicationIcon>Assets\msc.ico</ApplicationIcon>
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 

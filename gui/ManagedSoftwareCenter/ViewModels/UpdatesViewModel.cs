@@ -172,6 +172,10 @@ public partial class UpdatesViewModel : ObservableObject
         {
             await _triggerService.TriggerCheckAsync();
         }
+        catch (InvalidOperationException ex)
+        {
+            await _alertService.ShowInfoAsync("Check Error", ex.Message);
+        }
         finally
         {
             IsLoading = false;
@@ -187,7 +191,14 @@ public partial class UpdatesViewModel : ObservableObject
         if (!await CheckBatteryAsync()) return;
 
         // Trigger installation of all pending updates
-        await _triggerService.TriggerInstallAsync();
+        try
+        {
+            await _triggerService.TriggerInstallAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            await _alertService.ShowInfoAsync("Install Error", ex.Message);
+        }
     }
 
     [RelayCommand]
@@ -197,7 +208,14 @@ public partial class UpdatesViewModel : ObservableObject
         if (!await CheckBatteryAsync()) return;
 
         // For individual update installation
-        await _triggerService.TriggerInstallAsync();
+        try
+        {
+            await _triggerService.TriggerInstallAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            await _alertService.ShowInfoAsync("Install Error", ex.Message);
+        }
     }
 
     private async Task<bool> CheckBatteryAsync()

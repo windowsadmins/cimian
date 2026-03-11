@@ -18,8 +18,8 @@ public class StatusReporter : IDisposable
 {
     private const int DefaultPort = 19847;
     private const string DefaultHost = "127.0.0.1";
-    private const int ConnectionTimeoutMs = 1000;
-    private const int MaxRetries = 3;
+    private const int ConnectionTimeoutMs = 2000;
+    private const int MaxRetries = 10;
 
     private TcpClient? _client;
     private NetworkStream? _stream;
@@ -67,7 +67,7 @@ public class StatusReporter : IDisposable
                     {
                         _client.Dispose();
                         _client = null;
-                        Thread.Sleep(100);
+                        Thread.Sleep(Math.Min(500 * (attempt + 1), 3000));
                         continue;
                     }
 
@@ -91,7 +91,7 @@ public class StatusReporter : IDisposable
                     
                     _client?.Dispose();
                     _client = null;
-                    Thread.Sleep(100);
+                    Thread.Sleep(Math.Min(500 * (attempt + 1), 3000));
                 }
             }
         }

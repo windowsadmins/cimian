@@ -451,8 +451,8 @@ public partial class ShellViewModel : ObservableObject
 
     /// <summary>
     /// Called when managedsoftwareupdate connects to or disconnects from our
-    /// ProgressServer.  Handles the "pick-up" scenario: MSU was already running
-    /// when MSC launched, and MSU auto-reconnected on its next status message.
+    /// ProgressServer.  Fires on a background thread, so only touch simple
+    /// observable properties here — no async work or XAML interactions.
     /// </summary>
     private void OnProgressConnectionChanged(object? sender, bool connected)
     {
@@ -467,14 +467,11 @@ public partial class ShellViewModel : ObservableObject
             IsProgressIndeterminate = true;
             CanStopInstall = false;
         }
-        else if (!connected && IsInstalling)
-        {
-            // MSU disconnected without sending a Complete/Quit — session may
-            // have ended abruptly.  Reload data and reset state.
-            IsInstalling = false;
-            CanRefresh = true;
-            _ = HandleSessionEndAsync();
-        }
+        // Disconnect is deliberately NOT handled here.  The "quit" message
+        // already triggers ProgressMessageType.Complete → HandleSessionEndAsync.
+        // Handling disconnect too would cause double-reloads and races.  If MSU
+        // crashes without sending quit, the next InstallInfo.yaml change will
+        // fire OnInstallInfoChanged which resets state.
     }
 
     private void OnOperationStatusChanged(object? sender, bool isRunning)
