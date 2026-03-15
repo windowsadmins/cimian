@@ -36,29 +36,7 @@ public class DownloadService
 
     private static HttpClient CreateHttpClient(CimianConfig config)
     {
-        // Create handler without timeout - we'll use CancellationToken for per-request timeouts
-        var handler = new HttpClientHandler();
-        var client = new HttpClient(handler)
-        {
-            Timeout = Timeout.InfiniteTimeSpan // Disable default timeout, we manage it per-request
-        };
-
-        if (!string.IsNullOrEmpty(config.AuthToken))
-        {
-            client.DefaultRequestHeaders.Authorization = 
-                new AuthenticationHeaderValue("Bearer", config.AuthToken);
-        }
-        else if (!string.IsNullOrEmpty(config.AuthUser) && !string.IsNullOrEmpty(config.AuthPassword))
-        {
-            var credentials = Convert.ToBase64String(
-                Encoding.UTF8.GetBytes($"{config.AuthUser}:{config.AuthPassword}"));
-            client.DefaultRequestHeaders.Authorization = 
-                new AuthenticationHeaderValue("Basic", credentials);
-        }
-
-        client.DefaultRequestHeaders.Add("User-Agent", "Cimian-ManagedSoftwareUpdate/1.0");
-
-        return client;
+        return CimianHttpClientFactory.CreateClient(config, Timeout.InfiniteTimeSpan);
     }
 
     /// <summary>
