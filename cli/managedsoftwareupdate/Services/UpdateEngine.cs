@@ -689,6 +689,7 @@ public class UpdateEngine : IDisposable
             {
                 case "install":
                 case "update":
+                case "default":
                     // Go treats both install and update actions the same - calls CheckStatus
                     var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
                     ConsoleLogger.Detail($"    CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
@@ -2063,7 +2064,27 @@ public class UpdateEngine : IDisposable
                         }
                         info.OptionalInstalls.Add(optItem);
                         break;
+
+                    case "default":
+                        // Default installs: treated like managed_installs but only when not already installed.
+                        // If already installed, they silently disappear (not re-enforced).
+                        if (toInstallNames.Contains(key))
+                        {
+                            var defItem = BuildInstallInfoItem(mi.Name, cat);
+                            defItem.Status = "will-be-installed";
+                            defItem.WillBeInstalled = true;
+                            info.ManagedInstalls.Add(defItem);
+                        }
+                        // If already installed, don't add to any list — default installs are not enforced after first install
+                        break;
                 }
+            }
+
+            // Populate featured items from manifest service
+            if (_manifestService.FeaturedItems.Count > 0)
+            {
+                info.FeaturedItems = _manifestService.FeaturedItems.ToList();
+                LogInfo($"Featured items: {string.Join(", ", info.FeaturedItems)}");
             }
 
             // Serialize and write
@@ -2097,6 +2118,8 @@ public class UpdateEngine : IDisposable
             Developer = cat?.Developer,
             InstallerItemSize = cat?.Installer?.Size ?? 0,
             Uninstallable = cat?.IsUninstallable() ?? false,
+            RestartAction = cat?.RestartAction,
+            ForceInstallAfterDate = cat?.ForceInstallAfterDate,
         };
         return item;
     }

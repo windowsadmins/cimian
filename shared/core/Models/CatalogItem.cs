@@ -162,6 +162,25 @@ public class CatalogItem
     public InstallWindowInfo? InstallWindow { get; set; }
 
     /// <summary>
+    /// Deadline after which the item must be force-installed
+    /// </summary>
+    [YamlMember(Alias = "force_install_after_date")]
+    public DateTime? ForceInstallAfterDate { get; set; }
+
+    /// <summary>
+    /// Restart action after installation (RequireRestart, RequireLogout, RecommendRestart, None)
+    /// </summary>
+    [YamlMember(Alias = "restart_action")]
+    public string? RestartAction { get; set; }
+
+    /// <summary>
+    /// Script that returns the installed version on stdout.
+    /// Used as an alternative to registry/file-based version detection.
+    /// </summary>
+    [YamlMember(Alias = "version_script")]
+    public string? VersionScript { get; set; }
+
+    /// <summary>
     /// Additional metadata for cloud/enterprise features
     /// </summary>
     [YamlMember(Alias = "metadata")]
