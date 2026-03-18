@@ -229,6 +229,12 @@ public class ManifestFile
 
     [YamlMember(Alias = "conditional_items")]
     public List<ConditionalItem> ConditionalItems { get; set; } = new();
+
+    [YamlMember(Alias = "featured_items")]
+    public List<string> FeaturedItems { get; set; } = new();
+
+    [YamlMember(Alias = "default_installs")]
+    public List<string> DefaultInstalls { get; set; } = new();
 }
 
 /// <summary>
@@ -355,6 +361,15 @@ public class CatalogItem
 
     [YamlMember(Alias = "install_window")]
     public InstallWindow? InstallWindow { get; set; }
+
+    [YamlMember(Alias = "force_install_after_date")]
+    public DateTime? ForceInstallAfterDate { get; set; }
+
+    [YamlMember(Alias = "restart_action")]
+    public string? RestartAction { get; set; }
+
+    [YamlMember(Alias = "version_script")]
+    public string? VersionScript { get; set; }
 
     [YamlMember(Alias = "installs")]
     public List<InstallCheckItem> Installs { get; set; } = new();
