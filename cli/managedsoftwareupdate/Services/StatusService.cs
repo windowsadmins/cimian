@@ -136,6 +136,13 @@ public class StatusService
                 return CheckInstallcheckScript(item);
             }
 
+            // Priority 1.5: Check version_script if defined — runs script, captures stdout as installed version
+            if (!string.IsNullOrEmpty(item.VersionScript))
+            {
+                ConsoleLogger.Info($"Checking status via version_script item: {item.Name}");
+                return CheckVersionScript(item);
+            }
+
             // Priority 2: Check installs array if present (Go parity - file/hash verification)
             if (item.Installs != null && item.Installs.Count > 0)
             {
@@ -272,6 +279,72 @@ public class StatusService
             result.Status = "error";
             result.NeedsAction = true;
             result.Reason = $"installcheck_script failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
+            result.Error = ex;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Runs version_script and compares stdout to the catalog version.
+    /// If the script returns a version >= catalog version, no action is needed.
+    /// If the script fails or returns a lower version, install/update is needed.
+    /// </summary>
+    private StatusCheckResult CheckVersionScript(CatalogItem item)
+    {
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Script,
+            TargetVersion = item.Version
+        };
+
+        try
+        {
+            var scriptService = new ScriptService();
+            var (success, output) = scriptService.ExecuteScriptAsync(item.VersionScript!).Result;
+            var installedVersion = output?.Trim() ?? "";
+
+            ConsoleLogger.Debug($"version_script output for {item.Name}: '{installedVersion}'");
+
+            if (!success || string.IsNullOrEmpty(installedVersion))
+            {
+                // Script failed or returned empty — treat as not installed
+                result.Status = "pending";
+                result.NeedsAction = true;
+                result.Reason = string.IsNullOrEmpty(installedVersion)
+                    ? "version_script returned empty output (not installed)"
+                    : $"version_script failed: {installedVersion}";
+                result.ReasonCode = StatusReasonCode.InstallcheckNeeded;
+                return result;
+            }
+
+            // Compare installed version to catalog version
+            var comparison = CatalogService.CompareVersions(item.Version, installedVersion);
+            result.InstalledVersion = installedVersion;
+
+            if (comparison > 0)
+            {
+                // Catalog version is newer — update needed
+                result.Status = "pending";
+                result.NeedsAction = true;
+                result.IsUpdate = true;
+                result.Reason = $"version_script: installed {installedVersion} < catalog {item.Version}";
+                result.ReasonCode = StatusReasonCode.UpdateAvailable;
+            }
+            else
+            {
+                // Installed version is same or newer
+                result.Status = "installed";
+                result.Reason = $"version_script: installed {installedVersion} >= catalog {item.Version}";
+                result.ReasonCode = StatusReasonCode.VersionMatch;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Status = "error";
+            result.NeedsAction = true;
+            result.Reason = $"version_script failed: {ex.Message}";
             result.ReasonCode = StatusReasonCode.ScriptError;
             result.Error = ex;
         }
