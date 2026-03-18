@@ -98,6 +98,9 @@ public class InstallInfoItem
 
     [YamlMember(Alias = "screenshots")]
     public List<string>? Screenshots { get; set; }
+
+    [YamlMember(Alias = "force_install_after_date")]
+    public DateTime? ForceInstallAfterDate { get; set; }
 }
 
 /// <summary>

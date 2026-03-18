@@ -27,6 +27,12 @@ public class ManifestService
     private readonly CimianConfig _config;
     private readonly Dictionary<string, string> _itemSources = new();
     private readonly PredicateEngine _predicateEngine;
+    private readonly List<string> _featuredItems = new();
+
+    /// <summary>
+    /// Featured items collected across all processed manifests
+    /// </summary>
+    public IReadOnlyList<string> FeaturedItems => _featuredItems;
     private SystemFacts? _systemFacts;
 
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
@@ -220,6 +226,17 @@ public class ManifestService
                             // They should be passed as-is to ProcessManifestAsync
                             await ProcessManifestAsync(includeName, items, processedManifests, pendingConditionals);
                         }
+                    }
+
+                    // Collect featured_items from this manifest
+                    if (manifest.FeaturedItems != null && manifest.FeaturedItems.Count > 0)
+                    {
+                        foreach (var fi in manifest.FeaturedItems)
+                        {
+                            if (!_featuredItems.Contains(fi, StringComparer.OrdinalIgnoreCase))
+                                _featuredItems.Add(fi);
+                        }
+                        ConsoleLogger.Debug($"Collected {manifest.FeaturedItems.Count} featured items from {manifestName}");
                     }
 
                     // Convert to manifest items (excluding conditional items - they're deferred)
@@ -577,6 +594,22 @@ public class ManifestService
                     Action = "app",
                     SourceManifest = sourceManifest
                 });
+            }
+        }
+
+        // Add default_installs — treated like managed_installs but only on first encounter
+        // (not enforced if user has previously removed the item)
+        if (manifest.DefaultInstalls != null)
+        {
+            foreach (var name in manifest.DefaultInstalls)
+            {
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "default",
+                    SourceManifest = sourceManifest
+                });
+                SetItemSource(name, sourceManifest, "default_installs");
             }
         }
 
