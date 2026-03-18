@@ -1057,7 +1057,6 @@ function Build-PkgPackage {
     Write-BuildLog "Creating .pkg package for $Architecture..." "INFO"
     
     $binariesDir = "release\$Architecture"
-    $cimipkgPath = Join-Path $binariesDir "cimipkg.exe"
     
     # Check if binaries directory exists
     if (-not (Test-Path $binariesDir)) {
@@ -1065,12 +1064,22 @@ function Build-PkgPackage {
         return $null
     }
     
-    # Check if cimipkg exists for this architecture
+    # cimipkg.exe must run on the host machine, so prefer the host-architecture binary.
+    # Fall back to x64 since we are always building on x64 Windows.
+    $hostArch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'arm64' } else { 'x64' }
+    $cimipkgPath = Join-Path "release\$hostArch" "cimipkg.exe"
     if (-not (Test-Path $cimipkgPath)) {
-        Write-BuildLog "cimipkg.exe not found for $Architecture architecture: $cimipkgPath" "WARNING"
-        Write-BuildLog "Build cimipkg first with: .\build.ps1 -Architecture $Architecture -Sign" "INFO"
+        # Last-resort fallback to whichever arch was built
+        $cimipkgPath = Join-Path $binariesDir "cimipkg.exe"
+    }
+    
+    if (-not (Test-Path $cimipkgPath)) {
+        Write-BuildLog "cimipkg.exe not found (tried host arch '$hostArch' and '$Architecture')" "WARNING"
+        Write-BuildLog "Build cimipkg first with: .\build.ps1 -Architecture x64 -Sign" "INFO"
         return $null
     }
+    
+    Write-BuildLog "Using cimipkg.exe from: $cimipkgPath" "INFO"
     
     # Create temporary .pkg build directory
     $pkgTempDir = "release\pkg_$Architecture"
