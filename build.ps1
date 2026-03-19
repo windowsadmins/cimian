@@ -1094,7 +1094,7 @@ function Build-PkgPackage {
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
         'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
-        'repoclean.exe', 'ManagedSoftwareCenter.exe'
+        'repoclean.exe', 'Managed Software Center.exe'
     )
     
     $missingExecutables = @()
@@ -1343,7 +1343,7 @@ function Enter-DevelopmentMode {
     }
     
     # Kill running processes
-    $processes = @("cimistatus", "cimiwatcher", "managedsoftwareupdate", "ManagedSoftwareCenter")
+    $processes = @("cimistatus", "cimiwatcher", "managedsoftwareupdate", "Managed Software Center")
     foreach ($processName in $processes) {
         try {
             Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

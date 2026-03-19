@@ -21,7 +21,8 @@ try {
     Write-Host "Verifying CimianTools executables..."
     $expected = @(
         'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
-        'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe','repoclean.exe'
+        'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe','repoclean.exe',
+        'Managed Software Center.exe'
     )
     $missing = @()
     foreach ($name in $expected) {
@@ -231,6 +232,27 @@ try {
     } catch {
         Write-Warning "Failed to write version to registry: $_"
         Write-Warning "Version information will not be available in registry"
+    }
+
+    # Create Start Menu shortcut for Managed Software Center
+    Write-Host "Creating Start Menu shortcut for Managed Software Center..."
+    try {
+        $startMenuPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Cimian"
+        if (-not (Test-Path $startMenuPath)) {
+            New-Item -ItemType Directory -Path $startMenuPath -Force | Out-Null
+        }
+        $shortcutPath = Join-Path $startMenuPath "Managed Software Center.lnk"
+        $mscExe = Join-Path $InstallDir "Managed Software Center.exe"
+        $wshell = New-Object -ComObject WScript.Shell
+        $shortcut = $wshell.CreateShortcut($shortcutPath)
+        $shortcut.TargetPath = $mscExe
+        $shortcut.WorkingDirectory = $InstallDir
+        $shortcut.Description = "Self-service software installation for managed Windows devices"
+        $shortcut.IconLocation = "$mscExe,0"
+        $shortcut.Save()
+        Write-Host "✅ Start Menu shortcut created: $shortcutPath" -ForegroundColor Green
+    } catch {
+        Write-Warning "Failed to create Start Menu shortcut: $_"
     }
 
     Write-Host "CimianTools .pkg postinstall completed successfully!" -ForegroundColor Green

@@ -76,6 +76,26 @@
       <Files Include="**" />
     </ComponentGroup>
 
+    <!-- Start Menu Shortcut for Managed Software Center -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="CimianMenuDir" Name="Cimian">
+        <Component Id="MscStartMenuShortcut" Guid="3A7F2B91-C4D8-4E5F-9A12-6B3C0D1E2F4A">
+          <Shortcut Id="MscMenuShortcut"
+                    Name="Managed Software Center"
+                    Description="Self-service software installation for managed Windows devices"
+                    Target="[INSTALLDIR]Managed Software Center.exe"
+                    WorkingDirectory="INSTALLDIR" />
+          <RemoveFolder Id="RemoveCimianMenu" Directory="CimianMenuDir" On="uninstall" />
+          <RegistryValue Root="HKCU"
+                         Key="Software\Cimian\ManagedSoftwareCenter"
+                         Name="StartMenuShortcut"
+                         Type="integer"
+                         Value="1"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
     <!-- Common Application Data Directory -->
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="ManagedInstalls" Name="ManagedInstalls">
@@ -156,6 +176,7 @@
       <ComponentGroupRef Id="AllBinaries" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="Component_Config" />
+      <ComponentRef Id="MscStartMenuShortcut" />
     </Feature>
 
   </Package>
