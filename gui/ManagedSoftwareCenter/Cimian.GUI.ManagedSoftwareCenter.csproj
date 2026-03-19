@@ -10,7 +10,7 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <RootNamespace>Cimian.GUI.ManagedSoftwareCenter</RootNamespace>
-    <AssemblyName>ManagedSoftwareCenter</AssemblyName>
+    <AssemblyName>Managed Software Center</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     
     <!-- Platform target must match runtime identifier -->
