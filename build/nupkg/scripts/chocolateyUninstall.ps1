@@ -167,6 +167,27 @@ function Remove-InstallationFiles {
     }
 }
 
+function Remove-StartMenuShortcut {
+    Write-Log "Removing Start Menu shortcut for Managed Software Center..." "INFO"
+    try {
+        $shortcutPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Cimian\Managed Software Center.lnk"
+        if (Test-Path $shortcutPath) {
+            Remove-Item -Path $shortcutPath -Force -ErrorAction Stop
+            Write-Log "Removed Start Menu shortcut: $shortcutPath" "SUCCESS"
+        } else {
+            Write-Log "Start Menu shortcut not found (already removed)" "INFO"
+        }
+        # Remove the Cimian folder from Programs if it's now empty
+        $cimianMenuDir = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Cimian"
+        if ((Test-Path $cimianMenuDir) -and (-not (Get-ChildItem $cimianMenuDir))) {
+            Remove-Item -Path $cimianMenuDir -Force -ErrorAction SilentlyContinue
+            Write-Log "Removed empty Start Menu folder: $cimianMenuDir" "SUCCESS"
+        }
+    } catch {
+        Write-Log "Failed to remove Start Menu shortcut: $($_.Exception.Message)" "WARNING"
+    }
+}
+
 function Remove-RegistryKeys {
     Write-Log "Removing Cimian registry keys..." "INFO"
     
@@ -200,11 +221,14 @@ function Uninstall-CimianTools {
         
         # Step 4: Remove from PATH
         Remove-FromPath
+
+        # Step 5: Remove Start Menu shortcut
+        Remove-StartMenuShortcut
         
-        # Step 5: Remove installation files
+        # Step 6: Remove installation files
         Remove-InstallationFiles
         
-        # Step 6: Remove registry keys
+        # Step 7: Remove registry keys
         Remove-RegistryKeys
         
         Write-Log "CimianTools uninstallation completed successfully" "SUCCESS"
