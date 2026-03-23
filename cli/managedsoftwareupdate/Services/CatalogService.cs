@@ -20,44 +20,11 @@ public class CatalogService
     public CatalogService(CimianConfig config, HttpClient? httpClient = null)
     {
         _config = config;
-        _httpClient = httpClient ?? CreateHttpClient(config);
+        _httpClient = httpClient ?? CimianHttpClientFactory.CreateHttpClient(config);
         _deserializer = new DeserializerBuilder()
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
             .Build();
-    }
-
-    private static HttpClient CreateHttpClient(CimianConfig config)
-    {
-        var client = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(60)
-        };
-
-        // First try to get auth from registry (DPAPI encrypted)
-        var authHeader = AuthService.GetAuthHeader();
-        if (!string.IsNullOrEmpty(authHeader))
-        {
-            client.DefaultRequestHeaders.Authorization = 
-                new AuthenticationHeaderValue("Basic", authHeader);
-        }
-        // Fall back to config file auth if registry not available
-        else if (!string.IsNullOrEmpty(config.AuthToken))
-        {
-            client.DefaultRequestHeaders.Authorization = 
-                new AuthenticationHeaderValue("Bearer", config.AuthToken);
-        }
-        else if (!string.IsNullOrEmpty(config.AuthUser) && !string.IsNullOrEmpty(config.AuthPassword))
-        {
-            var credentials = Convert.ToBase64String(
-                Encoding.UTF8.GetBytes($"{config.AuthUser}:{config.AuthPassword}"));
-            client.DefaultRequestHeaders.Authorization = 
-                new AuthenticationHeaderValue("Basic", credentials);
-        }
-
-        client.DefaultRequestHeaders.Add("User-Agent", "Cimian-ManagedSoftwareUpdate/1.0");
-
-        return client;
     }
 
     /// <summary>

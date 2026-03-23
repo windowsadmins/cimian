@@ -89,6 +89,22 @@ public class CimianConfig
     [YamlMember(Alias = "PkgRequireSignature")]
     public bool PkgRequireSignature { get; set; }
 
+    // SSL client certificate authentication
+    [YamlMember(Alias = "UseClientCertificate")]
+    public bool UseClientCertificate { get; set; }
+
+    [YamlMember(Alias = "ClientCertificatePath")]
+    public string? ClientCertificatePath { get; set; }
+
+    [YamlMember(Alias = "ClientCertificatePassword")]
+    public string? ClientCertificatePassword { get; set; }
+
+    [YamlMember(Alias = "ClientCertificateThumbprint")]
+    public string? ClientCertificateThumbprint { get; set; }
+
+    [YamlMember(Alias = "SoftwareRepoCACertificate")]
+    public string? SoftwareRepoCACertificate { get; set; }
+
     public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
 }
 
