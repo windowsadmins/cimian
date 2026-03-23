@@ -181,6 +181,13 @@ public class CatalogItem
     public string? VersionScript { get; set; }
 
     /// <summary>
+    /// When true, the installer is downloaded proactively to cache even if the item
+    /// is optional and not yet requested by the user. Enables faster installs from MSC.
+    /// </summary>
+    [YamlMember(Alias = "precache")]
+    public bool Precache { get; set; }
+
+    /// <summary>
     /// Additional metadata for cloud/enterprise features
     /// </summary>
     [YamlMember(Alias = "metadata")]
