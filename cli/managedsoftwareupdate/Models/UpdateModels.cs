@@ -371,6 +371,9 @@ public class CatalogItem
     [YamlMember(Alias = "version_script")]
     public string? VersionScript { get; set; }
 
+    [YamlMember(Alias = "precache")]
+    public bool Precache { get; set; }
+
     [YamlMember(Alias = "installs")]
     public List<InstallCheckItem> Installs { get; set; } = new();
 

@@ -101,6 +101,9 @@ public class InstallInfoItem
 
     [YamlMember(Alias = "force_install_after_date")]
     public DateTime? ForceInstallAfterDate { get; set; }
+
+    [YamlMember(Alias = "precached")]
+    public bool Precached { get; set; }
 }
 
 /// <summary>

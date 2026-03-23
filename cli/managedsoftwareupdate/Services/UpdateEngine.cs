@@ -508,6 +508,10 @@ public class UpdateEngine : IDisposable
                 }
             }
 
+            // Precache: download optional items marked with precache=true
+            // This runs before installations so precached items are ready if the user requests them
+            await PrecacheOptionalItemsAsync(manifestItems, catalogMap, cancellationToken);
+
             // Perform installations
             var installSuccess = true;
             var successCount = 0;
@@ -1030,6 +1034,65 @@ public class UpdateEngine : IDisposable
 
         LogInfo($"Installation summary: {successCount} succeeded, {failCount} failed");
         return failCount == 0;
+    }
+
+    /// <summary>
+    /// Downloads optional items marked with precache=true to local cache without installing.
+    /// Munki parity: precache key causes the installer to be downloaded proactively
+    /// so it's ready when the user requests the item from Managed Software Center.
+    /// </summary>
+    private async Task PrecacheOptionalItemsAsync(
+        List<ManifestItem> manifestItems,
+        Dictionary<string, CatalogItem> catalogMap,
+        CancellationToken cancellationToken)
+    {
+        var precacheItems = new List<CatalogItem>();
+
+        foreach (var mi in manifestItems)
+        {
+            if (string.IsNullOrEmpty(mi.Name)) continue;
+            if (!string.Equals(mi.Action, "optional", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var key = mi.Name.ToLowerInvariant();
+            if (!catalogMap.TryGetValue(key, out var cat)) continue;
+            if (!cat.Precache) continue;
+
+            // Skip script-only items (no installer to download)
+            if (string.IsNullOrEmpty(cat.Installer?.Location)) continue;
+
+            // Skip if already cached
+            var cachePath = _downloadService.GetCachePath(cat);
+            if (File.Exists(cachePath)) continue;
+
+            precacheItems.Add(cat);
+        }
+
+        if (precacheItems.Count == 0) return;
+
+        LogInfo("----------------------------------------------------------------------");
+        LogInfo("PRECACHING OPTIONAL ITEMS");
+        LogInfo("----------------------------------------------------------------------");
+        LogInfo($"Precaching {precacheItems.Count} optional item(s)...");
+        _sessionLogger?.Log("INFO", $"Precaching {precacheItems.Count} optional items");
+
+        foreach (var item in precacheItems)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+
+            LogInfo($"    Precaching: {item.Name} v{item.Version}");
+            var path = await _downloadService.DownloadItemAsync(item, cancellationToken: cancellationToken);
+
+            if (!string.IsNullOrEmpty(path))
+            {
+                LogInfo($"    Precached: {item.Name} -> {path}");
+                _sessionLogger?.Log("INFO", $"Precached {item.Name} v{item.Version}");
+            }
+            else
+            {
+                ConsoleLogger.Warn($"Failed to precache {item.Name}");
+                _sessionLogger?.Log("WARN", $"Failed to precache {item.Name} v{item.Version}");
+            }
+        }
     }
 
     #region Dependency-Aware Installation (Go parity: pkg/process/process.go)
@@ -2136,6 +2199,13 @@ public class UpdateEngine : IDisposable
                             optItem.Status = status.NeedsAction
                                 ? (status.IsUpdate ? "update-available" : "not-installed")
                                 : "installed";
+
+                            // Check if installer is precached (already downloaded to local cache)
+                            if (!string.IsNullOrEmpty(cat.Installer?.Location))
+                            {
+                                var cachePath = _downloadService.GetCachePath(cat);
+                                optItem.Precached = File.Exists(cachePath);
+                            }
                         }
                         else
                         {
