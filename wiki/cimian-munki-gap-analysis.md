@@ -25,6 +25,13 @@
 | Structured JSON logging | `SessionLogger` | Session-based JSONL event streams |
 | Per-package scripts | `preinstall_script`, `postinstall_script`, etc. | 6 script hooks per package |
 | `installcheck_script` | `CatalogItem.cs`, `StatusService.cs` | Script-based install detection |
+| `featured_items` | `ManifestFile`, `ManifestService`, `WriteInstallInfo()` | Manifest → InstallInfo backend wiring |
+| `force_install_after_date` plumbing | `CatalogItem`, `InstallInfoItem`, `UpdateEngine` | Model wired through to InstallInfo.yaml |
+| `restart_action` plumbing | `CatalogItem`, `InstallInfoItem`, `UpdateEngine` | Model wired through to InstallInfo.yaml |
+| `version_script` | `CatalogItem`, `StatusService.CheckVersionScript()` | Munki v7 parity — script stdout = version, empty/non-zero = not installed |
+| `default_installs` | `ManifestFile`, `ManifestService`, `UpdateEngine` | Install-once semantics, not re-enforced after first install |
+| `precache` | `CatalogItem`, `UpdateEngine.PrecacheOptionalItemsAsync()` | Download-only for optional items; `Precached` flag in InstallInfo |
+| SSL client certificates | `CimianConfig`, `CimianHttpClientFactory` | mTLS via PFX file or Windows cert store thumbprint; custom CA support |
 
 ## True Remaining Gaps (Prioritized)
 
@@ -32,14 +39,14 @@
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 1 | `force_install_after_date` enforcement | Model/UI exists but `managedsoftwareupdate` needs to auto-install when deadline passes (not just UI warnings) | Medium — add to `CatalogItem` + `InstallInfoItem`, enforce in `UpdateEngine` |
-| 2 | `RestartAction` enforcement | Model exists, UI sorts by it. Post-install restart/logout not actually triggered | Medium — add to post-install flow in `UpdateEngine` |
+| 1 | `force_install_after_date` enforcement | Plumbing exists (model → InstallInfo). `UpdateEngine` needs to auto-install when deadline passes (not just UI warnings) | Medium — check DateTime.Now vs deadline in IdentifyActions |
+| 2 | `RestartAction` enforcement | Plumbing exists (model → InstallInfo). Post-install restart/logout not actually triggered | Medium — add to post-install flow in `UpdateEngine` |
 
 ### Priority 2: UI Feature Gaps
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 3 | `featured_items` backend wiring | UI is fully built, but `WriteInstallInfo()` never populates `FeaturedItems` from manifests | Small — add `featured_items` to `ManifestFile`, wire through to `WriteInstallInfo()` |
+| 3 | ~~`featured_items` backend wiring~~ | **DONE** — Wired from manifests through to `WriteInstallInfo()` | ✅ Implemented |
 | 4 | MSC text search | No search/filter in the item list | Medium — add SearchBox + filter logic to `SoftwareViewModel` |
 | 5 | Installation history view | No UI to show past install actions | Medium — read from session logs |
 | 6 | Deep link URL scheme (`cimian://`) | Not implemented | Medium — protocol registration + URI handler |
@@ -48,13 +55,14 @@
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 7 | `version_script` | Script that returns installed version (alternative to registry/file checks) | Medium — add to `CatalogItem`, run in `StatusService` |
-| 8 | `default_installs` | Manifest key for items installed only on first run (not enforced on subsequent runs) | Medium — add to `ManifestFile`, track in state |
+| 7 | ~~`version_script`~~ | **DONE** — Munki v7 parity. Priority 2 in detection chain. | ✅ Implemented |
+| 8 | ~~`default_installs`~~ | **DONE** — Install-once semantics in ManifestService + UpdateEngine. | ✅ Implemented |
 | 9 | Admin-Provided Custom Conditions | Script-drop-folder mechanism for extending system facts | Medium — scan folder, run scripts, merge into facts |
 | 10 | AutoRemove | Remove packages no longer in any manifest | Large — dependency tracking + safe removal |
-| 11 | Precache | Download but don't install (for bandwidth management) | Medium — download-only mode in installer |
+| 11 | ~~Precache~~ | **DONE** — `precache` bool on catalog items; `PrecacheOptionalItemsAsync()` downloads to cache without installing. | ✅ Implemented |
 | 12 | Localization / i18n | Framework ready but all strings hardcoded English | Large — extract strings, add resource files |
 | 13 | License seat tracking | Track available license seats per package | Large — server-side component needed |
+| 14 | ~~SSL Client Certificates~~ | **DONE** — mTLS via PFX/cert store + custom CA validation via `CimianHttpClientFactory` | ✅ Implemented |
 
 ## Unique Cimian Features (Not in Munki)
 
@@ -69,3 +77,4 @@
 | Chocolatey shim prevention | Block Chocolatey shim creation during install |
 | DPAPI encrypted auth | Windows credential protection for repo auth |
 | Install window scheduling | Time-based installation constraints |
+| SSL client cert + custom CA | `CimianHttpClientFactory` — PFX file, Windows cert store thumbprint, custom CA chain validation |
