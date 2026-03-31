@@ -1,3 +1,4 @@
 [submodule "cli/cimipkg"]
 	path = cli/cimipkg
 	url = https://github.com/windowsadmins/cimian-pkg.git
+	branch = main
