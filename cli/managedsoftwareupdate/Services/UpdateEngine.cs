@@ -45,6 +45,7 @@ public class UpdateEngine : IDisposable
     private bool _installOnly;
     private bool _auto;
     private bool _showStatus;
+    private bool _restartNeeded;
     
     // Store for managed items tracking (for status table)
     private List<ManifestItem> _allManifestItems = new();
@@ -461,6 +462,52 @@ public class UpdateEngine : IDisposable
                 LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
             }
 
+            // Go/Munki parity: Filter out unattended_install/unattended_uninstall items in --auto mode
+            // When running automatically (not user-initiated), skip items that require user interaction.
+            // This matches Munki's only_unattended behavior in install_with_info() and process_removals().
+            var skippedUnattended = new List<CatalogItem>();
+            if (_auto)
+            {
+                // Filter installs/updates: skip items with unattended_install == false
+                foreach (var list in new[] { toInstall, toUpdate })
+                {
+                    for (int i = list.Count - 1; i >= 0; i--)
+                    {
+                        var item = list[i];
+                        if (!item.UnattendedInstall)
+                        {
+                            LogInfo($"Skipping install of {item.Name} v{item.Version} because it's not unattended");
+                            _sessionLogger?.Log("INFO", $"Skipped {item.Name} v{item.Version}: unattended_install is false (auto mode)");
+                            _sessionLogger?.LogStatusCheck(
+                                item.Name, item.Version, "skipped",
+                                "Not eligible for unattended install (auto mode)",
+                                Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
+                                Cimian.Core.Models.DetectionMethod.None, null, false);
+                            skippedUnattended.Add(item);
+                            list.RemoveAt(i);
+                        }
+                    }
+                }
+
+                // Filter uninstalls: skip items with unattended_uninstall == false
+                for (int i = toUninstall.Count - 1; i >= 0; i--)
+                {
+                    var item = toUninstall[i];
+                    if (!item.UnattendedUninstall)
+                    {
+                        LogInfo($"Skipping removal of {item.Name} v{item.Version} because it's not unattended");
+                        _sessionLogger?.Log("INFO", $"Skipped removal of {item.Name} v{item.Version}: unattended_uninstall is false (auto mode)");
+                        skippedUnattended.Add(item);
+                        toUninstall.RemoveAt(i);
+                    }
+                }
+
+                if (skippedUnattended.Count > 0)
+                {
+                    LogInfo($"{skippedUnattended.Count} item(s) skipped due to unattended restrictions (auto mode)");
+                }
+            }
+
             // Perform installations
             var installSuccess = true;
             var successCount = 0;
@@ -604,6 +651,14 @@ public class UpdateEngine : IDisposable
                 
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
+                
+                // Handle restart_action: trigger system restart if any installed/removed item requires it
+                // Munki parity: returns POSTACTION_RESTART when any item has RequireRestart/RecommendRestart
+                if (_restartNeeded)
+                {
+                    PerformRestartAction();
+                }
+                
                 return 0;
             }
             else
@@ -620,6 +675,13 @@ public class UpdateEngine : IDisposable
                 
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
+                
+                // Even on partial failure, honor restart if any successful item required it
+                if (_restartNeeded)
+                {
+                    PerformRestartAction();
+                }
+                
                 return 1;
             }
         }
@@ -1107,6 +1169,14 @@ public class UpdateEngine : IDisposable
         {
             LogSuccess($"Installed: {item.Name} v{item.Version}");
             
+            // Track restart_action (Munki parity: requires_restart check)
+            if (RequiresRestart(item))
+            {
+                _restartNeeded = true;
+                LogInfo($"Restart required after installing {item.Name} (restart_action: {item.RestartAction})");
+                _sessionLogger?.Log("INFO", $"Restart required: {item.Name} (restart_action: {item.RestartAction})");
+            }
+            
             // Log structured event for external monitoring with reason tracking
             _sessionLogger?.LogInstallWithReason(
                 item.Name,
@@ -1246,6 +1316,15 @@ public class UpdateEngine : IDisposable
         if (success)
         {
             LogSuccess($"Removed: {item.Name}");
+            
+            // Track restart_action for uninstalls (Munki parity)
+            if (RequiresRestart(item))
+            {
+                _restartNeeded = true;
+                LogInfo($"Restart required after removing {item.Name} (restart_action: {item.RestartAction})");
+                _sessionLogger?.Log("INFO", $"Restart required: {item.Name} (restart_action: {item.RestartAction})");
+            }
+            
             installedItems.RemoveAll(i => string.Equals(i, item.Name, StringComparison.OrdinalIgnoreCase));
             return true;
         }
@@ -2122,6 +2201,56 @@ public class UpdateEngine : IDisposable
             ForceInstallAfterDate = cat?.ForceInstallAfterDate,
         };
         return item;
+    }
+
+    /// <summary>
+    /// Checks whether a catalog item's RestartAction indicates a reboot is needed.
+    /// Matches Munki's restartAction handling: "RequireRestart" and "RecommendRestart" both trigger reboot.
+    /// </summary>
+    private static bool RequiresRestart(CatalogItem item)
+    {
+        return item.RestartAction is "RequireRestart" or "RecommendRestart";
+    }
+
+    /// <summary>
+    /// Triggers a system restart after all install/uninstall operations complete.
+    /// In auto/bootstrap mode: schedules a reboot with a 5-minute grace period.
+    /// In interactive mode: logs a recommendation only.
+    /// </summary>
+    private void PerformRestartAction()
+    {
+        ConsoleLogger.Warn("One or more items require a system restart");
+        _sessionLogger?.Log("INFO", "Restart required by installed/removed items");
+
+        if (_auto || _isBootstrap)
+        {
+            ConsoleLogger.Warn("Scheduling system restart in 5 minutes...");
+            _sessionLogger?.Log("INFO", "Scheduling system restart (auto/bootstrap mode)");
+
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "shutdown.exe",
+                    Arguments = "/r /t 300 /c \"Cimian: System restarting to complete software updates\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                System.Diagnostics.Process.Start(psi);
+                ConsoleLogger.Info("System restart scheduled (300 second delay)");
+                _sessionLogger?.Log("INFO", "System restart scheduled via shutdown.exe /r /t 300");
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Error($"Failed to schedule system restart: {ex.Message}");
+                _sessionLogger?.Log("ERROR", $"Failed to schedule system restart: {ex.Message}");
+            }
+        }
+        else
+        {
+            ConsoleLogger.Warn("Restart recommended - please restart your computer to complete updates");
+            _sessionLogger?.Log("INFO", "Restart recommended (interactive mode - not forcing)");
+        }
     }
 
     #endregion
