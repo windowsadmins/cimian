@@ -89,6 +89,23 @@ public class CimianConfig
     [YamlMember(Alias = "PkgRequireSignature")]
     public bool PkgRequireSignature { get; set; }
 
+    // mTLS client certificate authentication
+    [YamlMember(Alias = "UseClientCertificate")]
+    public bool UseClientCertificate { get; set; }
+
+    [YamlMember(Alias = "ClientCertificatePath")]
+    public string ClientCertificatePath { get; set; } = @"C:\ProgramData\ManagedInstalls\certs\client.pem";
+
+    [YamlMember(Alias = "ClientKeyPath")]
+    public string ClientKeyPath { get; set; } = @"C:\ProgramData\ManagedInstalls\certs\client.key";
+
+    [YamlMember(Alias = "CACertificatePath")]
+    public string CACertificatePath { get; set; } = @"C:\ProgramData\ManagedInstalls\certs\ca.pem";
+
+    // Use the client certificate CN as the client identifier for manifest requests
+    [YamlMember(Alias = "UseClientCertificateCNAsClientIdentifier")]
+    public bool UseClientCertificateCNAsClientIdentifier { get; set; }
+
     public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
 }
 
