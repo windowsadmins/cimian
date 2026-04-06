@@ -75,12 +75,13 @@ public static class CimianHttpClientFactory
     }
 
     /// <summary>
-    /// Loads a client certificate from PFX file or Windows Certificate Store.
-    /// Returns null if no certificate could be loaded.
+    /// Loads a client certificate from file (PEM or PFX) or Windows Certificate Store.
+    /// PEM format uses separate cert + key files (Munki-compatible).
+    /// PFX format uses a single file with optional password.
     /// </summary>
     private static X509Certificate2? LoadClientCertificate(CimianConfig config)
     {
-        // Option 1: PFX file on disk
+        // Option 1: Certificate file on disk (PEM or PFX)
         if (!string.IsNullOrEmpty(config.ClientCertificatePath))
         {
             if (!File.Exists(config.ClientCertificatePath))
@@ -89,6 +90,15 @@ public static class CimianHttpClientFactory
                 return null;
             }
 
+            var ext = Path.GetExtension(config.ClientCertificatePath).ToLowerInvariant();
+
+            // PEM format — separate cert and key files (Munki-style)
+            if (ext is ".pem" or ".crt" or ".cer")
+            {
+                return LoadPemCertificate(config);
+            }
+
+            // PFX/P12 format — cert and key in one file
             try
             {
                 return X509CertificateLoader.LoadPkcs12FromFile(
@@ -182,5 +192,59 @@ public static class CimianHttpClientFactory
 
             return customChain.Build(cert);
         };
+    }
+
+    /// <summary>
+    /// Loads a PEM certificate with a separate private key file.
+    /// This is the format Munki uses: client.pem + client.key.
+    /// On Windows, re-exports to PFX so the private key works with SslStream.
+    /// </summary>
+    private static X509Certificate2? LoadPemCertificate(CimianConfig config)
+    {
+        if (string.IsNullOrEmpty(config.ClientKeyPath))
+        {
+            ConsoleLogger.Warn("PEM certificate requires ClientKeyPath to be set");
+            return null;
+        }
+
+        if (!File.Exists(config.ClientKeyPath))
+        {
+            ConsoleLogger.Warn($"Client key file not found: {config.ClientKeyPath}");
+            return null;
+        }
+
+        try
+        {
+            var certPem = File.ReadAllText(config.ClientCertificatePath!);
+            var keyPem = File.ReadAllText(config.ClientKeyPath);
+            var cert = X509Certificate2.CreateFromPem(certPem, keyPem);
+
+            // On Windows, re-export to PFX so the private key is usable with SslStream
+            var exported = cert.Export(X509ContentType.Pfx);
+            return X509CertificateLoader.LoadPkcs12(exported, null,
+                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to load PEM certificate from {config.ClientCertificatePath}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the CN from the client certificate for use as client identifier.
+    /// Returns null if mTLS is not configured, the feature is disabled, or the cert can't be read.
+    /// </summary>
+    public static string? GetClientCertificateCN(CimianConfig config)
+    {
+        if (!config.UseClientCertificate || !config.UseClientCertificateCNAsClientIdentifier)
+            return null;
+
+        var cert = LoadClientCertificate(config);
+        if (cert == null)
+            return null;
+
+        var cn = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
+        return string.IsNullOrEmpty(cn) ? null : cn;
     }
 }
