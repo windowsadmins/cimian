@@ -57,7 +57,12 @@ public class ManifestService
         var pendingConditionals = new List<(List<ConditionalItem> Items, string SourceManifest)>();
 
         // Start with the client identifier manifest
-        var clientIdentifier = _config.ClientIdentifier;
+        // If UseClientCertificateCNAsClientIdentifier is set, use the certificate CN
+        var clientIdentifier = CimianHttpClientFactory.GetClientCertificateCN(_config);
+        if (string.IsNullOrEmpty(clientIdentifier))
+        {
+            clientIdentifier = _config.ClientIdentifier;
+        }
         if (string.IsNullOrEmpty(clientIdentifier))
         {
             clientIdentifier = Environment.MachineName;
