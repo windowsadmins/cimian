@@ -3,6 +3,8 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
+using Cimian.Msi.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Cimian.CLI.Makepkginfo.Services;
 
@@ -34,7 +36,7 @@ public class MetadataExtractor
         string Description);
 
     /// <summary>
-    /// Extracts metadata from an MSI file using Windows Installer COM object via PowerShell
+    /// Extracts metadata from an MSI file using DTF (direct msi.dll interop).
     /// </summary>
     public MsiMetadata ExtractMsiMetadata(string msiPath)
     {
@@ -45,74 +47,18 @@ public class MetadataExtractor
 
         try
         {
-            var psScript = $@"
-$msi = ""{msiPath.Replace("\"", "`\"")}""
-$WindowsInstaller = New-Object -ComObject WindowsInstaller.Installer
-$db = $WindowsInstaller.OpenDatabase($msi,0)
-$view = $db.OpenView('SELECT * FROM Property')
-$view.Execute()
+            var reader = new MsiPropertyReader(NullLogger<MsiPropertyReader>.Instance);
+            var meta = reader.ReadMetadata(msiPath);
 
-$pairs = @{{}}
-while($rec = $view.Fetch()) {{
-    $prop = $rec.StringData(1)
-    $val = $rec.StringData(2)
-    $pairs[$prop] = $val
-}}
-$props = [PSCustomObject]@{{
-  ProductName   = $pairs[""ProductName""]
-  ProductVersion= $pairs[""ProductVersion""]
-  Manufacturer  = $pairs[""Manufacturer""]
-  Comments      = $pairs[""Comments""]
-  ProductCode   = $pairs[""ProductCode""]
-  UpgradeCode   = $pairs[""UpgradeCode""]
-}}
-$props | ConvertTo-Json -Compress
-";
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell",
-                Arguments = "-NoProfile -NonInteractive -Command -",
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process == null)
-            {
-                return new MsiMetadata("UnknownMSI", "", "", "", "", "");
-            }
-
-            process.StandardInput.Write(psScript);
-            process.StandardInput.Close();
-
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-
-            if (process.ExitCode != 0 || string.IsNullOrEmpty(output))
-            {
-                return new MsiMetadata("UnknownMSI", "", "", "", "", "");
-            }
-
-            var props = JsonSerializer.Deserialize<Dictionary<string, string?>>(output);
-            if (props == null)
-            {
-                return new MsiMetadata("UnknownMSI", "", "", "", "", "");
-            }
-
-            var productName = props.GetValueOrDefault("ProductName")?.Trim() ?? "UnknownMSI";
-            if (string.IsNullOrEmpty(productName)) productName = "UnknownMSI";
+            var productName = !string.IsNullOrEmpty(meta.ProductName) ? meta.ProductName : "UnknownMSI";
 
             return new MsiMetadata(
                 productName,
-                props.GetValueOrDefault("ProductVersion")?.Trim() ?? "",
-                props.GetValueOrDefault("Manufacturer")?.Trim() ?? "",
-                props.GetValueOrDefault("Comments")?.Trim() ?? "",
-                props.GetValueOrDefault("ProductCode")?.Trim() ?? "",
-                props.GetValueOrDefault("UpgradeCode")?.Trim() ?? ""
+                meta.ProductVersion,
+                meta.Manufacturer,
+                meta.Description,
+                meta.ProductCode,
+                meta.UpgradeCode
             );
         }
         catch

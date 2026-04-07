@@ -3,8 +3,10 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
-    <AssemblyName>makepkginfo</AssemblyName>
-    <RootNamespace>Cimian.CLI.Makepkginfo</RootNamespace>
+    <AssemblyName>pkginspector</AssemblyName>
+    <RootNamespace>Cimian.CLI.Pkginspector</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,9 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
-    <ProjectReference Include="..\..\shared\engine\Cimian.Engine.csproj" />
-    <ProjectReference Include="..\..\shared\infrastructure\Cimian.Infrastructure.csproj" />
     <ProjectReference Include="..\..\shared\msi\Cimian.Msi.csproj" />
   </ItemGroup>
 

@@ -3,6 +3,8 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Cimian.CLI.Cimiimport.Models;
+using Cimian.Msi.Services;
+using Microsoft.Extensions.Logging.Abstractions;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -80,13 +82,13 @@ public partial class MetadataExtractor
     }
 
     /// <summary>
-    /// Extracts MSI metadata using PowerShell COM interop.
+    /// Extracts MSI metadata using DTF (direct msi.dll interop).
+    /// For cimipkg-built MSI, also extracts embedded build-info.yaml for full metadata transfer.
     /// </summary>
     private void ExtractMsiMetadata(string packagePath, InstallerMetadata metadata)
     {
         metadata.InstallerType = "msi";
 
-        // Skip PowerShell extraction if file doesn't exist
         if (!File.Exists(packagePath))
         {
             metadata.Title = ParsePackageName(Path.GetFileName(packagePath));
@@ -96,68 +98,46 @@ public partial class MetadataExtractor
 
         try
         {
-            var escapedPath = packagePath.Replace("'", "''");
-            var script = @"
-$msiPath = '" + escapedPath + @"'
-$installer = New-Object -ComObject WindowsInstaller.Installer
-$database = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($msiPath, 0))
+            var reader = new MsiPropertyReader(NullLogger<MsiPropertyReader>.Instance);
+            var msiMeta = reader.ReadMetadata(packagePath);
 
-function Get-MsiProperty($name) {
-    $query = ""SELECT Value FROM Property WHERE Property = '$name'""
-    $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, @($query))
-    $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
-    $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
-    if ($record -ne $null) {
-        return $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, @(1))
-    }
-    return ''
-}
+            metadata.Title = !string.IsNullOrEmpty(msiMeta.ProductName)
+                ? msiMeta.ProductName : ParsePackageName(Path.GetFileName(packagePath));
+            metadata.ID = metadata.Title;
+            metadata.Version = ParseVersion(msiMeta.ProductVersion);
+            metadata.Developer = msiMeta.Manufacturer;
+            metadata.ProductCode = msiMeta.ProductCode;
+            metadata.UpgradeCode = msiMeta.UpgradeCode;
 
-@{
-    ProductName = Get-MsiProperty 'ProductName'
-    ProductVersion = Get-MsiProperty 'ProductVersion'
-    Manufacturer = Get-MsiProperty 'Manufacturer'
-    ProductCode = Get-MsiProperty 'ProductCode'
-    UpgradeCode = Get-MsiProperty 'UpgradeCode'
-} | ConvertTo-Json
-";
-
-            var psi = new ProcessStartInfo
+            // For cimipkg-built MSI, extract rich metadata from embedded build-info.yaml
+            if (msiMeta.IsCimianPackage)
             {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{script.Replace("\"", "\\\"")}\"",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-            if (process != null)
-            {
-                // Use timeout to prevent hanging on problematic MSI files
-                if (process.WaitForExit(10000)) // 10 second timeout
+                try
                 {
-                    var output = process.StandardOutput.ReadToEnd();
+                    var deserializer = new DeserializerBuilder()
+                        .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                        .IgnoreUnmatchedProperties()
+                        .Build();
+                    var buildInfo = deserializer.Deserialize<PkgBuildInfo>(msiMeta.BuildInfoYaml!);
 
-                    if (!string.IsNullOrEmpty(output))
+                    if (buildInfo?.Product != null)
                     {
-                        var json = System.Text.Json.JsonDocument.Parse(output);
-                        var root = json.RootElement;
-
-                        metadata.Title = root.TryGetProperty("ProductName", out var name) ? name.GetString() ?? "" : "";
-                        metadata.ID = metadata.Title;
-                        metadata.Version = ParseVersion(root.TryGetProperty("ProductVersion", out var ver) ? ver.GetString() ?? "" : "");
-                        metadata.Developer = root.TryGetProperty("Manufacturer", out var mfr) ? mfr.GetString() ?? "" : "";
-                        metadata.ProductCode = root.TryGetProperty("ProductCode", out var pc) ? pc.GetString() ?? "" : "";
-                        metadata.UpgradeCode = root.TryGetProperty("UpgradeCode", out var uc) ? uc.GetString() ?? "" : "";
+                        if (!string.IsNullOrEmpty(buildInfo.Product.Name))
+                            metadata.Title = buildInfo.Product.Name;
+                        if (!string.IsNullOrEmpty(buildInfo.Product.Version))
+                            metadata.Version = ParseVersion(buildInfo.Product.Version);
+                        if (!string.IsNullOrEmpty(buildInfo.Product.Developer))
+                            metadata.Developer = buildInfo.Product.Developer;
+                        if (!string.IsNullOrEmpty(buildInfo.Product.Description))
+                            metadata.Description = buildInfo.Product.Description;
+                        if (!string.IsNullOrEmpty(buildInfo.Product.Architecture) &&
+                            string.IsNullOrEmpty(metadata.Architecture))
+                            metadata.Architecture = buildInfo.Product.Architecture;
                     }
                 }
-                else
+                catch
                 {
-                    // Kill the process if it times out
-                    process.Kill();
-                    throw new TimeoutException("MSI metadata extraction timed out");
+                    // build-info.yaml parse failed; standard MSI properties already captured
                 }
             }
         }
