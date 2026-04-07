@@ -112,7 +112,7 @@ public partial class MetadataExtractor
             metadata.UpgradeCode = ReadProp("UpgradeCode") ?? "";
 
             // For cimipkg-built MSI, extract rich metadata from embedded build-info.yaml
-            var buildInfoYaml = ReadProp("CIMIAN_BUILD_INFO");
+            var buildInfoYaml = ReadProp("CIMIAN_PKG_BUILD_INFO");
             if (!string.IsNullOrEmpty(buildInfoYaml))
             {
                 try

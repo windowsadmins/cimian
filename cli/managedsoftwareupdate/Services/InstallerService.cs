@@ -735,6 +735,17 @@ public class InstallerService
         string localFile,
         CancellationToken cancellationToken)
     {
+        // cimipkg-built MSI have CIMIAN_PKG_BUILD_INFO in the Property table.
+        // Route these through sbin-installer (deterministic structure, tested path).
+        // Commercial/vendor MSI go straight to msiexec (battle-tested, 25 years of edge cases).
+        if (IsCimianBuiltMsi(localFile) && IsSbinInstallerAvailable())
+        {
+            ConsoleLogger.Info($"[INSTALLER METHOD: sbin-installer] cimipkg-built MSI detected: {item.Name}");
+            return await RunSbinInstallerAsync(localFile, item, cancellationToken);
+        }
+
+        ConsoleLogger.Info($"[INSTALLER METHOD: msiexec] Installing MSI: {item.Name}");
+
         var args = new List<string>
         {
             "/i",
@@ -758,6 +769,24 @@ public class InstallerService
         };
 
         return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
+    }
+
+    /// <summary>
+    /// Checks if an MSI was built by cimipkg by looking for the CIMIAN_PKG_BUILD_INFO property.
+    /// </summary>
+    private static bool IsCimianBuiltMsi(string msiPath)
+    {
+        try
+        {
+            using var db = new Database(msiPath, DatabaseOpenMode.ReadOnly);
+            var value = db.ExecuteScalar(
+                "SELECT `Value` FROM `Property` WHERE `Property` = 'CIMIAN_PKG_BUILD_INFO'");
+            return value != null;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task<(bool Success, string Output)> InstallExeAsync(
