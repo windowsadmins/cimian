@@ -8,6 +8,7 @@ using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
 using Microsoft.Win32;
+using WixToolset.Dtf.WindowsInstaller;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -1159,81 +1160,34 @@ public class InstallerService
     }
 
     /// <summary>
-    /// Finds installed product via UpgradeCode using Windows Installer packed GUID lookup.
-    /// Static version for use in installation verification.
+    /// Finds installed product via UpgradeCode using DTF's native Windows Installer API.
+    /// Replaces the previous packed GUID + registry walking approach.
     /// </summary>
     private static (bool installed, string? version) FindMsiByUpgradeCodeStatic(string upgradeCode)
     {
         if (string.IsNullOrEmpty(upgradeCode))
             return (false, null);
 
-        var packedUpgradeCode = PackGuidStatic(upgradeCode);
-        if (string.IsNullOrEmpty(packedUpgradeCode))
-            return (false, null);
-
         try
         {
-            using var upgradeKey = Registry.LocalMachine.OpenSubKey(
-                $@"SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UpgradeCodes\{packedUpgradeCode}");
-            if (upgradeKey == null)
-                return (false, null);
-
-            var valueNames = upgradeKey.GetValueNames();
-            if (valueNames.Length == 0)
-                return (false, null);
-
-            // Search uninstall registry for matching packed ProductCodes
-            foreach (var basePath in new[] {
-                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" })
+            foreach (var installation in ProductInstallation.GetRelatedProducts(upgradeCode))
             {
-                using var baseKey = Registry.LocalMachine.OpenSubKey(basePath);
-                if (baseKey == null) continue;
-
-                foreach (var subkeyName in baseKey.GetSubKeyNames())
+                try
                 {
-                    using var prodKey = baseKey.OpenSubKey(subkeyName);
-                    var version = prodKey?.GetValue("DisplayVersion")?.ToString();
-                    if (string.IsNullOrEmpty(version)) continue;
+                    var version = installation.ProductVersion?.ToString();
+                    if (!string.IsNullOrEmpty(version))
+                        return (true, version);
 
-                    var packedProductCode = PackGuidStatic(subkeyName);
-                    foreach (var valueName in valueNames)
-                    {
-                        if (string.Equals(valueName, packedProductCode, StringComparison.OrdinalIgnoreCase))
-                            return (true, version);
-                    }
+                    // Fallback to registry DisplayVersion
+                    var regVersion = FindMsiVersionByProductCode(installation.ProductCode);
+                    return (true, regVersion);
                 }
+                catch { /* continue to next product */ }
             }
         }
-        catch { /* failed to read registry */ }
+        catch { /* failed to enumerate related products */ }
 
         return (false, null);
-    }
-
-    /// <summary>
-    /// Converts a standard GUID to Windows Installer packed GUID format.
-    /// </summary>
-    private static string PackGuidStatic(string guid)
-    {
-        guid = guid.Replace("{", "").Replace("}", "").Replace("-", "").ToUpperInvariant();
-        if (guid.Length != 32)
-            return string.Empty;
-
-        var result = new char[32];
-        // Section 1: first 8 chars, reversed in pairs
-        result[0] = guid[6]; result[1] = guid[7]; result[2] = guid[4]; result[3] = guid[5];
-        result[4] = guid[2]; result[5] = guid[3]; result[6] = guid[0]; result[7] = guid[1];
-        // Section 2: next 4, reversed in pairs
-        result[8] = guid[10]; result[9] = guid[11]; result[10] = guid[8]; result[11] = guid[9];
-        // Section 3: next 4, reversed in pairs
-        result[12] = guid[14]; result[13] = guid[15]; result[14] = guid[12]; result[15] = guid[13];
-        // Section 4+5: remaining 16, reversed in pairs
-        for (int i = 16; i < 32; i += 2)
-        {
-            result[i] = guid[i + 1];
-            result[i + 1] = guid[i];
-        }
-        return new string(result);
     }
 
     private void RegisterInstallation(CatalogItem item)
