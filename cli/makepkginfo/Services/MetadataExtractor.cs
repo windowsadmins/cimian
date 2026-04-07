@@ -3,8 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
-using Cimian.Msi.Services;
-using Microsoft.Extensions.Logging.Abstractions;
+using WixToolset.Dtf.WindowsInstaller;
 
 namespace Cimian.CLI.Makepkginfo.Services;
 
@@ -47,18 +46,23 @@ public class MetadataExtractor
 
         try
         {
-            var reader = new MsiPropertyReader(NullLogger<MsiPropertyReader>.Instance);
-            var meta = reader.ReadMetadata(msiPath);
+            using var db = new Database(msiPath, DatabaseOpenMode.ReadOnly);
 
-            var productName = !string.IsNullOrEmpty(meta.ProductName) ? meta.ProductName : "UnknownMSI";
+            string? ReadProp(string name) {
+                try { return db.ExecuteScalar($"SELECT `Value` FROM `Property` WHERE `Property` = '{name}'")?.ToString(); }
+                catch { return null; }
+            }
+
+            var productName = ReadProp("ProductName")?.Trim() ?? "UnknownMSI";
+            if (string.IsNullOrEmpty(productName)) productName = "UnknownMSI";
 
             return new MsiMetadata(
                 productName,
-                meta.ProductVersion,
-                meta.Manufacturer,
-                meta.Description,
-                meta.ProductCode,
-                meta.UpgradeCode
+                ReadProp("ProductVersion")?.Trim() ?? "",
+                ReadProp("Manufacturer")?.Trim() ?? "",
+                ReadProp("Comments")?.Trim() ?? "",
+                ReadProp("ProductCode")?.Trim() ?? "",
+                ReadProp("UpgradeCode")?.Trim() ?? ""
             );
         }
         catch

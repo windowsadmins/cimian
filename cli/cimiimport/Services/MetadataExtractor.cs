@@ -3,8 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Cimian.CLI.Cimiimport.Models;
-using Cimian.Msi.Services;
-using Microsoft.Extensions.Logging.Abstractions;
+using WixToolset.Dtf.WindowsInstaller;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -98,19 +97,23 @@ public partial class MetadataExtractor
 
         try
         {
-            var reader = new MsiPropertyReader(NullLogger<MsiPropertyReader>.Instance);
-            var msiMeta = reader.ReadMetadata(packagePath);
+            using var db = new Database(packagePath, DatabaseOpenMode.ReadOnly);
 
-            metadata.Title = !string.IsNullOrEmpty(msiMeta.ProductName)
-                ? msiMeta.ProductName : ParsePackageName(Path.GetFileName(packagePath));
+            string? ReadProp(string name) {
+                try { return db.ExecuteScalar($"SELECT `Value` FROM `Property` WHERE `Property` = '{name}'")?.ToString(); }
+                catch { return null; }
+            }
+
+            metadata.Title = ReadProp("ProductName") ?? ParsePackageName(Path.GetFileName(packagePath));
             metadata.ID = metadata.Title;
-            metadata.Version = ParseVersion(msiMeta.ProductVersion);
-            metadata.Developer = msiMeta.Manufacturer;
-            metadata.ProductCode = msiMeta.ProductCode;
-            metadata.UpgradeCode = msiMeta.UpgradeCode;
+            metadata.Version = ParseVersion(ReadProp("ProductVersion") ?? "");
+            metadata.Developer = ReadProp("Manufacturer") ?? "";
+            metadata.ProductCode = ReadProp("ProductCode") ?? "";
+            metadata.UpgradeCode = ReadProp("UpgradeCode") ?? "";
 
             // For cimipkg-built MSI, extract rich metadata from embedded build-info.yaml
-            if (msiMeta.IsCimianPackage)
+            var buildInfoYaml = ReadProp("CIMIAN_BUILD_INFO");
+            if (!string.IsNullOrEmpty(buildInfoYaml))
             {
                 try
                 {
@@ -118,7 +121,7 @@ public partial class MetadataExtractor
                         .WithNamingConvention(UnderscoredNamingConvention.Instance)
                         .IgnoreUnmatchedProperties()
                         .Build();
-                    var buildInfo = deserializer.Deserialize<PkgBuildInfo>(msiMeta.BuildInfoYaml!);
+                    var buildInfo = deserializer.Deserialize<PkgBuildInfo>(buildInfoYaml);
 
                     if (buildInfo?.Product != null)
                     {

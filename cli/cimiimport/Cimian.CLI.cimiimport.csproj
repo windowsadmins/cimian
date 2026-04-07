@@ -16,13 +16,13 @@
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
     <PackageReference Include="System.Drawing.Common" Version="9.0.5" />
+    <PackageReference Include="WixToolset.Dtf.WindowsInstaller" Version="5.*" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
     <ProjectReference Include="..\..\shared\engine\Cimian.Engine.csproj" />
     <ProjectReference Include="..\..\shared\infrastructure\Cimian.Infrastructure.csproj" />
-    <ProjectReference Include="..\..\shared\msi\Cimian.Msi.csproj" />
   </ItemGroup>
 
 </Project>
