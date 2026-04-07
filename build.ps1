@@ -264,6 +264,7 @@ $Global:CSharpTools = @{
     "cimitrigger"           = @{ Project = "cli/cimitrigger"; Type = "CLI" }
     "manifestutil"          = @{ Project = "cli/manifestutil"; Type = "CLI" }
     "repoclean"             = @{ Project = "cli/repoclean"; Type = "CLI" }
+    "pkginspector"          = @{ Project = "cli/pkginspector"; Type = "CLI" }
     "cimiwatcher"           = @{ Project = "cli/cimiwatcher"; Type = "CLI" }
     "cimistatus"            = @{ Project = "gui/CimianStatus"; Type = "GUI" }
 }
@@ -790,82 +791,132 @@ function Build-MsiPackage {
         [string]$Thumbprint,
         [string]$CertStore
     )
-    
-    Write-BuildLog "Building MSI for $Architecture..." "INFO"
-    
-    # Check for WiX
-    $wixInstalled = $null
-    try {
-        $wixInstalled = & dotnet tool list -g 2>&1 | Select-String "wix"
-    } catch {}
-    
-    if (-not $wixInstalled) {
-        Write-BuildLog "WiX toolset not found. Installing..." "INFO"
-        & dotnet tool install --global wix 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install WiX toolset"
-        }
-    }
-    
-    $msiProjectPath = Join-Path $BuildDir "msi\Cimian.wixproj"
-    $msiSourceDir = Join-Path $BuildDir "msi"
-    $binDir = Join-Path $OutputDir $Architecture
-    
-    if (-not (Test-Path $msiProjectPath)) {
-        Write-BuildLog "MSI project not found at $msiProjectPath - skipping MSI creation" "WARNING"
+
+    Write-BuildLog "Building MSI for $Architecture using cimipkg..." "INFO"
+
+    $binariesDir = "release\$Architecture"
+
+    if (-not (Test-Path $binariesDir)) {
+        Write-BuildLog "Binaries directory not found: $binariesDir" "WARNING"
         return $null
     }
-    
-    # Copy support scripts to the binDir so WiX can find them
+
+    # Find cimipkg.exe (prefer host architecture)
+    $hostArch = if ([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) { 'arm64' } else { 'x64' }
+    $cimipkgPath = Join-Path "release\$hostArch" "cimipkg.exe"
+    if (-not (Test-Path $cimipkgPath)) {
+        $cimipkgPath = Join-Path $binariesDir "cimipkg.exe"
+    }
+    if (-not (Test-Path $cimipkgPath)) {
+        Write-BuildLog "cimipkg.exe not found - build it first" "WARNING"
+        return $null
+    }
+
+    Write-BuildLog "Using cimipkg.exe from: $cimipkgPath" "INFO"
+
+    # Create temporary MSI build directory (same structure as .pkg)
+    $msiTempDir = "release\msi_$Architecture"
+    if (Test-Path $msiTempDir) { Remove-Item $msiTempDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $msiTempDir -Force | Out-Null
+
+    # Create payload directory and copy all binaries
+    $payloadDir = Join-Path $msiTempDir "payload"
+    New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
+
+    Write-BuildLog "Copying CimianTools binaries for $Architecture to MSI payload..." "INFO"
+    $expectedExecutables = @(
+        'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
+        'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
+        'repoclean.exe', 'pkginspector.exe', 'Managed Software Center.exe'
+    )
+
+    foreach ($exe in $expectedExecutables) {
+        $sourcePath = Join-Path $binariesDir $exe
+        if (Test-Path $sourcePath) {
+            Copy-Item $sourcePath -Destination $payloadDir -Force
+        }
+    }
+
+    # Also copy support scripts into payload (they go to C:\Program Files\Cimian)
+    $msiSourceDir = Join-Path $BuildDir "msi"
     $supportScripts = @(
-        "install-tasks.ps1",
-        "uninstall-tasks.ps1",
-        "manage-service.ps1",
-        "verify-installation.ps1",
-        "diagnose-cimianwatcher.ps1"
+        "install-tasks.ps1", "uninstall-tasks.ps1", "manage-service.ps1",
+        "verify-installation.ps1", "diagnose-cimianwatcher.ps1"
     )
     foreach ($script in $supportScripts) {
         $srcPath = Join-Path $msiSourceDir $script
         if (Test-Path $srcPath) {
-            Copy-Item $srcPath -Destination $binDir -Force
+            Copy-Item $srcPath -Destination $payloadDir -Force
         }
     }
-    
-    $msiVersion = $Version.MsiCompatible
-    Write-BuildLog "MSI version: $msiVersion (from $($Version.Full))" "INFO"
-    
-    # Build the MSI
-    & dotnet build $msiProjectPath `
-        -p:Platform=$Architecture `
-        -p:ProductVersion=$msiVersion `
-        -p:BinDir=$binDir `
-        -o $OutputDir
-        
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to build MSI for $Architecture"
+
+    # Create scripts directory and copy install scripts (same templates as .pkg)
+    $scriptsDir = Join-Path $msiTempDir "scripts"
+    New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null
+
+    $releaseVersion = $Version.Full
+    $semanticVersion = $Version.Semantic
+
+    # Copy preinstall/postinstall from .pkg templates (they're identical in purpose)
+    $preinstallTemplatePath = "build\pkg\preinstall.ps1"
+    $preinstallPath = Join-Path $scriptsDir "preinstall.ps1"
+    if (Test-Path $preinstallTemplatePath) {
+        $content = (Get-Content $preinstallTemplatePath -Raw) -replace '\{\{VERSION\}\}', $semanticVersion
+        $content | Set-Content $preinstallPath -Encoding UTF8
     }
-    
-    # Find and rename the MSI
-    # Look for: Cimian-x64.msi, Cimian-arm64.msi, or generic Cimian.msi
-    $msiFile = Get-ChildItem -Path $OutputDir -Filter "Cimian*.msi" | 
-        Where-Object { $_.Name -match "^Cimian(-($Architecture|x64|arm64))?\.msi$" -and $_.Name -notmatch '^\d{4}\.\d{2}\.\d{2}\.' } | 
-        Select-Object -First 1
-        
-    if ($msiFile) {
-        $finalName = "Cimian-$($Version.Full)-$Architecture.msi"
-        $finalPath = Join-Path $OutputDir $finalName
-        Move-Item -Path $msiFile.FullName -Destination $finalPath -Force
-        Write-BuildLog "Created MSI: $finalName" "SUCCESS"
-        
+
+    $postinstallTemplatePath = "build\pkg\postinstall.ps1"
+    $postinstallPath = Join-Path $scriptsDir "postinstall.ps1"
+    if (Test-Path $postinstallTemplatePath) {
+        $content = (Get-Content $postinstallTemplatePath -Raw) -replace '\{\{VERSION\}\}', $semanticVersion
+        $content | Set-Content $postinstallPath -Encoding UTF8
+    }
+
+    # Create build-info.yaml from .pkg template
+    $buildInfoTemplatePath = "build\pkg\build-info.yaml"
+    $buildInfoPath = Join-Path $msiTempDir "build-info.yaml"
+    if (Test-Path $buildInfoTemplatePath) {
+        $content = (Get-Content $buildInfoTemplatePath -Raw) -replace '\{\{VERSION\}\}', $releaseVersion
+        # Add signing certificate for MSI signing
         if ($Sign -and $Thumbprint) {
-            Invoke-SignArtifact -Path $finalPath -Thumbprint $Thumbprint -Store $CertStore
-            Write-BuildLog "Signed MSI: $finalName" "SUCCESS"
+            $content += "`nsigning_thumbprint: $Thumbprint"
         }
-        
-        return $finalPath
+        $content | Set-Content $buildInfoPath -Encoding UTF8
+        Write-BuildLog "Created build-info.yaml with version $releaseVersion" "INFO"
     }
-    
-    Write-BuildLog "MSI file not found after build" "WARNING"
+
+    # Build the .msi package using cimipkg --msi
+    try {
+        $cimipkgArgs = @("--msi", "--verbose", $msiTempDir)
+
+        Write-BuildLog "Running cimipkg.exe --msi to create MSI package..." "INFO"
+        $process = Start-Process -FilePath $cimipkgPath -ArgumentList $cimipkgArgs -Wait -NoNewWindow -PassThru
+
+        if ($process.ExitCode -eq 0) {
+            Write-BuildLog "MSI package created successfully for $Architecture" "SUCCESS"
+
+            $buildDir = Join-Path $msiTempDir "build"
+            if (Test-Path $buildDir) {
+                $createdMsiFiles = Get-ChildItem -Path $buildDir -Filter "*.msi"
+                foreach ($msiFile in $createdMsiFiles) {
+                    $expectedName = "Cimian-$releaseVersion-$Architecture.msi"
+                    $targetPath = "release\$expectedName"
+                    Copy-Item $msiFile.FullName $targetPath -Force
+                    Write-BuildLog "MSI package: $expectedName ($([math]::Round($msiFile.Length / 1MB, 2)) MB)" "SUCCESS"
+                    return $targetPath
+                }
+            }
+        } else {
+            Write-BuildLog "Failed to create MSI package (exit code: $($process.ExitCode))" "ERROR"
+        }
+    }
+    catch {
+        Write-BuildLog "Error creating MSI package: $_" "ERROR"
+    }
+    finally {
+        if (Test-Path $msiTempDir) { Remove-Item $msiTempDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     return $null
 }
 
