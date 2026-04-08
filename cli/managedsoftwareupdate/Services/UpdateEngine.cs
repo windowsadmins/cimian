@@ -46,7 +46,8 @@ public class UpdateEngine : IDisposable
     private bool _auto;
     private bool _showStatus;
     private bool _restartNeeded;
-    
+    private bool _logoutNeeded;
+
     // Store for managed items tracking (for status table)
     private List<ManifestItem> _allManifestItems = new();
     private Dictionary<string, CatalogItem> _catalogMap = new();
@@ -364,6 +365,22 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
 
+            // AutoRemove: queue uninstall for packages installed by Cimian but no longer in any manifest
+            if (_config.AutoRemove)
+            {
+                var autoRemoveItems = IdentifyAutoRemoveItems(manifestItems, catalogMap);
+                if (autoRemoveItems.Count > 0)
+                {
+                    ConsoleLogger.Info($"AutoRemove: {autoRemoveItems.Count} package(s) no longer in manifests");
+                    foreach (var item in autoRemoveItems)
+                    {
+                        ConsoleLogger.Info($"    -> Auto-removing: {item.Name} v{item.Version}");
+                        _sessionLogger?.Log("INFO", $"AutoRemove: {item.Name} v{item.Version} no longer in any manifest");
+                    }
+                    toUninstall.AddRange(autoRemoveItems);
+                }
+            }
+
             // Apply --item filter if specified (Go parity: pkg/filter)
             if (itemFilterService.HasFilter)
             {
@@ -436,6 +453,7 @@ public class UpdateEngine : IDisposable
             }
 
             // Filter out items outside their install_window (applies to installs, updates, and uninstalls)
+            // Exception: force_install_after_date overrides install_window — if deadline has passed, install anyway
             var deferredItems = new List<CatalogItem>();
             var now = DateTime.Now;
             foreach (var list in new[] { toInstall, toUpdate, toUninstall })
@@ -445,6 +463,18 @@ public class UpdateEngine : IDisposable
                     var item = list[i];
                     if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
                     {
+                        // Deadline override: force_install_after_date takes priority over install_window
+                        if (item.ForceInstallAfterDate != null && now >= item.ForceInstallAfterDate.Value)
+                        {
+                            LogInfo($"Installing {item.Name} v{item.Version} despite install_window {item.InstallWindow}: force_install_after_date {item.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
+                            _sessionLogger?.LogStatusCheck(
+                                item.Name, item.Version, "pending",
+                                $"Deadline {item.ForceInstallAfterDate.Value:yyyy-MM-dd} overrides install window {item.InstallWindow}",
+                                Cimian.Core.Models.StatusReasonCode.DeadlineOverridesWindow,
+                                Cimian.Core.Models.DetectionMethod.None, null, true);
+                            continue; // Keep in list, don't defer
+                        }
+
                         LogInfo($"Deferred: {item.Name} v{item.Version} (outside install window {item.InstallWindow})");
                         _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: outside install window {item.InstallWindow}");
                         _sessionLogger?.LogStatusCheck(
@@ -656,13 +686,16 @@ public class UpdateEngine : IDisposable
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
                 
-                // Handle restart_action: trigger system restart if any installed/removed item requires it
-                // Munki parity: returns POSTACTION_RESTART when any item has RequireRestart/RecommendRestart
+                // Handle restart_action: restart takes precedence over logout (Munki parity)
                 if (_restartNeeded)
                 {
                     PerformRestartAction();
                 }
-                
+                else if (_logoutNeeded)
+                {
+                    PerformLogoutAction();
+                }
+
                 return 0;
             }
             else
@@ -670,20 +703,24 @@ public class UpdateEngine : IDisposable
                 ConsoleLogger.Warn("Some operations failed");
                 _sessionLogger?.Log("WARN", "Some operations failed");
                 ReportError("Some operations failed");
-                
+
                 // Collect items data for items.json report
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
-                
+
                 // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
-                
+
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
-                
-                // Even on partial failure, honor restart if any successful item required it
+
+                // Even on partial failure, honor restart/logout if any successful item required it
                 if (_restartNeeded)
                 {
                     PerformRestartAction();
+                }
+                else if (_logoutNeeded)
+                {
+                    PerformLogoutAction();
                 }
                 
                 return 1;
@@ -808,6 +845,38 @@ public class UpdateEngine : IDisposable
                     }
                     break;
 
+                case "optional":
+                    // Optional items are normally user-selected via the GUI.
+                    // But if force_install_after_date has passed, enforce installation (Munki behavior).
+                    if (catalogItem.ForceInstallAfterDate != null && DateTime.Now >= catalogItem.ForceInstallAfterDate.Value)
+                    {
+                        var optStatus = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
+                        ConsoleLogger.Detail($"    CheckStatus for {item.Name} (forced deadline): NeedsAction={optStatus.NeedsAction}, Status={optStatus.Status}");
+
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, optStatus.Status,
+                            optStatus.Reason, optStatus.ReasonCode, optStatus.DetectionMethod,
+                            optStatus.InstalledVersion, optStatus.NeedsAction);
+
+                        if (optStatus.NeedsAction)
+                        {
+                            ConsoleLogger.Info($"    -> force_install_after_date {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed, forcing install of optional item {item.Name}");
+                            _sessionLogger?.Log("INFO", $"Forcing install of optional item {item.Name}: deadline {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
+                            _sessionLogger?.LogStatusCheck(
+                                catalogItem.Name, catalogItem.Version, "pending",
+                                $"force_install_after_date {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed",
+                                Cimian.Core.Models.StatusReasonCode.ForceInstallDeadline,
+                                Cimian.Core.Models.DetectionMethod.None,
+                                optStatus.InstalledVersion, true);
+
+                            if (optStatus.IsUpdate)
+                                toUpdate.Add(catalogItem);
+                            else
+                                toInstall.Add(catalogItem);
+                        }
+                    }
+                    break;
+
                 case "uninstall":
                     if (catalogItem.IsUninstallable())
                     {
@@ -824,6 +893,50 @@ public class UpdateEngine : IDisposable
         }
 
         return (toInstall, toUpdate, toUninstall);
+    }
+
+    /// <summary>
+    /// Identifies packages installed by Cimian (in ManagedInstalls registry) that are no longer
+    /// referenced in any manifest. These are candidates for automatic removal.
+    /// </summary>
+    private List<CatalogItem> IdentifyAutoRemoveItems(
+        List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
+    {
+        var autoRemove = new List<CatalogItem>();
+
+        var manifestedNames = new HashSet<string>(
+            manifestItems.Select(m => m.Name).Where(n => !string.IsNullOrEmpty(n)),
+            StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var managedKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\ManagedInstalls");
+            if (managedKey == null) return autoRemove;
+
+            foreach (var name in managedKey.GetSubKeyNames())
+            {
+                if (manifestedNames.Contains(name)) continue;
+
+                using var itemKey = managedKey.OpenSubKey(name);
+                var version = itemKey?.GetValue("Version")?.ToString() ?? "0";
+
+                if (catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem))
+                {
+                    autoRemove.Add(catalogItem);
+                }
+                else
+                {
+                    autoRemove.Add(new CatalogItem { Name = name, Version = version });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"AutoRemove: failed to enumerate ManagedInstalls registry: {ex.Message}");
+        }
+
+        return autoRemove;
     }
 
     /// <summary>
@@ -1238,6 +1351,12 @@ public class UpdateEngine : IDisposable
                 _restartNeeded = true;
                 LogInfo($"Restart required after installing {item.Name} (restart_action: {item.RestartAction})");
                 _sessionLogger?.Log("INFO", $"Restart required: {item.Name} (restart_action: {item.RestartAction})");
+            }
+            else if (RequiresLogout(item))
+            {
+                _logoutNeeded = true;
+                LogInfo($"Logout required after installing {item.Name} (restart_action: {item.RestartAction})");
+                _sessionLogger?.Log("INFO", $"Logout required: {item.Name} (restart_action: {item.RestartAction})");
             }
             
             // Log structured event for external monitoring with reason tracking
@@ -2282,6 +2401,11 @@ public class UpdateEngine : IDisposable
         return item.RestartAction is "RequireRestart" or "RecommendRestart";
     }
 
+    private static bool RequiresLogout(CatalogItem item)
+    {
+        return item.RestartAction is "RequireLogout";
+    }
+
     /// <summary>
     /// Triggers a system restart after all install/uninstall operations complete.
     /// In auto/bootstrap mode: schedules a reboot with a 5-minute grace period.
@@ -2320,6 +2444,45 @@ public class UpdateEngine : IDisposable
         {
             ConsoleLogger.Warn("Restart recommended - please restart your computer to complete updates");
             _sessionLogger?.Log("INFO", "Restart recommended (interactive mode - not forcing)");
+        }
+    }
+
+    /// <summary>
+    /// Forces a user logout after all install/uninstall operations complete.
+    /// Matches Munki's RequireLogout behavior.
+    /// </summary>
+    private void PerformLogoutAction()
+    {
+        ConsoleLogger.Warn("One or more items require a user logout");
+        _sessionLogger?.Log("INFO", "Logout required by installed/removed items");
+
+        if (_auto || _isBootstrap)
+        {
+            ConsoleLogger.Warn("Forcing user logout to complete software updates...");
+            _sessionLogger?.Log("INFO", "Forcing user logout (auto/bootstrap mode)");
+
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "shutdown.exe",
+                    Arguments = "/l",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+                System.Diagnostics.Process.Start(psi);
+                _sessionLogger?.Log("INFO", "User logout initiated via shutdown.exe /l");
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Error($"Failed to initiate user logout: {ex.Message}");
+                _sessionLogger?.Log("ERROR", $"Failed to initiate user logout: {ex.Message}");
+            }
+        }
+        else
+        {
+            ConsoleLogger.Warn("Logout recommended - please log out and back in to complete updates");
+            _sessionLogger?.Log("INFO", "Logout recommended (interactive mode - not forcing)");
         }
     }
 
