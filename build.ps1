@@ -264,7 +264,6 @@ $Global:CSharpTools = @{
     "cimitrigger"           = @{ Project = "cli/cimitrigger"; Type = "CLI" }
     "manifestutil"          = @{ Project = "cli/manifestutil"; Type = "CLI" }
     "repoclean"             = @{ Project = "cli/repoclean"; Type = "CLI" }
-    "pkginspector"          = @{ Project = "cli/pkginspector"; Type = "CLI" }
     "cimiwatcher"           = @{ Project = "cli/cimiwatcher"; Type = "CLI" }
     "cimistatus"            = @{ Project = "gui/CimianStatus"; Type = "GUI" }
 }
@@ -827,7 +826,7 @@ function Build-MsiPackage {
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
         'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
-        'repoclean.exe', 'pkginspector.exe', 'Managed Software Center.exe'
+        'repoclean.exe', 'Managed Software Center.exe'
     )
 
     foreach ($exe in $expectedExecutables) {

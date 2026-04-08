@@ -110,7 +110,7 @@ jobs:
           $msiFile = Get-ChildItem -Path release -Filter "Cimian-*-x64.msi" | Select-Object -First 1
           if ($msiFile) {
             $targetName = "Cimian-$env:RELEASE_VERSION.msi"
-            Rename-Item $msiFile.FullName $targetName -ErrorAction SilentlyContinue
+            Rename-Item $msiFile.FullName $targetName
             Write-Host "MSI package: $targetName"
           } else {
             Write-Error "MSI build failed - output file not found"
