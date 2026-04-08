@@ -117,6 +117,12 @@ public static class StatusReasonCode
     /// <summary>OS version not supported</summary>
     public const string OsVersionMismatch = "os_version_mismatch";
 
+    /// <summary>force_install_after_date deadline has passed — item forced to install</summary>
+    public const string ForceInstallDeadline = "force_install_deadline";
+
+    /// <summary>force_install_after_date overrides install_window deferral</summary>
+    public const string DeadlineOverridesWindow = "deadline_overrides_window";
+
     #endregion
 
     #region Removed Reasons - Package confirmed removed

@@ -255,25 +255,7 @@ public partial class SoftwarePage : Page
     private static string GetCategoryIcon(string category)
     {
         // Map categories to Segoe MDL2 Assets icons
-        return category.ToLowerInvariant() switch
-        {
-            "all" => "\uE8FD",           // Grid
-            "productivity" => "\uE7C3",   // Edit
-            "utilities" => "\uE90F",      // Repair
-            "developer tools" => "\uE943", // Code
-            "developer" => "\uE943",      // Code
-            "communication" => "\uE8BD",  // Chat
-            "media" => "\uE8B2",          // Play
-            "entertainment" => "\uE7F4",  // TV
-            "business" => "\uE821",       // Briefcase
-            "security" => "\uE72E",       // Shield
-            "photo & video" => "\uE722",  // Camera
-            "music" => "\uE8D6",          // Music
-            "creativity" => "\uE790",     // Brush
-            "education" => "\uE7BE",      // Education
-            "gaming" => "\uE7FC",         // Game
-            _ => "\uE74C"                 // App (default)
-        };
+        return ViewModels.CategoryIcons.GetGlyph(category);
     }
 
     private void CategoryPill_Click(object sender, RoutedEventArgs e)
