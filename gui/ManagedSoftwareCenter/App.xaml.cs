@@ -3,6 +3,7 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Windows.AppLifecycle;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
@@ -59,6 +60,7 @@ public partial class App : Application
         services.AddTransient<CategoriesViewModel>();
         services.AddTransient<MyItemsViewModel>();
         services.AddTransient<UpdatesViewModel>();
+        services.AddTransient<HistoryViewModel>();
         services.AddTransient<ItemDetailViewModel>();
         services.AddTransient<ProgressViewModel>();
         
@@ -77,6 +79,16 @@ public partial class App : Application
     {
         try
         {
+            // Check for protocol activation (cimian:// deep link)
+            Uri? pendingUri = null;
+            var activationArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
+            if (activationArgs.Kind == ExtendedActivationKind.Protocol &&
+                activationArgs.Data is Windows.ApplicationModel.Activation.IProtocolActivatedEventArgs protocolArgs)
+            {
+                pendingUri = protocolArgs.Uri;
+                LogStartup($"Protocol activation: {pendingUri}");
+            }
+
             LogStartup("OnLaunched starting - creating MainWindow...");
             s_mainWindow = new MainWindow();
             LogStartup("MainWindow created - activating...");
@@ -89,11 +101,50 @@ public partial class App : Application
 
             var progressClient = Services.GetRequiredService<IProgressPipeClient>();
             await progressClient.ConnectAsync();
+
+            // Handle pending deep link after window is ready
+            if (pendingUri != null)
+            {
+                HandleProtocolActivation(pendingUri);
+            }
+
             LogStartup("OnLaunched complete.");
         }
         catch (Exception ex)
         {
             LogStartup($"CRASH in OnLaunched: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n");
+        }
+    }
+
+    /// <summary>
+    /// Handles cimian:// protocol URIs.
+    /// Supported: cimian://showitem?name=AppName, cimian://updates, cimian://history, cimian://categories
+    /// </summary>
+    public static void HandleProtocolActivation(Uri uri)
+    {
+        if (s_mainWindow is not MainWindow mainWindow) return;
+
+        var host = uri.Host.ToLowerInvariant();
+        switch (host)
+        {
+            case "showitem":
+                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+                var itemName = query["name"];
+                if (!string.IsNullOrEmpty(itemName))
+                    mainWindow.NavigateToItemDetail(itemName);
+                break;
+            case "updates":
+                mainWindow.NavigateToPage("updates");
+                break;
+            case "history":
+                mainWindow.NavigateToPage("history");
+                break;
+            case "categories":
+                mainWindow.NavigateToPage("categories");
+                break;
+            default:
+                mainWindow.NavigateToPage("software");
+                break;
         }
     }
 
