@@ -40,8 +40,13 @@ public partial class HistoryViewModel : ObservableObject
 
             if (File.Exists(SessionsPath))
             {
-                var json = await File.ReadAllTextAsync(SessionsPath);
-                var sessions = JsonSerializer.Deserialize<List<SessionData>>(json, JsonOptions);
+                List<SessionData>? sessions = null;
+                try
+                {
+                    var json = await File.ReadAllTextAsync(SessionsPath);
+                    sessions = JsonSerializer.Deserialize<List<SessionData>>(json, JsonOptions);
+                }
+                catch { }
 
                 if (sessions != null)
                 {
