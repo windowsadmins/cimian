@@ -15,6 +15,39 @@ public class CategoryGroup
     public string Name { get; set; } = string.Empty;
     public int ItemCount { get; set; }
     public List<InstallableItem> PreviewItems { get; set; } = [];
+    public string IconGlyph => CategoryIcons.GetGlyph(Name);
+}
+
+/// <summary>
+/// Category-to-icon glyph mapping, shared by CategoriesPage and SoftwarePage.
+/// </summary>
+public static class CategoryIcons
+{
+    public static string GetGlyph(string category)
+    {
+        return category.ToLowerInvariant() switch
+        {
+            "all" => "\uE8FD",
+            "productivity" => "\uE7C3",
+            "utilities" => "\uE90F",
+            "developer tools" or "developer" or "dev" or "development" => "\uE943",
+            "communication" => "\uE8BD",
+            "design" or "creativity" => "\uE790",
+            "media" => "\uE8B2",
+            "entertainment" => "\uE7F4",
+            "business" or "management" => "\uE821",
+            "security" or "remediation" => "\uE72E",
+            "photo & video" => "\uE722",
+            "music" => "\uE8D6",
+            "education" => "\uE7BE",
+            "gaming" => "\uE7FC",
+            "docs" or "documents" => "\uE8A5",
+            "plugins" => "\uE74D",
+            "prefs" or "preferences" => "\uE713",
+            "printing" => "\uE749",
+            _ => "\uE74C"
+        };
+    }
 }
 
 /// <summary>
