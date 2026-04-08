@@ -9,6 +9,14 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- Soften dark mode background (match Terminal dark charcoal tone) -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="ApplicationPageBackgroundThemeBrush" Color="#1E1E2E" />
+                    <SolidColorBrush x:Key="LayerFillColorDefaultBrush" Color="#252536" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
             <!-- Status colors -->
             <SolidColorBrush x:Key="StatusAvailableBrush" Color="#107C10" />
             <SolidColorBrush x:Key="StatusInstalledBrush" Color="#0078D4" />
