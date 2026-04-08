@@ -1199,8 +1199,10 @@ public class InstallerService
 
         try
         {
+            bool anyProductFound = false;
             foreach (var installation in ProductInstallation.GetRelatedProducts(upgradeCode))
             {
+                anyProductFound = true;
                 try
                 {
                     var version = installation.ProductVersion?.ToString();
@@ -1209,10 +1211,15 @@ public class InstallerService
 
                     // Fallback to registry DisplayVersion
                     var regVersion = FindMsiVersionByProductCode(installation.ProductCode);
-                    return (true, regVersion);
+                    if (!string.IsNullOrEmpty(regVersion))
+                        return (true, regVersion);
                 }
                 catch { /* continue to next product */ }
             }
+
+            // Products exist but none had a readable version
+            if (anyProductFound)
+                return (true, null);
         }
         catch { /* failed to enumerate related products */ }
 
