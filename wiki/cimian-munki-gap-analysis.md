@@ -48,7 +48,7 @@
 |---|-----|-------------|----------------------|
 | 3 | ~~`featured_items` backend wiring~~ | **DONE** — Wired from manifests through to `WriteInstallInfo()` | ✅ Implemented |
 | 4 | ~~MSC text search~~ | **DONE** — `AutoSuggestBox` + `ApplyFilters()` searches name, description, developer, category | ✅ Implemented |
-| 5 | Installation history view | Partially done — HistoryPage + ViewModel exist but not wired into navigation | Small — wire into MainWindow nav + DI |
+| 5 | ~~Installation history view~~ | **DONE** — `HistoryPage` reads `sessions.json`, wired into navigation + DI | ✅ Implemented |
 | 6 | Deep link URL scheme (`cimian://`) | Not implemented | Medium — protocol registration + URI handler |
 
 ### Priority 3: New Feature Gaps

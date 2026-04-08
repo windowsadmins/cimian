@@ -923,11 +923,18 @@ public class UpdateEngine : IDisposable
 
                 if (catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem))
                 {
-                    autoRemove.Add(catalogItem);
+                    if (catalogItem.IsUninstallable())
+                    {
+                        autoRemove.Add(catalogItem);
+                    }
+                    else
+                    {
+                        ConsoleLogger.Detail($"    AutoRemove: skipping {name} (not uninstallable)");
+                    }
                 }
                 else
                 {
-                    autoRemove.Add(new CatalogItem { Name = name, Version = version });
+                    ConsoleLogger.Detail($"    AutoRemove: skipping {name} (not in catalog)");
                 }
             }
         }
@@ -1506,7 +1513,13 @@ public class UpdateEngine : IDisposable
                 LogInfo($"Restart required after removing {item.Name} (restart_action: {item.RestartAction})");
                 _sessionLogger?.Log("INFO", $"Restart required: {item.Name} (restart_action: {item.RestartAction})");
             }
-            
+            else if (RequiresLogout(item))
+            {
+                _logoutNeeded = true;
+                LogInfo($"Logout required after removing {item.Name} (restart_action: {item.RestartAction})");
+                _sessionLogger?.Log("INFO", $"Logout required: {item.Name} (restart_action: {item.RestartAction})");
+            }
+
             installedItems.RemoveAll(i => string.Equals(i, item.Name, StringComparison.OrdinalIgnoreCase));
             return true;
         }
