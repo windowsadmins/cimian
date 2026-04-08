@@ -40,9 +40,16 @@ public interface IInstallInfoService
     Task<IReadOnlyList<ProblemItem>> GetProblemItemsAsync();
 
     /// <summary>
-    /// Get all items for the Software page (optional + processed + managed + updates)
+    /// Get all items across every list (optional + processed + managed + updates).
+    /// Used internally for lookups — not for the Software browse page.
     /// </summary>
     Task<IReadOnlyList<InstallableItem>> GetAllItemsAsync();
+
+    /// <summary>
+    /// Get browseable items for the Software page (optional + processed only).
+    /// Matches Munki behavior: managed_installs are admin-forced and hidden from the catalog.
+    /// </summary>
+    Task<IReadOnlyList<InstallableItem>> GetBrowseableItemsAsync();
 
     /// <summary>
     /// Get all unique categories

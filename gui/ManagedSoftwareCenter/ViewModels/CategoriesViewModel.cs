@@ -15,6 +15,7 @@ public class CategoryGroup
     public string Name { get; set; } = string.Empty;
     public int ItemCount { get; set; }
     public List<InstallableItem> PreviewItems { get; set; } = [];
+    public string IconGlyph => Views.SoftwarePage.GetCategoryIconGlyph(Name);
 }
 
 /// <summary>
