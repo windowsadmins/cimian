@@ -76,6 +76,12 @@
                         <InfoBadge x:Name="UpdatesBadge" Value="0" Visibility="Collapsed" />
                     </NavigationViewItem.InfoBadge>
                 </NavigationViewItem>
+
+                <NavigationViewItem Content="History" Tag="history" AutomationProperties.Name="Installation history">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE81C;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.PaneHeader>
