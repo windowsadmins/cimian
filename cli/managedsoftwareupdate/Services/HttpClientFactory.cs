@@ -104,7 +104,7 @@ public static class CimianHttpClientFactory
                 return X509CertificateLoader.LoadPkcs12FromFile(
                     config.ClientCertificatePath,
                     config.ClientCertificatePassword,
-                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
             }
             catch (Exception ex)
             {
@@ -222,7 +222,7 @@ public static class CimianHttpClientFactory
             // On Windows, re-export to PFX so the private key is usable with SslStream
             var exported = cert.Export(X509ContentType.Pfx);
             return X509CertificateLoader.LoadPkcs12(exported, null,
-                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
         }
         catch (Exception ex)
         {
@@ -240,11 +240,32 @@ public static class CimianHttpClientFactory
         if (!config.UseClientCertificate || !config.UseClientCertificateCNAsClientIdentifier)
             return null;
 
-        var cert = LoadClientCertificate(config);
+        // Read cert metadata only — avoid loading private key just for CN
+        X509Certificate2? cert = null;
+        try
+        {
+            if (!string.IsNullOrEmpty(config.ClientCertificatePath) && File.Exists(config.ClientCertificatePath))
+            {
+                cert = new X509Certificate2(config.ClientCertificatePath);
+            }
+            else if (!string.IsNullOrEmpty(config.ClientCertificateThumbprint))
+            {
+                cert = LoadClientCertificate(config);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+
         if (cert == null)
             return null;
 
         var cn = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
-        return string.IsNullOrEmpty(cn) ? null : cn;
+        if (string.IsNullOrEmpty(cn))
+            return null;
+
+        // Sanitize for use as URL path segment (manifest name)
+        return Uri.EscapeDataString(cn);
     }
 }
