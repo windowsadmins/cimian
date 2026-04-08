@@ -168,9 +168,30 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<InstallableItem>> GetBrowseableItemsAsync()
+    {
+        var info = await LoadAsync();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var items = new List<InstallableItem>();
+
+        foreach (var item in info.OptionalInstalls)
+        {
+            if (seen.Add(item.Name))
+                items.Add(item);
+        }
+        foreach (var item in info.ProcessedInstalls)
+        {
+            if (seen.Add(item.Name))
+                items.Add(item);
+        }
+
+        return items.AsReadOnly();
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<string>> GetCategoriesAsync()
     {
-        var allItems = await GetAllItemsAsync();
+        var allItems = await GetBrowseableItemsAsync();
 
         var categories = allItems
             .Where(x => !string.IsNullOrWhiteSpace(x.Category))
@@ -185,7 +206,7 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     /// <inheritdoc />
     public async Task<IReadOnlyList<InstallableItem>> GetItemsByCategoryAsync(string category)
     {
-        var allItems = await GetAllItemsAsync();
+        var allItems = await GetBrowseableItemsAsync();
 
         var items = allItems
             .Where(x => string.Equals(x.Category, category, StringComparison.OrdinalIgnoreCase))
