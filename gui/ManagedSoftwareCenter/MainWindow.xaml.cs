@@ -185,6 +185,7 @@ public partial class MainWindow : Window
             "categories" => typeof(CategoriesPage),
             "myitems" => typeof(MyItemsPage),
             "updates" => typeof(UpdatesPage),
+            "history" => typeof(HistoryPage),
             "detail" => typeof(ItemDetailPage),
             _ => null
         };

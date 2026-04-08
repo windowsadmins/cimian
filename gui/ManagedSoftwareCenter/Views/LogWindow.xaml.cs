@@ -48,7 +48,7 @@ public partial class LogWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(2250, 1500));
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(900, 600));
         CenterOnScreen();
 
         Closed += OnClosed;
