@@ -1,0 +1,63 @@
+<Page
+    x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.HistoryPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Cimian.GUI.ManagedSoftwareCenter.ViewModels">
+
+    <Grid>
+        <!-- Session list -->
+        <ScrollViewer Padding="24">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Installation History"
+                           Style="{StaticResource TitleTextBlockStyle}"
+                           Margin="0,0,0,16" />
+
+                <ItemsRepeater ItemsSource="{Binding Sessions}">
+                    <ItemsRepeater.Layout>
+                        <StackLayout Spacing="2" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="vm:HistoryEntry">
+                            <Grid Padding="16,12"
+                                  Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                  CornerRadius="4" Margin="0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="32" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Status icon -->
+                                <FontIcon Grid.Column="0" Glyph="{x:Bind StatusIcon}" FontSize="16"
+                                          VerticalAlignment="Center" />
+
+                                <!-- Session info -->
+                                <StackPanel Grid.Column="1" Spacing="2" Margin="8,0">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{x:Bind DateText}"
+                                                   Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <Border Background="{ThemeResource SystemFillColorNeutralBackgroundBrush}"
+                                                CornerRadius="4" Padding="6,2">
+                                            <TextBlock Text="{x:Bind RunTypeBadge}"
+                                                       Style="{StaticResource CaptionTextBlockStyle}" />
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{x:Bind SummaryText}"
+                                               Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7" />
+                                    <TextBlock Text="{x:Bind PackageList}"
+                                               Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.5"
+                                               TextTrimming="CharacterEllipsis" MaxLines="1" />
+                                </StackPanel>
+
+                                <!-- Duration -->
+                                <TextBlock Grid.Column="2" Text="{x:Bind DurationText}"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Opacity="0.5" VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

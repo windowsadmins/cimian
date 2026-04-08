@@ -89,6 +89,9 @@ public class CimianConfig
     [YamlMember(Alias = "PkgRequireSignature")]
     public bool PkgRequireSignature { get; set; }
 
+    [YamlMember(Alias = "AutoRemove")]
+    public bool AutoRemove { get; set; }
+
     // SSL client certificate authentication
     [YamlMember(Alias = "UseClientCertificate")]
     public bool UseClientCertificate { get; set; }
@@ -104,6 +107,9 @@ public class CimianConfig
 
     [YamlMember(Alias = "SoftwareRepoCACertificate")]
     public string? SoftwareRepoCACertificate { get; set; }
+
+    // TODO: Localization / i18n — extract all hardcoded UI strings to resource files for multi-language support
+    // TODO: License seat tracking — track available license seats per package (requires server-side component)
 
     public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
 }
