@@ -55,7 +55,10 @@
 
                             <!-- Category header -->
                             <StackPanel Orientation="Horizontal" Grid.Row="0">
-                                <TextBlock Text="{Binding Name}" 
+                                <FontIcon Glyph="{Binding IconGlyph}" FontSize="18"
+                                          Margin="0,0,10,0" VerticalAlignment="Center"
+                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{Binding Name}"
                                            Style="{StaticResource SubtitleTextBlockStyle}" />
                                 <TextBlock Text="{Binding ItemCount}" 
                                            Margin="8,0,0,0"

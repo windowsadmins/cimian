@@ -255,6 +255,14 @@ public partial class SoftwarePage : Page
     private static string GetCategoryIcon(string category)
     {
         // Map categories to Segoe MDL2 Assets icons
+        return GetCategoryIconGlyph(category);
+    }
+
+    /// <summary>
+    /// Shared category-to-icon mapping. Used by both SoftwarePage pills and CategoriesPage headers.
+    /// </summary>
+    public static string GetCategoryIconGlyph(string category)
+    {
         return category.ToLowerInvariant() switch
         {
             "all" => "\uE8FD",           // Grid
@@ -262,16 +270,27 @@ public partial class SoftwarePage : Page
             "utilities" => "\uE90F",      // Repair
             "developer tools" => "\uE943", // Code
             "developer" => "\uE943",      // Code
+            "dev" => "\uE943",            // Code
+            "development" => "\uE943",    // Code
             "communication" => "\uE8BD",  // Chat
+            "design" => "\uE790",         // Brush
             "media" => "\uE8B2",          // Play
             "entertainment" => "\uE7F4",  // TV
             "business" => "\uE821",       // Briefcase
+            "management" => "\uE821",     // Briefcase
             "security" => "\uE72E",       // Shield
+            "remediation" => "\uE72E",    // Shield
             "photo & video" => "\uE722",  // Camera
             "music" => "\uE8D6",          // Music
             "creativity" => "\uE790",     // Brush
             "education" => "\uE7BE",      // Education
             "gaming" => "\uE7FC",         // Game
+            "docs" => "\uE8A5",           // Document
+            "documents" => "\uE8A5",      // Document
+            "plugins" => "\uE74D",        // Puzzle / Extension
+            "prefs" => "\uE713",          // Settings
+            "preferences" => "\uE713",    // Settings
+            "printing" => "\uE749",       // Print
             _ => "\uE74C"                 // App (default)
         };
     }

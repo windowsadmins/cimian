@@ -322,27 +322,103 @@ public class ManifestService
     /// <summary>
     /// Ensures SystemFacts are populated for predicate evaluation
     /// </summary>
+    private static readonly string ConditionsDir = @"C:\ProgramData\ManagedInstalls\conditions";
+
     private void EnsureSystemFacts()
     {
         if (_systemFacts != null) return;
-        
-        // Get OS version info for conditional evaluations
+
         var osVersion = Environment.OSVersion.Version;
-        
+
         _systemFacts = new Cimian.Core.Models.SystemFacts
         {
             Hostname = Environment.MachineName,
             Architecture = GetSystemArchitecture(),
             OperatingSystem = "Windows",
-            OperatingSystemVersion = osVersion.ToString(), // e.g., "10.0.26200.7623"
-            OSVersMajor = osVersion.Major,                  // e.g., 10
-            OSVersMinor = osVersion.Minor,                  // e.g., 0
-            OSBuildNumber = osVersion.Build,                // e.g., 26200
+            OperatingSystemVersion = osVersion.ToString(),
+            OSVersMajor = osVersion.Major,
+            OSVersMinor = osVersion.Minor,
+            OSBuildNumber = osVersion.Build,
             Catalogs = _config.Catalogs,
             MachineType = GetMachineType(),
             MachineModel = GetMachineModel(),
             CollectedAt = DateTime.UtcNow
         };
+
+        // Load admin-provided custom conditions (Munki parity)
+        LoadCustomConditions();
+    }
+
+    /// <summary>
+    /// Scans the conditions folder for scripts and merges their key=value output into system facts.
+    /// Scripts can be .ps1, .bat, .cmd, or .exe. Each line of stdout is parsed as key=value.
+    /// </summary>
+    private void LoadCustomConditions()
+    {
+        if (!Directory.Exists(ConditionsDir)) return;
+
+        var scripts = Directory.GetFiles(ConditionsDir)
+            .Where(f => Path.GetExtension(f).ToLowerInvariant() is ".ps1" or ".bat" or ".cmd" or ".exe")
+            .OrderBy(f => f);
+
+        foreach (var script in scripts)
+        {
+            try
+            {
+                var ext = Path.GetExtension(script).ToLowerInvariant();
+                string fileName, arguments;
+
+                if (ext == ".ps1")
+                {
+                    fileName = "powershell.exe";
+                    arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script}\"";
+                }
+                else if (ext is ".bat" or ".cmd")
+                {
+                    fileName = "cmd.exe";
+                    arguments = $"/c \"{script}\"";
+                }
+                else
+                {
+                    fileName = script;
+                    arguments = "";
+                }
+
+                using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                });
+                if (process == null) continue;
+
+                var output = process.StandardOutput.ReadToEnd();
+                process.WaitForExit(30_000);
+
+                if (process.ExitCode != 0) continue;
+
+                foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var eqIndex = line.IndexOf('=');
+                    if (eqIndex > 0)
+                    {
+                        var key = line[..eqIndex].Trim();
+                        var value = line[(eqIndex + 1)..].Trim();
+                        _systemFacts!.CustomFacts[key] = value;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Detail($"    Condition script {Path.GetFileName(script)} failed: {ex.Message}");
+            }
+        }
+
+        if (_systemFacts!.CustomFacts.Count > 0)
+            ConsoleLogger.Info($"    Loaded {_systemFacts.CustomFacts.Count} custom condition(s)");
     }
     
     /// <summary>
