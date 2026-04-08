@@ -390,14 +390,20 @@ public class ManifestService
                     Arguments = arguments,
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
-                    RedirectStandardError = true,
+                    RedirectStandardError = false,
                     CreateNoWindow = true
                 });
                 if (process == null) continue;
 
-                var output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(30_000);
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                if (!process.WaitForExit(30_000))
+                {
+                    try { process.Kill(true); } catch { }
+                    ConsoleLogger.Detail($"    Condition script {Path.GetFileName(script)} timed out");
+                    continue;
+                }
 
+                var output = outputTask.Result;
                 if (process.ExitCode != 0) continue;
 
                 foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -405,7 +411,8 @@ public class ManifestService
                     var eqIndex = line.IndexOf('=');
                     if (eqIndex > 0)
                     {
-                        var key = line[..eqIndex].Trim();
+                        var key = line[..eqIndex].Trim().ToLowerInvariant();
+                        if (string.IsNullOrEmpty(key)) continue;
                         var value = line[(eqIndex + 1)..].Trim();
                         _systemFacts!.CustomFacts[key] = value;
                     }
