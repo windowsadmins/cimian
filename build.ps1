@@ -884,11 +884,11 @@ function Build-MsiPackage {
         Write-BuildLog "Created build-info.yaml with version $releaseVersion" "INFO"
     }
 
-    # Build the .msi package using cimipkg --msi
+    # Build the .msi package using cimipkg (MSI is the default format)
     try {
-        $cimipkgArgs = @("--msi", "--verbose", $msiTempDir)
+        $cimipkgArgs = @("--verbose", $msiTempDir)
 
-        Write-BuildLog "Running cimipkg.exe --msi to create MSI package..." "INFO"
+        Write-BuildLog "Running cimipkg.exe to create MSI package..." "INFO"
         $process = Start-Process -FilePath $cimipkgPath -ArgumentList $cimipkgArgs -Wait -NoNewWindow -PassThru
 
         if ($process.ExitCode -eq 0) {
