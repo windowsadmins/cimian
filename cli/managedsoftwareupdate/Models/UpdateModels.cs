@@ -105,8 +105,15 @@ public class CimianConfig
     [YamlMember(Alias = "ClientCertificateThumbprint")]
     public string? ClientCertificateThumbprint { get; set; }
 
+    [YamlMember(Alias = "ClientKeyPath")]
+    public string? ClientKeyPath { get; set; }
+
     [YamlMember(Alias = "SoftwareRepoCACertificate")]
     public string? SoftwareRepoCACertificate { get; set; }
+
+    // Use the client certificate CN as the client identifier for manifest requests
+    [YamlMember(Alias = "UseClientCertificateCNAsClientIdentifier")]
+    public bool UseClientCertificateCNAsClientIdentifier { get; set; }
 
     // TODO: Localization / i18n — extract all hardcoded UI strings to resource files for multi-language support
     // TODO: License seat tracking — track available license seats per package (requires server-side component)
