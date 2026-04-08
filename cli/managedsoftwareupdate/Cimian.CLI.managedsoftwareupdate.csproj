@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="CommandLineParser" Version="2.9.1" />
+    <PackageReference Include="WixToolset.Dtf.WindowsInstaller" Version="5.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.0-preview.*" />
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.5.0" />
     <PackageReference Include="System.Management" Version="10.0.0-preview.*" />
