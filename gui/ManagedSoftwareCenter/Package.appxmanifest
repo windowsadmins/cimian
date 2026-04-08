@@ -58,6 +58,13 @@
             </com:ExeServer>
           </com:ComServer>
         </com:Extension>
+
+        <!-- Deep link protocol: cimian://showitem?name=Firefox -->
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="cimian">
+            <uap:DisplayName>Cimian Software Center</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
       </Extensions>
     </Application>
   </Applications>

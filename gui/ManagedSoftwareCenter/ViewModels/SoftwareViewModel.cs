@@ -78,8 +78,8 @@ public partial class SoftwareViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            // Load all managed items (optional + processed + managed + updates)
-            var allItems = await _installInfoService.GetAllItemsAsync();
+            // Load browseable items only (optional + processed) — managed_installs hidden per Munki behavior
+            var allItems = await _installInfoService.GetBrowseableItemsAsync();
             _allItems = allItems.ToList();
             
             System.Diagnostics.Debug.WriteLine($"SoftwareVM: Loaded {_allItems.Count} items");
