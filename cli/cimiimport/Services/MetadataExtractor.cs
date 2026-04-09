@@ -409,8 +409,9 @@ public partial class MetadataExtractor
                         // Preserve the original 4th segment string to keep leading zeros
                         // (e.g. "0838" HHMM timestamps must not become "838"). Month and day
                         // are still zero-padded from parsed ints so "2026.4.9.0838" normalizes
-                        // to "2026.04.09.0838".
-                        return $"{year}.{month:D2}.{day:D2}.{parts[3]}";
+                        // to "2026.04.09.0838". Trim incidental whitespace (CR/LF, spaces)
+                        // that int.TryParse accepts but shouldn't bleed into the output.
+                        return $"{year}.{month:D2}.{day:D2}.{parts[3].Trim()}";
                     }
                     else
                     {
