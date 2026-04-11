@@ -850,9 +850,9 @@ public class ImportService
                 if (!string.IsNullOrEmpty(installer.Hash))
                     sb.AppendLine($"  hash: {installer.Hash}");
                 if (!string.IsNullOrEmpty(installer.ProductCode))
-                    sb.AppendLine($"  product_code: {installer.ProductCode}");
+                    sb.AppendLine($"  product_code: {EscapeYamlString(installer.ProductCode)}");
                 if (!string.IsNullOrEmpty(installer.UpgradeCode))
-                    sb.AppendLine($"  upgrade_code: {installer.UpgradeCode}");
+                    sb.AppendLine($"  upgrade_code: {EscapeYamlString(installer.UpgradeCode)}");
                 if (installer.Arguments != null && installer.Arguments.Count > 0)
                 {
                     sb.AppendLine("  arguments:");
