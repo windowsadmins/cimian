@@ -620,19 +620,51 @@ public class StatusService
     }
 
     /// <summary>
-    /// Queries Get-AppxProvisionedPackage -Online filtered by the manifest Identity.Name
-    /// (which appears as DisplayName in the provisioned-package listing). Returns whether
-    /// the package is present, its installed version, and the full PackageName.
+    /// Queries both per-user (Get-AppxPackage -AllUsers) and provisioned
+    /// (Get-AppxProvisionedPackage -Online) package stores for a package matching
+    /// the manifest Identity.Name. Returns the highest version found across both
+    /// stores and its PackageFullName.
     /// </summary>
+    /// <remarks>
+    /// Checking both stores is essential for real-world MSIX deployments:
+    ///   • Get-AppxPackage -AllUsers catches per-user registrations including
+    ///     Store-installed packages, vendor auto-updates (e.g., Slack updating
+    ///     itself in-place), and anything a user manually sideloaded.
+    ///   • Get-AppxProvisionedPackage catches items Cimian provisioned machine-wide
+    ///     that haven't yet been registered to any user (new profiles get them on
+    ///     first login).
+    /// The previous implementation queried only the provisioned store and missed
+    /// per-user installs entirely, causing Cimian to attempt a downgrade when a
+    /// user already had a newer version via auto-update.
+    /// Both queries require elevation, which managedsoftwareupdate already has
+    /// (sudo during dev, SYSTEM via scheduled task in production).
+    /// </remarks>
     private static (bool Found, string Version, string PackageName) QueryMsixProvisionedPackage(string identityName)
     {
         try
         {
             var escaped = identityName.Replace("'", "''");
+            // Collect results from both stores, sort by version descending, emit the top one.
+            // Using [System.Version] for comparison handles 4-part MSIX version strings correctly.
             var script = $@"
 $ErrorActionPreference = 'Stop'
-$pkg = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq '{escaped}' | Select-Object -First 1
-if ($pkg) {{ Write-Output ""$($pkg.Version)|$($pkg.PackageName)"" }}
+$results = @()
+try {{
+    $userPkgs = Get-AppxPackage -AllUsers -Name '{escaped}' -ErrorAction SilentlyContinue
+    foreach ($p in $userPkgs) {{
+        $results += [pscustomobject]@{{ Version = $p.Version; PackageFullName = $p.PackageFullName }}
+    }}
+}} catch {{}}
+try {{
+    $provPkgs = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object DisplayName -eq '{escaped}'
+    foreach ($p in $provPkgs) {{
+        $results += [pscustomobject]@{{ Version = $p.Version; PackageFullName = $p.PackageName }}
+    }}
+}} catch {{}}
+if ($results.Count -gt 0) {{
+    $top = $results | Sort-Object {{ [System.Version]$_.Version }} -Descending | Select-Object -First 1
+    Write-Output ""$($top.Version)|$($top.PackageFullName)""
+}}
 ";
             var scriptService = new ScriptService();
             var (success, output) = scriptService.ExecuteScriptAsync(script).Result;
@@ -655,7 +687,7 @@ if ($pkg) {{ Write-Output ""$($pkg.Version)|$($pkg.PackageName)"" }}
         }
         catch (Exception ex)
         {
-            ConsoleLogger.Warn($"Get-AppxProvisionedPackage query failed for {identityName}: {ex.Message}");
+            ConsoleLogger.Warn($"MSIX detection query failed for {identityName}: {ex.Message}");
             return (false, "", "");
         }
     }

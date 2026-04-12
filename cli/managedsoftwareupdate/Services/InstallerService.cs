@@ -930,6 +930,11 @@ public class InstallerService
         // Install script: provision the package, then emit "OK|<PackageName>" to stdout
         // so we can parse PackageFullName from the result. Pipe all output to a log
         // file as well for diagnostic parity with the MSI installer path.
+        //
+        // NOTE: This script must be compatible with Windows PowerShell 5.1 — that's
+        // what ScriptService.FindPowerShellExecutable prefers for Appx/Dism cmdlets.
+        // Tee-Object -Encoding does NOT exist in 5.1 (pwsh 7+ only), so we use
+        // Out-File -Append -Encoding utf8 instead.
         var installScript = $@"
 $ErrorActionPreference = 'Stop'
 $logFile = '{escapedLog}'
@@ -940,12 +945,15 @@ try {{
         Write-Output ""OK|$($result.PackageName)""
         exit 0
     }} else {{
-        Write-Output 'ERROR|Add-AppxProvisionedPackage returned no result'
+        $msg = 'Add-AppxProvisionedPackage returned no result'
+        $msg | Out-File -FilePath $logFile -Encoding utf8
+        Write-Output ""ERROR|$msg""
         exit 1
     }}
 }} catch {{
-    ""ERROR|$($_.Exception.Message)"" | Tee-Object -FilePath $logFile -Encoding utf8 | Out-Null
-    Write-Output ""ERROR|$($_.Exception.Message)""
+    $msg = $_.Exception.Message
+    $msg | Out-File -FilePath $logFile -Encoding utf8
+    Write-Output ""ERROR|$msg""
     exit 1
 }}
 ";
