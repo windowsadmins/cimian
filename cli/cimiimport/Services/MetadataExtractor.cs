@@ -43,6 +43,9 @@ public partial class MetadataExtractor
                 ExtractNupkgMetadata(packagePath, metadata);
                 break;
             case ".msix":
+            case ".appx":
+            case ".msixbundle":
+            case ".appxbundle":
                 ExtractMsixMetadata(packagePath, metadata);
                 break;
             case ".pkg":
@@ -240,14 +243,158 @@ public partial class MetadataExtractor
     }
 
     /// <summary>
-    /// Extracts MSIX metadata (basic fallback).
+    /// Extracts MSIX/APPX/MSIXBUNDLE/APPXBUNDLE metadata by parsing AppxManifest.xml
+    /// (or AppxBundleManifest.xml for bundles) from the package's ZIP container.
     /// </summary>
+    /// <remarks>
+    /// MSIX and APPX packages are ZIP archives. For a single-arch package, the manifest
+    /// lives at the root as "AppxManifest.xml". For bundles, the bundle manifest lives at
+    /// "AppxMetadata/AppxBundleManifest.xml" — bundles also carry nested per-arch packages
+    /// but those are NOT parsed here (Add-AppxProvisionedPackage handles them transparently
+    /// at install time, and bundle-level Identity is sufficient for pkginfo metadata).
+    /// </remarks>
     private void ExtractMsixMetadata(string packagePath, InstallerMetadata metadata)
     {
         metadata.InstallerType = "msix";
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(packagePath);
+
+            // Try bundle manifest first — bundles contain an AppxBundleManifest.xml
+            // under AppxMetadata/ and also contain the AppxManifest.xml of their first
+            // nested package at the root, so checking bundle manifest first is important.
+            var bundleEntry = archive.Entries.FirstOrDefault(e =>
+                e.FullName.Equals("AppxMetadata/AppxBundleManifest.xml", StringComparison.OrdinalIgnoreCase));
+
+            if (bundleEntry != null)
+            {
+                ParseAppxBundleManifest(bundleEntry, metadata);
+                return;
+            }
+
+            // Single-architecture package — AppxManifest.xml at root
+            var manifestEntry = archive.Entries.FirstOrDefault(e =>
+                e.FullName.Equals("AppxManifest.xml", StringComparison.OrdinalIgnoreCase));
+
+            if (manifestEntry != null)
+            {
+                ParseAppxManifest(manifestEntry, metadata);
+                return;
+            }
+        }
+        catch
+        {
+            // Fallback to filename-based defaults below
+        }
+
+        // Fallback: no manifest found or parse failed
         metadata.Title = ParsePackageName(Path.GetFileName(packagePath));
         metadata.ID = metadata.Title;
-        metadata.Version = "1.0.0";
+        if (string.IsNullOrEmpty(metadata.Version))
+            metadata.Version = "1.0.0";
+    }
+
+    /// <summary>
+    /// Parses a root-level AppxManifest.xml entry and populates metadata fields.
+    /// </summary>
+    private void ParseAppxManifest(ZipArchiveEntry manifestEntry, InstallerMetadata metadata)
+    {
+        using var stream = manifestEntry.Open();
+        var doc = System.Xml.Linq.XDocument.Load(stream);
+        var root = doc.Root;
+        if (root == null) return;
+
+        var ns = root.GetDefaultNamespace();
+
+        // <Identity Name="..." Version="..." ProcessorArchitecture="..." Publisher="CN=..." />
+        var identity = root.Element(ns + "Identity");
+        if (identity != null)
+        {
+            var identityName = (string?)identity.Attribute("Name") ?? "";
+            if (!string.IsNullOrEmpty(identityName))
+                metadata.IdentityName = identityName;
+
+            var version = (string?)identity.Attribute("Version");
+            if (!string.IsNullOrEmpty(version))
+                metadata.Version = ParseVersion(version);
+
+            // Architecture from manifest is only used when filename didn't supply one
+            var arch = (string?)identity.Attribute("ProcessorArchitecture");
+            if (!string.IsNullOrEmpty(arch) && string.IsNullOrEmpty(metadata.Architecture))
+                metadata.Architecture = arch.ToLowerInvariant();
+        }
+
+        // <Properties><DisplayName>.., <PublisherDisplayName>.., <Description>..</Properties>
+        var properties = root.Element(ns + "Properties");
+        if (properties != null)
+        {
+            var displayName = (string?)properties.Element(ns + "DisplayName");
+            if (!string.IsNullOrEmpty(displayName))
+                metadata.Title = displayName;
+
+            var publisherDisplayName = (string?)properties.Element(ns + "PublisherDisplayName");
+            if (!string.IsNullOrEmpty(publisherDisplayName))
+                metadata.Developer = publisherDisplayName;
+
+            var description = (string?)properties.Element(ns + "Description");
+            if (!string.IsNullOrEmpty(description))
+                metadata.Description = description;
+        }
+
+        // Title fallback chain: Properties.DisplayName → last segment of reverse-domain
+        // Identity.Name → manifest's Identity.Name as-is.
+        if (string.IsNullOrEmpty(metadata.Title) && !string.IsNullOrEmpty(metadata.IdentityName))
+        {
+            var idName = metadata.IdentityName;
+            metadata.Title = idName.Contains('.') ? idName.Split('.')[^1] : idName;
+        }
+
+        // ID is used by ImportService to derive the pkginfo filename + Name field —
+        // it must be the human-friendly Title, not the reverse-domain identity.
+        metadata.ID = metadata.Title;
+    }
+
+    /// <summary>
+    /// Parses a bundle manifest entry (AppxMetadata/AppxBundleManifest.xml) and populates metadata.
+    /// Bundle schema is simpler than AppxManifest — it has an Identity element but no Properties,
+    /// so Title/Developer fall back to identity name / filename parsing.
+    /// </summary>
+    private void ParseAppxBundleManifest(ZipArchiveEntry manifestEntry, InstallerMetadata metadata)
+    {
+        using var stream = manifestEntry.Open();
+        var doc = System.Xml.Linq.XDocument.Load(stream);
+        var root = doc.Root;
+        if (root == null) return;
+
+        var ns = root.GetDefaultNamespace();
+
+        var identity = root.Element(ns + "Identity");
+        if (identity != null)
+        {
+            var identityName = (string?)identity.Attribute("Name") ?? "";
+            if (!string.IsNullOrEmpty(identityName))
+            {
+                metadata.IdentityName = identityName;
+                // Bundle manifests have no <Properties><DisplayName> — fall back to last
+                // segment of the reverse-domain identity (e.g., "com.tinyspeck.slackdesktop"
+                // → "slackdesktop"), matching the nupkg convention at ExtractNupkgMetadata.
+                metadata.Title = identityName.Contains('.')
+                    ? identityName.Split('.')[^1]
+                    : identityName;
+                metadata.ID = metadata.Title;
+            }
+
+            var version = (string?)identity.Attribute("Version");
+            if (!string.IsNullOrEmpty(version))
+                metadata.Version = ParseVersion(version);
+
+            // Bundles are typically multi-arch; only use the declared arch if filename
+            // didn't already pin one. Common declared value for bundles is "neutral".
+            var arch = (string?)identity.Attribute("ProcessorArchitecture");
+            if (!string.IsNullOrEmpty(arch) && string.IsNullOrEmpty(metadata.Architecture))
+                metadata.Architecture = arch.ToLowerInvariant();
+        }
     }
 
     /// <summary>
