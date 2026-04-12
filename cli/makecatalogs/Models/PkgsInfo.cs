@@ -43,6 +43,10 @@ public class Installer
 
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
+    [YamlMember(Alias = "identity_name")]
+    public string? IdentityName { get; set; }
 }
 
 /// <summary>
@@ -67,6 +71,10 @@ public class InstallItem
 
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
+    [YamlMember(Alias = "identity_name")]
+    public string? IdentityName { get; set; }
 }
 
 /// <summary>
@@ -130,7 +138,7 @@ public class PkgsInfo
     public Installer? Installer { get; set; }
 
     [YamlMember(Alias = "uninstaller")]
-    public Installer? Uninstaller { get; set; }
+    public List<Installer>? Uninstaller { get; set; }
 
     [YamlMember(Alias = "preinstall_script")]
     public string? PreinstallScript { get; set; }

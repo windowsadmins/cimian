@@ -161,7 +161,7 @@ public class ImportService
                 ProductCode = string.IsNullOrEmpty(metadata.ProductCode) ? null : metadata.ProductCode.Trim(),
                 UpgradeCode = string.IsNullOrEmpty(metadata.UpgradeCode) ? null : metadata.UpgradeCode.Trim()
             },
-            Uninstaller = uninstaller,
+            Uninstaller = uninstaller != null ? [uninstaller] : null,
             UnattendedInstall = metadata.UnattendedInstall,
             UnattendedUninstall = metadata.UnattendedUninstall,
             Requires = metadata.Requires,
@@ -203,6 +203,20 @@ public class ImportService
                 }
             ];
         }
+        else if (metadata.InstallerType == "msix" && !string.IsNullOrEmpty(metadata.IdentityName))
+        {
+            // MSIX packages are detected via Get-AppxProvisionedPackage filtered by Identity.Name
+            Console.WriteLine($"Using MSIX identity => {metadata.IdentityName}");
+            finalInstalls =
+            [
+                new InstallItem
+                {
+                    Type = "msix",
+                    IdentityName = metadata.IdentityName,
+                    Version = pkgsInfo.Version
+                }
+            ];
+        }
         else
         {
             finalInstalls = [];
@@ -213,6 +227,23 @@ public class ImportService
             finalInstalls.AddRange(metadata.Installs);
         }
         pkgsInfo.Installs = finalInstalls.Count > 0 ? finalInstalls : null;
+
+        // Auto-generate an MSIX uninstaller entry when the importer didn't receive
+        // an explicit --uninstaller path. Remove-AppxProvisionedPackage at uninstall
+        // time will use the stored identity name to resolve the PackageFullName.
+        if (pkgsInfo.Uninstaller == null
+            && metadata.InstallerType == "msix"
+            && !string.IsNullOrEmpty(metadata.IdentityName))
+        {
+            pkgsInfo.Uninstaller =
+            [
+                new Installer
+                {
+                    Type = "msix",
+                    IdentityName = metadata.IdentityName
+                }
+            ];
+        }
 
         // Step 11: Show final details
         Console.WriteLine();
@@ -874,6 +905,37 @@ public class ImportService
                         sb.AppendLine($"  md5checksum: {item.MD5Checksum}");
                     if (!string.IsNullOrEmpty(item.Version))
                         sb.AppendLine($"  version: {item.Version}");
+                    if (!string.IsNullOrEmpty(item.IdentityName))
+                        sb.AppendLine($"  identity_name: {item.IdentityName}");
+                }
+            }
+            else if (kvp.Value is List<Installer> installerList)
+            {
+                // Used for the uninstaller block (emitted as a list for managedsoftwareupdate compatibility).
+                sb.AppendLine($"{kvp.Key}:");
+                foreach (var inst in installerList)
+                {
+                    sb.AppendLine($"- type: {inst.Type}");
+                    if (inst.Size > 0)
+                        sb.AppendLine($"  size: {inst.Size}");
+                    if (!string.IsNullOrEmpty(inst.Location))
+                        sb.AppendLine($"  location: {inst.Location}");
+                    if (!string.IsNullOrEmpty(inst.Hash))
+                        sb.AppendLine($"  hash: {inst.Hash}");
+                    if (!string.IsNullOrEmpty(inst.ProductCode))
+                        sb.AppendLine($"  product_code: {EscapeYamlString(inst.ProductCode)}");
+                    if (!string.IsNullOrEmpty(inst.UpgradeCode))
+                        sb.AppendLine($"  upgrade_code: {EscapeYamlString(inst.UpgradeCode)}");
+                    if (!string.IsNullOrEmpty(inst.IdentityName))
+                        sb.AppendLine($"  identity_name: {inst.IdentityName}");
+                    if (inst.Arguments != null && inst.Arguments.Count > 0)
+                    {
+                        sb.AppendLine("  arguments:");
+                        foreach (var arg in inst.Arguments)
+                        {
+                            sb.AppendLine($"  - {arg}");
+                        }
+                    }
                 }
             }
         }
