@@ -286,5 +286,24 @@ public class InstallerServiceTests
         Assert.False(item.IsUninstallable());
     }
 
+    [Fact]
+    public void IsUninstallable_MsixInstallsEntryWithoutIdentityName_ReturnsFalse()
+    {
+        // An MSIX installs-array entry with no identity_name can't be used to
+        // synthesize an uninstaller — IsUninstallable must report false.
+        var item = new CatalogItem
+        {
+            Name = "MsixNoIdentity",
+            Version = "1.0.0",
+            Uninstallable = true,
+            Uninstaller = [],
+            Installs = [
+                new InstallCheckItem { Type = "msix", IdentityName = null, Version = "1.0.0" }
+            ]
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
     #endregion
 }

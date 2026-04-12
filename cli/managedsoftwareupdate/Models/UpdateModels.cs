@@ -409,8 +409,13 @@ public class CatalogItem
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0
         || Check.Registry.Name != null
-        || Installs.Any(i => string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase)));
+        // Self-uninstallable MSIX: installs-array entry of type msix/appx with a
+        // usable identity_name. Without identity_name, UninstallAsync can't
+        // synthesize an uninstaller — so in that case this clause must be false.
+        || Installs.Any(i =>
+            (string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase))
+            && !string.IsNullOrWhiteSpace(i.IdentityName)));
 }
 
 /// <summary>

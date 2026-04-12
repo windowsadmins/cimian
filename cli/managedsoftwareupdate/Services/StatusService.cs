@@ -585,8 +585,10 @@ public class StatusService
                         result.Status = "pending";
                         result.NeedsAction = true;
                         result.IsUpdate = hasRegistryEntry;
-                        result.Reason = $"MSIX package not provisioned: {installItem.IdentityName}";
-                        result.ReasonCode = StatusReasonCode.ProductCodeMissing;
+                        result.Reason = $"MSIX package not found for identity: {installItem.IdentityName}";
+                        // NotInstalled is the installer-type-neutral code for "package is absent".
+                        // ProductCodeMissing is MSI-specific and would misclassify downstream.
+                        result.ReasonCode = StatusReasonCode.NotInstalled;
                         result.DetectionMethod = DetectionMethod.Msix;
                         return result;
                     }
@@ -639,6 +641,15 @@ public class StatusService
     /// Both queries require elevation, which managedsoftwareupdate already has
     /// (sudo during dev, SYSTEM via scheduled task in production).
     /// </remarks>
+    // Shared ScriptService instance reused across MSIX detection calls within a
+    // single CheckStatus pass. The service is stateless and only resolves the
+    // powershell.exe path once, so reuse avoids redundant allocation and PATH
+    // lookups when a manifest has many MSIX items. Note: the sync-over-async
+    // .Result usage below matches the existing convention in CheckInstallcheckScript
+    // and CheckVersionScript (StatusService.cs:251, :304) — async-ifying the whole
+    // StatusCheckResult pipeline is a separate refactor.
+    private static readonly ScriptService _msixScriptService = new();
+
     private static (bool Found, string Version, string PackageName) QueryMsixProvisionedPackage(string identityName)
     {
         try
@@ -666,8 +677,7 @@ if ($results.Count -gt 0) {{
     Write-Output ""$($top.Version)|$($top.PackageFullName)""
 }}
 ";
-            var scriptService = new ScriptService();
-            var (success, output) = scriptService.ExecuteScriptAsync(script).Result;
+            var (success, output) = _msixScriptService.ExecuteScriptAsync(script).Result;
 
             if (!success) return (false, "", "");
 

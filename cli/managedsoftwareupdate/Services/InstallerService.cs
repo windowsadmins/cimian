@@ -624,13 +624,14 @@ public class InstallerService
         // Verify installation before registering (prevents phantom installs)
         if (installerType != "pkg")
         {
-            if (VerifyInstallationBeforeRegistry(item))
+            var (verifyOk, verifyReason) = VerifyInstallationBeforeRegistry(item);
+            if (verifyOk)
             {
                 RegisterInstallation(item);
             }
             else
             {
-                var verifyError = $"Installation verification failed for {item.Name} - installer reported success but product is not registered in Windows Installer";
+                var verifyError = $"Installation verification failed for {item.Name}: {verifyReason}";
                 ConsoleLogger.Warn(verifyError);
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", verifyError);
                 return (false, verifyError);
@@ -1258,10 +1259,12 @@ try {{
     /// <summary>
     /// Verifies that an installation actually succeeded by checking the installs array.
     /// For MSI items, verifies the product is registered in Windows Installer via ProductCode/UpgradeCode.
+    /// For MSIX/APPX items, checks that InstallMsixAsync captured a PackageFullName from the provisioning call.
     /// For file/directory items, checks existence on disk.
-    /// Returns true if verification passes or no installs array is defined.
+    /// Returns (true, "") if verification passes or no installs array is defined; otherwise
+    /// (false, &lt;installer-type-specific reason&gt;) so callers can surface accurate error messages.
     /// </summary>
-    private bool VerifyInstallationBeforeRegistry(CatalogItem item)
+    private (bool Ok, string Reason) VerifyInstallationBeforeRegistry(CatalogItem item)
     {
         if (item.Installs.Count == 0)
         {
@@ -1270,10 +1273,10 @@ try {{
             if (installerType is "nopkg" or "script" or "")
             {
                 ConsoleLogger.Debug($"No installs array for script-only/nopkg item {item.Name} - expected");
-                return true;
+                return (true, "");
             }
             ConsoleLogger.Warn($"No installs array for {item.Name} - cannot verify, assuming success");
-            return true;
+            return (true, "");
         }
 
         foreach (var install in item.Installs)
@@ -1283,16 +1286,18 @@ try {{
                 case "file":
                     if (!string.IsNullOrEmpty(install.Path) && !File.Exists(install.Path))
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: expected file not found: {install.Path}");
-                        return false;
+                        var reason = $"expected file not found: {install.Path}";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
                     break;
 
                 case "directory":
                     if (!string.IsNullOrEmpty(install.Path) && !Directory.Exists(install.Path))
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: expected directory not found: {install.Path}");
-                        return false;
+                        var reason = $"expected directory not found: {install.Path}";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
                     break;
 
@@ -1325,8 +1330,9 @@ try {{
 
                     if (!msiFound)
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})");
-                        return false;
+                        var reason = $"MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
                     break;
 
@@ -1339,8 +1345,9 @@ try {{
                     // avoids making VerifyInstallationBeforeRegistry async.
                     if (string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: Add-AppxProvisionedPackage did not return a PackageFullName");
-                        return false;
+                        const string reason = "Add-AppxProvisionedPackage did not return a PackageFullName";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
                     ConsoleLogger.Debug($"MSIX verification successful for {item.Name}: {_lastResolvedMsixPackageFullName}");
                     break;
@@ -1352,7 +1359,7 @@ try {{
         }
 
         ConsoleLogger.Debug($"Installation verification successful for {item.Name}");
-        return true;
+        return (true, "");
     }
 
     /// <summary>

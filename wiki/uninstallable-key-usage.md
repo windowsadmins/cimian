@@ -86,8 +86,8 @@ installs:
 uninstaller:
   - type: msix
     identity_name: com.example.storeapp
-# uninstallable: auto-determined as true (via the installs entry's identity_name
-# — cimiimport auto-emits both blocks when importing a .msix file).
+# uninstallable: auto-determined as true (via the installs entry's identity_name).
+# cimiimport auto-emits both blocks when importing a .msix file.
 # Install runs Add-AppxProvisionedPackage -Online; uninstall runs
 # Remove-AppxProvisionedPackage -Online with the resolved PackageFullName
 # that was persisted to HKLM\SOFTWARE\ManagedInstalls\<Name> at install time.
