@@ -169,17 +169,100 @@ installer:
 # Automatically uninstallable via Chocolatey
 ```
 
-### 5. MSIX Packages
-- **Type**: `msix`
-- **Method**: Uses PowerShell's `Remove-AppxPackage` cmdlet
-- **Command**: `Remove-AppxPackage`
-- **Auto-uninstallable**: Yes
-- **Example**:
+### 5. MSIX / APPX Packages
+- **Type**: `msix` (also covers `appx`, `msixbundle`, `appxbundle`)
+- **Install command**: `Add-AppxProvisionedPackage -Online -PackagePath <file> -SkipLicense`,
+  preceded by a preflight check that removes older per-user installs for the same
+  identity if necessary (see "Install behavior" below).
+- **Uninstall command**: Two steps in sequence, both required to fully remove the app:
+  1. `Remove-AppxProvisionedPackage -Online -PackageName <PackageFullName>` — removes
+     the system-wide provisioning entry so new user profiles don't re-provision it.
+  2. `Get-AppxPackage -AllUsers -Name <IdentityName> | Remove-AppxPackage -AllUsers` —
+     removes any per-user registrations left behind (from the provisioned package
+     itself, from vendor auto-updates, or from previous Store installs).
+  Removing only the provisioned entry leaves the app fully functional for currently-
+  registered users, which surprised us during testing and is inconsistent with what
+  an admin expects from "uninstall".
+- **Auto-uninstallable**: Yes — cimiimport emits an `installs` entry with `type: msix`
+  and `identity_name`, and a matching `uninstaller` block. When the pkginfo has no
+  explicit uninstaller, Cimian synthesizes one from the installs-array entry.
+- **How PackageFullName is resolved**: at install time, the `PackageName` returned by
+  `Add-AppxProvisionedPackage` is persisted to `HKLM\SOFTWARE\ManagedInstalls\<Name>`
+  alongside `IdentityName` and `InstallerType`. Uninstall reads that value. If the
+  registry entry is missing, uninstall falls back to a runtime
+  `Get-AppxProvisionedPackage -Online` query filtered by `identity_name`.
+
+#### Install behavior
+
+Cimian's MSIX install path runs a preflight against both Appx stores before calling
+`Add-AppxProvisionedPackage`:
+
+1. **Higher version already installed → silent skip, no action.** This is the
+   never-downgrade policy. If `Get-AppxPackage -AllUsers` or `Get-AppxProvisionedPackage`
+   reports the package at a version >= the catalog version, Cimian logs
+   `"Newer version installed"` and returns success without calling the install cmdlet.
+   Detection normally catches this case first, but the preflight is a safety net for
+   races where the auto-updater runs between detection and install.
+2. **Older per-user install blocks provisioning → auto-remediation.** When a vendor
+   like Slack auto-updates itself, the app is registered per-user rather than
+   provisioned. An older per-user registration conflicts with
+   `Add-AppxProvisionedPackage` and surfaces as `0x80070490 Element not found`.
+   Cimian auto-remediates by running `Remove-AppxPackage -AllUsers` for the identity
+   first, then provisioning the catalog version. **User data is preserved** by
+   Windows' Appx subsystem — Slack chat history, settings, and anything else under
+   `%LOCALAPPDATA%\Packages\<PackageFamilyName>\` survives the remediation, so the
+   user experience is "Slack restarted" not "Slack reset". This is worth
+   communicating to end users in deployment announcements so nobody panics the
+   first time they see a reinstall in their session.
+3. **Nothing installed → direct provisioning.** The common path: just
+   `Add-AppxProvisionedPackage`, capture the returned `PackageFullName`, persist
+   to the ManagedInstalls registry, done.
+
+#### Requirements
+
+- **Signing certificate must be trusted on the client before install.** MSIX
+  packages from vendors whose signing certs aren't in the Windows-managed trusted
+  roots (many legitimate open-source and third-party vendors) will fail install
+  with `0x800b0109 CERT_E_UNTRUSTEDROOT`. Cimian does **not** auto-install
+  publisher certs into `LocalMachine\TrustedPublisher` — that's an explicit
+  policy decision, because once a cert is in `TrustedPublisher`, any future
+  package signed by that publisher can sideload without further review. Use one
+  of these pre-deployment channels instead:
+  - **Group Policy**: `Computer Configuration → Windows Settings → Security
+    Settings → Public Key Policies → Trusted Publishers`, importing the vendor's
+    code-signing cert.
+  - **Intune / MDM cert profile**: deploy a trusted-publisher certificate profile
+    from your MDM tenant before the MSIX package is assigned.
+  - **One-off manual import** (dev machines / pilot testing):
+    `Import-Certificate -FilePath vendor.cer -CertStoreLocation Cert:\LocalMachine\TrustedPublisher`
+  Vendor certs from Microsoft, Slack, Adobe, etc. are typically already trusted
+  via Windows' cross-signing roots and don't need this step. The failure mode is
+  obvious in the Cimian install log, so you'll know immediately which packages
+  need this treatment.
+
+#### Out of scope
+
+- License files (`.xml`) required by Store-signed apps — use `preinstall_script`
+  to `Add-AppxProvisionedPackage -LicensePath ...`.
+- Per-architecture nested manifest extraction from `.msixbundle` payloads. Bundles
+  install transparently through `Add-AppxProvisionedPackage`, but cimiimport only
+  parses the top-level bundle manifest into pkginfo metadata.
+- Auto-extraction of the MSIX signing cert during import (considered and rejected
+  — see "Requirements" above for why).
+
+#### Example (auto-generated by cimiimport)
+
 ```yaml
 installer:
   type: msix
-  location: /packages/store-app.msix
-# Automatically uninstallable via MSIX removal
+  location: /apps/comms/Slack-x64-4.45.69.0.msix
+installs:
+  - type: msix
+    identity_name: com.tinyspeck.slackdesktop
+    version: 4.45.69.0
+uninstaller:
+  - type: msix
+    identity_name: com.tinyspeck.slackdesktop
 ```
 
 ### 7. Uninstalls Array (Advanced Feature)
