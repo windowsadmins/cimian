@@ -132,6 +132,7 @@ param(
     [switch]$PackageOnly,
     [switch]$NupkgOnly,
     [switch]$MsiOnly,
+    # TODO(pkg-sunset): Remove $PkgOnly parameter
     [switch]$PkgOnly,
     [switch]$Clean,
     [ValidateSet('Debug', 'Release')]
@@ -1096,6 +1097,7 @@ function Build-NuGetPackage {
 
 #region Pkg Packaging Functions
 
+# TODO(pkg-sunset): Remove Build-PkgPackage function
 function Build-PkgPackage {
     param(
         [string]$Architecture,
@@ -1697,6 +1699,7 @@ try {
             }
         }
         
+        # TODO(pkg-sunset): Remove .pkg package build block
         # .pkg packages (always created in full builds)
         if (-not $MsiOnly -and -not $NupkgOnly) {
             foreach ($arch in $archs) {

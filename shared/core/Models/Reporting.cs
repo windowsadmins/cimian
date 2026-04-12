@@ -809,6 +809,7 @@ public class SessionData
     public Dictionary<string, object>? Environment { get; set; }
 }
 
+// TODO(pkg-sunset): Remove PkgRegistryMetadata class
 /// <summary>
 /// PkgRegistryMetadata represents enhanced .pkg package metadata from Windows registry
 /// </summary>

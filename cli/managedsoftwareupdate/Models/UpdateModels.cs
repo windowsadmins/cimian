@@ -121,6 +121,7 @@ public class CimianConfig
     public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
 }
 
+// TODO(pkg-sunset): Remove PkgBuildInfo, PkgProductInfo, PkgSignatureInfo, PkgCertificateInfo classes
 /// <summary>
 /// Build information extracted from .pkg packages (build-info.yaml)
 /// Matches Go: extract.PkgBuildInfo
