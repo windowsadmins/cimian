@@ -171,6 +171,7 @@ public class InstallerService
             $"sbin-installer installation started for {item.Name}");
 
         // Build command arguments (matches Go)
+        // TODO(pkg-sunset): Remove --pkg flag usage
         var argsBuilder = new StringBuilder($"--pkg \"{packagePath}\" --target {target} --verbose");
 
         // Add temp-dir if specified in pkginfo (helps avoid MAX_PATH 260 char limit issues)
@@ -334,6 +335,7 @@ public class InstallerService
         }
     }
 
+    // TODO(pkg-sunset): Remove InstallPkgWithSbinAsync method
     /// <summary>
     /// Installs a .pkg package using sbin-installer.
     /// Matches Go: installOrUpgradePkgWithSbin()
@@ -581,6 +583,7 @@ public class InstallerService
         
         var result = installerType.ToLowerInvariant() switch
         {
+            // TODO(pkg-sunset): Remove .pkg format switch case
             // PRIMARY: .pkg files use sbin-installer (matches Go behavior)
             "pkg" => await InstallPkgWithSbinAsync(item, localFile, cancellationToken),
             
