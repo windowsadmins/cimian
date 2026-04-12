@@ -555,12 +555,109 @@ public class StatusService
                         result.InstalledVersion = msiInstalledVersion;
                     }
                     break;
+
+                case "msix":
+                case "appx":
+                    // Detect MSIX/APPX packages via Get-AppxProvisionedPackage -Online.
+                    // The pkginfo installs entry supplies identity_name (= manifest Identity/@Name);
+                    // Get-AppxProvisionedPackage returns DisplayName matching that value.
+                    if (string.IsNullOrEmpty(installItem.IdentityName))
+                    {
+                        ConsoleLogger.Warn($"MSIX install check missing identity_name item: {item.Name}");
+                        result.Status = "error";
+                        result.NeedsAction = true;
+                        result.Reason = $"MSIX install check missing identity_name";
+                        result.ReasonCode = StatusReasonCode.CheckFailed;
+                        result.DetectionMethod = DetectionMethod.Msix;
+                        return result;
+                    }
+
+                    var msixCatalogVersion = !string.IsNullOrEmpty(installItem.Version)
+                        ? installItem.Version
+                        : item.Version;
+
+                    var (msixFound, msixVersion, _) = QueryMsixProvisionedPackage(installItem.IdentityName);
+
+                    if (!msixFound)
+                    {
+                        ConsoleLogger.Info($"MSIX package not installed item: {item.Name} identityName: {installItem.IdentityName}");
+                        var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
+                        result.Status = "pending";
+                        result.NeedsAction = true;
+                        result.IsUpdate = hasRegistryEntry;
+                        result.Reason = $"MSIX package not provisioned: {installItem.IdentityName}";
+                        result.ReasonCode = StatusReasonCode.ProductCodeMissing;
+                        result.DetectionMethod = DetectionMethod.Msix;
+                        return result;
+                    }
+
+                    if (!string.IsNullOrEmpty(msixCatalogVersion) && !string.IsNullOrEmpty(msixVersion))
+                    {
+                        var cmp = CatalogService.CompareVersions(msixCatalogVersion, msixVersion);
+                        if (cmp > 0)
+                        {
+                            ConsoleLogger.Info($"MSIX version outdated item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
+                            result.Status = "pending";
+                            result.NeedsAction = true;
+                            result.IsUpdate = true;
+                            result.InstalledVersion = msixVersion;
+                            result.Reason = $"MSIX version outdated: {msixVersion} -> {msixCatalogVersion}";
+                            result.ReasonCode = StatusReasonCode.VersionOutdated;
+                            result.DetectionMethod = DetectionMethod.Msix;
+                            return result;
+                        }
+                    }
+
+                    ConsoleLogger.Info($"MSIX verification passed item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
+                    result.InstalledVersion = msixVersion;
+                    break;
             }
         }
 
         result.Reason = $"All {item.Installs.Count} install checks passed";
         result.ReasonCode = StatusReasonCode.FileMatch;
         return result;
+    }
+
+    /// <summary>
+    /// Queries Get-AppxProvisionedPackage -Online filtered by the manifest Identity.Name
+    /// (which appears as DisplayName in the provisioned-package listing). Returns whether
+    /// the package is present, its installed version, and the full PackageName.
+    /// </summary>
+    private static (bool Found, string Version, string PackageName) QueryMsixProvisionedPackage(string identityName)
+    {
+        try
+        {
+            var escaped = identityName.Replace("'", "''");
+            var script = $@"
+$ErrorActionPreference = 'Stop'
+$pkg = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq '{escaped}' | Select-Object -First 1
+if ($pkg) {{ Write-Output ""$($pkg.Version)|$($pkg.PackageName)"" }}
+";
+            var scriptService = new ScriptService();
+            var (success, output) = scriptService.ExecuteScriptAsync(script).Result;
+
+            if (!success) return (false, "", "");
+
+            foreach (var line in (output ?? "").Split('\n', '\r'))
+            {
+                var trimmed = line.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+                var pipe = trimmed.IndexOf('|');
+                if (pipe > 0)
+                {
+                    var version = trimmed[..pipe].Trim();
+                    var pkgName = trimmed[(pipe + 1)..].Trim();
+                    return (true, version, pkgName);
+                }
+            }
+            return (false, "", "");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Get-AppxProvisionedPackage query failed for {identityName}: {ex.Message}");
+            return (false, "", "");
+        }
     }
 
     /// <summary>

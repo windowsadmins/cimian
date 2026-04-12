@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Management.Automation;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -674,6 +673,7 @@ public class InstallerService
                 "msi" => await UninstallMsiAsync(uninstaller, cancellationToken),
                 "exe" => await UninstallExeAsync(uninstaller, cancellationToken),
                 "powershell" or "ps1" => await UninstallPowerShellAsync(uninstaller, cancellationToken),
+                "msix" or "appx" => await UninstallMsixAsync(item, uninstaller, cancellationToken),
                 _ => await UninstallMsiAsync(uninstaller, cancellationToken)
             };
         }
@@ -681,6 +681,25 @@ public class InstallerService
         {
             ConsoleLogger.Info($"Running uninstall_script for {item.Name}...");
             result = await _scriptService.ExecuteScriptAsync(item.UninstallScript, cancellationToken);
+        }
+        else
+        {
+            // Self-uninstallable MSIX: the pkginfo has an installs-array entry of type
+            // msix but no explicit uninstaller block. Synthesize one from the installs
+            // entry — the identity_name there carries everything we need.
+            var msixInstall = item.Installs.FirstOrDefault(i =>
+                string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+
+            if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
+            {
+                var synthetic = new UninstallerInfo
+                {
+                    Type = "msix",
+                    IdentityName = msixInstall.IdentityName
+                };
+                result = await UninstallMsixAsync(item, synthetic, cancellationToken);
+            }
         }
 
         if (!result.Success)
@@ -877,41 +896,90 @@ public class InstallerService
         return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
     }
 
+    /// <summary>
+    /// Most recently resolved MSIX PackageFullName from a successful install.
+    /// Consumed by VerifyInstallationBeforeRegistry + RegisterInstallation so the
+    /// exact PackageFullName can be persisted to HKLM\SOFTWARE\ManagedInstalls\&lt;Name&gt;.
+    /// Reset on each install attempt.
+    /// </summary>
+    private string? _lastResolvedMsixPackageFullName;
+
+    /// <summary>
+    /// Installs an MSIX/APPX package (or .msixbundle/.appxbundle) using
+    /// Add-AppxProvisionedPackage -Online, which provisions the package at the OS
+    /// image level. Works from both elevated admin and SYSTEM contexts (DISM-based
+    /// operation) and matches the enterprise deployment model used by Intune.
+    ///
+    /// Known limitation: currently-signed-in users won't see the app until next
+    /// login; new user profiles get it automatically. This is acceptable for
+    /// Cimian's daemon-style deployment model.
+    /// </summary>
     private async Task<(bool Success, string Output)> InstallMsixAsync(
         CatalogItem item,
         string localFile,
         CancellationToken cancellationToken)
     {
-        try
+        _lastResolvedMsixPackageFullName = null;
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started",
+            $"Installing MSIX {item.Name} via Add-AppxProvisionedPackage");
+
+        var logPath = Path.Combine(_config.CachePath, $"{item.Name}_msix_install.log");
+        var escapedPath = localFile.Replace("'", "''");
+        var escapedLog = logPath.Replace("'", "''");
+
+        // Install script: provision the package, then emit "OK|<PackageName>" to stdout
+        // so we can parse PackageFullName from the result. Pipe all output to a log
+        // file as well for diagnostic parity with the MSI installer path.
+        var installScript = $@"
+$ErrorActionPreference = 'Stop'
+$logFile = '{escapedLog}'
+try {{
+    $result = Add-AppxProvisionedPackage -Online -PackagePath '{escapedPath}' -SkipLicense
+    if ($result) {{
+        $result | Out-File -FilePath $logFile -Encoding utf8
+        Write-Output ""OK|$($result.PackageName)""
+        exit 0
+    }} else {{
+        Write-Output 'ERROR|Add-AppxProvisionedPackage returned no result'
+        exit 1
+    }}
+}} catch {{
+    ""ERROR|$($_.Exception.Message)"" | Tee-Object -FilePath $logFile -Encoding utf8 | Out-Null
+    Write-Output ""ERROR|$($_.Exception.Message)""
+    exit 1
+}}
+";
+
+        var (success, output) = await _scriptService.ExecuteScriptAsync(installScript, cancellationToken);
+
+        if (!success)
         {
-            using var ps = PowerShell.Create();
-            ps.AddCommand("Add-AppxPackage")
-              .AddParameter("Path", localFile)
-              .AddParameter("ForceApplicationShutdown");
-
-            var results = await ps.InvokeAsync();
-            var output = new StringBuilder();
-
-            foreach (var result in results)
-            {
-                output.AppendLine(result?.ToString() ?? "");
-            }
-
-            if (ps.HadErrors)
-            {
-                foreach (var error in ps.Streams.Error)
-                {
-                    output.AppendLine($"ERROR: {error}");
-                }
-                return (false, output.ToString());
-            }
-
-            return (true, output.ToString());
+            var errorMsg = $"MSIX install failed: {output.Trim()}";
+            _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
+            return (false, errorMsg);
         }
-        catch (Exception ex)
+
+        // Parse "OK|<PackageFullName>" from stdout to capture PackageFullName.
+        // ScriptService returns combined stdout+stderr, so look for the OK line.
+        foreach (var line in output.Split('\n', '\r'))
         {
-            return (false, $"MSIX installation failed: {ex.Message}");
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("OK|", StringComparison.Ordinal))
+            {
+                _lastResolvedMsixPackageFullName = trimmed[3..].Trim();
+                break;
+            }
         }
+
+        if (string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
+        {
+            ConsoleLogger.Warn($"MSIX install for {item.Name} succeeded but PackageFullName was not captured from output");
+        }
+
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed",
+            $"MSIX installed: {_lastResolvedMsixPackageFullName ?? item.Name}");
+
+        return (true, output);
     }
 
     private async Task<(bool Success, string Output)> InstallPowerShellAsync(
@@ -1001,6 +1069,102 @@ public class InstallerService
         }
 
         return await _scriptService.ExecuteScriptAsync(uninstaller.Command, cancellationToken);
+    }
+
+    /// <summary>
+    /// Uninstalls an MSIX/APPX package via Remove-AppxProvisionedPackage -Online.
+    /// Reads the PackageFullName that was stored in HKLM\SOFTWARE\ManagedInstalls\&lt;Name&gt;
+    /// at install time. Falls back to runtime discovery via Get-AppxProvisionedPackage
+    /// filtered by IdentityName when the registry value is absent (e.g., registry reset).
+    /// </summary>
+    private async Task<(bool Success, string Output)> UninstallMsixAsync(
+        CatalogItem item,
+        UninstallerInfo uninstaller,
+        CancellationToken cancellationToken)
+    {
+        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "started",
+            $"Uninstalling MSIX {item.Name}");
+
+        // Resolve PackageFullName: prefer the value stored at install time in registry.
+        var packageFullName = ReadManagedInstallsValue(item.Name, "PackageFullName");
+
+        // Fallback: runtime discovery via IdentityName.
+        if (string.IsNullOrEmpty(packageFullName) && !string.IsNullOrEmpty(uninstaller.IdentityName))
+        {
+            var escapedIdentity = uninstaller.IdentityName.Replace("'", "''");
+            var discoverScript = $@"
+$ErrorActionPreference = 'Stop'
+$pkg = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq '{escapedIdentity}' | Select-Object -First 1
+if ($pkg) {{ Write-Output $pkg.PackageName }}
+";
+            var (discoverOk, discoverOut) = await _scriptService.ExecuteScriptAsync(discoverScript, cancellationToken);
+            if (discoverOk)
+            {
+                foreach (var line in discoverOut.Split('\n', '\r'))
+                {
+                    var trimmed = line.Trim();
+                    if (!string.IsNullOrEmpty(trimmed)
+                        && !trimmed.StartsWith("ERROR", StringComparison.Ordinal))
+                    {
+                        packageFullName = trimmed;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (string.IsNullOrEmpty(packageFullName))
+        {
+            var errorMsg = $"MSIX uninstall failed: unable to resolve PackageFullName for {item.Name} "
+                + $"(identity_name='{uninstaller.IdentityName ?? "(null)"}' — not in ManagedInstalls "
+                + "registry and not found by Get-AppxProvisionedPackage)";
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed", errorMsg);
+            return (false, errorMsg);
+        }
+
+        var escapedName = packageFullName.Replace("'", "''");
+        var removeScript = $@"
+$ErrorActionPreference = 'Stop'
+try {{
+    Remove-AppxProvisionedPackage -Online -PackageName '{escapedName}' -ErrorAction Stop | Out-Null
+    Write-Output 'OK'
+    exit 0
+}} catch {{
+    Write-Output ""ERROR|$($_.Exception.Message)""
+    exit 1
+}}
+";
+
+        var (success, output) = await _scriptService.ExecuteScriptAsync(removeScript, cancellationToken);
+
+        if (!success)
+        {
+            var errorMsg = $"MSIX uninstall failed: {output.Trim()}";
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed", errorMsg);
+            return (false, errorMsg);
+        }
+
+        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "completed",
+            $"MSIX removed: {packageFullName}");
+        return (true, output);
+    }
+
+    /// <summary>
+    /// Reads a single string value from HKLM\SOFTWARE\ManagedInstalls\&lt;itemName&gt;.
+    /// Returns null if the key or value is absent.
+    /// </summary>
+    private static string? ReadManagedInstallsValue(string itemName, string valueName)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(
+                $@"SOFTWARE\ManagedInstalls\{itemName}", writable: false);
+            return key?.GetValue(valueName) as string;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
@@ -1158,6 +1322,21 @@ public class InstallerService
                     }
                     break;
 
+                case "msix":
+                case "appx":
+                    // InstallMsixAsync already captured the PackageFullName from
+                    // Add-AppxProvisionedPackage output into _lastResolvedMsixPackageFullName.
+                    // A non-empty value means the provisioning command returned a registration.
+                    // This is cheaper than a second Get-AppxProvisionedPackage round-trip and
+                    // avoids making VerifyInstallationBeforeRegistry async.
+                    if (string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
+                    {
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: Add-AppxProvisionedPackage did not return a PackageFullName");
+                        return false;
+                    }
+                    ConsoleLogger.Debug($"MSIX verification successful for {item.Name}: {_lastResolvedMsixPackageFullName}");
+                    break;
+
                 default:
                     ConsoleLogger.Debug($"Unknown install type '{install.Type}' for {item.Name}, skipping verification");
                     break;
@@ -1232,10 +1411,29 @@ public class InstallerService
         {
             using var key = Registry.LocalMachine.CreateSubKey(
                 $@"SOFTWARE\ManagedInstalls\{item.Name}");
-            
+
             key?.SetValue("Version", item.Version);
             key?.SetValue("DisplayName", item.DisplayName ?? item.Name);
             key?.SetValue("InstallDate", DateTime.Now.ToString("yyyy-MM-dd"));
+
+            // MSIX enrichment: persist InstallerType + PackageFullName + IdentityName so
+            // UninstallMsixAsync can find the exact PackageName to remove without a runtime
+            // Get-AppxProvisionedPackage round-trip.
+            var installerType = item.Installer.Type?.ToLowerInvariant() ?? "";
+            if (installerType is "msix" or "appx")
+            {
+                key?.SetValue("InstallerType", installerType);
+
+                if (!string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
+                    key?.SetValue("PackageFullName", _lastResolvedMsixPackageFullName);
+
+                var msixInstall = item.Installs.FirstOrDefault(i =>
+                    string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+
+                if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
+                    key?.SetValue("IdentityName", msixInstall.IdentityName);
+            }
         }
         catch (Exception ex)
         {

@@ -219,5 +219,72 @@ public class InstallerServiceTests
         Assert.True(success);
     }
 
+    [Fact]
+    public async Task UninstallAsync_MsixWithNoIdentityAndNoRegistry_ReturnsFailure()
+    {
+        // MSIX uninstaller block with no identity_name AND no prior registry enrichment.
+        // UninstallMsixAsync should detect it can't resolve PackageFullName and fail cleanly.
+        var item = new CatalogItem
+        {
+            // Name must not collide with a real ManagedInstalls key on the test machine
+            Name = $"NonexistentMsixTest_{Guid.NewGuid():N}",
+            Version = "1.0.0",
+            Uninstaller = [
+                new UninstallerInfo { Type = "msix", IdentityName = null }
+            ]
+        };
+
+        var (success, output) = await _service.UninstallAsync(item);
+
+        Assert.False(success);
+        Assert.Contains("unable to resolve PackageFullName", output);
+    }
+
+    #endregion
+
+    #region IsUninstallable Tests
+
+    [Fact]
+    public void IsUninstallable_MsixInstallsEntryOnly_ReturnsTrue()
+    {
+        // An MSIX pkginfo that has only an installs-array entry (no uninstaller block)
+        // should still report as uninstallable — UninstallAsync synthesizes the
+        // uninstaller from the installs entry.
+        var item = new CatalogItem
+        {
+            Name = "MsixInstallsOnly",
+            Version = "1.0.0",
+            Uninstallable = true,
+            Uninstaller = [],
+            Installs = [
+                new InstallCheckItem
+                {
+                    Type = "msix",
+                    IdentityName = "com.example.testapp",
+                    Version = "1.0.0"
+                }
+            ]
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void IsUninstallable_NoUninstallerNoMsixInstalls_ReturnsFalse()
+    {
+        var item = new CatalogItem
+        {
+            Name = "RegularApp",
+            Version = "1.0.0",
+            Uninstallable = true,
+            Uninstaller = [],
+            Installs = [
+                new InstallCheckItem { Type = "file", Path = @"C:\foo\bar.exe" }
+            ]
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
     #endregion
 }
