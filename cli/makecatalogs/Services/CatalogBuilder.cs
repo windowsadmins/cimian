@@ -126,33 +126,39 @@ public class CatalogBuilder
                 }
             }
 
-            if (pkg.Uninstaller?.Location != null)
+            // Validate every uninstaller entry that references a file on disk.
+            // MSIX/APPX uninstallers have only identity_name (no Location) so they're
+            // skipped here and handled at runtime by managedsoftwareupdate.
+            if (pkg.Uninstaller != null)
             {
-                // Trim leading slashes from uninstaller Location
-                var uninstallerLocation = pkg.Uninstaller.Location.TrimStart('/', '\\').Replace('\\', '/');
-                var relativePath = "pkgs/" + uninstallerLocation;
-                if (!existingFiles.Contains(relativePath))
+                foreach (var uninst in pkg.Uninstaller)
                 {
-                    warnings.Add($"{pkg.FilePath} has missing uninstaller => {relativePath}");
-                }
-                else if (hashCheck)
-                {
-                    // Hash and size validation when --hash_check is enabled
-                    var fullPath = Path.Combine(repoPath, relativePath.Replace('/', '\\'));
-                    if (File.Exists(fullPath))
+                    if (uninst.Location == null) continue;
+
+                    var uninstallerLocation = uninst.Location.TrimStart('/', '\\').Replace('\\', '/');
+                    var relativePath = "pkgs/" + uninstallerLocation;
+                    if (!existingFiles.Contains(relativePath))
                     {
-                        var fileInfo = new FileInfo(fullPath);
-                        if (pkg.Uninstaller.Size.HasValue && fileInfo.Length != pkg.Uninstaller.Size.Value)
+                        warnings.Add($"{pkg.FilePath} has missing uninstaller => {relativePath}");
+                        continue;
+                    }
+
+                    if (!hashCheck) continue;
+
+                    var fullPath = Path.Combine(repoPath, relativePath.Replace('/', '\\'));
+                    if (!File.Exists(fullPath)) continue;
+
+                    var fileInfo = new FileInfo(fullPath);
+                    if (uninst.Size.HasValue && fileInfo.Length != uninst.Size.Value)
+                    {
+                        warnings.Add($"{pkg.FilePath} uninstaller size mismatch: expected {uninst.Size}, actual {fileInfo.Length}");
+                    }
+                    if (!string.IsNullOrEmpty(uninst.Hash))
+                    {
+                        var actualHash = ComputeMd5Hash(fullPath);
+                        if (!string.Equals(actualHash, uninst.Hash, StringComparison.OrdinalIgnoreCase))
                         {
-                            warnings.Add($"{pkg.FilePath} uninstaller size mismatch: expected {pkg.Uninstaller.Size}, actual {fileInfo.Length}");
-                        }
-                        if (!string.IsNullOrEmpty(pkg.Uninstaller.Hash))
-                        {
-                            var actualHash = ComputeMd5Hash(fullPath);
-                            if (!string.Equals(actualHash, pkg.Uninstaller.Hash, StringComparison.OrdinalIgnoreCase))
-                            {
-                                warnings.Add($"{pkg.FilePath} uninstaller hash mismatch: expected {pkg.Uninstaller.Hash}, actual {actualHash}");
-                            }
+                            warnings.Add($"{pkg.FilePath} uninstaller hash mismatch: expected {uninst.Hash}, actual {actualHash}");
                         }
                     }
                 }

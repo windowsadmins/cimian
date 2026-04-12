@@ -555,12 +555,151 @@ public class StatusService
                         result.InstalledVersion = msiInstalledVersion;
                     }
                     break;
+
+                case "msix":
+                case "appx":
+                    // Detect MSIX/APPX packages via Get-AppxProvisionedPackage -Online.
+                    // The pkginfo installs entry supplies identity_name (= manifest Identity/@Name);
+                    // Get-AppxProvisionedPackage returns DisplayName matching that value.
+                    if (string.IsNullOrEmpty(installItem.IdentityName))
+                    {
+                        ConsoleLogger.Warn($"MSIX install check missing identity_name item: {item.Name}");
+                        result.Status = "error";
+                        result.NeedsAction = true;
+                        result.Reason = $"MSIX install check missing identity_name";
+                        result.ReasonCode = StatusReasonCode.CheckFailed;
+                        result.DetectionMethod = DetectionMethod.Msix;
+                        return result;
+                    }
+
+                    var msixCatalogVersion = !string.IsNullOrEmpty(installItem.Version)
+                        ? installItem.Version
+                        : item.Version;
+
+                    var (msixFound, msixVersion, _) = QueryMsixProvisionedPackage(installItem.IdentityName);
+
+                    if (!msixFound)
+                    {
+                        ConsoleLogger.Info($"MSIX package not installed item: {item.Name} identityName: {installItem.IdentityName}");
+                        var hasRegistryEntry = HasManagedInstallsEntry(item.Name);
+                        result.Status = "pending";
+                        result.NeedsAction = true;
+                        result.IsUpdate = hasRegistryEntry;
+                        result.Reason = $"MSIX package not found for identity: {installItem.IdentityName}";
+                        // NotInstalled is the installer-type-neutral code for "package is absent".
+                        // ProductCodeMissing is MSI-specific and would misclassify downstream.
+                        result.ReasonCode = StatusReasonCode.NotInstalled;
+                        result.DetectionMethod = DetectionMethod.Msix;
+                        return result;
+                    }
+
+                    if (!string.IsNullOrEmpty(msixCatalogVersion) && !string.IsNullOrEmpty(msixVersion))
+                    {
+                        var cmp = CatalogService.CompareVersions(msixCatalogVersion, msixVersion);
+                        if (cmp > 0)
+                        {
+                            ConsoleLogger.Info($"MSIX version outdated item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
+                            result.Status = "pending";
+                            result.NeedsAction = true;
+                            result.IsUpdate = true;
+                            result.InstalledVersion = msixVersion;
+                            result.Reason = $"MSIX version outdated: {msixVersion} -> {msixCatalogVersion}";
+                            result.ReasonCode = StatusReasonCode.VersionOutdated;
+                            result.DetectionMethod = DetectionMethod.Msix;
+                            return result;
+                        }
+                    }
+
+                    ConsoleLogger.Info($"MSIX verification passed item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
+                    result.InstalledVersion = msixVersion;
+                    break;
             }
         }
 
         result.Reason = $"All {item.Installs.Count} install checks passed";
         result.ReasonCode = StatusReasonCode.FileMatch;
         return result;
+    }
+
+    /// <summary>
+    /// Queries both per-user (Get-AppxPackage -AllUsers) and provisioned
+    /// (Get-AppxProvisionedPackage -Online) package stores for a package matching
+    /// the manifest Identity.Name. Returns the highest version found across both
+    /// stores and its PackageFullName.
+    /// </summary>
+    /// <remarks>
+    /// Checking both stores is essential for real-world MSIX deployments:
+    ///   • Get-AppxPackage -AllUsers catches per-user registrations including
+    ///     Store-installed packages, vendor auto-updates (e.g., Slack updating
+    ///     itself in-place), and anything a user manually sideloaded.
+    ///   • Get-AppxProvisionedPackage catches items Cimian provisioned machine-wide
+    ///     that haven't yet been registered to any user (new profiles get them on
+    ///     first login).
+    /// The previous implementation queried only the provisioned store and missed
+    /// per-user installs entirely, causing Cimian to attempt a downgrade when a
+    /// user already had a newer version via auto-update.
+    /// Both queries require elevation, which managedsoftwareupdate already has
+    /// (sudo during dev, SYSTEM via scheduled task in production).
+    /// </remarks>
+    // Shared ScriptService instance reused across MSIX detection calls within a
+    // single CheckStatus pass. The service is stateless and only resolves the
+    // powershell.exe path once, so reuse avoids redundant allocation and PATH
+    // lookups when a manifest has many MSIX items. Note: the sync-over-async
+    // .Result usage below matches the existing convention in CheckInstallcheckScript
+    // and CheckVersionScript (StatusService.cs:251, :304) — async-ifying the whole
+    // StatusCheckResult pipeline is a separate refactor.
+    private static readonly ScriptService _msixScriptService = new();
+
+    private static (bool Found, string Version, string PackageName) QueryMsixProvisionedPackage(string identityName)
+    {
+        try
+        {
+            var escaped = identityName.Replace("'", "''");
+            // Collect results from both stores, sort by version descending, emit the top one.
+            // Using [System.Version] for comparison handles 4-part MSIX version strings correctly.
+            var script = $@"
+$ErrorActionPreference = 'Stop'
+$results = @()
+try {{
+    $userPkgs = Get-AppxPackage -AllUsers -Name '{escaped}' -ErrorAction SilentlyContinue
+    foreach ($p in $userPkgs) {{
+        $results += [pscustomobject]@{{ Version = $p.Version; PackageFullName = $p.PackageFullName }}
+    }}
+}} catch {{}}
+try {{
+    $provPkgs = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object DisplayName -eq '{escaped}'
+    foreach ($p in $provPkgs) {{
+        $results += [pscustomobject]@{{ Version = $p.Version; PackageFullName = $p.PackageName }}
+    }}
+}} catch {{}}
+if ($results.Count -gt 0) {{
+    $top = $results | Sort-Object {{ [System.Version]$_.Version }} -Descending | Select-Object -First 1
+    Write-Output ""$($top.Version)|$($top.PackageFullName)""
+}}
+";
+            var (success, output) = _msixScriptService.ExecuteScriptAsync(script).Result;
+
+            if (!success) return (false, "", "");
+
+            foreach (var line in (output ?? "").Split('\n', '\r'))
+            {
+                var trimmed = line.Trim();
+                if (string.IsNullOrEmpty(trimmed)) continue;
+                var pipe = trimmed.IndexOf('|');
+                if (pipe > 0)
+                {
+                    var version = trimmed[..pipe].Trim();
+                    var pkgName = trimmed[(pipe + 1)..].Trim();
+                    return (true, version, pkgName);
+                }
+            }
+            return (false, "", "");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"MSIX detection query failed for {identityName}: {ex.Message}");
+            return (false, "", "");
+        }
     }
 
     /// <summary>

@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Management.Automation;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -625,13 +624,14 @@ public class InstallerService
         // Verify installation before registering (prevents phantom installs)
         if (installerType != "pkg")
         {
-            if (VerifyInstallationBeforeRegistry(item))
+            var (verifyOk, verifyReason) = VerifyInstallationBeforeRegistry(item);
+            if (verifyOk)
             {
                 RegisterInstallation(item);
             }
             else
             {
-                var verifyError = $"Installation verification failed for {item.Name} - installer reported success but product is not registered in Windows Installer";
+                var verifyError = $"Installation verification failed for {item.Name}: {verifyReason}";
                 ConsoleLogger.Warn(verifyError);
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", verifyError);
                 return (false, verifyError);
@@ -674,6 +674,7 @@ public class InstallerService
                 "msi" => await UninstallMsiAsync(uninstaller, cancellationToken),
                 "exe" => await UninstallExeAsync(uninstaller, cancellationToken),
                 "powershell" or "ps1" => await UninstallPowerShellAsync(uninstaller, cancellationToken),
+                "msix" or "appx" => await UninstallMsixAsync(item, uninstaller, cancellationToken),
                 _ => await UninstallMsiAsync(uninstaller, cancellationToken)
             };
         }
@@ -681,6 +682,25 @@ public class InstallerService
         {
             ConsoleLogger.Info($"Running uninstall_script for {item.Name}...");
             result = await _scriptService.ExecuteScriptAsync(item.UninstallScript, cancellationToken);
+        }
+        else
+        {
+            // Self-uninstallable MSIX: the pkginfo has an installs-array entry of type
+            // msix but no explicit uninstaller block. Synthesize one from the installs
+            // entry — the identity_name there carries everything we need.
+            var msixInstall = item.Installs.FirstOrDefault(i =>
+                string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+
+            if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
+            {
+                var synthetic = new UninstallerInfo
+                {
+                    Type = "msix",
+                    IdentityName = msixInstall.IdentityName
+                };
+                result = await UninstallMsixAsync(item, synthetic, cancellationToken);
+            }
         }
 
         if (!result.Success)
@@ -877,41 +897,209 @@ public class InstallerService
         return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
     }
 
+    /// <summary>
+    /// Most recently resolved MSIX PackageFullName from a successful install.
+    /// Consumed by VerifyInstallationBeforeRegistry + RegisterInstallation so the
+    /// exact PackageFullName can be persisted to HKLM\SOFTWARE\ManagedInstalls\&lt;Name&gt;.
+    /// Reset on each install attempt.
+    /// </summary>
+    private string? _lastResolvedMsixPackageFullName;
+
+    /// <summary>
+    /// Installs an MSIX/APPX package (or .msixbundle/.appxbundle) using
+    /// Add-AppxProvisionedPackage -Online, which provisions the package at the OS
+    /// image level. Works from both elevated admin and SYSTEM contexts (DISM-based
+    /// operation) and matches the enterprise deployment model used by Intune.
+    ///
+    /// The install script performs a preflight check against both Appx stores
+    /// (per-user via Get-AppxPackage -AllUsers and provisioned via
+    /// Get-AppxProvisionedPackage -Online) before calling the install cmdlet,
+    /// to handle three real-world scenarios:
+    ///
+    ///   1. Higher version already installed → emit SKIP, return success
+    ///      ("never downgrade" policy; StatusService detection should normally
+    ///      catch this first, but this preflight is a safety net).
+    ///   2. Older per-user install blocks provisioning of the catalog version
+    ///      (classic 0x80070490 "Element not found" failure mode when a vendor
+    ///      like Slack auto-updates itself) → run Remove-AppxPackage -AllUsers
+    ///      for the identity first, then provision.
+    ///   3. Nothing installed → provision directly.
+    ///
+    /// Known limitation: currently-signed-in users won't see the app until next
+    /// login; new user profiles get it automatically. This is acceptable for
+    /// Cimian's daemon-style deployment model. Per-user-install removal preserves
+    /// the app's data directory under %LOCALAPPDATA%\Packages\&lt;PackageFamilyName&gt;
+    /// so user settings survive the remediation.
+    /// </summary>
     private async Task<(bool Success, string Output)> InstallMsixAsync(
         CatalogItem item,
         string localFile,
         CancellationToken cancellationToken)
     {
-        try
+        _lastResolvedMsixPackageFullName = null;
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started",
+            $"Installing MSIX {item.Name} via Add-AppxProvisionedPackage");
+
+        // Look up the package Identity.Name from the installs-array entry that
+        // cimiimport emits. This is used for the preflight query; without it we
+        // can't identify the package to clean up older per-user installs.
+        var msixInstallEntry = item.Installs.FirstOrDefault(i =>
+            string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+        var identityName = msixInstallEntry?.IdentityName ?? "";
+
+        var logPath = Path.Combine(_config.CachePath, $"{item.Name}_msix_install.log");
+        var escapedPath = localFile.Replace("'", "''");
+        var escapedLog = logPath.Replace("'", "''");
+        var escapedIdentity = identityName.Replace("'", "''");
+        var escapedCatalogVer = (item.Version ?? "").Replace("'", "''");
+
+        // Install script: preflight → decide action → install.
+        // Compatible with Windows PowerShell 5.1 (what ScriptService prefers for
+        // Appx/Dism cmdlets). Avoids Tee-Object -Encoding (pwsh 7+ only).
+        // Emits one of three outcomes on the last line:
+        //   OK|<PackageFullName>    — new install or upgrade succeeded
+        //   SKIP|<PackageFullName>  — newer version already present, no action
+        //   ERROR|<message>         — install failed
+        var installScript = $@"
+$ErrorActionPreference = 'Stop'
+$logFile = '{escapedLog}'
+$identity = '{escapedIdentity}'
+$catalogVerStr = '{escapedCatalogVer}'
+function Write-Log($msg) {{ try {{ Add-Content -Path $logFile -Value $msg -Encoding utf8 }} catch {{}} }}
+
+# --- Preflight: discover any existing installation across both stores ---
+$existing = @()
+if ($identity) {{
+    try {{
+        $userPkgs = Get-AppxPackage -AllUsers -Name $identity -ErrorAction SilentlyContinue
+        foreach ($p in $userPkgs) {{
+            $existing += [pscustomobject]@{{ Version = $p.Version; FullName = $p.PackageFullName; PerUser = $true }}
+        }}
+    }} catch {{}}
+    try {{
+        $provPkgs = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object DisplayName -eq $identity
+        foreach ($p in $provPkgs) {{
+            $existing += [pscustomobject]@{{ Version = $p.Version; FullName = $p.PackageName; PerUser = $false }}
+        }}
+    }} catch {{}}
+}}
+
+$highest = $null
+if ($existing.Count -gt 0) {{
+    $highest = $existing | Sort-Object {{ [System.Version]$_.Version }} -Descending | Select-Object -First 1
+}}
+
+# --- Never-downgrade: if installed version >= catalog version, no action ---
+if ($highest -and $catalogVerStr) {{
+    try {{
+        $catalogVer = [System.Version]$catalogVerStr
+        $installedVer = [System.Version]$highest.Version
+        if ($installedVer -ge $catalogVer) {{
+            $skipMsg = ""Newer version installed: $($highest.Version) >= $catalogVerStr (PackageFullName: $($highest.FullName))""
+            Write-Log $skipMsg
+            Write-Output ""SKIP|$($highest.FullName)""
+            exit 0
+        }}
+    }} catch {{}}
+}}
+
+# --- Per-user conflict: remove older per-user install before provisioning ---
+if ($highest -and $highest.PerUser -and $identity) {{
+    $cleanupMsg = ""Removing older per-user install: $($highest.FullName) (identity: $identity)""
+    Write-Log $cleanupMsg
+    try {{
+        Get-AppxPackage -AllUsers -Name $identity | Remove-AppxPackage -AllUsers -ErrorAction Stop
+        Write-Log ""Per-user cleanup complete""
+    }} catch {{
+        Write-Log ""Per-user cleanup failed (continuing anyway): $($_.Exception.Message)""
+    }}
+}}
+
+# --- Install: provision the new package ---
+try {{
+    $result = Add-AppxProvisionedPackage -Online -PackagePath '{escapedPath}' -SkipLicense
+    if ($result) {{
+        $result | Out-File -FilePath $logFile -Append -Encoding utf8
+        Write-Output ""OK|$($result.PackageName)""
+        exit 0
+    }} else {{
+        $msg = 'Add-AppxProvisionedPackage returned no result'
+        Write-Log $msg
+        Write-Output ""ERROR|$msg""
+        exit 1
+    }}
+}} catch {{
+    $msg = $_.Exception.Message
+    Write-Log $msg
+    Write-Output ""ERROR|$msg""
+    exit 1
+}}
+";
+
+        var (success, output) = await _scriptService.ExecuteScriptAsync(installScript, cancellationToken);
+
+        // Parse the outcome marker from stdout. ScriptService returns combined
+        // stdout+stderr; the script emits exactly one of OK/SKIP/ERROR on its
+        // terminal line.
+        string outcome = "";
+        string payload = "";
+        foreach (var line in output.Split('\n', '\r'))
         {
-            using var ps = PowerShell.Create();
-            ps.AddCommand("Add-AppxPackage")
-              .AddParameter("Path", localFile)
-              .AddParameter("ForceApplicationShutdown");
-
-            var results = await ps.InvokeAsync();
-            var output = new StringBuilder();
-
-            foreach (var result in results)
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("OK|", StringComparison.Ordinal))
             {
-                output.AppendLine(result?.ToString() ?? "");
+                outcome = "OK";
+                payload = trimmed[3..].Trim();
+                break;
             }
-
-            if (ps.HadErrors)
+            if (trimmed.StartsWith("SKIP|", StringComparison.Ordinal))
             {
-                foreach (var error in ps.Streams.Error)
-                {
-                    output.AppendLine($"ERROR: {error}");
-                }
-                return (false, output.ToString());
+                outcome = "SKIP";
+                payload = trimmed[5..].Trim();
+                break;
             }
-
-            return (true, output.ToString());
+            if (trimmed.StartsWith("ERROR|", StringComparison.Ordinal))
+            {
+                outcome = "ERROR";
+                payload = trimmed[6..].Trim();
+                break;
+            }
         }
-        catch (Exception ex)
+
+        var version = item.Version ?? string.Empty;
+
+        if (!success && outcome != "SKIP")
         {
-            return (false, $"MSIX installation failed: {ex.Message}");
+            var errorMsg = $"MSIX install failed: {(string.IsNullOrEmpty(payload) ? output.Trim() : payload)}";
+            _sessionLogger?.LogInstall(item.Name, version, "install", "failed", errorMsg);
+            return (false, errorMsg);
         }
+
+        if (outcome == "SKIP")
+        {
+            // Newer version already installed. Record the existing PackageFullName
+            // so VerifyInstallationBeforeRegistry passes and RegisterInstallation
+            // starts tracking the pre-existing install under ManagedInstalls\<Name>.
+            _lastResolvedMsixPackageFullName = payload;
+            ConsoleLogger.Info($"MSIX {item.Name}: newer version already installed, no action");
+            _sessionLogger?.LogInstall(item.Name, version, "install", "completed",
+                $"Newer version already installed: {payload}");
+            return (true, $"Newer version installed: {payload}");
+        }
+
+        // OK path — new install or upgrade succeeded.
+        _lastResolvedMsixPackageFullName = payload;
+
+        if (string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
+        {
+            ConsoleLogger.Warn($"MSIX install for {item.Name} succeeded but PackageFullName was not captured from output");
+        }
+
+        _sessionLogger?.LogInstall(item.Name, version, "install", "completed",
+            $"MSIX installed: {_lastResolvedMsixPackageFullName ?? item.Name}");
+
+        return (true, output);
     }
 
     private async Task<(bool Success, string Output)> InstallPowerShellAsync(
@@ -1003,6 +1191,163 @@ public class InstallerService
         return await _scriptService.ExecuteScriptAsync(uninstaller.Command, cancellationToken);
     }
 
+    /// <summary>
+    /// Uninstalls an MSIX/APPX package belt-and-braces:
+    ///   1. Remove-AppxProvisionedPackage -Online by PackageFullName (removes the
+    ///      system-wide provisioning entry that would otherwise re-provision the
+    ///      app on new user profiles).
+    ///   2. Get-AppxPackage -AllUsers by identity | Remove-AppxPackage -AllUsers
+    ///      (removes any per-user registrations left behind, including from
+    ///      vendor auto-updates or previous Store installs).
+    ///
+    /// Both steps are required in practice — removing only the provisioned entry
+    /// leaves the app fully functional for currently-registered users, which is
+    /// surprising and inconsistent with what an admin expects from "uninstall".
+    /// This is the same pattern Gorilla's MSIX PR uses.
+    ///
+    /// PackageFullName is read from HKLM\SOFTWARE\ManagedInstalls\&lt;Name&gt; (written
+    /// at install time by RegisterInstallation). Falls back to runtime discovery
+    /// via Get-AppxProvisionedPackage filtered by IdentityName when the registry
+    /// value is absent.
+    ///
+    /// User data under %LOCALAPPDATA%\Packages\&lt;PackageFamilyName&gt; is preserved
+    /// by Windows' Appx subsystem across Remove-AppxPackage — settings, chat
+    /// history, etc. survive an uninstall/reinstall cycle unless the admin
+    /// explicitly wipes that directory.
+    /// </summary>
+    private async Task<(bool Success, string Output)> UninstallMsixAsync(
+        CatalogItem item,
+        UninstallerInfo uninstaller,
+        CancellationToken cancellationToken)
+    {
+        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "started",
+            $"Uninstalling MSIX {item.Name}");
+
+        // Resolve PackageFullName: prefer the value stored at install time in registry.
+        var packageFullName = ReadManagedInstallsValue(item.Name, "PackageFullName");
+
+        // Fallback: runtime discovery via IdentityName.
+        if (string.IsNullOrEmpty(packageFullName) && !string.IsNullOrEmpty(uninstaller.IdentityName))
+        {
+            var escapedIdentity = uninstaller.IdentityName.Replace("'", "''");
+            var discoverScript = $@"
+$ErrorActionPreference = 'Stop'
+$pkg = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq '{escapedIdentity}' | Select-Object -First 1
+if ($pkg) {{ Write-Output $pkg.PackageName }}
+";
+            var (discoverOk, discoverOut) = await _scriptService.ExecuteScriptAsync(discoverScript, cancellationToken);
+            if (discoverOk)
+            {
+                foreach (var line in discoverOut.Split('\n', '\r'))
+                {
+                    var trimmed = line.Trim();
+                    if (!string.IsNullOrEmpty(trimmed)
+                        && !trimmed.StartsWith("ERROR", StringComparison.Ordinal))
+                    {
+                        packageFullName = trimmed;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // IdentityName is required for step 2 (per-user cleanup). If absent, we
+        // can still remove the provisioned entry by PackageFullName, but can't
+        // reach per-user registrations. Log it but don't fail — partial success
+        // is better than no uninstall at all.
+        var identityName = uninstaller.IdentityName
+            ?? ReadManagedInstallsValue(item.Name, "IdentityName")
+            ?? "";
+
+        if (string.IsNullOrEmpty(packageFullName) && string.IsNullOrEmpty(identityName))
+        {
+            var errorMsg = $"MSIX uninstall failed: unable to resolve PackageFullName or IdentityName for {item.Name}";
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed", errorMsg);
+            return (false, errorMsg);
+        }
+
+        var escapedName = packageFullName?.Replace("'", "''") ?? "";
+        var escapedIdentity2 = identityName.Replace("'", "''");
+
+        // Both cmdlets tolerate the target being absent (-ErrorAction SilentlyContinue
+        // on the per-user side; the provisioned removal is wrapped in try/catch).
+        // This keeps the script idempotent — running twice doesn't fail.
+        var removeScript = $@"
+$ErrorActionPreference = 'Stop'
+$errors = @()
+
+# Step 1: remove provisioned entry (by full name, if we have one)
+if ('{escapedName}' -ne '') {{
+    try {{
+        Remove-AppxProvisionedPackage -Online -PackageName '{escapedName}' -ErrorAction Stop | Out-Null
+        Write-Output ""Removed provisioned: {escapedName}""
+    }} catch {{
+        # 'not found' is OK — provisioned entry may have already been cleaned.
+        if ($_.Exception.Message -notmatch 'not found|not installed') {{
+            $errors += ""provisioned-remove: $($_.Exception.Message)""
+        }}
+    }}
+}}
+
+# Step 2: remove per-user registrations (by identity, across all users)
+if ('{escapedIdentity2}' -ne '') {{
+    try {{
+        $userPkgs = Get-AppxPackage -AllUsers -Name '{escapedIdentity2}' -ErrorAction SilentlyContinue
+        if ($userPkgs) {{
+            foreach ($p in $userPkgs) {{
+                try {{
+                    Remove-AppxPackage -Package $p.PackageFullName -AllUsers -ErrorAction Stop
+                    Write-Output ""Removed per-user: $($p.PackageFullName)""
+                }} catch {{
+                    $errors += ""per-user-remove $($p.PackageFullName): $($_.Exception.Message)""
+                }}
+            }}
+        }}
+    }} catch {{
+        $errors += ""per-user-enumerate: $($_.Exception.Message)""
+    }}
+}}
+
+if ($errors.Count -gt 0) {{
+    Write-Output ""ERROR|$($errors -join '; ')""
+    exit 1
+}}
+Write-Output 'OK'
+exit 0
+";
+
+        var (success, output) = await _scriptService.ExecuteScriptAsync(removeScript, cancellationToken);
+
+        if (!success)
+        {
+            var errorMsg = $"MSIX uninstall failed: {output.Trim()}";
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed", errorMsg);
+            return (false, errorMsg);
+        }
+
+        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "completed",
+            $"MSIX removed: {packageFullName ?? identityName}");
+        return (true, output);
+    }
+
+    /// <summary>
+    /// Reads a single string value from HKLM\SOFTWARE\ManagedInstalls\&lt;itemName&gt;.
+    /// Returns null if the key or value is absent.
+    /// </summary>
+    private static string? ReadManagedInstallsValue(string itemName, string valueName)
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(
+                $@"SOFTWARE\ManagedInstalls\{itemName}", writable: false);
+            return key?.GetValue(valueName) as string;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
         ProcessStartInfo startInfo,
         string itemName,
@@ -1086,10 +1431,12 @@ public class InstallerService
     /// <summary>
     /// Verifies that an installation actually succeeded by checking the installs array.
     /// For MSI items, verifies the product is registered in Windows Installer via ProductCode/UpgradeCode.
+    /// For MSIX/APPX items, checks that InstallMsixAsync captured a PackageFullName from the provisioning call.
     /// For file/directory items, checks existence on disk.
-    /// Returns true if verification passes or no installs array is defined.
+    /// Returns (true, "") if verification passes or no installs array is defined; otherwise
+    /// (false, &lt;installer-type-specific reason&gt;) so callers can surface accurate error messages.
     /// </summary>
-    private bool VerifyInstallationBeforeRegistry(CatalogItem item)
+    private (bool Ok, string Reason) VerifyInstallationBeforeRegistry(CatalogItem item)
     {
         if (item.Installs.Count == 0)
         {
@@ -1098,10 +1445,10 @@ public class InstallerService
             if (installerType is "nopkg" or "script" or "")
             {
                 ConsoleLogger.Debug($"No installs array for script-only/nopkg item {item.Name} - expected");
-                return true;
+                return (true, "");
             }
             ConsoleLogger.Warn($"No installs array for {item.Name} - cannot verify, assuming success");
-            return true;
+            return (true, "");
         }
 
         foreach (var install in item.Installs)
@@ -1111,16 +1458,18 @@ public class InstallerService
                 case "file":
                     if (!string.IsNullOrEmpty(install.Path) && !File.Exists(install.Path))
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: expected file not found: {install.Path}");
-                        return false;
+                        var reason = $"expected file not found: {install.Path}";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
                     break;
 
                 case "directory":
                     if (!string.IsNullOrEmpty(install.Path) && !Directory.Exists(install.Path))
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: expected directory not found: {install.Path}");
-                        return false;
+                        var reason = $"expected directory not found: {install.Path}";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
                     break;
 
@@ -1153,9 +1502,26 @@ public class InstallerService
 
                     if (!msiFound)
                     {
-                        ConsoleLogger.Warn($"Verification failed for {item.Name}: MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})");
-                        return false;
+                        var reason = $"MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
                     }
+                    break;
+
+                case "msix":
+                case "appx":
+                    // InstallMsixAsync already captured the PackageFullName from
+                    // Add-AppxProvisionedPackage output into _lastResolvedMsixPackageFullName.
+                    // A non-empty value means the provisioning command returned a registration.
+                    // This is cheaper than a second Get-AppxProvisionedPackage round-trip and
+                    // avoids making VerifyInstallationBeforeRegistry async.
+                    if (string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
+                    {
+                        const string reason = "Add-AppxProvisionedPackage did not return a PackageFullName";
+                        ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
+                        return (false, reason);
+                    }
+                    ConsoleLogger.Debug($"MSIX verification successful for {item.Name}: {_lastResolvedMsixPackageFullName}");
                     break;
 
                 default:
@@ -1165,7 +1531,7 @@ public class InstallerService
         }
 
         ConsoleLogger.Debug($"Installation verification successful for {item.Name}");
-        return true;
+        return (true, "");
     }
 
     /// <summary>
@@ -1232,10 +1598,29 @@ public class InstallerService
         {
             using var key = Registry.LocalMachine.CreateSubKey(
                 $@"SOFTWARE\ManagedInstalls\{item.Name}");
-            
+
             key?.SetValue("Version", item.Version);
             key?.SetValue("DisplayName", item.DisplayName ?? item.Name);
             key?.SetValue("InstallDate", DateTime.Now.ToString("yyyy-MM-dd"));
+
+            // MSIX enrichment: persist InstallerType + PackageFullName + IdentityName so
+            // UninstallMsixAsync can find the exact PackageName to remove without a runtime
+            // Get-AppxProvisionedPackage round-trip.
+            var installerType = item.Installer.Type?.ToLowerInvariant() ?? "";
+            if (installerType is "msix" or "appx")
+            {
+                key?.SetValue("InstallerType", installerType);
+
+                if (!string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
+                    key?.SetValue("PackageFullName", _lastResolvedMsixPackageFullName);
+
+                var msixInstall = item.Installs.FirstOrDefault(i =>
+                    string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+
+                if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
+                    key?.SetValue("IdentityName", msixInstall.IdentityName);
+            }
         }
         catch (Exception ex)
         {

@@ -181,6 +181,9 @@ public static class DetectionMethod
     /// <summary>MSI product code detection</summary>
     public const string Msi = "msi";
 
+    /// <summary>MSIX/APPX package identity detection via Get-AppxProvisionedPackage</summary>
+    public const string Msix = "msix";
+
     /// <summary>Self-update version comparison</summary>
     public const string SelfUpdate = "self_update";
 

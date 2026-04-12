@@ -406,7 +406,16 @@ public class CatalogItem
     [YamlMember(Alias = "installs")]
     public List<InstallCheckItem> Installs { get; set; } = new();
 
-    public bool IsUninstallable() => Uninstallable && (Uninstaller.Count > 0 || Check.Registry.Name != null);
+    public bool IsUninstallable() => Uninstallable && (
+        Uninstaller.Count > 0
+        || Check.Registry.Name != null
+        // Self-uninstallable MSIX: installs-array entry of type msix/appx with a
+        // usable identity_name. Without identity_name, UninstallAsync can't
+        // synthesize an uninstaller — so in that case this clause must be false.
+        || Installs.Any(i =>
+            (string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase))
+            && !string.IsNullOrWhiteSpace(i.IdentityName)));
 }
 
 /// <summary>
@@ -481,7 +490,7 @@ public class InstallWindow
 public class InstallCheckItem
 {
     [YamlMember(Alias = "type")]
-    public string Type { get; set; } = string.Empty; // "file", "msi", "directory"
+    public string Type { get; set; } = string.Empty; // "file", "msi", "directory", "msix"
 
     [YamlMember(Alias = "path")]
     public string? Path { get; set; }
@@ -497,6 +506,10 @@ public class InstallCheckItem
 
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name)</summary>
+    [YamlMember(Alias = "identity_name")]
+    public string? IdentityName { get; set; }
 }
 
 /// <summary>
@@ -640,6 +653,10 @@ public class UninstallerInfo
 
     [YamlMember(Alias = "command")]
     public string? Command { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name). Used to resolve PackageFullName at uninstall.</summary>
+    [YamlMember(Alias = "identity_name")]
+    public string? IdentityName { get; set; }
 
     /// <summary>
     /// Command-line switches (Windows-style with / prefix)

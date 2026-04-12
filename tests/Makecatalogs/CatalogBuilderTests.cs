@@ -174,7 +174,7 @@ catalogs: []
             {
                 Name = "App1",
                 FilePath = "test.yaml",
-                Uninstaller = new Installer { Location = "missing/uninstaller.exe" }
+                Uninstaller = [new Installer { Location = "missing/uninstaller.exe" }]
             }
         };
 
