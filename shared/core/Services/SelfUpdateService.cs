@@ -398,6 +398,7 @@ public static class SelfUpdateService
         }
     }
 
+    // TODO(pkg-sunset): Remove PerformPkgUpdate method
     private static bool PerformPkgUpdate(string pkgPath, string itemName)
     {
         // .pkg files are installed using sbin-installer (C:\Program Files\sbin\installer.exe)

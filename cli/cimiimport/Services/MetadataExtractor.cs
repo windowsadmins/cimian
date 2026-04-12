@@ -48,6 +48,7 @@ public partial class MetadataExtractor
             case ".appxbundle":
                 ExtractMsixMetadata(packagePath, metadata);
                 break;
+            // TODO(pkg-sunset): Remove .pkg case routing
             case ".pkg":
                 ExtractPkgMetadata(packagePath, metadata);
                 break;
@@ -397,6 +398,7 @@ public partial class MetadataExtractor
         }
     }
 
+    // TODO(pkg-sunset): Remove ExtractPkgMetadata method
     /// <summary>
     /// Extracts .pkg (Cimian package) metadata from build-info.yaml.
     /// </summary>
@@ -631,6 +633,7 @@ public partial class MetadataExtractor
         return "";
     }
 }
+// TODO(pkg-sunset): Remove PkgBuildInfo, PkgProductInfo, PkgInstallerInfo classes
 /// <summary>
 /// Represents the build-info.yaml structure from .pkg packages.
 /// </summary>
