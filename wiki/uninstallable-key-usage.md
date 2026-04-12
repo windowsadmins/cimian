@@ -72,14 +72,26 @@ installer:
 # uninstallable: auto-determined as true
 ```
 
-4. **MSIX packages:**
+4. **MSIX / APPX packages:**
 ```yaml
 name: "store-app"
 version: "2.0.0"
 installer:
   type: "msix"
   location: "/packages/store-app-2.0.0.msix"
-# uninstallable: auto-determined as true
+installs:
+  - type: msix
+    identity_name: com.example.storeapp
+    version: 2.0.0
+uninstaller:
+  - type: msix
+    identity_name: com.example.storeapp
+# uninstallable: auto-determined as true (via the installs entry's identity_name).
+# cimiimport auto-emits both blocks when importing a .msix file.
+# Install runs Add-AppxProvisionedPackage -Online; uninstall runs
+# Remove-AppxProvisionedPackage -Online with the resolved PackageFullName
+# that was persisted to HKLM\SOFTWARE\ManagedInstalls\<Name> at install time.
+# Note: currently-signed-in users must log out/back in to see a newly provisioned app.
 ```
 
 5. **Items with registry checks:**

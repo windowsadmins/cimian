@@ -67,7 +67,7 @@ public class PkgsInfo
     public Installer? Installer { get; set; }
 
     [YamlMember(Alias = "uninstaller")]
-    public Installer? Uninstaller { get; set; }
+    public List<Installer>? Uninstaller { get; set; }
 
     [YamlMember(Alias = "preinstall_script")]
     public string? PreinstallScript { get; set; }
@@ -113,6 +113,10 @@ public class Installer
 
     [YamlMember(Alias = "arguments")]
     public List<string>? Arguments { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
+    [YamlMember(Alias = "identity_name")]
+    public string? IdentityName { get; set; }
 }
 
 /// <summary>
@@ -131,6 +135,10 @@ public class InstallItem
 
     [YamlMember(Alias = "version")]
     public string? Version { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
+    [YamlMember(Alias = "identity_name")]
+    public string? IdentityName { get; set; }
 }
 
 /// <summary>
@@ -170,6 +178,9 @@ public class InstallerMetadata
     public List<string>? Requires { get; set; }
     public List<string>? UpdateFor { get; set; }
     public List<string>? BlockingApps { get; set; }
+
+    /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
+    public string IdentityName { get; set; } = "";
 }
 
 /// <summary>

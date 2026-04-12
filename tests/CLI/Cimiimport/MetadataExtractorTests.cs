@@ -156,13 +156,207 @@ public class MetadataExtractorTests
     [InlineData(".EXE", true)]
     [InlineData(".nupkg", true)]
     [InlineData(".NUPKG", true)]
+    [InlineData(".msix", true)]
+    [InlineData(".appx", true)]
+    [InlineData(".msixbundle", true)]
+    [InlineData(".appxbundle", true)]
     [InlineData(".txt", false)]
     [InlineData(".zip", false)]
     public void IsSupportedInstallerType_ValidatesCorrectly(string extension, bool expected)
     {
-        var supportedExtensions = new[] { ".msi", ".exe", ".nupkg", ".msix" };
+        var supportedExtensions = new[] { ".msi", ".exe", ".nupkg", ".msix", ".appx", ".msixbundle", ".appxbundle" };
         var isSupported = supportedExtensions.Contains(extension.ToLowerInvariant());
         Assert.Equal(expected, isSupported);
+    }
+
+    // ========================================================================
+    // MSIX / APPX metadata extraction tests
+    // ========================================================================
+
+    private static async Task WriteMsixFixtureAsync(string path, string manifestXml)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        var entry = zip.CreateEntry("AppxManifest.xml");
+        using var writer = new StreamWriter(entry.Open());
+        await writer.WriteAsync(manifestXml);
+    }
+
+    private static async Task WriteMsixBundleFixtureAsync(string path, string bundleManifestXml)
+    {
+        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        var entry = zip.CreateEntry("AppxMetadata/AppxBundleManifest.xml");
+        using var writer = new StreamWriter(entry.Open());
+        await writer.WriteAsync(bundleManifestXml);
+    }
+
+    [Fact]
+    public async Task ExtractMetadata_ExtractsFromValidMsix()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_msix_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var msixPath = Path.Combine(tempDir, "TestApp.msix");
+            // Version 4.45.69.0 mirrors real Slack MSIX and avoids the ParseVersion
+            // date-format heuristic (which would rewrite 2.5.1.0 → 2002.05.01.0).
+            await WriteMsixFixtureAsync(msixPath, @"<?xml version=""1.0"" encoding=""utf-8""?>
+<Package xmlns=""http://schemas.microsoft.com/appx/manifest/foundation/windows10"">
+  <Identity Name=""com.example.testapp"" Version=""4.45.69.0"" ProcessorArchitecture=""x64"" Publisher=""CN=Example Corp"" />
+  <Properties>
+    <DisplayName>TestApp</DisplayName>
+    <PublisherDisplayName>Example Corp</PublisherDisplayName>
+    <Description>A test application</Description>
+  </Properties>
+</Package>");
+
+            var metadata = _extractor.ExtractMetadata(msixPath, _config);
+
+            Assert.Equal("msix", metadata.InstallerType);
+            Assert.Equal("com.example.testapp", metadata.IdentityName);
+            Assert.Equal("TestApp", metadata.Title);
+            Assert.Equal("TestApp", metadata.ID);
+            Assert.Equal("4.45.69.0", metadata.Version);
+            Assert.Equal("x64", metadata.Architecture);
+            Assert.Equal("Example Corp", metadata.Developer);
+            Assert.Equal("A test application", metadata.Description);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractMetadata_Msix_FilenameArchOverridesManifest()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_msix_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            // Filename says arm64, manifest says x64 — filename should win
+            var msixPath = Path.Combine(tempDir, "TestApp-arm64-1.0.0.msix");
+            await WriteMsixFixtureAsync(msixPath, @"<?xml version=""1.0"" encoding=""utf-8""?>
+<Package xmlns=""http://schemas.microsoft.com/appx/manifest/foundation/windows10"">
+  <Identity Name=""com.example.testapp"" Version=""1.0.0.0"" ProcessorArchitecture=""x64"" Publisher=""CN=Test"" />
+  <Properties>
+    <DisplayName>TestApp</DisplayName>
+    <PublisherDisplayName>Test</PublisherDisplayName>
+  </Properties>
+</Package>");
+
+            var metadata = _extractor.ExtractMetadata(msixPath, _config);
+
+            Assert.Equal("arm64", metadata.Architecture);
+            Assert.Contains("arm64", metadata.SupportedArch);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public void ExtractMetadata_Msix_MissingManifest_FallsBackToFilename()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_msix_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var msixPath = Path.Combine(tempDir, "MyApp-1.0.0.msix");
+            // ZIP with no AppxManifest.xml entry
+            using (var zip = ZipFile.Open(msixPath, ZipArchiveMode.Create))
+            {
+                var entry = zip.CreateEntry("other.txt");
+                using var writer = new StreamWriter(entry.Open());
+                writer.Write("not a manifest");
+            }
+
+            var metadata = _extractor.ExtractMetadata(msixPath, _config);
+
+            Assert.Equal("msix", metadata.InstallerType);
+            Assert.Equal("MyApp-1.0.0", metadata.Title);
+            Assert.Equal("1.0.0", metadata.Version);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractMetadata_Msix_CorruptManifest_FallsBackToFilename()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_msix_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var msixPath = Path.Combine(tempDir, "BrokenApp-2.0.0.msix");
+            await WriteMsixFixtureAsync(msixPath, "<<<not valid xml>>>");
+
+            var metadata = _extractor.ExtractMetadata(msixPath, _config);
+
+            Assert.Equal("msix", metadata.InstallerType);
+            Assert.Equal("BrokenApp-2.0.0", metadata.Title);
+            Assert.Equal("1.0.0", metadata.Version); // fallback default
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractMetadata_MsixBundle_ExtractsFromBundleManifest()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_msix_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var bundlePath = Path.Combine(tempDir, "TestBundle.msixbundle");
+            await WriteMsixBundleFixtureAsync(bundlePath, @"<?xml version=""1.0"" encoding=""utf-8""?>
+<Bundle xmlns=""http://schemas.microsoft.com/appx/2018/bundle"">
+  <Identity Name=""com.example.bundledapp"" Version=""3.0.0.0"" Publisher=""CN=Example"" />
+  <Packages>
+    <Package Type=""application"" Version=""3.0.0.0"" Architecture=""x64"" FileName=""TestBundle.x64.msix"" />
+  </Packages>
+</Bundle>");
+
+            var metadata = _extractor.ExtractMetadata(bundlePath, _config);
+
+            Assert.Equal("msix", metadata.InstallerType);
+            Assert.Equal("com.example.bundledapp", metadata.IdentityName);
+            Assert.Equal("bundledapp", metadata.Title); // last segment of reverse-domain
+            Assert.Equal("3.0.0.0", metadata.Version);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task ExtractMetadata_Msix_NoDisplayName_FallsBackToIdentityLastSegment()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"cimiimport_msix_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var msixPath = Path.Combine(tempDir, "NoName.msix");
+            await WriteMsixFixtureAsync(msixPath, @"<?xml version=""1.0"" encoding=""utf-8""?>
+<Package xmlns=""http://schemas.microsoft.com/appx/manifest/foundation/windows10"">
+  <Identity Name=""com.tinyspeck.slackdesktop"" Version=""4.45.69.0"" ProcessorArchitecture=""x64"" Publisher=""CN=Slack"" />
+</Package>");
+
+            var metadata = _extractor.ExtractMetadata(msixPath, _config);
+
+            Assert.Equal("com.tinyspeck.slackdesktop", metadata.IdentityName);
+            Assert.Equal("slackdesktop", metadata.Title);
+            Assert.Equal("slackdesktop", metadata.ID);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+        }
     }
 
     [Fact]
