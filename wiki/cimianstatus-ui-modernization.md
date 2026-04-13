@@ -36,7 +36,7 @@ The CimianStatus UI has been significantly modernized with a focus on improving 
 - **Modern Styling**: Cleaner progress bar appearance without heavy borders
 
 ### 5. Modernized Button Design
-- **Icon Integration**: Added emoji icons to buttons (📄 Show Logs, 🔄 Run Now)
+- **Icon Integration**: Added emoji icons to buttons (Show Logs, Run Now)
 - **Better Sizing**: Larger buttons (120x35) for improved usability
 - **Modern Positioning**: Improved button layout and spacing
 
@@ -88,7 +88,7 @@ else: progressColor = BLUE
 ### Enhanced Layout
 ```
 ┌─────────────────────────────┐
-│ 🔧 Cimian Management        │  Header (80px)
+│ Cimian Management        │  Header (80px)
 │ Software Update Status      │
 ├─────────────────────────────┤
 │                             │
@@ -99,7 +99,7 @@ else: progressColor = BLUE
 │ │ [Progress Bar]          │ │
 │ └─────────────────────────┘ │
 │                             │
-│ [📄 Show Logs] [🔄 Run Now] │  Button Panel (60px)
+│ [Show Logs] [Run Now] │  Button Panel (60px)
 └─────────────────────────────┘
 ```
 

@@ -5,12 +5,10 @@ Successfully ported the Munki `repoclean` tool to C# for the Cimian project. Thi
 
 ## Project Structure
 ```
-cmd/repoclean/
-├── repoclean.csproj              # Project file with .NET 8.0 target
+cli/repoclean/
+├── Cimian.CLI.repoclean.csproj   # Project file
 ├── Program.cs                    # Main entry point with command-line parsing
-├── Models.cs                     # Data models and options classes
-├── README.md                     # Comprehensive documentation
-├── appsettings.json              # Configuration file
+├── Models/                       # Data models and options classes
 └── Services/
     ├── Interfaces.cs             # Service interfaces
     ├── RepositoryCleaner.cs      # Main cleanup orchestrator
