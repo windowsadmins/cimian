@@ -81,18 +81,18 @@ The solution file (`CimianTools.sln`) organizes projects into folders:
 
 ```
 Solution
-├── 📁 shared
+├── shared
 │   ├── Cimian.Core
 │   ├── Cimian.Engine
 │   └── Cimian.Infrastructure
-├── 📁 cli
+├── cli
 │   ├── Cimian.CLI.managedsoftwareupdate
 │   ├── Cimian.CLI.makepkginfo
 │   └── ... (10 total)
-├── 📁 apps
+├── apps
 │   ├── Cimian.GUI.ManagedSoftwareCenter
 │   └── Cimian.GUI.CimianStatus
-└── 📁 tests
+└── tests
     └── Cimian.Tests
 ```
 
@@ -152,6 +152,6 @@ dotnet publish cli/managedsoftwareupdate/Cimian.CLI.managedsoftwareupdate.csproj
 
 ## Migration Status
 
-✅ **Complete** - All Go code has been removed from this branch. The codebase is 100% C# / .NET.
+**Complete** - All Go code has been removed from this branch. The codebase is 100% C# / .NET.
 
 See `MIGRATION_CHECKLIST.md` for detailed migration status and verification results.
