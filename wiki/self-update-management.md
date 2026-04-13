@@ -85,15 +85,15 @@ managedsoftwareupdate --selfupdate-status
 
 Output example:
 ```
-🔄 Cimian Self-Update Status
+Cimian Self-Update Status
 ════════════════════════════
-📋 Status: Self-update pending
-📦 Update details:
+Status: Self-update pending
+Update details:
    version: 2025.08.19
    package: Cimian-x64-2025.08.19.msi
    scheduled: 2025-08-18T15:30:00Z
 
-💡 To trigger the update:
+To trigger the update:
    managedsoftwareupdate --restart-service
 ```
 
@@ -105,11 +105,11 @@ managedsoftwareupdate --restart-service
 
 Output example:
 ```
-🔄 Restarting CimianWatcher service...
-✅ CimianWatcher service stopped
+Restarting CimianWatcher service...
+CimianWatcher service stopped
    Waiting for service to stop... done
-✅ CimianWatcher service restarted successfully
-ℹ️  Self-update will be processed if pending
+CimianWatcher service restarted successfully
+ℹ Self-update will be processed if pending
 ```
 
 ### Clear Self-Update Flag

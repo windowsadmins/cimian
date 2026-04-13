@@ -47,10 +47,10 @@ For dependency chains:
 
 ### Key Components
 
-1. **ItemSource struct** (`pkg/catalog/catalog.go`): Tracks the origin information for each item
-2. **Source tracking functions** (`pkg/process/process.go`): Helper functions to set, get, and log source information
-3. **Manifest processing** (`pkg/process/process.go`): Updates the Manifests function to track sources when processing manifest items
-4. **Dependency processing**: Updates advanced dependency logic to track sources for requires, update_for, and dependent items
+1. **ItemSource record** (`shared/core/Models/CatalogItem.cs`): Tracks the origin information for each item
+2. **Source tracking helpers** (`cli/managedsoftwareupdate/Services/ManifestService.cs`): Set, get, and log source information as items are resolved
+3. **Manifest processing** (`cli/managedsoftwareupdate/Services/ManifestService.cs`): Records sources when processing manifest items
+4. **Dependency processing** (`cli/managedsoftwareupdate/Services/UpdateEngine.cs`): Extends the source chain for `requires`, `update_for`, and dependent items
 
 ### Source Tracking Functions
 

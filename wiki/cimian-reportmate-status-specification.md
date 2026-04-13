@@ -342,7 +342,7 @@ ReportMate should validate:
 For questions about this specification or ReportMate integration:
 - **Development Team:** Cimian Core Team
 - **Documentation:** `/docs/cimian-reportmate-status-specification.md`
-- **Implementation Reference:** `/pkg/reporting/reporting.go`
+- **Implementation Reference:** `shared/core/Models/Reporting.cs`
 
 ---
 

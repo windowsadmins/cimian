@@ -156,11 +156,11 @@ cimitrigger gui
 
 You should see:
 ```
-🚀 Triggering GUI update via CimianWatcher service...
-✅ GUI update trigger file created successfully
-📁 Trigger file location: C:\ProgramData\ManagedInstalls\.cimian.bootstrap
-⏳ Waiting for CimianWatcher service to process the request...
-✅ CimianWatcher service processed the trigger - update should be starting!
+Triggering GUI update via CimianWatcher service...
+GUI update trigger file created successfully
+Trigger file location: C:\ProgramData\ManagedInstalls\.cimian.bootstrap
+Waiting for CimianWatcher service to process the request...
+CimianWatcher service processed the trigger - update should be starting!
 ```
 
 ## Domain vs Entra Considerations
