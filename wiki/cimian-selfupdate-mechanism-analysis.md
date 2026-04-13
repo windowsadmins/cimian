@@ -7,7 +7,7 @@ The Cimian self-update system provides a safe, reliable mechanism for Cimian to 
 
 ### Core Components
 
-1. **Self-Update Manager** (`pkg/selfupdate/selfupdate.go`)
+1. **Self-Update Manager** (`shared/core/Services/SelfUpdateService.cs`)
    - Handles scheduling and execution of self-updates
    - Provides rollback capabilities in case of failures
    - Manages backup and restore operations
@@ -17,12 +17,12 @@ The Cimian self-update system provides a safe, reliable mechanism for Cimian to 
    - Contains metadata about the scheduled update
    - Persists across service restarts
 
-3. **CimianWatcher Service** (`cmd/cimiwatcher/main.go`)
+3. **CimianWatcher Service** (`cli/cimiwatcher/Program.cs`)
    - Checks for pending self-updates on service start
    - Executes scheduled self-updates safely
    - Handles service lifecycle during updates
 
-4. **ManageSoftwareUpdate** (`cmd/managedsoftwareupdate/main.go`)
+4. **ManagedSoftwareUpdate** (`cli/managedsoftwareupdate/Program.cs`)
    - Detects Cimian packages in the catalog
    - Schedules self-updates instead of regular installation
    - Provides manual self-update commands
@@ -30,42 +30,46 @@ The Cimian self-update system provides a safe, reliable mechanism for Cimian to 
 ## Self-Update Flow
 
 ### 1. Detection Phase
-```go
+```csharp
 // In managedsoftwareupdate during regular catalog processing
-func IsCimianPackage(item catalog.Item) bool {
-    itemName := strings.ToLower(item.Name)
-    
+public static bool IsCimianPackage(CatalogItem item)
+{
+    var itemName = item.Name.ToLowerInvariant();
+
     // Exact matches for main packages
-    cimianMainPackages := []string{"cimian", "cimiantools"}
-    
+    var cimianMainPackages = new[] { "cimian", "cimiantools" };
+
     // Check installer location patterns
-    if strings.Contains(installerLocation, "/cimian-") ||
-       strings.Contains(installerLocation, "/cimiantools-") {
-        return true
+    if (installerLocation.Contains("/cimian-") ||
+        installerLocation.Contains("/cimiantools-"))
+    {
+        return true;
     }
 }
 ```
 
-**Compatibility with Build Process**: ✅ **VERIFIED**
+**Compatibility with Build Process**: **VERIFIED**
 - The build process creates MSI files named `Cimian-x64-2025.08.31.2030.msi` and `Cimian-arm64-2025.08.31.2030.msi`
 - The detection logic looks for "/cimian-" in the installer location, which would match these files
 - Package names "cimian" and "cimiantools" are also supported
 
 ### 2. Scheduling Phase
-```go
-func (sum *SelfUpdateManager) ScheduleSelfUpdate(item catalog.Item, localFile string, cfg *config.Configuration) error {
+```csharp
+public async Task ScheduleSelfUpdateAsync(CatalogItem item, string localFile, CimianConfig cfg)
+{
     // Creates flag file with metadata:
-    flagData := fmt.Sprintf(`# Cimian Self-Update Scheduled
-Item: %s
-Version: %s
-InstallerType: %s
-LocalFile: %s
-ScheduledAt: %s
-`, item.Name, item.Version, item.Installer.Type, localFile, time.Now().Format(time.RFC3339))
+    var flagData = $@"# Cimian Self-Update Scheduled
+Item: {item.Name}
+Version: {item.Version}
+InstallerType: {item.Installer.Type}
+LocalFile: {localFile}
+ScheduledAt: {DateTimeOffset.UtcNow:O}
+";
+    await File.WriteAllTextAsync(SelfUpdateFlagFile, flagData);
 }
 ```
 
-**Compatibility with Build Process**: ✅ **VERIFIED**
+**Compatibility with Build Process**: **VERIFIED**
 - The build process creates both MSI and NUPKG packages
 - The self-update system supports both installer types
 - Version format matches (e.g., `2025.08.31.2030`)
@@ -73,12 +77,13 @@ ScheduledAt: %s
 ### 3. Execution Phase
 When CimianWatcher service starts or restarts:
 
-```go
-func (m *cimianWatcherService) checkAndPerformSelfUpdate() {
-    pending, metadata, err := selfupdate.GetSelfUpdateStatus()
-    if pending {
-        selfUpdateManager := selfupdate.NewSelfUpdateManager()
-        selfUpdateManager.PerformSelfUpdate(cfg)
+```csharp
+private async Task CheckAndPerformSelfUpdateAsync()
+{
+    var (pending, metadata) = SelfUpdateService.GetSelfUpdateStatus();
+    if (pending)
+    {
+        await _selfUpdateService.PerformSelfUpdateAsync(cfg);
     }
 }
 ```
@@ -91,7 +96,7 @@ func (m *cimianWatcherService) checkAndPerformSelfUpdate() {
 5. **Cleanup**: Removes flag file and backup on success
 6. **Rollback**: Restores backup if update fails
 
-**Compatibility with Build Process**: ✅ **VERIFIED**
+**Compatibility with Build Process**: **VERIFIED**
 - MSI packages built by the build process are standard Windows Installer packages
 - The REINSTALLMODE=vamus and REINSTALL=ALL flags ensure proper upgrade behavior
 - Logging is captured for troubleshooting
@@ -110,22 +115,22 @@ release/
 
 ### Self-Update Compatibility Analysis
 
-#### MSI Package Names ✅
+#### MSI Package Names 
 - **Built**: `Cimian-arm64-2025.08.31.2030.msi`
 - **Detection**: Looks for "/cimian-" pattern in installer location
 - **Result**: Will be detected as Cimian self-update package
 
-#### Version Format ✅
+#### Version Format 
 - **Built**: `2025.08.31.2030` (from $env:RELEASE_VERSION)
 - **Expected**: String format in catalog
 - **Result**: Compatible, versions will be compared correctly
 
-#### Installer Types ✅
+#### Installer Types 
 - **Built**: MSI and NUPKG packages
 - **Supported**: Both MSI and NUPKG installer types
 - **Result**: Both package types can be used for self-update
 
-#### Architecture Support ✅
+#### Architecture Support 
 - **Built**: Both x64 and ARM64 packages
 - **Logic**: Self-update downloads and uses appropriate architecture
 - **Result**: Architecture-specific updates will work correctly
@@ -221,25 +226,25 @@ items:
 
 ## Verification Results
 
-### ✅ Package Detection
+### Package Detection
 The self-update system **WILL** detect packages built by `build.ps1` because:
 - Package names match expected patterns ("Cimian")
 - Installer locations will contain "/cimian-" pattern
 - Both MSI and NUPKG types are supported
 
-### ✅ Version Compatibility
+### Version Compatibility
 The version format used by the build process **IS** compatible:
 - Build uses: `2025.08.31.2030`
 - Self-update expects: String version numbers
 - Comparison will work correctly
 
-### ✅ Installation Process
+### Installation Process
 The MSI packages **WILL** install correctly because:
 - Standard Windows Installer format
 - Proper upgrade flags (REINSTALLMODE=vamus, REINSTALL=ALL)
 - Service management handles file locking
 
-### ✅ Architecture Support
+### Architecture Support
 Both x64 and ARM64 packages **WILL** work:
 - Self-update system is architecture-aware
 - Appropriate package will be selected and installed
@@ -249,13 +254,13 @@ Both x64 and ARM64 packages **WILL** work:
 
 The Cimian self-update mechanism **IS FULLY COMPATIBLE** with the build process. The system will:
 
-1. ✅ Correctly detect Cimian packages in the catalog
-2. ✅ Download the appropriate architecture package
-3. ✅ Schedule the self-update safely
-4. ✅ Execute the update with proper service management
-5. ✅ Upgrade the installation correctly using the new MSI
-6. ✅ Provide rollback capabilities if needed
-7. ✅ Clean up temporary files after successful update
+1. Correctly detect Cimian packages in the catalog
+2. Download the appropriate architecture package
+3. Schedule the self-update safely
+4. Execute the update with proper service management
+5. Upgrade the installation correctly using the new MSI
+6. Provide rollback capabilities if needed
+7. Clean up temporary files after successful update
 
 The `.cimian.selfupdate` flag file system ensures updates are applied safely during service restarts, avoiding the installation conflicts we just resolved.
 
