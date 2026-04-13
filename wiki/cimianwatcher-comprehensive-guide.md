@@ -80,11 +80,11 @@ Get-WmiObject -Class Win32_Service -Filter "Name='CimianWatcher'"
 # Test service installation
 $service = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
 if ($service) {
-    Write-Host "✓ Service is installed" -ForegroundColor Green
+    Write-Host "Service is installed" -ForegroundColor Green
     Write-Host "  Status: $($service.Status)"
     Write-Host "  StartType: $($service.StartType)"
 } else {
-    Write-Host "✗ Service not found" -ForegroundColor Red
+    Write-Host "Service not found" -ForegroundColor Red
 }
 ```
 
@@ -94,7 +94,7 @@ if ($service) {
 $exePath = "C:\Program Files\Cimian\cimiwatcher.exe"
 if (Test-Path $exePath) {
     $fileInfo = Get-Item $exePath
-    Write-Host "✓ Executable found" -ForegroundColor Green
+    Write-Host "Executable found" -ForegroundColor Green
     Write-Host "  Path: $($fileInfo.FullName)"
     Write-Host "  Size: $($fileInfo.Length) bytes"
     Write-Host "  Modified: $($fileInfo.LastWriteTime)"
@@ -103,7 +103,7 @@ if (Test-Path $exePath) {
     $signature = Get-AuthenticodeSignature $exePath
     Write-Host "  Signature: $($signature.Status)"
 } else {
-    Write-Host "✗ Executable not found at $exePath" -ForegroundColor Red
+    Write-Host "Executable not found at $exePath" -ForegroundColor Red
 }
 ```
 
@@ -121,7 +121,7 @@ New-Item -ItemType Directory -Path (Split-Path $flagFile) -Force -ErrorAction Si
 
 # Create flag file
 Set-Content -Path $flagFile -Value $content -Encoding UTF8
-Write-Host "✓ Bootstrap flag file created" -ForegroundColor Green
+Write-Host "Bootstrap flag file created" -ForegroundColor Green
 Write-Host "  Path: $flagFile"
 Write-Host "  Content: $content"
 
@@ -131,9 +131,9 @@ Start-Sleep -Seconds 15
 
 # Check if file still exists (service may delete it)
 if (Test-Path $flagFile) {
-    Write-Host "⚠ Flag file still exists - service may not be responding" -ForegroundColor Yellow
+    Write-Host "Flag file still exists - service may not be responding" -ForegroundColor Yellow
 } else {
-    Write-Host "✓ Flag file processed by service" -ForegroundColor Green
+    Write-Host "Flag file processed by service" -ForegroundColor Green
 }
 ```
 
@@ -142,12 +142,12 @@ if (Test-Path $flagFile) {
 # Monitor Windows Event Log for service activity
 $events = Get-EventLog -LogName Application -Source "CimianWatcher" -Newest 5 -ErrorAction SilentlyContinue
 if ($events) {
-    Write-Host "✓ Service event log entries found:" -ForegroundColor Green
+    Write-Host "Service event log entries found:" -ForegroundColor Green
     $events | ForEach-Object {
         Write-Host "  $($_.TimeGenerated): $($_.Message.Substring(0, [Math]::Min(80, $_.Message.Length)))..."
     }
 } else {
-    Write-Host "⚠ No recent service log entries found" -ForegroundColor Yellow
+    Write-Host "No recent service log entries found" -ForegroundColor Yellow
 }
 ```
 
@@ -158,13 +158,13 @@ if ($events) {
 # Monitor service resource usage
 $process = Get-Process -Name "cimianwatcher" -ErrorAction SilentlyContinue
 if ($process) {
-    Write-Host "✓ Service process running" -ForegroundColor Green
+    Write-Host "Service process running" -ForegroundColor Green
     Write-Host "  Process ID: $($process.Id)"
     Write-Host "  CPU Usage: $($process.CPU) seconds"
     Write-Host "  Memory Usage: $([Math]::Round($process.WorkingSet64 / 1MB, 2)) MB"
     Write-Host "  Start Time: $($process.StartTime)"
 } else {
-    Write-Host "✗ Service process not found" -ForegroundColor Red
+    Write-Host "Service process not found" -ForegroundColor Red
 }
 ```
 
@@ -174,11 +174,11 @@ if ($process) {
 $monitorPath = "C:\ProgramData\ManagedInstalls"
 try {
     $acl = Get-Acl $monitorPath
-    Write-Host "✓ Bootstrap directory accessible" -ForegroundColor Green
+    Write-Host "Bootstrap directory accessible" -ForegroundColor Green
     Write-Host "  Path: $monitorPath"
     Write-Host "  Owner: $($acl.Owner)"
 } catch {
-    Write-Host "✗ Cannot access bootstrap directory: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Cannot access bootstrap directory: $($_.Exception.Message)" -ForegroundColor Red
 }
 ```
 
@@ -242,9 +242,9 @@ $testFile = "C:\ProgramData\ManagedInstalls\test.tmp"
 try {
     "test" | Out-File -FilePath $testFile
     Remove-Item $testFile
-    Write-Host "✓ Directory access OK" -ForegroundColor Green
+    Write-Host "Directory access OK" -ForegroundColor Green
 } catch {
-    Write-Host "✗ Directory access failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Directory access failed: $($_.Exception.Message)" -ForegroundColor Red
 }
 
 # Monitor service in debug mode (requires stopping service first)

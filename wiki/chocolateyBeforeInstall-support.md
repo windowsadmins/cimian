@@ -19,8 +19,8 @@ Cimian now inspects every `.nupkg` file before installation and:
 ## Implementation Details
 
 ### Code Location
-- Primary implementation: `pkg/installer/installer.go`
-- Function: `extractAndRunChocolateyBeforeInstall()`
+- Primary implementation: `cli/managedsoftwareupdate/Services/InstallerService.cs`
+- Method: `ExtractAndRunChocolateyBeforeInstallAsync()`
 
 ### Execution Flow
 1. **Pre-Install Check**: Before calling `choco install` or `choco upgrade`, Cimian inspects the `.nupkg` file
@@ -49,7 +49,7 @@ No configuration changes are required. The feature is automatically enabled for 
 example-package.1.0.0.nupkg
 ├── tools/
 │   ├── chocolateyInstall.ps1
-│   └── chocolateyBeforeInstall.ps1  ← This script will be executed first
+│   └── chocolateyBeforeInstall.ps1  (this script will be executed first)
 ├── example-package.nuspec
 └── [Content_Types].xml
 ```
@@ -63,7 +63,7 @@ INFO: chocolateyBeforeInstall.ps1 script completed successfully, item=MyPackage,
 
 ## Testing
 
-Test cases are included in `pkg/installer/chocolatey_before_install_test.go` covering:
+Test cases are included in `tests/Managedsoftwareupdate/InstallerServiceTests.cs` covering:
 - Packages with `chocolateyBeforeInstall.ps1`
 - Packages without the script
 - Packages with empty scripts

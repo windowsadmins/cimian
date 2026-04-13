@@ -25,27 +25,27 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
 
 ## Key Features
 
-### 🗂️ Timestamped Directory Structure
+### Timestamped Directory Structure
 - **Format**: `YYYY-MM-DD-HHMMss` subdirectories
 - **Retention**: Last 10 days (daily) + Last 24 hours (hourly)
 - **Organization**: Automatic cleanup of old logs
 
-### 📊 External Tool Integration
+### External Tool Integration
 - **Compatible Tables**: Pre-configured table schemas for external monitoring tools
 - **JSON Format**: All logs stored in queryable JSON format
 - **Event Streaming**: Real-time event logging for monitoring
 - **Aggregated Views**: Pre-computed data tables for efficient querying
 
-### 🔄 ReportMate Compatibility
+### ReportMate Compatibility
 - **Data Export**: Native ReportMate format export
 - **Session Tracking**: Comprehensive session management
 - **Summary Reports**: Aggregated installation statistics
 
-### 🎯 Implementation Status
-- **✅ Core Architecture**: Timestamped directory structure, structured logging system
-- **✅ External Tool Integration**: Table schemas, data export, query examples
-- **✅ ReportMate Compatibility**: Export layer, data transformation, session summaries
-- **✅ Background Cleanup**: Automatic maintenance routines
+### Implementation Status
+- **Core Architecture**: Timestamped directory structure, structured logging system
+- **External Tool Integration**: Table schemas, data export, query examples
+- **ReportMate Compatibility**: Export layer, data transformation, session summaries
+- **Background Cleanup**: Automatic maintenance routines
 
 ## Data Structures & Samples
 
@@ -93,8 +93,8 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
     "message": "Package installation started",
     "duration_ms": 0,
     "progress": 0,
-    "source_file": "installer.go",
-    "source_function": "InstallPackage",
+    "source_file": "InstallerService.cs",
+    "source_function": "InstallerService.InstallPackageAsync",
     "source_line": 156
   }
 ]
@@ -139,37 +139,38 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
 ## API Usage
 
 ### Basic Logging
-```go
-import "github.com/windowsadmins/cimian/pkg/logging"
+```csharp
+using Cimian.Core.Services;
 
-// Initialize logging system
-cfg := &config.Configuration{LogLevel: "INFO"}
-logging.Init(cfg)
-defer logging.CloseLogger()
+// Initialize logging system (normally wired via DI during host build)
+var sessionLogger = new SessionLogger(config);
 
 // Basic logging with key-value pairs
-logging.Info("Package installation started", "package", "Firefox", "version", "119.0.1")
-logging.Error("Installation failed", "error_code", 1603, "package", "Chrome")
+sessionLogger.Info("Package installation started",
+    ("package", "Firefox"), ("version", "119.0.1"));
+sessionLogger.Error("Installation failed",
+    ("error_code", 1603), ("package", "Chrome"));
 ```
 
 ### Structured Logging
-```go
+```csharp
 // For external tool compatibility with explicit properties
-properties := map[string]interface{}{
-    "package_name":      "Firefox",
-    "installer_type":   "MSI",
-}
-logging.LogStructured(logging.LevelInfo, "Package installation completed", properties)
+var properties = new Dictionary<string, object?>
+{
+    ["package_name"] = "Firefox",
+    ["installer_type"] = "MSI",
+};
+sessionLogger.LogStructured(LogLevel.Information, "Package installation completed", properties);
 ```
 
 ### Session Management
-```go
+```csharp
 // Get current session information
-logDir := logging.GetCurrentLogDir()
-sessionID := logging.GetSessionID()
+var logDir = sessionLogger.CurrentLogDirectory;
+var sessionId = sessionLogger.SessionId;
 
 // Update run type during execution
-logging.SetRunType("manual") // manual, scheduled, auto
+sessionLogger.SetRunType("manual"); // manual, scheduled, auto
 ```
 
 ## External Tool Integration
@@ -363,16 +364,15 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed aggregated views
 
 ## Implementation Status
 
-### ✅ Completed Components
+### Completed Components
 ```
-pkg/logging/
-├── logging.go          ✅ Enhanced core logging with structured integration
-├── events.go           ✅ Structured logging implementation  
-├── osquery.go         ✅ osquery table generation and export
-└── reportmate.go      ✅ ReportMate compatibility layer
+shared/core/Services/
+├── SessionLogger.cs    Per-session structured JSONL event streams
+├── ConsoleLogger.cs    Console output with level filtering
+└── DataExporter.cs     osquery / ReportMate export layer
 ```
 
-### ⏳ Next Steps
+### Next Steps
 1. **Integration**: Update existing Cimian components to use new logging
 2. **Testing**: Comprehensive testing with signed binaries
 3. **Deployment**: Roll out to production environments

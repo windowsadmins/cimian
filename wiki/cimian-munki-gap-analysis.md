@@ -39,30 +39,30 @@
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 1 | ~~`force_install_after_date` enforcement~~ | **DONE** — `IdentifyActions` forces optional items when deadline passes; deadline overrides `install_window` deferral | ✅ Implemented |
-| 2 | ~~`RestartAction` enforcement~~ | **DONE** — `RequireRestart`/`RecommendRestart` schedules reboot; `RequireLogout` forces logoff. Auto/bootstrap only; interactive logs recommendation. | ✅ Implemented |
+| 1 | ~~`force_install_after_date` enforcement~~ | **DONE** — `IdentifyActions` forces optional items when deadline passes; deadline overrides `install_window` deferral | Implemented |
+| 2 | ~~`RestartAction` enforcement~~ | **DONE** — `RequireRestart`/`RecommendRestart` schedules reboot; `RequireLogout` forces logoff. Auto/bootstrap only; interactive logs recommendation. | Implemented |
 
 ### Priority 2: UI Feature Gaps
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 3 | ~~`featured_items` backend wiring~~ | **DONE** — Wired from manifests through to `WriteInstallInfo()` | ✅ Implemented |
-| 4 | ~~MSC text search~~ | **DONE** — `AutoSuggestBox` + `ApplyFilters()` searches name, description, developer, category | ✅ Implemented |
-| 5 | ~~Installation history view~~ | **DONE** — `HistoryPage` reads `sessions.json`, wired into navigation + DI | ✅ Implemented |
+| 3 | ~~`featured_items` backend wiring~~ | **DONE** — Wired from manifests through to `WriteInstallInfo()` | Implemented |
+| 4 | ~~MSC text search~~ | **DONE** — `AutoSuggestBox` + `ApplyFilters()` searches name, description, developer, category | Implemented |
+| 5 | ~~Installation history view~~ | **DONE** — `HistoryPage` reads `sessions.json`, wired into navigation + DI | Implemented |
 | 6 | Deep link URL scheme (`cimian://`) | Not implemented | Medium — protocol registration + URI handler |
 
 ### Priority 3: New Feature Gaps
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 7 | ~~`version_script`~~ | **DONE** — Munki v7 parity. Priority 2 in detection chain. | ✅ Implemented |
-| 8 | ~~`default_installs`~~ | **DONE** — Install-once semantics in ManifestService + UpdateEngine. | ✅ Implemented |
-| 9 | ~~Admin-Provided Custom Conditions~~ | **DONE** — Scripts in `C:\ProgramData\ManagedInstalls\conditions\` (.ps1/.bat/.cmd/.exe), stdout parsed as key=value, merged into CustomFacts | ✅ Implemented |
-| 10 | ~~AutoRemove~~ | **DONE** — `AutoRemove` config option; compares ManagedInstalls registry against manifests, queues orphaned packages for uninstall | ✅ Implemented |
-| 11 | ~~Precache~~ | **DONE** — `precache` bool on catalog items; `PrecacheOptionalItemsAsync()` downloads to cache without installing. | ✅ Implemented |
+| 7 | ~~`version_script`~~ | **DONE** — Munki v7 parity. Priority 2 in detection chain. | Implemented |
+| 8 | ~~`default_installs`~~ | **DONE** — Install-once semantics in ManifestService + UpdateEngine. | Implemented |
+| 9 | ~~Admin-Provided Custom Conditions~~ | **DONE** — Scripts in `C:\ProgramData\ManagedInstalls\conditions\` (.ps1/.bat/.cmd/.exe), stdout parsed as key=value, merged into CustomFacts | Implemented |
+| 10 | ~~AutoRemove~~ | **DONE** — `AutoRemove` config option; compares ManagedInstalls registry against manifests, queues orphaned packages for uninstall | Implemented |
+| 11 | ~~Precache~~ | **DONE** — `precache` bool on catalog items; `PrecacheOptionalItemsAsync()` downloads to cache without installing. | Implemented |
 | 12 | Localization / i18n | Framework ready but all strings hardcoded English | Large — extract strings, add resource files |
 | 13 | License seat tracking | Track available license seats per package | Large — server-side component needed |
-| 14 | ~~SSL Client Certificates~~ | **DONE** — mTLS via PFX/cert store + custom CA validation via `CimianHttpClientFactory` | ✅ Implemented |
+| 14 | ~~SSL Client Certificates~~ | **DONE** — mTLS via PFX/cert store + custom CA validation via `CimianHttpClientFactory` | Implemented |
 
 ## Unique Cimian Features (Not in Munki)
 

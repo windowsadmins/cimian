@@ -71,7 +71,7 @@ C:\ProgramData\ManagedInstalls\reports\
 ### Console Error Log
 ```
 [2025-08-30 20:33:04] ERROR installerInstall returned error item: Git error: system arch arm64 not in supported_arch=[x64] for item Git
-[2025-08-30 20:33:04] ✗ Installation failed: failed: [Git DotNetRuntime] succeeded: 0 total: 2
+[2025-08-30 20:33:04] Installation failed: failed: [Git DotNetRuntime] succeeded: 0 total: 2
 ```
 
 ## Data Sources for ReportMate
@@ -97,8 +97,8 @@ C:\ProgramData\ManagedInstalls\reports\
     "system_arch": "arm64"
   },
   "source": {
-    "file": "logging.go",
-    "function": "logging.LogEventEntry",
+    "file": "SessionLogger.cs",
+    "function": "SessionLogger.LogEventEntry",
     "line": 817
   }
 }
@@ -124,8 +124,8 @@ C:\ProgramData\ManagedInstalls\reports\
     "installer_output": "Error 1603. Fatal error during installation."
   },
   "source": {
-    "file": "installer.go",
-    "function": "InstallMSI",
+    "file": "InstallerService.cs",
+    "function": "InstallerService.InstallMsiAsync",
     "line": 245
   }
 }
@@ -319,14 +319,14 @@ def collect_configuration_warnings():
 
 ### 3. Alerting Thresholds
 
-- **🚨 CRITICAL (Immediate Action Required)**: 
+- **CRITICAL (Immediate Action Required)**: 
   - Any `status == "error"`
   - Software that users need is failing to install
   
-- **⚠️ WARNING (Monitor and Plan)**:
+- **WARNING (Monitor and Plan)**:
   - `status == "warning"`: Repository has packages incompatible with system architecture, configuration issues, network problems, missing dependencies
 
-- **📊 INFO (Trending Analysis)**:
+- **INFO (Trending Analysis)**:
   - Warning count > 5 for any package (repository cleanup needed)
   - New error types or unusual patterns
   - System architecture distribution analysis

@@ -55,12 +55,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass [additional_args] -File script
 
 The bypass is implemented consistently across all script execution functions:
 
-```go
+```csharp
 // Standard PowerShell arguments with execution policy bypass
-func buildStandardPowerShellArgs(args ...string) []string {
-    baseArgs := []string{"-NoProfile", "-ExecutionPolicy", "Bypass"}
-    baseArgs = append(baseArgs, args...)
-    return baseArgs
+public static string[] BuildStandardPowerShellArgs(params string[] args)
+{
+    var baseArgs = new List<string> { "-NoProfile", "-ExecutionPolicy", "Bypass" };
+    baseArgs.AddRange(args);
+    return baseArgs.ToArray();
 }
 ```
 
@@ -68,18 +69,21 @@ func buildStandardPowerShellArgs(args ...string) []string {
 
 For functions with access to configuration, the bypass can be controlled:
 
-```go
+```csharp
 // Configurable PowerShell arguments
-func buildPowerShellArgs(cfg *config.Configuration, args ...string) []string {
-    baseArgs := []string{"-NoProfile"}
-    
+public static string[] BuildPowerShellArgs(CimianConfig? cfg, params string[] args)
+{
+    var baseArgs = new List<string> { "-NoProfile" };
+
     // Add execution policy bypass if configured (default: true)
-    if cfg == nil || cfg.ForceExecutionPolicyBypass {
-        baseArgs = append(baseArgs, "-ExecutionPolicy", "Bypass")
+    if (cfg is null || cfg.ForceExecutionPolicyBypass)
+    {
+        baseArgs.Add("-ExecutionPolicy");
+        baseArgs.Add("Bypass");
     }
-    
-    baseArgs = append(baseArgs, args...)
-    return baseArgs
+
+    baseArgs.AddRange(args);
+    return baseArgs.ToArray();
 }
 ```
 

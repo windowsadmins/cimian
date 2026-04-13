@@ -6,175 +6,124 @@ This guide documents the improved status classification system implemented in Ci
 
 ## Status Constants
 
-The following status constants are defined in `pkg/logging/logging.go`:
+The following status constants are defined in `shared/core/Models/StatusReasonCode.cs`:
 
 ### Error Status Types (Critical)
-```go
-const (
-    StatusInstallationError = "installation_error"  // MSI, EXE, NuGet package failed to install
-    StatusScriptError       = "script_error"        // Pre/post-install script execution failed
-    StatusExecutionError    = "execution_error"     // Binary execution failure during install
-)
+```csharp
+public static class StatusValue
+{
+    public const string InstallationError = "installation_error";  // MSI, EXE, NuGet package failed to install
+    public const string ScriptError       = "script_error";        // Pre/post-install script execution failed
+    public const string ExecutionError    = "execution_error";     // Binary execution failure during install
+}
 ```
 
 ### Warning Status Types (Non-Critical)
-```go
-const (
-    StatusArchitectureWarning = "architecture_warning"  // Architecture mismatch (repo issue)
-    StatusDependencyWarning   = "dependency_warning"    // Missing dependencies detected
-    StatusConfigWarning       = "config_warning"        // Configuration/manifest issues
-    StatusDownloadWarning     = "download_warning"      // Network/download problems
-    StatusCompatibilityWarning = "compatibility_warning" // OS version compatibility
-)
+```csharp
+public static class StatusValue
+{
+    public const string ArchitectureWarning  = "architecture_warning";   // Architecture mismatch (repo issue)
+    public const string DependencyWarning    = "dependency_warning";     // Missing dependencies detected
+    public const string ConfigWarning        = "config_warning";         // Configuration/manifest issues
+    public const string DownloadWarning      = "download_warning";       // Network/download problems
+    public const string CompatibilityWarning = "compatibility_warning";  // OS version compatibility
+}
 ```
 
 ### Success Status Types
-```go
-const (
-    StatusSuccess    = "success"    // Operation completed successfully
-    StatusCompleted  = "completed"  // Process finished without errors
-    StatusSkipped    = "skipped"    // Operation intentionally skipped
-)
+```csharp
+public static class StatusValue
+{
+    public const string Success   = "success";    // Operation completed successfully
+    public const string Completed = "completed";  // Process finished without errors
+    public const string Skipped   = "skipped";    // Operation intentionally skipped
+}
 ```
 
 ## Helper Functions
 
 ### Status Classification Helper
-```go
-// DetermineInstallStatus returns appropriate status based on context
-func DetermineInstallStatus(err error, context map[string]interface{}) string {
-    if err == nil {
-        return StatusSuccess
+```csharp
+// DetermineInstallStatus returns the appropriate status based on context.
+public static string DetermineInstallStatus(Exception? err, IDictionary<string, object?>? context)
+{
+    if (err is null)
+    {
+        return StatusValue.Success;
     }
-    
-    errMsg := strings.ToLower(err.Error())
-    
+
+    var errMsg = err.Message.ToLowerInvariant();
+
     // Check for architecture mismatches (WARNING)
-    if strings.Contains(errMsg, "architecture") || 
-       strings.Contains(errMsg, "supported_arch") {
-        return StatusArchitectureWarning
+    if (errMsg.Contains("architecture") || errMsg.Contains("supported_arch"))
+    {
+        return StatusValue.ArchitectureWarning;
     }
-    
+
     // Check for actual installation failures (ERROR)
-    if strings.Contains(errMsg, "exit code") || 
-       strings.Contains(errMsg, "installation failed") ||
-       strings.Contains(errMsg, "msi") ||
-       strings.Contains(errMsg, "exe") {
-        return StatusInstallationError
+    if (errMsg.Contains("exit code") ||
+        errMsg.Contains("installation failed") ||
+        errMsg.Contains("msi") ||
+        errMsg.Contains("exe"))
+    {
+        return StatusValue.InstallationError;
     }
-    
+
     // Check for script failures (ERROR)
-    if strings.Contains(errMsg, "script") {
-        return StatusScriptError
+    if (errMsg.Contains("script"))
+    {
+        return StatusValue.ScriptError;
     }
-    
+
     // Check for download issues (WARNING)
-    if strings.Contains(errMsg, "download") || 
-       strings.Contains(errMsg, "network") {
-        return StatusDownloadWarning
+    if (errMsg.Contains("download") || errMsg.Contains("network"))
+    {
+        return StatusValue.DownloadWarning;
     }
-    
+
     // Check for configuration issues (WARNING)
-    if strings.Contains(errMsg, "manifest") || 
-       strings.Contains(errMsg, "catalog") ||
-       strings.Contains(errMsg, "config") {
-        return StatusConfigWarning
+    if (errMsg.Contains("manifest") || errMsg.Contains("catalog") || errMsg.Contains("config"))
+    {
+        return StatusValue.ConfigWarning;
     }
-    
+
     // Default to execution error for unknown failures
-    return StatusExecutionError
+    return StatusValue.ExecutionError;
 }
 ```
 
 ### Script Status Helper
-```go
-// DetermineScriptStatus returns appropriate status for script execution
-func DetermineScriptStatus(exitCode int, output string) string {
-    if exitCode == 0 {
-        return StatusSuccess
-    }
-    return StatusScriptError
+```csharp
+// DetermineScriptStatus returns the appropriate status for script execution.
+public static string DetermineScriptStatus(int exitCode, string output)
+{
+    return exitCode == 0 ? StatusValue.Success : StatusValue.ScriptError;
 }
 ```
 
 ### Download Status Helper
-```go
-// DetermineDownloadStatus returns appropriate status for download operations
-func DetermineDownloadStatus(err error, httpStatus int) string {
-    if err == nil && httpStatus >= 200 && httpStatus < 300 {
-        return StatusSuccess
+```csharp
+// DetermineDownloadStatus returns the appropriate status for download operations.
+public static string DetermineDownloadStatus(Exception? err, int httpStatus)
+{
+    if (err is null && httpStatus >= 200 && httpStatus < 300)
+    {
+        return StatusValue.Success;
     }
-    return StatusDownloadWarning
+    return StatusValue.DownloadWarning;
 }
 ```
 
 ## Implementation Examples
 
-### Architecture Check
-```go
-// Before (generic)
-logging.LogEventEntry("install", "architecture_check", "failed", 
-    fmt.Sprintf("Architecture mismatch: system arch %s not supported", sysArch))
+Call sites pass the classified status through `SessionLogger.LogEventEntry()` instead of a hardcoded `"failed"` literal. The typical patterns:
 
-// After (specific)
-logging.LogEventEntry("install", "architecture_check", StatusArchitectureWarning,
-    fmt.Sprintf("Architecture mismatch: system arch %s not supported (package supports: %v)", 
-        sysArch, item.SupportedArch))
-```
+- **Architecture check** - use `StatusValue.ArchitectureWarning` when `SupportedArch` does not include the system arch; include the package's supported-arch list in the message context.
+- **MSI installation** - exit code `3010` is treated as `StatusValue.Success` (reboot required); any other non-zero exit code maps to `StatusValue.InstallationError`.
+- **Script execution** - route through `DetermineScriptStatus(exitCode, output)` so exit 0 is `Success` and anything else is `ScriptError`.
+- **Download operations** - route through `DetermineDownloadStatus(err, httpStatus)` so 2xx is `Success` and anything else is `DownloadWarning`.
 
-### MSI Installation
-```go
-// Before (generic)
-if exitCode != 0 {
-    logging.LogEventEntry("install", "execute", "failed",
-        fmt.Sprintf("MSI installation failed with exit code %d", exitCode))
-}
-
-// After (specific)
-if exitCode != 0 {
-    if exitCode == 3010 {
-        // Reboot required - this is actually success
-        logging.LogEventEntry("install", "execute", StatusSuccess,
-            fmt.Sprintf("MSI installation succeeded with reboot required (exit code %d)", exitCode))
-    } else {
-        // Actual failure
-        logging.LogEventEntry("install", "execute", StatusInstallationError,
-            fmt.Sprintf("MSI installation failed with exit code %d: %s", exitCode, output))
-    }
-}
-```
-
-### Script Execution
-```go
-// Before (generic)
-if err := runScript(scriptPath); err != nil {
-    logging.LogEventEntry("install", "preinstall_script", "failed",
-        fmt.Sprintf("Script execution failed: %v", err))
-}
-
-// After (specific)
-if exitCode, output, err := runScriptWithOutput(scriptPath); err != nil {
-    status := DetermineScriptStatus(exitCode, output)
-    logging.LogEventEntry("install", "preinstall_script", status,
-        fmt.Sprintf("Script execution failed with exit code %d: %s", exitCode, output))
-}
-```
-
-### Download Operations
-```go
-// Before (generic)
-if err := downloadFile(url, dest); err != nil {
-    logging.LogEventEntry("download", "fetch", "failed",
-        fmt.Sprintf("Download failed: %v", err))
-}
-
-// After (specific)
-if err := downloadFile(url, dest); err != nil {
-    status := DetermineDownloadStatus(err, httpStatus)
-    logging.LogEventEntry("download", "fetch", status,
-        fmt.Sprintf("Download failed from %s: %v", url, err))
-}
-```
+For concrete call sites, see `cli/managedsoftwareupdate/Services/InstallerService.cs`, `ScriptService.cs`, and `DownloadService.cs`.
 
 ## Usage Guidelines
 

@@ -17,10 +17,10 @@ By creating `.exe.ignore` files for each executable, we tell Chocolatey to skip 
 - `cimistatus.exe.ignore`
 - `cimitrigger.exe.ignore`
 - `cimiwatcher.exe.ignore`
-- `makecatalogs.exe.ignore` ✓ (NEW)
-- `makepkginfo.exe.ignore` ✓ (NEW)
-- `managedsoftwareupdate.exe.ignore` ✓ (NEW)
-- `manifestutil.exe.ignore` ✓ (NEW)
+- `makecatalogs.exe.ignore` (NEW)
+- `makepkginfo.exe.ignore` (NEW)
+- `managedsoftwareupdate.exe.ignore` (NEW)
+- `manifestutil.exe.ignore` (NEW)
 
 ### 2. Updated chocolateyInstall.ps1
 - Added comments explaining the shim prevention strategy
@@ -41,11 +41,11 @@ Both `nupkg.x64.nuspec` and `nupkg.arm64.nuspec` now include:
 
 ## Benefits
 
-- ✅ Prevents Chocolatey shim conflicts
-- ✅ Executables install to proper location (`C:\Program Files\Cimian\`)
-- ✅ PATH is properly managed
-- ✅ No interference with local development
-- ✅ Clean uninstallation process
+- Prevents Chocolatey shim conflicts
+- Executables install to proper location (`C:\Program Files\Cimian\`)
+- PATH is properly managed
+- No interference with local development
+- Clean uninstallation process
 
 ## Testing
 

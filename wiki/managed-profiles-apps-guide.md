@@ -10,10 +10,10 @@ Cimian now supports two new array keys that work alongside the existing `managed
 - **`managed_apps`**: Microsoft Store applications deployed via Microsoft Graph API
 
 These arrays follow the same patterns as existing managed arrays and support:
-- ✅ Manifest-level configuration
-- ✅ Conditional item evaluation (NSPredicate-style)
-- ✅ Deduplication logic to prevent conflicts
-- ✅ Integration with Cimian's logging and reporting system
+- Manifest-level configuration
+- Conditional item evaluation (NSPredicate-style)
+- Deduplication logic to prevent conflicts
+- Integration with Cimian's logging and reporting system
 
 ## Usage Examples
 
