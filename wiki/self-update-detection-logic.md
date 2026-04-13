@@ -7,11 +7,11 @@ The self-update detection has been refined to only trigger for the **main Cimian
 ## Updated Detection Logic
 
 ### Main Cimian Packages (Triggers Self-Update)
-✅ **Exact matches:**
+**Exact matches:**
 - `cimian`
 - `cimiantools`
 
-✅ **Exact matches with suffixes:**
+**Exact matches with suffixes:**
 - `cimian-msi`
 - `cimian-nupkg` 
 - `cimiantools-msi`
@@ -19,7 +19,7 @@ The self-update detection has been refined to only trigger for the **main Cimian
 - `cimian.msi`
 - `cimian.nupkg`
 
-✅ **Installer location patterns:**
+**Installer location patterns:**
 - `/cimian-*.msi`
 - `/cimian-*.nupkg`
 - `/cimiantools-*.msi`
@@ -28,7 +28,7 @@ The self-update detection has been refined to only trigger for the **main Cimian
 - `/cimian.nupkg`
 
 ### Supporting Tools (Excluded from Self-Update)
-❌ **Explicitly excluded prefixes:**
+**Explicitly excluded prefixes:**
 - `cimianpreflight`
 - `cimianauth`
 - `cimianbrowser`
@@ -47,10 +47,10 @@ The self-update detection has been refined to only trigger for the **main Cimian
 ### Packages in Repository
 | Package Name | Version | Self-Update Triggered? | Reason |
 |-------------|---------|----------------------|---------|
-| `Cimian` | 25.8.18 | ❌ No | Architecture mismatch (would trigger on x64) |
-| `CimianPreflight` | 2025.8.12 | ❌ No | ✅ Correctly excluded (supporting tool) |
-| `CimianAuth` | 2025.8.12 | ❌ No | ✅ Correctly excluded (supporting tool) |
-| `OneDrivePrefs` | 1.0.0 | ❌ No | ✅ Correctly excluded (not Cimian package) |
+| `Cimian` | 25.8.18 | No | Architecture mismatch (would trigger on x64) |
+| `CimianPreflight` | 2025.8.12 | No | Correctly excluded (supporting tool) |
+| `CimianAuth` | 2025.8.12 | No | Correctly excluded (supporting tool) |
+| `OneDrivePrefs` | 1.0.0 | No | Correctly excluded (not Cimian package) |
 
 ### Verification Commands
 ```bash
