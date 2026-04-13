@@ -54,7 +54,7 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Extracts metadata automatically (version, product codes, dependencies)
 - Generates YAML pkginfo files with installation instructions
 - Integrates with cloud storage (AWS S3, Azure Blob Storage) for package distribution
-- Handles script integration (pre/post install/uninstall scr
+- Handles script integration (pre/post install and uninstall scripts)
 - Features interactive and non-interactive configuration modes
 
 **`cimipkg.exe`** - *NuGet Package Creator*
@@ -76,6 +76,12 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 - Extracts installer metadata and generates deployment configurations
 - Supports direct package analysis and metadata generation workflows
 
+**`repoclean.exe`** - *Repository Cleaner*
+- Removes older, unused software items from a Cimian repository
+- Keeps a configurable number of recent versions per package (`--keep`, default 2)
+- Runs as a dry-run by default; use `--remove` to actually delete
+- Supports `--auto` for non-interactive cleanup in CI/CD pipelines
+
 #### Deployment Triggers and Monitoring
 
 **`cimitrigger.exe`** - *Deployment Trigger Tool*
@@ -95,14 +101,19 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 
 #### User Interface
 
-**`cimistatus.exe`** - *Modern Status GUI Application*
-- Native WPF application with Windows 11-inspired design
-- Real-time status monitoring for software operations
-- Modern UI with theme-aware colors and animations
-- Supports both interactive user sessions and background service mode
-- Single-instance application with window management
-- Integration with logging and status reporting systems
-- Built using Modern WPF UI framework for contemporary appearance
+**`ManagedSoftwareCenter.exe`** - *End-User Self-Service Application*
+- WinUI 3 application providing a Munki-style self-service software catalog
+- Browse, install, update, and remove optional software without admin rights
+- Organized pages for Software, Categories, My Items, Updates, and History
+- Item detail views with descriptions, screenshots, and version info
+- Built-in log viewer for diagnosing installation issues
+- Theme-aware UI that follows the Windows system light/dark setting
+
+**`cimistatus.exe`** - *Installation Status GUI*
+- Native WPF status window shown during bootstrap and managed update runs
+- Real-time progress, package queue, and error reporting
+- Single-instance design with user-session and service-mode support
+- Integrates with the logging and reporting pipeline used by `managedsoftwareupdate`
 
 ## Repository Structure
 
@@ -273,19 +284,19 @@ The project uses a comprehensive PowerShell build system (`build.ps1`) that:
 
 ```pwsh
 # Full build with automatic signing
-.\build.ps1
-
-# Development mode (fast iteration)
-.\build.ps1 -Dev -Install
+.\build.ps1 -Sign
 
 # Build specific binary only
 .\build.ps1 -Binary cimistatus -Sign
 
-# Create Intune packages
-.\build.ps1 -IntuneWin
+# Build all binaries without packaging
+.\build.ps1 -Sign -Binaries
 
-# Package existing binaries
-.\build.ps1 -PackageOnly
+# Create Intune packages
+.\build.ps1 -Sign -IntuneWin
+
+# Package existing binaries without rebuilding
+.\build.ps1 -Sign -PackageOnly
 ```
 
 ### Environment Configuration
@@ -770,7 +781,7 @@ conditional_items:
   - condition: enrolled_usage == "Shared"
     conditional_items:
       # Nested conditions within the main condition
-      - condition: enrolled_area != "Classroom" OR enrolled_area != "Podium"
+      - condition: enrolled_area != "Classroom" AND enrolled_area != "Podium"
         managed_installs:
           - CollaborativeTools
           - GroupSoftware
@@ -1015,7 +1026,7 @@ conditional_items:
 Cimian components write to Windows Event Log under:
 - **Application Log**: General application events
 - **System Log**: Service-related events  
-- **Custom Logs**: Detailed operation logs in `C:\ProgramData\ManagedInstalls\Logs\`
+- **Custom Logs**: Detailed operation logs in `C:\ProgramData\ManagedInstalls\logs\`
 
 ### Log Files
 
@@ -1070,7 +1081,7 @@ managedsoftwareupdate.exe --checkonly --verbose
 
 ### Microsoft Intune Integration
 
-1. **Package Creation**: Use `cimipkg.exe -intunewin` to create .intunewin packages
+1. **Package Creation**: Use `cimipkg.exe --nupkg --intunewin <project>` to create .intunewin packages
 2. **Upload to Intune**: Import .intunewin files into Microsoft Endpoint Manager
 3. **Assignment**: Deploy to device groups with appropriate targeting
 4. **Monitoring**: Use Intune reporting for deployment status
