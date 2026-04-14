@@ -101,19 +101,13 @@ All binaries are built for both x64 and ARM64 architectures and installed to `C:
 
 #### User Interface
 
-**`ManagedSoftwareCenter.exe`** - *End-User Self-Service Application*
-- WinUI 3 application providing a Munki-style self-service software catalog
+**`Managed Software Center.exe`** - *End-User Self-Service Application*
+- WinUI 3 application providing a self-service software catalog
 - Browse, install, update, and remove optional software without admin rights
 - Organized pages for Software, Categories, My Items, Updates, and History
 - Item detail views with descriptions, screenshots, and version info
 - Built-in log viewer for diagnosing installation issues
 - Theme-aware UI that follows the Windows system light/dark setting
-
-**`cimistatus.exe`** - *Installation Status GUI*
-- Native WPF status window shown during bootstrap and managed update runs
-- Real-time progress, package queue, and error reporting
-- Single-instance design with user-session and service-mode support
-- Integrates with the logging and reporting pipeline used by `managedsoftwareupdate`
 
 ## Repository Structure
 
