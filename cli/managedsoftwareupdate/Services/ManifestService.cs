@@ -1,10 +1,12 @@
 using System.Net.Http.Headers;
 using System.Text;
+using Microsoft.Extensions.Logging.Abstractions;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core.Services;
 using Cimian.Engine.Predicates;
+using Cimian.Infrastructure.System;
 using SystemFacts = Cimian.Core.Models.SystemFacts;
 // Use the Predicate expression types from Cimian.Engine
 using ParsedExpression = Cimian.Engine.Predicates.ParsedExpression;
@@ -333,22 +335,34 @@ public class ManifestService
     {
         if (_systemFacts != null) return;
 
-        var osVersion = Environment.OSVersion.Version;
-
-        _systemFacts = new Cimian.Core.Models.SystemFacts
+        // Use the full SystemFactsCollector (WMI-backed) so conditionals referencing
+        // machine_model, gpu_names, cpu_*, ram_*, storage_*, npu_* evaluate against
+        // real hardware values. Falls back to a minimal stub if collection fails so
+        // the run still proceeds (conditionals just evaluate to false, same as before).
+        try
         {
-            Hostname = Environment.MachineName,
-            Architecture = GetSystemArchitecture(),
-            OperatingSystem = "Windows",
-            OperatingSystemVersion = osVersion.ToString(),
-            OSVersMajor = osVersion.Major,
-            OSVersMinor = osVersion.Minor,
-            OSBuildNumber = osVersion.Build,
-            Catalogs = _config.Catalogs,
-            MachineType = GetMachineType(),
-            MachineModel = GetMachineModel(),
-            CollectedAt = DateTime.UtcNow
-        };
+            var collector = new SystemFactsCollector(new ConsoleForwardingLogger<SystemFactsCollector>());
+            collector.SetCatalogs(_config.Catalogs);
+            _systemFacts = collector.CollectAsync().GetAwaiter().GetResult();
+            ConsoleLogger.Info($"    SystemFacts: machine_model='{_systemFacts.MachineModel}' machine_type='{_systemFacts.MachineType}' gpu_names=[{string.Join(", ", _systemFacts.GpuNames)}] arch='{_systemFacts.Architecture}'");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"SystemFactsCollector failed ({ex.Message}) - falling back to minimal facts");
+            var osVersion = Environment.OSVersion.Version;
+            _systemFacts = new SystemFacts
+            {
+                Hostname = Environment.MachineName,
+                Architecture = GetSystemArchitecture(),
+                OperatingSystem = "Windows",
+                OperatingSystemVersion = osVersion.ToString(),
+                OSVersMajor = osVersion.Major,
+                OSVersMinor = osVersion.Minor,
+                OSBuildNumber = osVersion.Build,
+                Catalogs = _config.Catalogs,
+                CollectedAt = DateTime.UtcNow
+            };
+        }
 
         // Load admin-provided custom conditions (Munki parity)
         LoadCustomConditions();
@@ -504,62 +518,6 @@ public class ManifestService
         };
     }
     
-    /// <summary>
-    /// Gets the machine model (for ARM64 Surface detection, etc.)
-    /// </summary>
-    private static string GetMachineModel()
-    {
-        // This would ideally use WMI Win32_ComputerSystem.Model
-        // For now, return a placeholder - can be enhanced later
-        return "Unknown";
-    }
-    
-    /// <summary>
-    /// Detects machine type: laptop, desktop, virtual, or server
-    /// Uses battery presence as primary laptop indicator
-    /// </summary>
-    private static string GetMachineType()
-    {
-        try
-        {
-            // Check for virtual machine first
-            var manufacturer = Environment.GetEnvironmentVariable("COMPUTERNAME") ?? "";
-            if (manufacturer.StartsWith("VM", StringComparison.OrdinalIgnoreCase))
-            {
-                return "virtual";
-            }
-            
-            // Check for battery - presence indicates laptop
-            // Use PowerShell to query battery status
-            var batteryCheck = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoProfile -Command \"(Get-WmiObject Win32_Battery).Count\"",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            
-            using var process = System.Diagnostics.Process.Start(batteryCheck);
-            if (process != null)
-            {
-                var output = process.StandardOutput.ReadToEnd().Trim();
-                process.WaitForExit(5000);
-                
-                if (int.TryParse(output, out int batteryCount) && batteryCount > 0)
-                {
-                    return "laptop";
-                }
-            }
-        }
-        catch
-        {
-            // Fall through to default
-        }
-        
-        return "desktop";
-    }
-
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)
     {
         var items = new List<ManifestItem>();
@@ -751,8 +709,44 @@ public class ManifestService
         {
             return ver1 < ver2;
         }
-        
+
         // Fall back to string comparison
         return string.Compare(v1, v2, StringComparison.OrdinalIgnoreCase) < 0;
+    }
+}
+
+/// <summary>
+/// Forwards Microsoft.Extensions.Logging calls to ConsoleLogger so warnings and errors
+/// from Cimian.Infrastructure services are visible in managedsoftwareupdate output.
+/// </summary>
+internal sealed class ConsoleForwardingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+{
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) =>
+        logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning;
+
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        if (!IsEnabled(logLevel)) return;
+        var message = formatter(state, exception);
+        if (exception != null) message = $"{message}: {exception.GetType().Name}: {exception.Message}";
+        switch (logLevel)
+        {
+            case Microsoft.Extensions.Logging.LogLevel.Error:
+            case Microsoft.Extensions.Logging.LogLevel.Critical:
+                ConsoleLogger.Error($"    [{typeof(T).Name}] {message}");
+                break;
+            default:
+                ConsoleLogger.Warn($"    [{typeof(T).Name}] {message}");
+                break;
+        }
+    }
+
+    private sealed class NullScope : IDisposable
+    {
+        public static readonly NullScope Instance = new();
+        public void Dispose() { }
     }
 }
