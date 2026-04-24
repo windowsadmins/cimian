@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text;
-using Microsoft.Extensions.Logging.Abstractions;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
@@ -348,8 +347,11 @@ public class ManifestService
         }
         catch (Exception ex)
         {
-            ConsoleLogger.Warn($"SystemFactsCollector failed ({ex.Message}) - falling back to minimal facts");
+            ConsoleLogger.Warn($"SystemFactsCollector failed ({ex.GetType().Name}) - falling back to minimal facts. Exception: {ex}");
             var osVersion = Environment.OSVersion.Version;
+            // Preserve the pre-fix stub defaults on the unhappy path so predicates
+            // like `machine_type == "desktop"` keep behaving the way they did before
+            // this change, instead of silently flipping false when collection fails.
             _systemFacts = new SystemFacts
             {
                 Hostname = Environment.MachineName,
@@ -360,6 +362,8 @@ public class ManifestService
                 OSVersMinor = osVersion.Minor,
                 OSBuildNumber = osVersion.Build,
                 Catalogs = _config.Catalogs,
+                MachineType = "desktop",
+                MachineModel = "Unknown",
                 CollectedAt = DateTime.UtcNow
             };
         }
