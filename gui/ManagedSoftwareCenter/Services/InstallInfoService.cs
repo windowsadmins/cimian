@@ -77,6 +77,7 @@ public class InstallInfoService : IInstallInfoService, IDisposable
             info.FeaturedItems ??= [];
             info.ProblemItems ??= [];
             info.ProcessedInstalls ??= [];
+            info.ProcessedUninstalls ??= [];
 
             _cachedInfo = info;
             _cacheTime = DateTime.Now;
@@ -122,7 +123,7 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<InstallableItem>> GetManagedUpdatesAsync()
+    public async Task<IReadOnlyList<string>> GetManagedUpdatesAsync()
     {
         var info = await LoadAsync();
         return info.ManagedUpdates.AsReadOnly();
@@ -139,16 +140,10 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     public async Task<IReadOnlyList<InstallableItem>> GetAllItemsAsync()
     {
         var info = await LoadAsync();
-        // Combine all item lists, deduplicating by name
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allItems = new List<InstallableItem>();
 
         foreach (var item in info.OptionalInstalls)
-        {
-            if (seen.Add(item.Name))
-                allItems.Add(item);
-        }
-        foreach (var item in info.ProcessedInstalls)
         {
             if (seen.Add(item.Name))
                 allItems.Add(item);
@@ -158,7 +153,7 @@ public class InstallInfoService : IInstallInfoService, IDisposable
             if (seen.Add(item.Name))
                 allItems.Add(item);
         }
-        foreach (var item in info.ManagedUpdates)
+        foreach (var item in info.Removals)
         {
             if (seen.Add(item.Name))
                 allItems.Add(item);
@@ -175,11 +170,6 @@ public class InstallInfoService : IInstallInfoService, IDisposable
         var items = new List<InstallableItem>();
 
         foreach (var item in info.OptionalInstalls)
-        {
-            if (seen.Add(item.Name))
-                items.Add(item);
-        }
-        foreach (var item in info.ProcessedInstalls)
         {
             if (seen.Add(item.Name))
                 items.Add(item);
@@ -221,25 +211,16 @@ public class InstallInfoService : IInstallInfoService, IDisposable
     {
         var info = await LoadAsync();
 
-        // Search all collections
-        var item = info.OptionalInstalls.FirstOrDefault(x => 
+        var item = info.OptionalInstalls.FirstOrDefault(x =>
             string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
-        
         if (item != null) return item;
 
-        item = info.ManagedInstalls.FirstOrDefault(x => 
+        item = info.ManagedInstalls.FirstOrDefault(x =>
             string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
-        
         if (item != null) return item;
 
-        item = info.ManagedUpdates.FirstOrDefault(x => 
+        item = info.Removals.FirstOrDefault(x =>
             string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
-        
-        if (item != null) return item;
-
-        item = info.ProcessedInstalls.FirstOrDefault(x => 
-            string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
-
         return item;
     }
 

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.SoftwarePage"
+    x:Name="RootPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:converters="using:Cimian.GUI.ManagedSoftwareCenter.Converters">
@@ -282,59 +283,88 @@
                       MinHeight="200">
                 <GridView.ItemTemplate>
                     <DataTemplate>
-                        <!-- Microsoft Store style app tile -->
                         <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
                                 CornerRadius="8"
-                                Width="200" Height="90"
+                                Width="240" Height="140"
                                 Padding="12">
                             <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
                                 <!-- App Icon with status overlay -->
-                                <Grid Grid.Column="0" Width="56" Height="56" Margin="0,0,12,0">
+                                <Grid Grid.Row="0" Grid.Column="0" Width="48" Height="48" Margin="0,0,12,0" VerticalAlignment="Top">
                                     <Border CornerRadius="8"
                                             Background="{ThemeResource SubtleFillColorSecondaryBrush}">
                                         <Image Source="{Binding IconImage}"
-                                               Width="56" Height="56"
+                                               Width="48" Height="48"
                                                Stretch="UniformToFill" />
                                     </Border>
-                                    <!-- Installed checkmark badge (bottom-right corner) -->
-                                    <Border Width="18" Height="18"
-                                            CornerRadius="9"
+                                    <Border Width="16" Height="16"
+                                            CornerRadius="8"
                                             Background="{ThemeResource SystemFillColorSuccessBrush}"
                                             HorizontalAlignment="Right"
                                             VerticalAlignment="Bottom"
                                             Margin="0,0,-2,-2"
                                             Visibility="{Binding Installed, Converter={StaticResource BoolToVisibilityConverter}}">
-                                        <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"
+                                        <FontIcon Glyph="&#xE73E;" FontSize="9" Foreground="White"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
                                 </Grid>
 
                                 <!-- App Info -->
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding DisplayName, FallbackValue='App Name'}" 
+                                <StackPanel Grid.Row="0" Grid.Column="1" VerticalAlignment="Top">
+                                    <TextBlock Text="{Binding DisplayName, FallbackValue='App Name'}"
                                                FontSize="13"
                                                FontWeight="SemiBold"
                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="110" />
-                                    <TextBlock Text="{Binding Developer, FallbackValue=''}" 
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Developer, FallbackValue=''}"
                                                FontSize="11"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                TextTrimming="CharacterEllipsis"
-                                               MaxWidth="110"
                                                Margin="0,2,0,0" />
-                                    <!-- Status indicator -->
                                     <TextBlock Text="{Binding StatusText, FallbackValue=''}"
                                                FontSize="11"
                                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                               TextTrimming="CharacterEllipsis"
                                                Margin="0,4,0,0" />
+                                </StackPanel>
+
+                                <!-- Action buttons -->
+                                <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                            Orientation="Horizontal"
+                                            Spacing="6"
+                                            Margin="0,10,0,0">
+                                    <Button Content="{Binding InstallActionLabel}"
+                                            Style="{ThemeResource AccentButtonStyle}"
+                                            Padding="12,4"
+                                            FontSize="12"
+                                            MinWidth="72"
+                                            Visibility="{Binding ShowInstallAction, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            Command="{Binding ElementName=RootPage, Path=ViewModel.InstallItemCommand}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="Remove"
+                                            Padding="12,4"
+                                            FontSize="12"
+                                            MinWidth="72"
+                                            Visibility="{Binding ShowRemoveAction, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            Command="{Binding ElementName=RootPage, Path=ViewModel.RemoveItemCommand}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Content="Cancel"
+                                            Padding="12,4"
+                                            FontSize="12"
+                                            MinWidth="72"
+                                            Visibility="{Binding ShowCancelAction, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            Command="{Binding ElementName=RootPage, Path=ViewModel.CancelRequestCommand}"
+                                            CommandParameter="{Binding}" />
                                 </StackPanel>
                             </Grid>
                         </Border>

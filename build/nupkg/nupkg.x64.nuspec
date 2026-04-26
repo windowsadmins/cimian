@@ -2,7 +2,7 @@
 <package>
   <metadata>
     <id>CimianTools-x64</id>
-    <version>26.3.20.1254</version>
+    <version>26.4.24.1221</version>
     <title>Cimian Tools (x64)</title>
     <authors>WindowsAdmins</authors>
     <owners>WindowsAdmins</owners>
@@ -13,6 +13,7 @@
     <tags>deployment;software-management;windows;enterprise;intune</tags>
   </metadata>
   <files>
-    <file src="..\..\..\release\x64\*.exe" target="tools" />
+    <!-- Include full publish tree so WinUI 3 apps (MSC) ship with their runtime. -->
+    <file src="..\..\..\release\x64\**\*" target="tools" />
   </files>
 </package>
