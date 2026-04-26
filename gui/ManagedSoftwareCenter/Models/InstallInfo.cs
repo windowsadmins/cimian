@@ -13,31 +13,31 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Models;
 public class InstallInfo
 {
     /// <summary>
-    /// Items available for optional installation by users
+    /// Items available for optional installation by users (installed or not)
     /// </summary>
     [YamlMember(Alias = "optional_installs")]
     public List<InstallableItem> OptionalInstalls { get; set; } = [];
 
     /// <summary>
-    /// Items scheduled for installation (admin-managed + user selections)
+    /// Items scheduled for install or update this session (full records)
     /// </summary>
     [YamlMember(Alias = "managed_installs")]
     public List<InstallableItem> ManagedInstalls { get; set; } = [];
 
     /// <summary>
-    /// Items scheduled for removal
+    /// Items scheduled for removal this session
     /// </summary>
     [YamlMember(Alias = "removals")]
     public List<InstallableItem> Removals { get; set; } = [];
 
     /// <summary>
-    /// Updates available for installed managed software
+    /// Names of items from the manifest's managed_updates list
     /// </summary>
     [YamlMember(Alias = "managed_updates")]
-    public List<InstallableItem> ManagedUpdates { get; set; } = [];
+    public List<string> ManagedUpdates { get; set; } = [];
 
     /// <summary>
-    /// Featured/highlighted optional items
+    /// Names of optional items the admin wants highlighted
     /// </summary>
     [YamlMember(Alias = "featured_items")]
     public List<string> FeaturedItems { get; set; } = [];
@@ -49,10 +49,16 @@ public class InstallInfo
     public List<ProblemItem> ProblemItems { get; set; } = [];
 
     /// <summary>
-    /// All managed items that are already installed and up-to-date
+    /// Names of items already processed this session (dedup / cycle bookkeeping)
     /// </summary>
     [YamlMember(Alias = "processed_installs")]
-    public List<InstallableItem> ProcessedInstalls { get; set; } = [];
+    public List<string> ProcessedInstalls { get; set; } = [];
+
+    /// <summary>
+    /// Names of uninstalls already processed this session
+    /// </summary>
+    [YamlMember(Alias = "processed_uninstalls")]
+    public List<string> ProcessedUninstalls { get; set; } = [];
 
     /// <summary>
     /// Timestamp when this info was generated
@@ -81,7 +87,7 @@ public class InstallableItem
     /// <summary>
     /// Version to be installed
     /// </summary>
-    [YamlMember(Alias = "version")]
+    [YamlMember(Alias = "version_to_install")]
     public string Version { get; set; } = string.Empty;
 
     /// <summary>
@@ -109,9 +115,9 @@ public class InstallableItem
     public string? Developer { get; set; }
 
     /// <summary>
-    /// URL to icon image
+    /// Icon name (relative path under the icons endpoint)
     /// </summary>
-    [YamlMember(Alias = "icon")]
+    [YamlMember(Alias = "icon_name")]
     public string? Icon { get; set; }
 
     /// <summary>
@@ -131,6 +137,16 @@ public class InstallableItem
     /// </summary>
     [YamlMember(Alias = "installed")]
     public bool Installed { get; set; }
+
+    /// <summary>
+    /// Whether the installed version is older than the available version.
+    /// Authoritative update signal — set by managedsoftwareupdate after the
+    /// catalog comparison. Prefer this over comparing Version /
+    /// InstalledVersion strings, which is case- and format-sensitive
+    /// (e.g. "1.0" vs "1.0.0" or "1.0.0-RC" vs "1.0.0-rc").
+    /// </summary>
+    [YamlMember(Alias = "needs_update")]
+    public bool NeedsUpdate { get; set; }
 
     /// <summary>
     /// Whether uninstall is supported
@@ -316,6 +332,54 @@ public class InstallableItem
     /// Size in bytes for binding
     /// </summary>
     public long InstallerSize => InstallerItemSize > 0 ? InstallerItemSize : InstalledSize;
+
+    [YamlIgnore]
+    public bool IsInstallRequestPending =>
+        Status == ItemStatus.InstallRequested ||
+        Status == ItemStatus.WillBeInstalled ||
+        Status == ItemStatus.UpdateWillBeInstalled;
+
+    [YamlIgnore]
+    public bool IsRemovalRequestPending =>
+        Status == ItemStatus.RemovalRequested ||
+        Status == ItemStatus.WillBeRemoved;
+
+    [YamlIgnore]
+    public bool HasUpdateAvailable =>
+        NeedsUpdate ||
+        // Fallback for legacy InstallInfo.yaml without the needs_update field.
+        (Installed &&
+         !string.IsNullOrEmpty(InstalledVersion) &&
+         !string.Equals(InstalledVersion, Version, StringComparison.OrdinalIgnoreCase));
+
+    [YamlIgnore]
+    public bool ShowInstallAction
+    {
+        get
+        {
+            if (IsInstallRequestPending || IsRemovalRequestPending) return false;
+            if (Status == ItemStatus.Unavailable) return false;
+            if (Status == ItemStatus.InstalledNotRemovable) return false;
+            return !Installed || HasUpdateAvailable;
+        }
+    }
+
+    [YamlIgnore]
+    public bool ShowRemoveAction
+    {
+        get
+        {
+            if (IsInstallRequestPending || IsRemovalRequestPending) return false;
+            if (!Installed || !Uninstallable) return false;
+            return DependentItems == null || DependentItems.Count == 0;
+        }
+    }
+
+    [YamlIgnore]
+    public bool ShowCancelAction => IsInstallRequestPending || IsRemovalRequestPending;
+
+    [YamlIgnore]
+    public string InstallActionLabel => HasUpdateAvailable ? "Update" : "Install";
 
     /// <summary>
     /// Gets formatted size string

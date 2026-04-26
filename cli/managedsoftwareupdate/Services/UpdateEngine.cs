@@ -2272,43 +2272,37 @@ public class UpdateEngine : IDisposable
                 {
                     case "install":
                     case "update":
+                        // Always bookkeep the name as processed.
+                        info.ProcessedInstalls.Add(mi.Name);
+
+                        // managed_updates from the manifest is surfaced as a name list.
+                        if (action == "update")
+                            info.ManagedUpdates.Add(mi.Name);
+
                         if (toUpdateNames.Contains(key) || toInstallNames.Contains(key))
                         {
-                            // Needs action — add to managed_installs
+                            // Needs install or update this session — full record on managed_installs.
                             var isUpdate = toUpdateNames.Contains(key);
                             var item = BuildInstallInfoItem(mi.Name, cat);
                             item.Status = isUpdate ? "update-available" : "will-be-installed";
                             item.WillBeInstalled = true;
                             item.NeedsUpdate = isUpdate;
 
-                            // Try to get installed version from status check
                             if (cat != null)
                             {
                                 var status = _statusService.CheckStatus(cat, action, _config.CachePath);
                                 item.InstalledVersion = status.InstalledVersion;
+                                item.Installed = !string.IsNullOrEmpty(status.InstalledVersion);
                             }
 
-                            if (isUpdate)
-                                info.ManagedUpdates.Add(item);
-                            else
-                                info.ManagedInstalls.Add(item);
+                            info.ManagedInstalls.Add(item);
                         }
-                        else
-                        {
-                            // Already installed and up-to-date — add to processed_installs
-                            var procItem = BuildInstallInfoItem(mi.Name, cat);
-                            procItem.Installed = true;
-                            procItem.Status = "installed";
-                            if (cat != null)
-                            {
-                                var status = _statusService.CheckStatus(cat, action, _config.CachePath);
-                                procItem.InstalledVersion = status.InstalledVersion;
-                            }
-                            info.ProcessedInstalls.Add(procItem);
-                        }
+                        // Else: already installed and up-to-date. No record is written;
+                        // the name on processed_installs is the only trace, matching Munki.
                         break;
 
                     case "uninstall":
+                        info.ProcessedUninstalls.Add(mi.Name);
                         if (toUninstallNames.Contains(key))
                         {
                             var item = BuildInstallInfoItem(mi.Name, cat);

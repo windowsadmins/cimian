@@ -30,9 +30,9 @@ public interface IInstallInfoService
     Task<IReadOnlyList<InstallableItem>> GetRemovalsAsync();
 
     /// <summary>
-    /// Get available updates
+    /// Get names from the manifest's managed_updates list
     /// </summary>
-    Task<IReadOnlyList<InstallableItem>> GetManagedUpdatesAsync();
+    Task<IReadOnlyList<string>> GetManagedUpdatesAsync();
 
     /// <summary>
     /// Get problem items
@@ -46,8 +46,8 @@ public interface IInstallInfoService
     Task<IReadOnlyList<InstallableItem>> GetAllItemsAsync();
 
     /// <summary>
-    /// Get browseable items for the Software page (optional + processed only).
-    /// Matches Munki behavior: managed_installs are admin-forced and hidden from the catalog.
+    /// Get items for the Software browse page. Returns optional_installs only;
+    /// managed_installs are admin-forced and not user-browseable.
     /// </summary>
     Task<IReadOnlyList<InstallableItem>> GetBrowseableItemsAsync();
 
