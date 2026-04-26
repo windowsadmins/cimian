@@ -78,7 +78,7 @@ public partial class SoftwareViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            // Load browseable items only (optional + processed) — managed_installs hidden per Munki behavior
+            // optional_installs only; managed_installs are admin-forced and not browseable
             var allItems = await _installInfoService.GetBrowseableItemsAsync();
             _allItems = allItems.ToList();
             
@@ -215,7 +215,7 @@ public partial class SoftwareViewModel : ObservableObject
 
         // Add to self-service manifest
         await _selfServiceService.AddInstallRequestAsync(item.Name);
-        
+
         // Update item status
         item.Status = ItemStatus.InstallRequested;
         item.UserRequested = true;
@@ -223,8 +223,7 @@ public partial class SoftwareViewModel : ObservableObject
         // Trigger immediate check/install
         await _triggerService.TriggerInstallAsync();
 
-        // Refresh to show updated status
-        OnPropertyChanged(nameof(Items));
+        ApplyFilters();
     }
 
     [RelayCommand]
@@ -246,8 +245,7 @@ public partial class SoftwareViewModel : ObservableObject
         // Trigger immediate check/install
         await _triggerService.TriggerInstallAsync();
 
-        // Refresh to show updated status
-        OnPropertyChanged(nameof(Items));
+        ApplyFilters();
     }
 
     [RelayCommand]
@@ -260,8 +258,7 @@ public partial class SoftwareViewModel : ObservableObject
         item.UserRequested = false;
         item.Status = item.Installed ? ItemStatus.Installed : ItemStatus.NotInstalled;
 
-        // Refresh to show updated status
-        OnPropertyChanged(nameof(Items));
+        ApplyFilters();
     }
 
     private async Task<bool> CheckBlockingAppsAsync(InstallableItem item)

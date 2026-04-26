@@ -446,7 +446,7 @@ function Invoke-SignArtifact {
         foreach ($tsa in $tsas) {
             try {
                 Write-BuildLog "Signing (attempt $attempt): $Path" "INFO"
-                
+
                 $signArgs = @(
                     "sign"
                     "/sha1", $Thumbprint
@@ -454,29 +454,35 @@ function Invoke-SignArtifact {
                     "/td", "sha256"
                     "/fd", "sha256"
                 ) + $storeParam + @($Path)
-                
+
                 $psi = New-Object System.Diagnostics.ProcessStartInfo
                 $psi.FileName = $signToolExe
-                $psi.Arguments = $signArgs -join ' '
+                # ArgumentList handles per-argument quoting — required for paths with spaces
+                # such as "Managed Software Center.exe". Do NOT set $psi.Arguments in addition.
+                foreach ($a in $signArgs) { $psi.ArgumentList.Add($a) }
                 $psi.UseShellExecute = $false
                 $psi.RedirectStandardOutput = $true
                 $psi.RedirectStandardError = $true
                 $psi.CreateNoWindow = $true
-                
+
                 $process = [System.Diagnostics.Process]::Start($psi)
                 $stdout = $process.StandardOutput.ReadToEnd()
                 $stderr = $process.StandardError.ReadToEnd()
                 $process.WaitForExit()
-                
+
                 if ($process.ExitCode -eq 0) {
                     Write-BuildLog "Successfully signed: $Path" "SUCCESS"
                     return
                 }
+
+                $detail = ($stderr, $stdout | Where-Object { $_ -and $_.Trim() }) -join ' | '
+                if (-not $detail) { $detail = "(no output)" }
+                Write-BuildLog "signtool exit $($process.ExitCode) via ${tsa}: $detail" "WARNING"
             }
             catch {
                 Write-BuildLog "Signing attempt failed: $_" "WARNING"
             }
-            
+
             Start-Sleep -Seconds (2 * $attempt)
         }
     }
@@ -824,16 +830,19 @@ function Build-MsiPackage {
     New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
 
     Write-BuildLog "Copying CimianTools binaries for $Architecture to MSI payload..." "INFO"
+    # Mirror the full publish tree so WinUI 3 companion files (PRI / XBF / runtime DLLs)
+    # ride along with Managed Software Center.exe. A selective exe-only copy breaks MSC
+    # with "This app can't run on your PC" because the launcher stub can't find its runtime.
+    Copy-Item -Path (Join-Path $binariesDir '*') -Destination $payloadDir -Recurse -Force
+
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
         'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
         'repoclean.exe', 'Managed Software Center.exe'
     )
-
     foreach ($exe in $expectedExecutables) {
-        $sourcePath = Join-Path $binariesDir $exe
-        if (Test-Path $sourcePath) {
-            Copy-Item $sourcePath -Destination $payloadDir -Force
+        if (-not (Test-Path (Join-Path $payloadDir $exe))) {
+            Write-BuildLog "Expected executable missing from MSI payload: $exe" "WARNING"
         }
     }
 
@@ -857,19 +866,15 @@ function Build-MsiPackage {
     $releaseVersion = $Version.Full
     $semanticVersion = $Version.Semantic
 
-    # Copy preinstall/postinstall from .pkg templates (they're identical in purpose)
-    $preinstallTemplatePath = "build\pkg\preinstall.ps1"
-    $preinstallPath = Join-Path $scriptsDir "preinstall.ps1"
-    if (Test-Path $preinstallTemplatePath) {
-        $content = (Get-Content $preinstallTemplatePath -Raw) -replace '\{\{VERSION\}\}', $semanticVersion
-        $content | Set-Content $preinstallPath -Encoding UTF8
-    }
-
-    $postinstallTemplatePath = "build\pkg\postinstall.ps1"
-    $postinstallPath = Join-Path $scriptsDir "postinstall.ps1"
-    if (Test-Path $postinstallTemplatePath) {
-        $content = (Get-Content $postinstallTemplatePath -Raw) -replace '\{\{VERSION\}\}', $semanticVersion
-        $content | Set-Content $postinstallPath -Encoding UTF8
+    # Copy preinstall/postinstall/uninstall from .pkg templates (same names, same
+    # behavior across both package formats).
+    foreach ($scriptName in @('preinstall.ps1', 'postinstall.ps1', 'uninstall.ps1')) {
+        $srcPath = Join-Path 'build\pkg' $scriptName
+        $destPath = Join-Path $scriptsDir $scriptName
+        if (Test-Path $srcPath) {
+            $content = (Get-Content $srcPath -Raw) -replace '\{\{VERSION\}\}', $semanticVersion
+            $content | Set-Content $destPath -Encoding UTF8
+        }
     }
 
     # Create build-info.yaml from .pkg template
@@ -967,7 +972,8 @@ function Build-NuGetPackage {
     <tags>deployment;software-management;windows;enterprise;intune</tags>
   </metadata>
   <files>
-    <file src="..\..\..\release\$Architecture\*.exe" target="tools" />
+    <!-- Include full publish tree so WinUI 3 apps (MSC) ship with their runtime. -->
+    <file src="..\..\..\release\$Architecture\**\*" target="tools" />
   </files>
 </package>
 "@
@@ -1007,10 +1013,10 @@ function Build-NuGetPackage {
         if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
         
-        # Create tools directory with binaries
+        # Create tools directory with full publish tree (WinUI 3 apps need their runtime).
         $toolsDir = Join-Path $tempDir "tools"
         New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
-        Copy-Item "$releaseArchDir\*.exe" -Destination $toolsDir -Force -ErrorAction Stop
+        Copy-Item "$releaseArchDir\*" -Destination $toolsDir -Recurse -Force -ErrorAction Stop
         
         # Create package metadata directory
         $metaDir = Join-Path $tempDir "_package"
@@ -1143,28 +1149,22 @@ function Build-PkgPackage {
     New-Item -ItemType Directory -Path $payloadDir -Force | Out-Null
     
     Write-BuildLog "Copying CimianTools binaries for $Architecture architecture to .pkg payload..." "INFO"
+    # Mirror the full publish tree so WinUI 3 companion files ship with Managed Software Center.exe.
+    Copy-Item -Path (Join-Path $binariesDir '*') -Destination $payloadDir -Recurse -Force
+
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
         'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
         'repoclean.exe', 'Managed Software Center.exe'
     )
-    
     $missingExecutables = @()
     foreach ($exe in $expectedExecutables) {
-        $sourcePath = Join-Path $binariesDir $exe
-        $destPath = Join-Path $payloadDir $exe
-        
-        if (Test-Path $sourcePath) {
-            Copy-Item $sourcePath $destPath -Force
-            Write-BuildLog "Copied $exe to .pkg payload" "INFO"
-        } else {
+        if (-not (Test-Path (Join-Path $payloadDir $exe))) {
             $missingExecutables += $exe
         }
     }
-    
     if ($missingExecutables.Count -gt 0) {
         Write-BuildLog "Missing executables for $Architecture architecture: $($missingExecutables -join ', ')" "WARNING"
-        Write-BuildLog "Continuing with available executables..." "WARNING"
     }
     
     # Create scripts directory and copy install scripts
@@ -1174,28 +1174,16 @@ function Build-PkgPackage {
     $releaseVersion = $Version.Full
     $semanticVersion = $Version.Semantic
     
-    # Copy postinstall script
-    $postinstallTemplatePath = "build\pkg\postinstall.ps1"
-    $postinstallPath = Join-Path $scriptsDir "postinstall.ps1"
-    if (Test-Path $postinstallTemplatePath) {
-        $postinstallTemplate = Get-Content $postinstallTemplatePath -Raw
-        $postinstallContent = $postinstallTemplate -replace '\{\{VERSION\}\}', $semanticVersion
-        $postinstallContent | Set-Content $postinstallPath -Encoding UTF8
-        Write-BuildLog "Created postinstall.ps1 script in scripts directory for .pkg" "INFO"
-    } else {
-        Write-BuildLog "Postinstall template not found: $postinstallTemplatePath" "WARNING"
-    }
-    
-    # Copy preinstall script
-    $preinstallTemplatePath = "build\pkg\preinstall.ps1"
-    $preinstallPath = Join-Path $scriptsDir "preinstall.ps1"
-    if (Test-Path $preinstallTemplatePath) {
-        $preinstallTemplate = Get-Content $preinstallTemplatePath -Raw
-        $preinstallContent = $preinstallTemplate -replace '\{\{VERSION\}\}', $semanticVersion
-        $preinstallContent | Set-Content $preinstallPath -Encoding UTF8
-        Write-BuildLog "Created preinstall.ps1 script in scripts directory for .pkg" "INFO"
-    } else {
-        Write-BuildLog "Preinstall template not found: $preinstallTemplatePath" "WARNING"
+    foreach ($scriptName in @('preinstall.ps1', 'postinstall.ps1', 'uninstall.ps1')) {
+        $srcPath = Join-Path 'build\pkg' $scriptName
+        $destPath = Join-Path $scriptsDir $scriptName
+        if (Test-Path $srcPath) {
+            $content = (Get-Content $srcPath -Raw) -replace '\{\{VERSION\}\}', $semanticVersion
+            $content | Set-Content $destPath -Encoding UTF8
+            Write-BuildLog "Created $scriptName in scripts directory for .pkg" "INFO"
+        } else {
+            Write-BuildLog "Script template not found: $srcPath" "WARNING"
+        }
     }
     
     # Create build-info.yaml from template

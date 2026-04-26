@@ -92,19 +92,31 @@ public partial class UpdatesViewModel : ObservableObject
         IsLoading = true;
         try
         {
-            // Load managed updates (updates to already installed software)
-            var updates = await _installInfoService.GetManagedUpdatesAsync();
-            // Sort: forced deadlines first (earliest deadline on top), then by name
+            // Updates tab is derived from managed_installs (records for items needing
+            // install or update this session). Split by the needs_update flag set by
+            // managedsoftwareupdate during the catalog comparison:
+            //  - needs_update == true  -> shown under Updates
+            //  - needs_update == false -> shown under Pending installs
+            // Status checks below are a defensive fallback for any item whose
+            // schedule was rewritten by the self-service flow (which doesn't
+            // re-evaluate needs_update). The previous version-string comparison
+            // was case- and format-sensitive — use NeedsUpdate as the source of
+            // truth.
+            var managedInstalls = await _installInfoService.GetManagedInstallsAsync();
+
+            var updatesList = managedInstalls
+                .Where(x => x.NeedsUpdate ||
+                            x.Status == ItemStatus.UpdateAvailable ||
+                            x.Status == ItemStatus.UpdateWillBeInstalled)
+                .ToList();
             Updates = new ObservableCollection<InstallableItem>(
-                updates.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
+                updatesList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
                        .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
                        .ThenBy(x => x.GetDisplayName()));
 
-            // Load pending managed installs (from admin manifest)
-            var managedInstalls = await _installInfoService.GetManagedInstallsAsync();
-            var pending = managedInstalls.Where(x => x.WillBeInstalled || !x.Installed).ToList();
+            var installsList = managedInstalls.Except(updatesList).ToList();
             PendingInstalls = new ObservableCollection<InstallableItem>(
-                pending.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
+                installsList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
                        .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
                        .ThenBy(x => x.GetDisplayName()));
 

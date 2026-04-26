@@ -16,7 +16,7 @@ public class InstallInfoFile
     public List<InstallInfoItem> ManagedInstalls { get; set; } = [];
 
     [YamlMember(Alias = "managed_updates")]
-    public List<InstallInfoItem> ManagedUpdates { get; set; } = [];
+    public List<string> ManagedUpdates { get; set; } = [];
 
     [YamlMember(Alias = "removals")]
     public List<InstallInfoItem> Removals { get; set; } = [];
@@ -28,7 +28,10 @@ public class InstallInfoFile
     public List<InstallInfoProblem> ProblemItems { get; set; } = [];
 
     [YamlMember(Alias = "processed_installs")]
-    public List<InstallInfoItem> ProcessedInstalls { get; set; } = [];
+    public List<string> ProcessedInstalls { get; set; } = [];
+
+    [YamlMember(Alias = "processed_uninstalls")]
+    public List<string> ProcessedUninstalls { get; set; } = [];
 
     [YamlMember(Alias = "featured_items")]
     public List<string> FeaturedItems { get; set; } = [];
@@ -48,7 +51,7 @@ public class InstallInfoItem
     [YamlMember(Alias = "display_name")]
     public string? DisplayName { get; set; }
 
-    [YamlMember(Alias = "version")]
+    [YamlMember(Alias = "version_to_install")]
     public string Version { get; set; } = string.Empty;
 
     [YamlMember(Alias = "installed_version")]
@@ -63,7 +66,7 @@ public class InstallInfoItem
     [YamlMember(Alias = "developer")]
     public string? Developer { get; set; }
 
-    [YamlMember(Alias = "icon")]
+    [YamlMember(Alias = "icon_name")]
     public string? Icon { get; set; }
 
     [YamlMember(Alias = "installer_item_size")]
