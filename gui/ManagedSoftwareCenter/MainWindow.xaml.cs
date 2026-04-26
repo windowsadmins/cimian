@@ -72,6 +72,9 @@ public partial class MainWindow : Window
                 case nameof(ViewModel.IsObnoxiousMode):
                     ApplyObnoxiousMode(ViewModel.IsObnoxiousMode);
                     break;
+                case nameof(ViewModel.IsUpdatesOnlyMode):
+                    ApplyUpdatesOnlyMode(ViewModel.IsUpdatesOnlyMode);
+                    break;
             }
         });
     }
@@ -230,6 +233,26 @@ public partial class MainWindow : Window
         if (ContentFrame.CanGoBack)
         {
             ContentFrame.GoBack();
+        }
+    }
+
+    private bool _updatesOnlyActive;
+
+    // When optional_installs is empty, hide the navigation pane entirely and pin
+    // the content to the Updates page (Munki v7 "updatesOnlyWindowMode").
+    private void ApplyUpdatesOnlyMode(bool updatesOnly)
+    {
+        if (updatesOnly == _updatesOnlyActive) return;
+        _updatesOnlyActive = updatesOnly;
+
+        if (updatesOnly)
+        {
+            NavView.IsPaneVisible = false;
+            NavigateToPage("updates");
+        }
+        else
+        {
+            NavView.IsPaneVisible = true;
         }
     }
 
