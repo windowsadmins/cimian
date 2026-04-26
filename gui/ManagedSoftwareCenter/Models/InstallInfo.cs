@@ -139,6 +139,16 @@ public class InstallableItem
     public bool Installed { get; set; }
 
     /// <summary>
+    /// Whether the installed version is older than the available version.
+    /// Authoritative update signal — set by managedsoftwareupdate after the
+    /// catalog comparison. Prefer this over comparing Version /
+    /// InstalledVersion strings, which is case- and format-sensitive
+    /// (e.g. "1.0" vs "1.0.0" or "1.0.0-RC" vs "1.0.0-rc").
+    /// </summary>
+    [YamlMember(Alias = "needs_update")]
+    public bool NeedsUpdate { get; set; }
+
+    /// <summary>
     /// Whether uninstall is supported
     /// </summary>
     [YamlMember(Alias = "uninstallable")]
@@ -336,9 +346,11 @@ public class InstallableItem
 
     [YamlIgnore]
     public bool HasUpdateAvailable =>
-        Installed &&
-        !string.IsNullOrEmpty(InstalledVersion) &&
-        !string.Equals(InstalledVersion, Version, StringComparison.OrdinalIgnoreCase);
+        NeedsUpdate ||
+        // Fallback for legacy InstallInfo.yaml without the needs_update field.
+        (Installed &&
+         !string.IsNullOrEmpty(InstalledVersion) &&
+         !string.Equals(InstalledVersion, Version, StringComparison.OrdinalIgnoreCase));
 
     [YamlIgnore]
     public bool ShowInstallAction

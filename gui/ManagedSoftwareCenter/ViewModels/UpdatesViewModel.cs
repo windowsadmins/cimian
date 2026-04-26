@@ -93,15 +93,21 @@ public partial class UpdatesViewModel : ObservableObject
         try
         {
             // Updates tab is derived from managed_installs (records for items needing
-            // install or update this session). Split by needs_update:
+            // install or update this session). Split by the needs_update flag set by
+            // managedsoftwareupdate during the catalog comparison:
             //  - needs_update == true  -> shown under Updates
             //  - needs_update == false -> shown under Pending installs
+            // Status checks below are a defensive fallback for any item whose
+            // schedule was rewritten by the self-service flow (which doesn't
+            // re-evaluate needs_update). The previous version-string comparison
+            // was case- and format-sensitive — use NeedsUpdate as the source of
+            // truth.
             var managedInstalls = await _installInfoService.GetManagedInstallsAsync();
 
             var updatesList = managedInstalls
-                .Where(x => x.Status == ItemStatus.UpdateAvailable ||
-                            x.Status == ItemStatus.UpdateWillBeInstalled ||
-                            (!string.IsNullOrEmpty(x.InstalledVersion) && x.InstalledVersion != x.Version))
+                .Where(x => x.NeedsUpdate ||
+                            x.Status == ItemStatus.UpdateAvailable ||
+                            x.Status == ItemStatus.UpdateWillBeInstalled)
                 .ToList();
             Updates = new ObservableCollection<InstallableItem>(
                 updatesList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)

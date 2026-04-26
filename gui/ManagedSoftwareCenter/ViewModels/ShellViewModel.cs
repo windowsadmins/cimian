@@ -326,9 +326,12 @@ public partial class ShellViewModel : ObservableObject
         // actual managedsoftwareupdate process finishes).
         SessionCompleted?.Invoke(this, EventArgs.Empty);
 
-        // Show notification if updates are available (items needing update this session)
-        var updateRecordsCount = info.ManagedInstalls.Count(x =>
-            !string.IsNullOrEmpty(x.InstalledVersion) && x.InstalledVersion != x.Version);
+        // Show notification if updates are available (items needing update this
+        // session). NeedsUpdate is the authoritative flag set by
+        // managedsoftwareupdate after catalog comparison — version-string
+        // comparison would miss case and format differences (e.g. "1.0" vs
+        // "1.0.0", "RC1" vs "rc1").
+        var updateRecordsCount = info.ManagedInstalls.Count(x => x.NeedsUpdate);
         if (updateRecordsCount > 0)
         {
             _notificationService.ShowUpdatesAvailable(updateRecordsCount);

@@ -41,21 +41,30 @@ try {
         Write-Host "Added to system PATH"
     }
 
-    # Install or restart CimianWatcher service
+    # Install or restart CimianWatcher service. Idempotent across all phases:
+    #  - Service missing      -> install + start.
+    #  - Service Stopped/etc. -> Start-Service.
+    #  - Service Running      -> no-op (do NOT call Start-Service; it throws
+    #    on an already-running service, which would otherwise drop us into
+    #    the reinstall branch and tear down a healthy service for nothing).
     $cimiwatcherExe = Join-Path $InstallDir "cimiwatcher.exe"
     if (Test-Path $cimiwatcherExe) {
         try {
             $existingService = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
             if ($existingService) {
-                Write-Host "CimianWatcher service present; starting..."
-                try {
-                    Start-Service -Name "CimianWatcher" -ErrorAction Stop
-                    Start-Sleep -Seconds 2
-                } catch {
-                    Write-Warning "Failed to start existing service, reinstalling: $_"
-                    try { & $cimiwatcherExe uninstall; Start-Sleep -Seconds 2 } catch { }
-                    & $cimiwatcherExe install; Start-Sleep -Seconds 2
-                    & $cimiwatcherExe start; Start-Sleep -Seconds 2
+                if ($existingService.Status -eq "Running") {
+                    Write-Host "CimianWatcher service already running; no action needed"
+                } else {
+                    Write-Host "CimianWatcher service present (Status=$($existingService.Status)); starting..."
+                    try {
+                        Start-Service -Name "CimianWatcher" -ErrorAction Stop
+                        Start-Sleep -Seconds 2
+                    } catch {
+                        Write-Warning "Failed to start existing service, reinstalling: $_"
+                        try { & $cimiwatcherExe uninstall; Start-Sleep -Seconds 2 } catch { }
+                        & $cimiwatcherExe install; Start-Sleep -Seconds 2
+                        & $cimiwatcherExe start; Start-Sleep -Seconds 2
+                    }
                 }
             } else {
                 Write-Host "Installing CimianWatcher service..."
