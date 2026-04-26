@@ -70,6 +70,10 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsObnoxiousMode { get; set; }
 
+    // True when optional_installs is empty — sidebar collapses and Updates becomes the only view.
+    [ObservableProperty]
+    public partial bool IsUpdatesOnlyMode { get; set; }
+
     /// <summary>
     /// Raised when a managedsoftwareupdate session completes so pages can reload
     /// </summary>
@@ -240,14 +244,18 @@ public partial class ShellViewModel : ObservableObject
     private async Task UpdateBadgesAsync(InstallInfo info)
     {
         AvailableCount = info.OptionalInstalls.Count;
-        UpdatesCount = info.ManagedUpdates.Count + info.ManagedInstalls.Count(x => x.WillBeInstalled);
+        // Updates tab count = managed_installs (includes updates) + removals this session
+        UpdatesCount = info.ManagedInstalls.Count + info.Removals.Count;
+
+        // Collapse the sidebar when the catalog has no optional software to browse.
+        IsUpdatesOnlyMode = AvailableCount == 0;
 
         // Get user's selections from self-service manifest
         var selfService = await _selfServiceService.GetAllRequestsAsync();
         MyItemsCount = selfService.ManagedInstalls.Count + selfService.ManagedUninstalls.Count;
 
         // Check for approaching forced install deadlines
-        var allItems = info.ManagedUpdates.Concat(info.ManagedInstalls);
+        var allItems = info.ManagedInstalls.Concat(info.Removals);
         var nextDeadline = allItems
             .Where(x => x.ForceInstallAfterDate.HasValue)
             .OrderBy(x => x.ForceInstallAfterDate!.Value)
@@ -318,10 +326,15 @@ public partial class ShellViewModel : ObservableObject
         // actual managedsoftwareupdate process finishes).
         SessionCompleted?.Invoke(this, EventArgs.Empty);
 
-        // Show notification if updates are available
-        if (info.ManagedUpdates.Count > 0)
+        // Show notification if updates are available (items needing update this
+        // session). NeedsUpdate is the authoritative flag set by
+        // managedsoftwareupdate after catalog comparison — version-string
+        // comparison would miss case and format differences (e.g. "1.0" vs
+        // "1.0.0", "RC1" vs "rc1").
+        var updateRecordsCount = info.ManagedInstalls.Count(x => x.NeedsUpdate);
+        if (updateRecordsCount > 0)
         {
-            _notificationService.ShowUpdatesAvailable(info.ManagedUpdates.Count);
+            _notificationService.ShowUpdatesAvailable(updateRecordsCount);
         }
     }
 
