@@ -246,7 +246,7 @@ public static class CimianHttpClientFactory
         {
             if (!string.IsNullOrEmpty(config.ClientCertificatePath) && File.Exists(config.ClientCertificatePath))
             {
-                cert = new X509Certificate2(config.ClientCertificatePath);
+                cert = X509CertificateLoader.LoadCertificateFromFile(config.ClientCertificatePath);
             }
             else if (!string.IsNullOrEmpty(config.ClientCertificateThumbprint))
             {
