@@ -19,8 +19,8 @@ namespace Cimian.Core.Services;
 /// </summary>
 public class SessionLogger : IDisposable
 {
-    private const string BaseLogsDir = @"C:\ProgramData\ManagedInstalls\logs";
-    private const string ReportsDir = @"C:\ProgramData\ManagedInstalls\reports";
+    private static readonly string BaseLogsDir = CimianPaths.LogsDir;
+    private static readonly string ReportsDir = CimianPaths.ReportsDir;
 
     // Retention policy: 30-day rolling window (~220MB at typical usage)
     private const int DefaultMaxAgeDays = 30;

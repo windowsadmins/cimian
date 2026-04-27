@@ -1,6 +1,7 @@
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core;
 using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -90,9 +91,9 @@ public class ConfigurationService
         {
             SoftwareRepoURL = "https://your-repo.example.com",
             ClientIdentifier = Environment.MachineName,
-            CachePath = @"C:\ProgramData\ManagedInstalls\Cache",
-            CatalogsPath = @"C:\ProgramData\ManagedInstalls\catalogs",
-            ManifestsPath = @"C:\ProgramData\ManagedInstalls\manifests",
+            CachePath = CimianPaths.CacheDir,
+            CatalogsPath = CimianPaths.CatalogsDir,
+            ManifestsPath = CimianPaths.ManifestsDir,
             LogLevel = "INFO",
             InstallerTimeout = 900,
             Catalogs = new List<string> { "Production" }
@@ -139,8 +140,8 @@ public class ConfigurationService
             config.CachePath,
             config.CatalogsPath,
             config.ManifestsPath,
-            @"C:\ProgramData\ManagedInstalls\logs",
-            @"C:\ProgramData\ManagedInstalls\reports"
+            CimianPaths.LogsDir,
+            CimianPaths.ReportsDir
         };
 
         foreach (var dir in directories)
