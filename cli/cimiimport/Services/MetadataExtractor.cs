@@ -654,8 +654,9 @@ public partial class MetadataExtractor
     {
         if (string.IsNullOrEmpty(value)) return value;
 
-        // A YAML doc always contains a colon and a newline; a base64 string never
-        // does. Base64 is also strictly limited to A-Z, a-z, 0-9, '+', '/', and '='.
+        // cimipkg build-info YAML reliably contains ':' (every key-value line) and
+        // typically newlines too; base64 contains neither and is limited to
+        // A-Z, a-z, 0-9, '+', '/', and '='. Either marker is enough to short-circuit.
         if (value.Contains('\n') || value.Contains(':')) return value;
 
         try
