@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Reflection;
 using Cimian.CLI.Cimiimport.Models;
 using Cimian.CLI.Cimiimport.Services;
+using Cimian.Core;
 
 namespace Cimian.CLI.Cimiimport;
 
@@ -251,7 +252,7 @@ public class Program
     {
         try
         {
-            var makeCatalogsBinary = @"C:\Program Files\Cimian\makecatalogs.exe";
+            var makeCatalogsBinary = CimianPaths.MakeCatalogsExe;
             if (!File.Exists(makeCatalogsBinary))
             {
                 Console.WriteLine("⚠️ makecatalogs not found");
