@@ -115,8 +115,10 @@ public partial class MetadataExtractor
             metadata.ProductCode = ReadProp("ProductCode") ?? "";
             metadata.UpgradeCode = ReadProp("UpgradeCode") ?? "";
 
-            // For cimipkg-built MSI, extract rich metadata from embedded build-info.yaml
-            var buildInfoYaml = ReadProp("CIMIAN_PKG_BUILD_INFO");
+            // For cimipkg-built MSI, extract rich metadata from embedded build-info.yaml.
+            // cimipkg stores the YAML base64-encoded so the property value stays single-line
+            // (multi-line values corrupt the MSI Property dump and PREVIOUSVERSIONSINSTALLED).
+            var buildInfoYaml = DecodeBuildInfoYaml(ReadProp("CIMIAN_PKG_BUILD_INFO"));
             if (!string.IsNullOrEmpty(buildInfoYaml))
             {
                 try
@@ -147,6 +149,14 @@ public partial class MetadataExtractor
                     // build-info.yaml parse failed; standard MSI properties already captured
                 }
             }
+
+            // CIMIAN_PKG_FULL_VERSION is the unencoded full version (e.g. 2026.04.24.1640)
+            // that cimipkg writes alongside the truncated MSI ProductVersion (e.g. 26.4.2416).
+            // Use it as the authoritative version when present so cimiimport doesn't display
+            // the lossy ProductVersion form.
+            var fullVersion = ReadProp("CIMIAN_PKG_FULL_VERSION");
+            if (!string.IsNullOrEmpty(fullVersion))
+                metadata.Version = ParseVersion(fullVersion);
         }
         catch
         {
@@ -631,6 +641,33 @@ public partial class MetadataExtractor
         }
         
         return "";
+    }
+
+    /// <summary>
+    /// CIMIAN_PKG_BUILD_INFO is base64-encoded YAML in cimipkg builds since the
+    /// property-leak fix; older builds stored the raw multi-line YAML inline.
+    /// Try base64 first; if that fails, return the value as-is so legacy MSIs
+    /// still surface their build-info.
+    /// Mirrors cimipkg/Services/MsiPropertyReader.DecodeBuildInfoYaml.
+    /// </summary>
+    private static string? DecodeBuildInfoYaml(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+
+        // cimipkg build-info YAML reliably contains ':' (every key-value line) and
+        // typically newlines too; base64 contains neither and is limited to
+        // A-Z, a-z, 0-9, '+', '/', and '='. Either marker is enough to short-circuit.
+        if (value.Contains('\n') || value.Contains(':')) return value;
+
+        try
+        {
+            var bytes = Convert.FromBase64String(value);
+            return System.Text.Encoding.UTF8.GetString(bytes);
+        }
+        catch (FormatException)
+        {
+            return value;
+        }
     }
 }
 // TODO(pkg-sunset): Remove PkgBuildInfo, PkgProductInfo, PkgInstallerInfo classes
