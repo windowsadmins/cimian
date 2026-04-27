@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.ServiceProcess;
+using Cimian.Core;
 using CimianTools.CimiTrigger.Models;
 
 namespace CimianTools.CimiTrigger.Services;
@@ -156,7 +157,7 @@ public class DiagnosticService
     /// </summary>
     private bool CheckDirectoryAccess()
     {
-        var dir = @"C:\ProgramData\ManagedInstalls";
+        var dir = CimianPaths.ManagedInstallsRoot;
 
         if (!Directory.Exists(dir))
         {
@@ -322,7 +323,7 @@ public class DiagnosticService
         Console.WriteLine("   1. cimitrigger --force gui        # Direct elevation (bypasses service)");
         Console.WriteLine("   2. cimitrigger --force headless   # Direct headless elevation");
         Console.WriteLine("   3. Manual PowerShell elevation:");
-        Console.WriteLine("      PowerShell -Command \"Start-Process -FilePath 'C:\\Program Files\\Cimian\\managedsoftwareupdate.exe' -ArgumentList '--auto','--show-status','-vv' -Verb RunAs\"");
+        Console.WriteLine($"      PowerShell -Command \"Start-Process -FilePath '{CimianPaths.ManagedSoftwareUpdateExe}' -ArgumentList '--auto','--show-status','-vv' -Verb RunAs\"");
 
         Console.WriteLine("\n📋 Troubleshooting commands:");
         Console.WriteLine("   sc query CimianWatcher              # Check service status");
@@ -352,7 +353,7 @@ public class DiagnosticService
                 Console.WriteLine("   Solutions:");
                 Console.WriteLine("   1. Reinstall Cimian completely");
                 Console.WriteLine("   2. Register service manually:");
-                Console.WriteLine("      cd \"C:\\Program Files\\Cimian\"");
+                Console.WriteLine($"      cd \"{CimianPaths.CimianInstallDir}\"");
                 Console.WriteLine("      cimiwatcher.exe install");
                 Console.WriteLine("      sc start CimianWatcher");
                 Console.WriteLine("   3. Use direct method: cimitrigger --force gui");
@@ -373,7 +374,7 @@ public class DiagnosticService
                 Console.WriteLine("🔴 DIRECTORY ACCESS:");
                 Console.WriteLine("   Solutions:");
                 Console.WriteLine("   1. Run as administrator");
-                Console.WriteLine("   2. Check folder permissions on C:\\ProgramData\\ManagedInstalls");
+                Console.WriteLine($"   2. Check folder permissions on {CimianPaths.ManagedInstallsRoot}");
                 Console.WriteLine("   3. Create directory manually with proper permissions");
                 Console.WriteLine("   4. Use direct method: cimitrigger --force gui");
                 Console.WriteLine();

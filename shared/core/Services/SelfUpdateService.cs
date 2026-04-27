@@ -7,14 +7,9 @@ namespace Cimian.Core.Services;
 /// </summary>
 public static class SelfUpdateService
 {
-    // Self-update flag file - indicates a self-update is pending
-    public const string SelfUpdateFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.selfupdate";
-    
-    // Backup directory for current installation during self-update
-    public const string SelfUpdateBackupDir = @"C:\ProgramData\ManagedInstalls\SelfUpdateBackup";
-    
-    // Installation directory for Cimian
-    public const string CimianInstallDir = @"C:\Program Files\Cimian";
+    private static readonly string SelfUpdateFlagFile = CimianPaths.SelfUpdateFlagFile;
+    private static readonly string SelfUpdateBackupDir = CimianPaths.SelfUpdateBackupDir;
+    private static readonly string CimianInstallDir = CimianPaths.CimianInstallDir;
 
     /// <summary>
     /// Metadata parsed from the self-update flag file
@@ -157,7 +152,7 @@ public static class SelfUpdateService
             case "msi":
             {
                 var logFile = Path.Combine(
-                    @"C:\ProgramData\ManagedInstalls\logs",
+                    CimianPaths.LogsDir,
                     $"selfupdate-{DateTime.Now:yyyyMMdd-HHmmss}.log");
                 Directory.CreateDirectory(Path.GetDirectoryName(logFile)!);
                 fileName = "msiexec.exe";
@@ -357,7 +352,7 @@ public static class SelfUpdateService
             ConsoleLogger.Info($"Executing MSI update: {msiPath}");
 
             var logFile = Path.Combine(
-                @"C:\ProgramData\ManagedInstalls\logs",
+                CimianPaths.LogsDir,
                 $"selfupdate-{DateTime.Now:yyyyMMdd-HHmmss}.log");
 
             // Ensure log directory exists

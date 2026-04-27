@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Management.Automation;
 using System.Text;
+using Cimian.Core;
 using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -300,8 +301,8 @@ public class ScriptService
         // Check multiple possible locations (matching Go behavior)
         var possiblePaths = new[]
         {
-            @"C:\Program Files\Cimian\preflight.ps1",
-            @"C:\ProgramData\ManagedInstalls\sbin\preflight.ps1"
+            CimianPaths.PreflightScriptInstall,
+            CimianPaths.PreflightScript
         };
 
         string? preflightPath = null;
@@ -332,8 +333,8 @@ public class ScriptService
         // Check multiple possible locations (matching Go behavior)
         var possiblePaths = new[]
         {
-            @"C:\Program Files\Cimian\postflight.ps1",
-            @"C:\ProgramData\ManagedInstalls\sbin\postflight.ps1"
+            CimianPaths.PostflightScriptInstall,
+            CimianPaths.PostflightScript
         };
 
         string? postflightPath = null;

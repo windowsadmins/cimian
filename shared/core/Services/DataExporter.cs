@@ -21,21 +21,13 @@ public class DataExporter
     private List<SessionPackageInfo> _currentSessionPackagesInfo = new();
     private List<string> _currentSessionPackages = new();
 
-    private static readonly string DefaultBaseDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "ManagedInstalls", "Logs");
-
-    private static readonly string ReportsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "ManagedInstalls", "reports");
-
-    private static readonly string ManifestsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "ManagedInstalls", "manifests");
-
-    private static readonly string CatalogsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "ManagedInstalls", "catalogs");
+    // DataExporter writes to ManagedInstalls\Logs (capital L) — distinct from
+    // SessionLogger's lowercase 'logs'. Preserved as-is for compatibility with
+    // existing on-disk layouts and external log shippers.
+    private static readonly string DefaultBaseDir = Path.Combine(CimianPaths.ManagedInstallsRoot, "Logs");
+    private static readonly string ReportsDir   = CimianPaths.ReportsDir;
+    private static readonly string ManifestsDir = CimianPaths.ManifestsDir;
+    private static readonly string CatalogsDir  = CimianPaths.CatalogsDir;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -682,9 +674,7 @@ public class DataExporter
     /// </summary>
     public SessionConfig? LoadCimianConfiguration()
     {
-        var configPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "ManagedInstalls", "preferences.yaml");
+        var configPath = Path.Combine(CimianPaths.ManagedInstallsRoot, "preferences.yaml");
 
         if (!File.Exists(configPath))
             return null;
