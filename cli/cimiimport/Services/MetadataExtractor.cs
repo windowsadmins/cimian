@@ -654,9 +654,9 @@ public partial class MetadataExtractor
     {
         if (string.IsNullOrEmpty(value)) return value;
 
-        // cimipkg build-info YAML reliably contains ':' (every key-value line) and
-        // typically newlines too; base64 contains neither and is limited to
-        // A-Z, a-z, 0-9, '+', '/', and '='. Either marker is enough to short-circuit.
+        // cimipkg build-info YAML is expected to contain ':' and typically includes
+        // newlines, while a base64 string contains neither and is limited to
+        // A-Z, a-z, 0-9, '+', '/', and '='.
         if (value.Contains('\n') || value.Contains(':')) return value;
 
         try
