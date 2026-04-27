@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Cimian.CLI.Cimiimport.Models;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -637,7 +638,8 @@ public class ImportService
     }
 
     /// <summary>
-    /// Replaces user profile path with variable.
+    /// Replaces the resolved user-profile prefix in a path with %USERPROFILE%
+    /// so the resulting metadata is portable across machines / users.
     /// </summary>
     private static string ReplacePathUserProfile(string path)
     {
@@ -647,7 +649,7 @@ public class ImportService
 
         if (path.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase))
         {
-            return @"C:\Users\%USERPROFILE%" + path[userProfile.Length..];
+            return "%USERPROFILE%" + path[userProfile.Length..];
         }
         return path;
     }
@@ -657,7 +659,7 @@ public class ImportService
     /// </summary>
     private void RunMakeCatalogs(string repoPath, bool silent)
     {
-        var makeCatalogsBinary = @"C:\Program Files\Cimian\makecatalogs.exe";
+        var makeCatalogsBinary = CimianPaths.MakeCatalogsExe;
         if (!File.Exists(makeCatalogsBinary))
         {
             return; // Silently skip if not found

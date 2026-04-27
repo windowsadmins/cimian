@@ -1,4 +1,5 @@
 using Cimian.CLI.Makepkginfo.Models;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -25,7 +26,7 @@ public class PkgInfoBuilder
     /// <summary>
     /// Configuration for loading repository settings
     /// </summary>
-    public const string DefaultConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
+    public static readonly string DefaultConfigPath = CimianPaths.ConfigYaml;
 
     /// <summary>
     /// Loads Cimian configuration from the config file
@@ -347,7 +348,7 @@ public class PkgInfoBuilder
 
         if (path.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase))
         {
-            return @"C:\Users\%USERPROFILE%" + path[userProfile.Length..];
+            return "%USERPROFILE%" + path[userProfile.Length..];
         }
 
         return path;

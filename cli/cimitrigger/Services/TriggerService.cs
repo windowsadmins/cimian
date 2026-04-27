@@ -1,3 +1,4 @@
+using Cimian.Core;
 using CimianTools.CimiTrigger.Models;
 
 namespace CimianTools.CimiTrigger.Services;
@@ -10,8 +11,8 @@ public class TriggerService
     /// <summary>
     /// Bootstrap flag file paths.
     /// </summary>
-    public const string GuiBootstrapFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
-    public const string HeadlessBootstrapFile = @"C:\ProgramData\ManagedInstalls\.cimian.headless";
+    public static readonly string GuiBootstrapFile = CimianPaths.BootstrapFlagFile;
+    public static readonly string HeadlessBootstrapFile = CimianPaths.HeadlessFlagFile;
 
     private readonly ElevationService _elevationService;
 
@@ -226,7 +227,7 @@ public class TriggerService
     {
         try
         {
-            var logsDir = @"C:\ProgramData\ManagedInstalls\logs";
+            var logsDir = CimianPaths.LogsDir;
             if (!Directory.Exists(logsDir)) return null;
 
             var directories = Directory.GetDirectories(logsDir)

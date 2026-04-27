@@ -1,4 +1,5 @@
 using Cimian.CLI.Manifestutil.Models;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -13,7 +14,7 @@ public class SelfServiceManifestService
     /// <summary>
     /// Default path to the self-service manifest
     /// </summary>
-    public const string DefaultManifestPath = @"C:\ProgramData\ManagedInstalls\SelfServeManifest.yaml";
+    public static readonly string DefaultManifestPath = CimianPaths.SelfServeManifestYaml;
 
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;

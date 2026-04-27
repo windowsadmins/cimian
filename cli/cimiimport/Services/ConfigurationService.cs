@@ -1,4 +1,5 @@
 using Cimian.CLI.Cimiimport.Models;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -9,7 +10,7 @@ namespace Cimian.CLI.Cimiimport.Services;
 /// </summary>
 public class ConfigurationService
 {
-    public const string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
+    public static readonly string ConfigPath = CimianPaths.ConfigYaml;
 
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
@@ -94,16 +95,14 @@ public class ConfigurationService
     }
 
     /// <summary>
-    /// Gets default configuration.
+    /// Gets default configuration. RepoPath is resolved at runtime from the
+    /// surrounding git checkout — never hardcoded to a user-profile path.
     /// </summary>
     public ImportConfiguration GetDefaultConfig()
     {
-        var userProfile = Environment.GetEnvironmentVariable("USERPROFILE") ?? 
-                         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
         return new ImportConfiguration
         {
-            RepoPath = Path.Combine(userProfile, "DevOps", "Cimian", "deployment"),
+            RepoPath = RepoResolver.ResolveDefaultRepoPath() ?? string.Empty,
             CloudProvider = "none",
             CloudBucket = "",
             DefaultCatalog = "Development",
@@ -119,7 +118,10 @@ public class ConfigurationService
     {
         var defaults = GetDefaultConfig();
 
-        Console.Write($"Enter Repo Path [{config.RepoPath ?? defaults.RepoPath}]: ");
+        var repoPrompt = !string.IsNullOrEmpty(config.RepoPath) ? config.RepoPath
+                       : !string.IsNullOrEmpty(defaults.RepoPath) ? defaults.RepoPath
+                       : "(no Cimian deployment detected — please enter)";
+        Console.Write($"Enter Repo Path [{repoPrompt}]: ");
         var input = Console.ReadLine()?.Trim();
         if (!string.IsNullOrEmpty(input))
         {

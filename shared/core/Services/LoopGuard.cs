@@ -29,25 +29,21 @@ namespace Cimian.Core.Services;
 ///   8+ installs → suppress indefinitely until manual clear
 ///   3 installs within 2 hours (rapid-fire) → suppress 12 hours
 ///
-/// State persisted to: C:\ProgramData\ManagedInstalls\reports\state.json
+/// State persisted to: %ProgramData%\ManagedInstalls\reports\state.json
 /// Clear with: managedsoftwareupdate --clear-loop (name or all)
 /// </summary>
 public class LoopGuard
 {
-    private static readonly string StateDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "ManagedInstalls");
-
-    private static readonly string ReportsDir = Path.Combine(StateDir, "reports");
+    private static readonly string ReportsDir = CimianPaths.ReportsDir;
 
     private static readonly string StatePath = Path.Combine(ReportsDir, "state.json");
 
     // Legacy path for migration from older versions
     private static readonly string LegacyStatePath = Path.Combine(ReportsDir, "loop_state.json");
 
-    private static readonly string LogsDir = Path.Combine(StateDir, "logs");
+    private static readonly string LogsDir = CimianPaths.LogsDir;
 
-    private static readonly string CacheDir = Path.Combine(StateDir, "Cache");
+    private static readonly string CacheDir = CimianPaths.CacheDir;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
