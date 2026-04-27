@@ -274,6 +274,15 @@ $Global:GuiApps = @{
     "ManagedSoftwareCenter" = @{ Project = "gui/ManagedSoftwareCenter"; Type = "GUI" }
 }
 
+# Native C++ DLLs built with MSBuild rather than dotnet publish.
+$Global:NativeDlls = @{
+    "cimianstatusprovider" = @{
+        Project = "gui/CimianStatusProvider/CimianStatusProvider.vcxproj"
+        Output  = "CimianStatusProvider.dll"
+        Type    = "NativeDll"
+    }
+}
+
 #region Certificate and Signing Functions
 
 function Test-Command {
@@ -675,31 +684,93 @@ function Publish-Binary {
     Write-BuildLog "$ToolName ($RuntimeIdentifier) built successfully" -Level 'SUCCESS'
 }
 
+function Find-MsBuildExe {
+    # Prefer the VS Developer environment if it's already on PATH.
+    $msbuild = Get-Command 'msbuild.exe' -ErrorAction SilentlyContinue
+    if ($msbuild) { return $msbuild.Source }
+
+    # Fall back to vswhere — present on any box with VS 2017+ installed.
+    $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vsRoot = & $vswhere -latest -requires Microsoft.Component.MSBuild `
+            -property installationPath -products * 2>$null | Select-Object -First 1
+        if ($vsRoot) {
+            foreach ($candidate in @(
+                "$vsRoot\MSBuild\Current\Bin\amd64\MSBuild.exe",
+                "$vsRoot\MSBuild\Current\Bin\MSBuild.exe"
+            )) {
+                if (Test-Path $candidate) { return $candidate }
+            }
+        }
+    }
+    throw "MSBuild not found. Install Visual Studio 2022 with the 'Desktop development with C++' workload."
+}
+
+function Build-NativeDll {
+    param(
+        [Parameter(Mandatory = $true)] [string]$ToolName,
+        [Parameter(Mandatory = $true)] [string]$ProjectPath,
+        [Parameter(Mandatory = $true)] [string]$Architecture,
+        [Parameter(Mandatory = $true)] [string]$OutputDirectory,
+        [Parameter(Mandatory = $true)] [string]$ExpectedOutput
+    )
+
+    $msbuild = Find-MsBuildExe
+    $platform = if ($Architecture -eq 'arm64') { 'ARM64' } else { 'x64' }
+
+    Write-BuildLog "Building native DLL $ToolName ($platform) via MSBuild" 'INFO'
+
+    # `$args` is an automatic in PS function scope; use a distinct name and
+    # invoke the array directly rather than splatting via `@$args`.
+    $msbuildArgs = @(
+        $ProjectPath,
+        "/p:Configuration=Release",
+        "/p:Platform=$platform",
+        "/m",
+        "/nologo",
+        "/v:minimal"
+    )
+    & $msbuild $msbuildArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSBuild failed for $ToolName ($platform) — exit $LASTEXITCODE"
+    }
+
+    $produced = Join-Path $OutputDirectory $ExpectedOutput
+    if (-not (Test-Path $produced)) {
+        throw "Native DLL $ExpectedOutput not produced at $produced"
+    }
+    Write-BuildLog "$ToolName ($Architecture) built successfully" 'SUCCESS'
+}
+
 function Build-AllBinaries {
     param(
         [string]$SingleBinary,
         [string]$BuildVersion = ''
     )
-    
+
     $archs = if ($Architecture -eq 'both') { @('x64', 'arm64') } elseif ($Architecture -eq 'x64') { @('x64') } else { @('arm64') }
     $runtimeMap = @{ 'x64' = 'win-x64'; 'arm64' = 'win-arm64' }
-    
+
     # Determine tools to build
     $toolsToBuild = @{}
     $guiAppsToBuild = @{}
+    $nativeDllsToBuild = @{}
 
     if ($SingleBinary) {
         if ($Global:CSharpTools.ContainsKey($SingleBinary)) {
             $toolsToBuild = @{ $SingleBinary = $Global:CSharpTools[$SingleBinary] }
         } elseif ($Global:GuiApps.ContainsKey($SingleBinary)) {
             $guiAppsToBuild = @{ $SingleBinary = $Global:GuiApps[$SingleBinary] }
+        } elseif ($Global:NativeDlls.ContainsKey($SingleBinary)) {
+            $nativeDllsToBuild = @{ $SingleBinary = $Global:NativeDlls[$SingleBinary] }
         } else {
-            $allNames = ($Global:CSharpTools.Keys + $Global:GuiApps.Keys) -join ', '
+            $allNames = ($Global:CSharpTools.Keys + $Global:GuiApps.Keys + $Global:NativeDlls.Keys) -join ', '
             throw "Unknown binary: $SingleBinary. Valid options: $allNames"
         }
     } else {
         $toolsToBuild = $Global:CSharpTools
         $guiAppsToBuild = $Global:GuiApps
+        $nativeDllsToBuild = $Global:NativeDlls
     }
     
     Write-BuildLog "Building tools: $(($toolsToBuild.Keys + $guiAppsToBuild.Keys) -join ', ')"
@@ -733,15 +804,27 @@ function Build-AllBinaries {
         foreach ($appName in $guiAppsToBuild.Keys) {
             $appInfo = $guiAppsToBuild[$appName]
             $projectPath = Join-Path $RootDir $appInfo.Project
-            
+
             $csprojFiles = Get-ChildItem -Path $projectPath -Filter '*.csproj' -ErrorAction SilentlyContinue
             if (-not $csprojFiles -or $csprojFiles.Count -eq 0) {
                 Write-BuildLog "No .csproj found for $appName" -Level 'WARNING'
                 continue
             }
-            
+
             $csproj = $csprojFiles[0].FullName
             Publish-Binary -ToolName $appName -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $true -IsWinUI $true -BuildVersion $BuildVersion
+        }
+
+        foreach ($dllName in $nativeDllsToBuild.Keys) {
+            $dllInfo = $nativeDllsToBuild[$dllName]
+            $vcxproj = Join-Path $RootDir $dllInfo.Project
+            if (-not (Test-Path $vcxproj)) {
+                Write-BuildLog "vcxproj not found for $dllName at $vcxproj" -Level 'WARNING'
+                continue
+            }
+            Build-NativeDll -ToolName $dllName -ProjectPath $vcxproj `
+                            -Architecture $arch -OutputDirectory $outputPath `
+                            -ExpectedOutput $dllInfo.Output
         }
     }
     
@@ -770,18 +853,29 @@ function Invoke-SignAllBinaries {
     
     foreach ($arch in $archs) {
         $archDir = Join-Path $OutputDir $arch
-        $exeFiles = Get-ChildItem -Path $archDir -Filter "*.exe" -File -ErrorAction SilentlyContinue
-        
-        foreach ($exe in $exeFiles) {
+        # Sign every .exe AND every Cimian-authored .dll. We deliberately scope
+        # DLL signing to our own native components — third-party .NET assemblies
+        # carry their own signatures and re-signing them invalidates them.
+        $artifacts = @()
+        $artifacts += Get-ChildItem -Path $archDir -Filter "*.exe" -File -ErrorAction SilentlyContinue
+        foreach ($dllName in $Global:NativeDlls.Keys) {
+            $dllOutput = $Global:NativeDlls[$dllName].Output
+            $candidate = Join-Path $archDir $dllOutput
+            if (Test-Path $candidate) {
+                $artifacts += Get-Item $candidate
+            }
+        }
+
+        foreach ($artifact in $artifacts) {
             try {
-                Invoke-SignArtifact -Path $exe.FullName -Thumbprint $Thumbprint -Store $CertStore
+                Invoke-SignArtifact -Path $artifact.FullName -Thumbprint $Thumbprint -Store $CertStore
             }
             catch {
-                Write-BuildLog "Failed to sign $($exe.Name): $_" -Level 'WARNING'
+                Write-BuildLog "Failed to sign $($artifact.Name): $_" -Level 'WARNING'
             }
         }
     }
-    
+
     Write-BuildLog "Binary signing complete" -Level 'SUCCESS'
 }
 
@@ -838,7 +932,8 @@ function Build-MsiPackage {
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
         'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
-        'repoclean.exe', 'Managed Software Center.exe'
+        'repoclean.exe', 'Managed Software Center.exe',
+        'CimianStatusProvider.dll'
     )
     foreach ($exe in $expectedExecutables) {
         if (-not (Test-Path (Join-Path $payloadDir $exe))) {
@@ -1155,7 +1250,8 @@ function Build-PkgPackage {
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
         'cimiimport.exe', 'cimipkg.exe', 'makecatalogs.exe', 'makepkginfo.exe', 'manifestutil.exe',
-        'repoclean.exe', 'Managed Software Center.exe'
+        'repoclean.exe', 'Managed Software Center.exe',
+        'CimianStatusProvider.dll'
     )
     $missingExecutables = @()
     foreach ($exe in $expectedExecutables) {

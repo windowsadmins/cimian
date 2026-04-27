@@ -183,10 +183,21 @@ public class FileWatcherService : BackgroundService
 
             _logger.LogInformation("Started managedsoftwareupdate process (PID: {Pid})", updateProcess.Id);
 
-            // If GUI mode and caller didn't suppress cimistatus, launch the status UI
+            // If GUI mode and caller didn't suppress cimistatus, decide between:
+            //   - logged-in user → launch cimistatus.exe in their session (existing behaviour)
+            //   - pre-logon → leave the UI to the CimianStatusProvider PLAP loaded
+            //     by LogonUI.exe, which is already listening on 127.0.0.1:19847.
             if (withGUI && !suppressCimistatus)
             {
-                LaunchCimianStatus();
+                if (SessionProbe.IsInteractiveUserLoggedOn())
+                {
+                    LaunchCimianStatus();
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "No interactive user — leaving UI to CimianStatusProvider PLAP on logon screen");
+                }
             }
 
             // Wait for the update process to complete

@@ -20,7 +20,8 @@ try {
     $expected = @(
         'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
         'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe','repoclean.exe',
-        'Managed Software Center.exe'
+        'Managed Software Center.exe',
+        'CimianStatusProvider.dll'
     )
     $missing = @()
     foreach ($name in $expected) {
@@ -133,6 +134,36 @@ try {
         Set-ItemProperty -Path $registryPath -Name "InstallPath" -Value $InstallDir -Type String
     } catch {
         Write-Warning "Failed to write version to registry: $_"
+    }
+
+    # Register the CimianStatusProvider PLAP credential provider so LogonUI.exe
+    # picks it up on next reboot. The DLL self-registers under
+    # HKLM\SOFTWARE\Classes\CLSID\{...} and HKLM\...\PLAP Providers\{...}.
+    # Idempotent — regsvr32 happily overwrites an existing registration.
+    try {
+        $plapDll = Join-Path $InstallDir 'CimianStatusProvider.dll'
+        if (Test-Path $plapDll) {
+            Write-Host "Registering CimianStatusProvider PLAP..."
+            $regsvr = Join-Path $env:SystemRoot 'System32\regsvr32.exe'
+            $regProc = Start-Process -FilePath $regsvr -ArgumentList @('/s', "`"$plapDll`"") `
+                -Wait -PassThru -WindowStyle Hidden
+            if ($regProc.ExitCode -ne 0) {
+                Write-Warning "regsvr32 returned exit code $($regProc.ExitCode) for CimianStatusProvider.dll"
+            } else {
+                # Verify the PLAP key landed.
+                $plapGuid = '{C1819A88-7E61-4C0E-9D77-3F0E4B3C1A55}'
+                $plapKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\PLAP Providers\$plapGuid"
+                if (Test-Path $plapKey) {
+                    Write-Host "CimianStatusProvider PLAP registered"
+                } else {
+                    Write-Warning "PLAP registration appears to have failed: $plapKey not present"
+                }
+            }
+        } else {
+            Write-Warning "CimianStatusProvider.dll not found at $plapDll - logon screen progress UI will not be available"
+        }
+    } catch {
+        Write-Warning "Failed to register CimianStatusProvider PLAP: $_"
     }
 
     # Start Menu shortcut (idempotent)

@@ -10,6 +10,31 @@ $ErrorActionPreference = 'Continue'
 $InstallDir = "C:\Program Files\Cimian"
 Write-Host "CimianTools uninstall: phase=$($env:CIMIAN_PHASE) version=$($env:CIMIAN_VERSION)" -ForegroundColor Yellow
 
+# 0. Unregister the CimianStatusProvider PLAP first, while the DLL still exists.
+# We have to do this BEFORE RemoveFiles removes CimianStatusProvider.dll,
+# otherwise regsvr32 /u has nothing to call DllUnregisterServer on and the
+# HKLM\...\PLAP Providers\{GUID} entry would be orphaned, leaving a dead
+# CLSID reference that LogonUI keeps trying to load.
+try {
+    $plapDll = Join-Path $InstallDir 'CimianStatusProvider.dll'
+    $plapGuid = '{C1819A88-7E61-4C0E-9D77-3F0E4B3C1A55}'
+    $plapKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\PLAP Providers\$plapGuid"
+    $clsidKey = "HKLM:\SOFTWARE\Classes\CLSID\$plapGuid"
+
+    if (Test-Path $plapDll) {
+        $regsvr = Join-Path $env:SystemRoot 'System32\regsvr32.exe'
+        & $regsvr /s /u "`"$plapDll`""
+    }
+    # Belt-and-suspenders cleanup in case the DLL was already gone or
+    # DllUnregisterServer didn't run. RegDeleteKey is harmless if the key
+    # doesn't exist.
+    if (Test-Path $plapKey)  { Remove-Item -Path $plapKey  -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $clsidKey) { Remove-Item -Path $clsidKey -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Host "Unregistered CimianStatusProvider PLAP"
+} catch {
+    Write-Warning "Failed to unregister CimianStatusProvider PLAP: $_"
+}
+
 # 1. Remove scheduled task. Harmless if it's already gone.
 try {
     $task = Get-ScheduledTask -TaskName "Cimian Managed Software Update Hourly" -ErrorAction SilentlyContinue
