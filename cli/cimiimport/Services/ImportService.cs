@@ -323,8 +323,12 @@ public class ImportService
 
         Console.WriteLine($"Pkginfo created at: {pkginfoPath}");
 
-        // Open in editor if configured
-        if (config.OpenImportedYaml)
+        // Open in editor if configured. Suppressed under --nointeractive: the editor
+        // (VS Code / Notepad) inherits the parent process's stdio, and when cimiimport
+        // is itself invoked with redirected stdio (e.g. PowerShell `& cimiimport ... 2>&1`),
+        // the editor's grandchild handles keep the pipe open after cimiimport exits and
+        // deadlock the caller. CI must never spawn an editor.
+        if (config.OpenImportedYaml && !noInteractive)
         {
             TryOpenFile(pkginfoPath);
         }
