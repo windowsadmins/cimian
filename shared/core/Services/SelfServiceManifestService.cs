@@ -79,7 +79,7 @@ public interface ISelfServiceManifestService
 /// </summary>
 public class SelfServiceManifestService : ISelfServiceManifestService
 {
-    private const string SelfServiceManifestPath = @"C:\ProgramData\ManagedInstalls\SelfServeManifest.yaml";
+    private static readonly string SelfServiceManifestPath = CimianPaths.SelfServeManifestYaml;
     
     private readonly ILogger<SelfServiceManifestService>? _logger;
     private readonly IDeserializer _deserializer;

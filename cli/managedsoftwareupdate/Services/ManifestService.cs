@@ -3,6 +3,7 @@ using System.Text;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core;
 using Cimian.Core.Services;
 using Cimian.Engine.Predicates;
 using Cimian.Infrastructure.System;
@@ -328,7 +329,7 @@ public class ManifestService
     /// <summary>
     /// Ensures SystemFacts are populated for predicate evaluation
     /// </summary>
-    private static readonly string ConditionsDir = @"C:\ProgramData\ManagedInstalls\conditions";
+    private static readonly string ConditionsDir = CimianPaths.ConditionsDir;
 
     private void EnsureSystemFacts()
     {

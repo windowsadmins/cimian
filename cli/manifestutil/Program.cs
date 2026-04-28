@@ -1,12 +1,13 @@
 using System.CommandLine;
 using Cimian.CLI.Manifestutil.Services;
+using Cimian.Core;
 
 namespace Cimian.CLI.Manifestutil;
 
 class Program
 {
     private const string Version = "2.0.0";
-    private const string DefaultConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
+    private static readonly string DefaultConfigPath = CimianPaths.ConfigYaml;
 
     static async Task<int> Main(string[] args)
     {

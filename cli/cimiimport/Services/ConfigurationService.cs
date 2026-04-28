@@ -1,4 +1,5 @@
 using Cimian.CLI.Cimiimport.Models;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -9,7 +10,7 @@ namespace Cimian.CLI.Cimiimport.Services;
 /// </summary>
 public class ConfigurationService
 {
-    public const string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
+    public static readonly string ConfigPath = CimianPaths.ConfigYaml;
 
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
@@ -94,16 +95,14 @@ public class ConfigurationService
     }
 
     /// <summary>
-    /// Gets default configuration.
+    /// Gets default configuration. RepoPath is resolved at runtime from the
+    /// surrounding git checkout — never hardcoded to a user-profile path.
     /// </summary>
     public ImportConfiguration GetDefaultConfig()
     {
-        var userProfile = Environment.GetEnvironmentVariable("USERPROFILE") ?? 
-                         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
         return new ImportConfiguration
         {
-            RepoPath = Path.Combine(userProfile, "DevOps", "Cimian", "deployment"),
+            RepoPath = RepoResolver.ResolveDefaultRepoPath() ?? string.Empty,
             CloudProvider = "none",
             CloudBucket = "",
             DefaultCatalog = "Development",
@@ -119,15 +118,26 @@ public class ConfigurationService
     {
         var defaults = GetDefaultConfig();
 
-        Console.Write($"Enter Repo Path [{config.RepoPath ?? defaults.RepoPath}]: ");
-        var input = Console.ReadLine()?.Trim();
-        if (!string.IsNullOrEmpty(input))
+        string? input;
+
+        // Loop until we have a non-empty RepoPath. We refuse to save an empty
+        // value because downstream tools (makecatalogs, makepkginfo, etc.) all
+        // read RepoPath from Config.yaml and silently misbehave on empty.
+        var existingDefault = !string.IsNullOrEmpty(config.RepoPath) ? config.RepoPath : defaults.RepoPath;
+        while (true)
         {
-            config.RepoPath = input;
-        }
-        else if (string.IsNullOrEmpty(config.RepoPath))
-        {
-            config.RepoPath = defaults.RepoPath;
+            var prompt = !string.IsNullOrEmpty(existingDefault)
+                ? existingDefault
+                : "(no Cimian deployment detected — please enter)";
+            Console.Write($"Enter Repo Path [{prompt}]: ");
+            input = Console.ReadLine()?.Trim();
+            var chosen = !string.IsNullOrEmpty(input) ? input : existingDefault;
+            if (!string.IsNullOrEmpty(chosen))
+            {
+                config.RepoPath = chosen;
+                break;
+            }
+            Console.WriteLine("⚠️ RepoPath is required. Enter the path to your Cimian deployment workspace.");
         }
 
         Console.Write($"Enter Cloud Provider (aws/azure/none) [{config.CloudProvider ?? defaults.CloudProvider}]: ");
@@ -181,7 +191,9 @@ public class ConfigurationService
     }
 
     /// <summary>
-    /// Runs non-interactive configuration with defaults.
+    /// Runs non-interactive configuration with defaults. Throws if RepoPath
+    /// can't be resolved — non-interactive can't prompt, so silently saving
+    /// an empty path would just paper over the misconfiguration.
     /// </summary>
     public void ConfigureNonInteractive(ImportConfiguration config)
     {
@@ -195,6 +207,13 @@ public class ConfigurationService
             config.DefaultCatalog = defaults.DefaultCatalog;
         if (string.IsNullOrEmpty(config.DefaultArch))
             config.DefaultArch = defaults.DefaultArch;
+
+        if (string.IsNullOrEmpty(config.RepoPath))
+        {
+            throw new InvalidOperationException(
+                "RepoPath could not be resolved. Run from inside a Cimian deployment " +
+                "checkout, or use interactive --configure to set it explicitly.");
+        }
 
         SaveConfig(config);
         Console.WriteLine("✅ Configuration saved (non-interactive).");

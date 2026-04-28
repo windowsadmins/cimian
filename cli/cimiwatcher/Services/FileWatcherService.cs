@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Cimian.Core;
 using Cimian.Core.Services;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,9 +12,9 @@ namespace Cimian.CLI.Cimiwatcher.Services;
 /// </summary>
 public class FileWatcherService : BackgroundService
 {
-    private const string BootstrapFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
-    private const string HeadlessFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.headless";
-    private const string CimianExePath = @"C:\Program Files\Cimian\managedsoftwareupdate.exe";
+    private static readonly string BootstrapFlagFile = CimianPaths.BootstrapFlagFile;
+    private static readonly string HeadlessFlagFile = CimianPaths.HeadlessFlagFile;
+    private static readonly string CimianExePath = CimianPaths.ManagedSoftwareUpdateExe;
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
 
     private readonly ILogger<FileWatcherService> _logger;
