@@ -247,6 +247,79 @@ public class StatusServiceTests
 
     #endregion
 
+    #region MSI installer-block ProductCode/UpgradeCode Tests (Priority 6.5)
+
+    [Fact]
+    public void CheckStatus_MsiInstaller_WithFakeProductCode_ReportsProductCodeMissing()
+    {
+        // Priority 6.5: pkginfo declares installer.product_code on an MSI but the GUID
+        // is not registered with Windows Installer. Before the fix this fell through to
+        // NoChecks (silently "installed"); now it must surface as Pending with
+        // ProductCodeMissing so the package gets installed.
+        var item = new CatalogItem
+        {
+            Name = "TestPkgWithFakeProductCode",
+            Version = "1.0.0",
+            Installer = new InstallerInfo
+            {
+                Type = "msi",
+                ProductCode = "{00000000-0000-0000-0000-000000000000}",
+                UpgradeCode = "{11111111-1111-1111-1111-111111111111}"
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("pending", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.ProductCodeMissing, result.ReasonCode);
+        Assert.Equal(Cimian.Core.Models.DetectionMethod.Msi, result.DetectionMethod);
+    }
+
+    [Fact]
+    public void CheckStatus_MsiInstaller_WithoutProductCodeOrUpgradeCode_FallsThroughToNoChecks()
+    {
+        // Regression guard: an MSI pkginfo that doesn't declare product_code/upgrade_code
+        // should keep the existing "no checks" fall-through behavior — Priority 6.5 only
+        // engages when authoritative MSI identity is provided.
+        var item = new CatalogItem
+        {
+            Name = "MsiWithoutCodes",
+            Version = "1.0.0",
+            Installer = new InstallerInfo { Type = "msi" }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("installed", result.Status);
+        Assert.False(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.NoChecks, result.ReasonCode);
+    }
+
+    [Fact]
+    public void CheckStatus_NonMsiInstaller_WithProductCodeIsIgnored()
+    {
+        // Priority 6.5 is gated on installer.type == "msi". A pkg/exe/script item that
+        // happens to carry a product_code (unusual, but possible) must not be routed
+        // through the MSI registry lookup.
+        var item = new CatalogItem
+        {
+            Name = "PkgWithProductCode",
+            Version = "1.0.0",
+            Installer = new InstallerInfo
+            {
+                Type = "pkg",
+                ProductCode = "{00000000-0000-0000-0000-000000000000}"
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.NotEqual(Cimian.Core.Models.DetectionMethod.Msi, result.DetectionMethod);
+    }
+
+    #endregion
+
     #region Script Check Tests
 
     [Fact]
