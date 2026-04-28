@@ -212,24 +212,26 @@ public class StatusService
             }
 
             // Priority 6.5: top-level `installer:` block ProductCode/UpgradeCode (MSI authoritative).
-            // The Windows Installer database is the source of truth for MSI install state — query it
-            // directly when the pkgsinfo declares product_code/upgrade_code at the installer level,
-            // even when no installs[] array is present.
-            if (string.Equals(item.Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase)
-                && (!string.IsNullOrEmpty(item.Installer.ProductCode) ||
-                    !string.IsNullOrEmpty(item.Installer.UpgradeCode)))
+            // Look the package up in the Windows Uninstall / Installer\UpgradeCodes registry views
+            // — same source `msiexec` ultimately consults — when the pkgsinfo declares
+            // product_code/upgrade_code at the installer level, even with no installs[] array.
+            var msiInstaller = item.Installer;
+            if (msiInstaller != null
+                && string.Equals(msiInstaller.Type, "msi", StringComparison.OrdinalIgnoreCase)
+                && (!string.IsNullOrEmpty(msiInstaller.ProductCode) ||
+                    !string.IsNullOrEmpty(msiInstaller.UpgradeCode)))
             {
-                ConsoleLogger.Debug($"Verifying MSI via installer block item: {item.Name} productCode: {item.Installer.ProductCode} upgradeCode: {item.Installer.UpgradeCode}");
+                ConsoleLogger.Debug($"Verifying MSI via installer block item: {item.Name} productCode: {msiInstaller.ProductCode} upgradeCode: {msiInstaller.UpgradeCode}");
                 var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
-                    item.Installer.ProductCode, item.Installer.UpgradeCode, item.Version, item.Name);
+                    msiInstaller.ProductCode, msiInstaller.UpgradeCode, item.Version, item.Name);
 
                 if (!msiInstalled)
                 {
-                    ConsoleLogger.Info($"MSI product not installed item: {item.Name} productCode: {item.Installer.ProductCode} upgradeCode: {item.Installer.UpgradeCode}");
+                    ConsoleLogger.Info($"MSI product not installed item: {item.Name} productCode: {msiInstaller.ProductCode} upgradeCode: {msiInstaller.UpgradeCode}");
                     result.Status = "pending";
                     result.NeedsAction = true;
                     result.IsUpdate = HasManagedInstallsEntry(item.Name);
-                    result.Reason = $"MSI not registered in Windows Installer (ProductCode={item.Installer.ProductCode}, UpgradeCode={item.Installer.UpgradeCode})";
+                    result.Reason = $"MSI not registered in Windows Installer (ProductCode={msiInstaller.ProductCode}, UpgradeCode={msiInstaller.UpgradeCode})";
                     result.ReasonCode = StatusReasonCode.ProductCodeMissing;
                     result.DetectionMethod = DetectionMethod.Msi;
                     return result;
@@ -955,13 +957,20 @@ if ($results.Count -gt 0) {{
     // MSI ProductVersion is capped at major.minor.build (255.255.65535), so cimipkg compresses
     // date-based versions like 2026.04.12.2144 into 26.4.1221 to fit. The expanded form is
     // persisted by Cimian to HKLM\SOFTWARE\ManagedInstalls\<Name>\Version after install.
-    // Prefer that when present so logs and version comparisons use the original date string.
+    // Prefer the expanded form only when it compares >= the MSI-reported version, so logs
+    // and comparisons keep the original date string for cimipkg packages, but apps that can
+    // auto-update outside Cimian (Chrome, etc.) still report the live MSI DisplayVersion
+    // instead of a stale Cimian receipt.
     private string ResolveExpandedVersion(string itemName, string msiVersion)
     {
         if (string.IsNullOrEmpty(itemName))
             return msiVersion;
         var expanded = GetManagedInstallsVersion(itemName);
-        return string.IsNullOrEmpty(expanded) ? msiVersion : expanded;
+        if (string.IsNullOrEmpty(expanded))
+            return msiVersion;
+        // CompareVersions returns >0 when first arg is greater. We want expanded only if
+        // expanded >= msiVersion, i.e. CompareVersions(msiVersion, expanded) <= 0.
+        return CatalogService.CompareVersions(msiVersion, expanded) <= 0 ? expanded : msiVersion;
     }
 
     /// <summary>
