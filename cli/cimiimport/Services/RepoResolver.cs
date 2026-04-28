@@ -49,14 +49,25 @@ public static class RepoResolver
             {
                 WorkingDirectory = repoRoot,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                // Don't redirect stderr — leaving it as inherited avoids an
+                // unread-pipe deadlock if git writes a lot to it. The text we
+                // care about ("origin URL") goes to stdout regardless.
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
-            var stdout = p.StandardOutput.ReadToEnd();
-            p.WaitForExit(2000);
+
+            // Drain stdout asynchronously so a stalled `git` (credential prompt,
+            // slow remote) can't block us — the WaitForExit timeout below is the
+            // hard cap.
+            var stdoutTask = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(2000))
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+            var stdout = stdoutTask.GetAwaiter().GetResult();
             return p.ExitCode == 0 &&
                    stdout.Contains(CimianRemotePattern, StringComparison.OrdinalIgnoreCase);
         }
