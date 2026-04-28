@@ -154,6 +154,8 @@ public class UpdateModelsTests
         Assert.Empty(installer.Args);
         Assert.Null(installer.Hash);
         Assert.Null(installer.Size);
+        Assert.Null(installer.ProductCode);
+        Assert.Null(installer.UpgradeCode);
     }
 
     [Fact]
@@ -165,7 +167,9 @@ public class UpdateModelsTests
             Type = "msi",
             Hash = "abc123def456",
             Size = 1024000,
-            Args = ["/qn", "/norestart"]
+            Args = ["/qn", "/norestart"],
+            ProductCode = "{12345678-1234-1234-1234-123456789012}",
+            UpgradeCode = "{abcdef01-2345-6789-abcd-ef0123456789}"
         };
 
         Assert.Equal("apps/myapp/myapp-1.0.0.msi", installer.Location);
@@ -173,6 +177,29 @@ public class UpdateModelsTests
         Assert.Equal("abc123def456", installer.Hash);
         Assert.Equal(1024000, installer.Size);
         Assert.Equal(2, installer.Args.Count);
+        Assert.Equal("{12345678-1234-1234-1234-123456789012}", installer.ProductCode);
+        Assert.Equal("{abcdef01-2345-6789-abcd-ef0123456789}", installer.UpgradeCode);
+    }
+
+    [Fact]
+    public void InstallerInfo_DeserializesProductCodeAndUpgradeCodeFromYaml()
+    {
+        var yaml = """
+            type: msi
+            location: apps/myapp/myapp-1.0.0.msi
+            product_code: '{12345678-1234-1234-1234-123456789012}'
+            upgrade_code: '{abcdef01-2345-6789-abcd-ef0123456789}'
+            """;
+
+        var deserializer = new YamlDotNet.Serialization.DeserializerBuilder()
+            .IgnoreUnmatchedProperties()
+            .Build();
+
+        var installer = deserializer.Deserialize<InstallerInfo>(yaml);
+
+        Assert.Equal("msi", installer.Type);
+        Assert.Equal("{12345678-1234-1234-1234-123456789012}", installer.ProductCode);
+        Assert.Equal("{abcdef01-2345-6789-abcd-ef0123456789}", installer.UpgradeCode);
     }
 
     #endregion
