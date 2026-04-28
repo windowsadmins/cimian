@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Cimian.Core;
 using CimianTools.CimiTrigger.Models;
 
 namespace CimianTools.CimiTrigger.Services;
@@ -13,7 +14,7 @@ public class ElevationService
     /// </summary>
     private static readonly string[] ExecutablePaths =
     [
-        @"C:\Program Files\Cimian\managedsoftwareupdate.exe",
+        CimianPaths.ManagedSoftwareUpdateExe,
         @"C:\Program Files (x86)\Cimian\managedsoftwareupdate.exe",
         @".\managedsoftwareupdate.exe",
         @"..\release\x64\managedsoftwareupdate.exe",
@@ -26,7 +27,7 @@ public class ElevationService
     /// </summary>
     private static readonly string[] StatusPaths =
     [
-        @"C:\Program Files\Cimian\cimistatus.exe",
+        CimianPaths.CimiStatusExe,
         @"C:\Program Files (x86)\Cimian\cimistatus.exe",
         @".\cimistatus.exe",
         @"..\release\x64\cimistatus.exe",
@@ -94,7 +95,7 @@ public class ElevationService
                     else
                     {
                         Console.WriteLine("📋 Update process completed quickly");
-                        Console.WriteLine("💡 Check CimianStatus GUI for results, or view logs in C:\\ProgramData\\ManagedInstalls\\logs");
+                        Console.WriteLine($"💡 Check CimianStatus GUI for results, or view logs in {CimianPaths.LogsDir}");
                     }
 
                     return new ElevationResult

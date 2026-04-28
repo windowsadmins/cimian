@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core;
 using Cimian.Core.Models;
 using Cimian.Core.Services;
 using YamlDotNet.Serialization;
@@ -2369,7 +2370,7 @@ public class UpdateEngine : IDisposable
                 .Build();
 
             var yaml = serializer.Serialize(info);
-            var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? @"C:\ProgramData\ManagedInstalls", "InstallInfo.yaml");
+            var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
             File.WriteAllText(path, yaml);
 
             LogInfo($"Wrote {path}");
