@@ -688,21 +688,39 @@ public class InstallerService
         }
         else
         {
-            // Self-uninstallable MSIX: the pkginfo has an installs-array entry of type
-            // msix but no explicit uninstaller block. Synthesize one from the installs
-            // entry — the identity_name there carries everything we need.
-            var msixInstall = item.Installs.FirstOrDefault(i =>
-                string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
-
-            if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
+            // Self-uninstallable MSI: cimipkg-built MSI pkginfos already carry the
+            // ProductCode in installer.product_code (PR #10). The same GUID is what
+            // msiexec /x needs to remove the package — there is no reason to require
+            // a hand-rolled uninstaller: block when we already have authoritative data.
+            if (string.Equals(item.Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(item.Installer.ProductCode))
             {
+                ConsoleLogger.Debug($"Synthesizing MSI uninstaller from installer.product_code item: {item.Name} productCode: {item.Installer.ProductCode}");
                 var synthetic = new UninstallerInfo
                 {
-                    Type = "msix",
-                    IdentityName = msixInstall.IdentityName
+                    Type = "msi",
+                    ProductCode = item.Installer.ProductCode
                 };
-                result = await UninstallMsixAsync(item, synthetic, cancellationToken);
+                result = await UninstallMsiAsync(synthetic, cancellationToken);
+            }
+            else
+            {
+                // Self-uninstallable MSIX: the pkginfo has an installs-array entry of type
+                // msix but no explicit uninstaller block. Synthesize one from the installs
+                // entry — the identity_name there carries everything we need.
+                var msixInstall = item.Installs.FirstOrDefault(i =>
+                    string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+
+                if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
+                {
+                    var synthetic = new UninstallerInfo
+                    {
+                        Type = "msix",
+                        IdentityName = msixInstall.IdentityName
+                    };
+                    result = await UninstallMsixAsync(item, synthetic, cancellationToken);
+                }
             }
         }
 
