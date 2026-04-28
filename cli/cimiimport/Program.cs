@@ -147,15 +147,23 @@ public class Program
             // Handle --config or --config-auto
             if (configRequested || configAuto)
             {
-                if (configAuto && !configRequested)
+                try
                 {
-                    configService.ConfigureNonInteractive(config);
+                    if (configAuto && !configRequested)
+                    {
+                        configService.ConfigureNonInteractive(config);
+                    }
+                    else
+                    {
+                        configService.ConfigureInteractive(config);
+                    }
+                    context.ExitCode = 0;
                 }
-                else
+                catch (InvalidOperationException ex)
                 {
-                    configService.ConfigureInteractive(config);
+                    Console.Error.WriteLine($"❌ {ex.Message}");
+                    context.ExitCode = 1;
                 }
-                context.ExitCode = 0;
                 return;
             }
 
@@ -221,7 +229,7 @@ public class Program
                 {
                     // Run makecatalogs
                     Console.WriteLine("Running makecatalogs...");
-                    RunMakeCatalogs();
+                    RunMakeCatalogs(config.RepoPath);
 
                     Console.WriteLine("Import completed successfully.");
                     context.ExitCode = 0;
@@ -248,7 +256,7 @@ public class Program
         Console.WriteLine($"cimiimport v{version.Major}.{version.Minor}.{version.Build}");
     }
 
-    private static void RunMakeCatalogs()
+    private static void RunMakeCatalogs(string repoPath)
     {
         try
         {
@@ -262,10 +270,15 @@ public class Program
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = makeCatalogsBinary,
-                Arguments = "--silent",
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
             };
+            if (!string.IsNullOrEmpty(repoPath))
+            {
+                psi.ArgumentList.Add("--repo_path");
+                psi.ArgumentList.Add(repoPath);
+            }
+            psi.ArgumentList.Add("--silent");
 
             using var process = System.Diagnostics.Process.Start(psi);
             process?.WaitForExit();
