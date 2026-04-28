@@ -557,6 +557,14 @@ public class InstallerInfo
     [YamlMember(Alias = "size")]
     public long? Size { get; set; }
 
+    /// <summary>MSI ProductCode from the .msi (authoritative install identity per version).</summary>
+    [YamlMember(Alias = "product_code")]
+    public string? ProductCode { get; set; }
+
+    /// <summary>MSI UpgradeCode from the .msi (stable across versions; used to detect outdated installs).</summary>
+    [YamlMember(Alias = "upgrade_code")]
+    public string? UpgradeCode { get; set; }
+
     /// <summary>
     /// Custom temporary directory for package extraction
     /// Use shorter paths like C:\Temp to avoid Windows MAX_PATH (260 char) limit issues
