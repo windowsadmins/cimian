@@ -692,14 +692,16 @@ public class InstallerService
             // ProductCode in installer.product_code (PR #10). The same GUID is what
             // msiexec /x needs to remove the package — there is no reason to require
             // a hand-rolled uninstaller: block when we already have authoritative data.
-            if (string.Equals(item.Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrEmpty(item.Installer.ProductCode))
+            var msiInstaller = item.Installer;
+            if (msiInstaller != null
+                && string.Equals(msiInstaller.Type, "msi", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(msiInstaller.ProductCode))
             {
-                ConsoleLogger.Debug($"Synthesizing MSI uninstaller from installer.product_code item: {item.Name} productCode: {item.Installer.ProductCode}");
+                ConsoleLogger.Debug($"Synthesizing MSI uninstaller from installer.product_code item: {item.Name} productCode: {msiInstaller.ProductCode}");
                 var synthetic = new UninstallerInfo
                 {
                     Type = "msi",
-                    ProductCode = item.Installer.ProductCode
+                    ProductCode = msiInstaller.ProductCode
                 };
                 result = await UninstallMsiAsync(synthetic, cancellationToken);
             }
