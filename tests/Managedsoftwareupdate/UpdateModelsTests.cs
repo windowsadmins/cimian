@@ -139,6 +139,59 @@ public class UpdateModelsTests
         Assert.False(item.IsUninstallable());
     }
 
+    [Fact]
+    public void CatalogItem_IsUninstallable_MsiInstallerWithProductCode_ReturnsTrue()
+    {
+        // Self-uninstallable MSI: no uninstaller block, but installer.product_code is
+        // enough — UninstallAsync synthesizes msiexec /x from it.
+        var item = new CatalogItem
+        {
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo
+            {
+                Type = "msi",
+                ProductCode = "{12345678-1234-1234-1234-123456789012}"
+            }
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void CatalogItem_IsUninstallable_MsiInstallerWithoutProductCode_ReturnsFalse()
+    {
+        // An MSI installer with no product_code can't be uninstalled — we have nothing
+        // to feed msiexec /x.
+        var item = new CatalogItem
+        {
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "msi" }
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void CatalogItem_IsUninstallable_NonMsiWithProductCode_ReturnsFalse()
+    {
+        // The MSI synthesis clause is gated on installer.type == "msi". A pkg/exe
+        // pkginfo that happens to carry a product_code (unusual) does not qualify.
+        var item = new CatalogItem
+        {
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo
+            {
+                Type = "pkg",
+                ProductCode = "{12345678-1234-1234-1234-123456789012}"
+            }
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
     #endregion
 
     #region InstallerInfo Tests

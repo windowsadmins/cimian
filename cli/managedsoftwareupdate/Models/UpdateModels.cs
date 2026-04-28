@@ -414,8 +414,9 @@ public class CatalogItem
         // Self-uninstallable MSI: cimipkg-built MSI pkginfos carry the ProductCode in
         // installer.product_code. Same GUID is what msiexec /x needs — UninstallAsync
         // synthesizes an UninstallerInfo from it.
-        || (string.Equals(Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrEmpty(Installer.ProductCode))
+        || (Installer is { } msi
+            && string.Equals(msi.Type, "msi", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrEmpty(msi.ProductCode))
         // Self-uninstallable MSIX: installs-array entry of type msix/appx with a
         // usable identity_name. Without identity_name, UninstallAsync can't
         // synthesize an uninstaller — so in that case this clause must be false.
