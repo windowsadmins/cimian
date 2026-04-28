@@ -7,13 +7,14 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using Cimian.CLI.Cimiwatcher.Services;
+using Cimian.Core;
 
 namespace Cimian.CLI.Cimiwatcher;
 
 class Program
 {
     private const string ServiceName = "CimianWatcher";
-    private const string LogPath = @"C:\ProgramData\ManagedInstalls\logs\cimiwatcher.log";
+    private static readonly string LogPath = CimianPaths.CimiwatcherLog;
 
     static async Task<int> Main(string[] args)
     {
