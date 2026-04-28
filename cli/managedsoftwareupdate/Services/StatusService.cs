@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core;
 using Cimian.Core.Models;
 using Cimian.Core.Services;
 using Microsoft.Win32;
@@ -18,7 +19,7 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// </summary>
 public class StatusService
 {
-    private const string BootstrapFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
+    private static readonly string BootstrapFlagFile = CimianPaths.BootstrapFlagFile;
 
     /// <summary>
     /// Checks if the item is the Cimian/CimianTools self-update package

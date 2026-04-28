@@ -1,3 +1,4 @@
+using Cimian.Core;
 using YamlDotNet.Serialization;
 
 namespace Cimian.CLI.managedsoftwareupdate.Models;
@@ -14,13 +15,13 @@ public class CimianConfig
     public string ClientIdentifier { get; set; } = string.Empty;
 
     [YamlMember(Alias = "CachePath")]
-    public string CachePath { get; set; } = @"C:\ProgramData\ManagedInstalls\Cache";
+    public string CachePath { get; set; } = CimianPaths.CacheDir;
 
     [YamlMember(Alias = "CatalogsPath")]
-    public string CatalogsPath { get; set; } = @"C:\ProgramData\ManagedInstalls\catalogs";
+    public string CatalogsPath { get; set; } = CimianPaths.CatalogsDir;
 
     [YamlMember(Alias = "ManifestsPath")]
-    public string ManifestsPath { get; set; } = @"C:\ProgramData\ManagedInstalls\manifests";
+    public string ManifestsPath { get; set; } = CimianPaths.ManifestsDir;
 
     [YamlMember(Alias = "LogLevel")]
     public string LogLevel { get; set; } = "INFO";
@@ -118,7 +119,7 @@ public class CimianConfig
     // TODO: Localization / i18n — extract all hardcoded UI strings to resource files for multi-language support
     // TODO: License seat tracking — track available license seats per package (requires server-side component)
 
-    public static readonly string ConfigPath = @"C:\ProgramData\ManagedInstalls\Config.yaml";
+    public static readonly string ConfigPath = CimianPaths.ConfigYaml;
 }
 
 // TODO(pkg-sunset): Remove PkgBuildInfo, PkgProductInfo, PkgSignatureInfo, PkgCertificateInfo classes

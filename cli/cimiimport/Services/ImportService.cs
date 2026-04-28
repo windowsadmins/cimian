@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Cimian.CLI.Cimiimport.Models;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -637,7 +638,8 @@ public class ImportService
     }
 
     /// <summary>
-    /// Replaces user profile path with variable.
+    /// Replaces the resolved user-profile prefix in a path with %USERPROFILE%
+    /// so the resulting metadata is portable across machines / users.
     /// </summary>
     private static string ReplacePathUserProfile(string path)
     {
@@ -647,17 +649,19 @@ public class ImportService
 
         if (path.StartsWith(userProfile, StringComparison.OrdinalIgnoreCase))
         {
-            return @"C:\Users\%USERPROFILE%" + path[userProfile.Length..];
+            return "%USERPROFILE%" + path[userProfile.Length..];
         }
         return path;
     }
 
     /// <summary>
-    /// Runs makecatalogs.
+    /// Runs makecatalogs against the given repo path. Without --repo_path,
+    /// makecatalogs falls back to whatever Config.yaml says, which may not
+    /// be the workspace cimiimport just imported into.
     /// </summary>
     private void RunMakeCatalogs(string repoPath, bool silent)
     {
-        var makeCatalogsBinary = @"C:\Program Files\Cimian\makecatalogs.exe";
+        var makeCatalogsBinary = CimianPaths.MakeCatalogsExe;
         if (!File.Exists(makeCatalogsBinary))
         {
             return; // Silently skip if not found
@@ -665,14 +669,21 @@ public class ImportService
 
         try
         {
-            var args = silent ? "--silent" : "";
             var psi = new ProcessStartInfo
             {
                 FileName = makeCatalogsBinary,
-                Arguments = args,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
             };
+            if (!string.IsNullOrEmpty(repoPath))
+            {
+                psi.ArgumentList.Add("--repo_path");
+                psi.ArgumentList.Add(repoPath);
+            }
+            if (silent)
+            {
+                psi.ArgumentList.Add("--silent");
+            }
             using var process = Process.Start(psi);
             process?.WaitForExit();
         }
