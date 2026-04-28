@@ -211,7 +211,51 @@ public class StatusService
                 return result;
             }
 
-            // Go parity: If no checks are defined and no installs array, 
+            // Priority 6.5: top-level `installer:` block ProductCode/UpgradeCode (MSI authoritative).
+            // The Windows Installer database is the source of truth for MSI install state — query it
+            // directly when the pkgsinfo declares product_code/upgrade_code at the installer level,
+            // even when no installs[] array is present.
+            if (string.Equals(item.Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase)
+                && (!string.IsNullOrEmpty(item.Installer.ProductCode) ||
+                    !string.IsNullOrEmpty(item.Installer.UpgradeCode)))
+            {
+                ConsoleLogger.Debug($"Verifying MSI via installer block item: {item.Name} productCode: {item.Installer.ProductCode} upgradeCode: {item.Installer.UpgradeCode}");
+                var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
+                    item.Installer.ProductCode, item.Installer.UpgradeCode, item.Version, item.Name);
+
+                if (!msiInstalled)
+                {
+                    ConsoleLogger.Info($"MSI product not installed item: {item.Name} productCode: {item.Installer.ProductCode} upgradeCode: {item.Installer.UpgradeCode}");
+                    result.Status = "pending";
+                    result.NeedsAction = true;
+                    result.IsUpdate = HasManagedInstallsEntry(item.Name);
+                    result.Reason = $"MSI not registered in Windows Installer (ProductCode={item.Installer.ProductCode}, UpgradeCode={item.Installer.UpgradeCode})";
+                    result.ReasonCode = StatusReasonCode.ProductCodeMissing;
+                    result.DetectionMethod = DetectionMethod.Msi;
+                    return result;
+                }
+                if (!msiVersionMatch)
+                {
+                    ConsoleLogger.Info($"MSI version outdated item: {item.Name} installedVersion: {msiInstalledVersion} catalogVersion: {item.Version}");
+                    result.Status = "pending";
+                    result.NeedsAction = true;
+                    result.IsUpdate = true;
+                    result.InstalledVersion = msiInstalledVersion;
+                    result.Reason = $"MSI version outdated: {msiInstalledVersion} -> {item.Version}";
+                    result.ReasonCode = StatusReasonCode.VersionOutdated;
+                    result.DetectionMethod = DetectionMethod.Msi;
+                    return result;
+                }
+                ConsoleLogger.Info($"MSI verification passed - version current or newer item: {item.Name} installedVersion: {msiInstalledVersion} catalogVersion: {item.Version}");
+                result.Status = "installed";
+                result.Reason = $"MSI ProductCode/UpgradeCode match — installed version {msiInstalledVersion}";
+                result.ReasonCode = StatusReasonCode.ProductCodeMatch;
+                result.DetectionMethod = DetectionMethod.Msi;
+                result.InstalledVersion = msiInstalledVersion;
+                return result;
+            }
+
+            // Go parity: If no checks are defined and no installs array,
             // assume item doesn't need action (it may not have verification methods)
             // Don't fall back to ManagedInstalls registry as Go doesn't do this
             ConsoleLogger.Debug($"No file tracking needed - registry/product code verification sufficient item: {item.Name}");
@@ -499,7 +543,7 @@ public class StatusService
                     // This handles auto-updating apps (Chrome, etc.) where ProductCode changes each version
                     var catalogVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
                     var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
-                        installItem.ProductCode, installItem.UpgradeCode, catalogVersion);
+                        installItem.ProductCode, installItem.UpgradeCode, catalogVersion, item.Name);
 
                     // If MSI detection failed, try registry lookup using item's display_name or name as fallback
                     // This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update)
@@ -848,14 +892,15 @@ if ($results.Count -gt 0) {{
     /// Returns: (installed, versionMatch, installedVersion)
     /// </summary>
     private (bool installed, bool versionMatch, string? installedVersion) CheckMsiWithUpgradeCode(
-        string? productCode, string? upgradeCode, string catalogVersion)
+        string? productCode, string? upgradeCode, string catalogVersion, string itemName = "")
     {
         // First try ProductCode lookup (faster, exact match)
         if (!string.IsNullOrEmpty(productCode))
         {
-            var (installed, installedVersion) = CheckMsiProductWithVersion(productCode);
-            if (installed && !string.IsNullOrEmpty(installedVersion))
+            var (installed, msiVersion) = CheckMsiProductWithVersion(productCode);
+            if (installed && !string.IsNullOrEmpty(msiVersion))
             {
+                var installedVersion = ResolveExpandedVersion(itemName, msiVersion);
                 ConsoleLogger.Debug($"Found MSI via ProductCode productCode: {productCode} installedVersion: {installedVersion}");
 
                 if (string.IsNullOrEmpty(catalogVersion))
@@ -879,9 +924,10 @@ if ($results.Count -gt 0) {{
         // ProductCode not found - try UpgradeCode (handles auto-updated apps)
         if (!string.IsNullOrEmpty(upgradeCode))
         {
-            var (installed, installedVersion) = FindMsiByUpgradeCode(upgradeCode);
-            if (installed && !string.IsNullOrEmpty(installedVersion))
+            var (installed, msiVersion) = FindMsiByUpgradeCode(upgradeCode);
+            if (installed && !string.IsNullOrEmpty(msiVersion))
             {
+                var installedVersion = ResolveExpandedVersion(itemName, msiVersion);
                 ConsoleLogger.Debug($"Found MSI via UpgradeCode upgradeCode: {upgradeCode} installedVersion: {installedVersion}");
 
                 if (string.IsNullOrEmpty(catalogVersion))
@@ -904,6 +950,18 @@ if ($results.Count -gt 0) {{
 
         ConsoleLogger.Debug($"MSI not found via ProductCode or UpgradeCode productCode: {productCode} upgradeCode: {upgradeCode}");
         return (false, false, null);
+    }
+
+    // MSI ProductVersion is capped at major.minor.build (255.255.65535), so cimipkg compresses
+    // date-based versions like 2026.04.12.2144 into 26.4.1221 to fit. The expanded form is
+    // persisted by Cimian to HKLM\SOFTWARE\ManagedInstalls\<Name>\Version after install.
+    // Prefer that when present so logs and version comparisons use the original date string.
+    private string ResolveExpandedVersion(string itemName, string msiVersion)
+    {
+        if (string.IsNullOrEmpty(itemName))
+            return msiVersion;
+        var expanded = GetManagedInstallsVersion(itemName);
+        return string.IsNullOrEmpty(expanded) ? msiVersion : expanded;
     }
 
     /// <summary>
