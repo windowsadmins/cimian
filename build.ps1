@@ -890,9 +890,11 @@ function Build-MsiPackage {
         Write-BuildLog "Created build-info.yaml with version $releaseVersion" "INFO"
     }
 
-    # Build the .msi package using cimipkg (MSI is the default format)
+    # Build the .msi package using cimipkg (MSI is the default format).
+    # --skip-import suppresses the post-build cimiimport prompt; without it,
+    # cimipkg shells out to cimiimport with inherited stdio and hangs in CI.
     try {
-        $cimipkgArgs = @("--verbose", $msiTempDir)
+        $cimipkgArgs = @("--verbose", "--skip-import", $msiTempDir)
 
         Write-BuildLog "Running cimipkg.exe to create MSI package..." "INFO"
         $process = Start-Process -FilePath $cimipkgPath -ArgumentList $cimipkgArgs -Wait -NoNewWindow -PassThru
@@ -1198,10 +1200,12 @@ function Build-PkgPackage {
         Write-BuildLog "build-info.yaml template not found: $buildInfoTemplatePath" "WARNING"
     }
     
-    # Build the .pkg package using cimipkg
+    # Build the .pkg package using cimipkg.
+    # --skip-import suppresses the post-build cimiimport prompt; without it,
+    # cimipkg shells out to cimiimport with inherited stdio and hangs in CI.
     try {
-        $cimipkgArgs = @("--verbose", $pkgTempDir)
-        
+        $cimipkgArgs = @("--verbose", "--skip-import", $pkgTempDir)
+
         Write-BuildLog "Running cimipkg.exe to create .pkg package..." "INFO"
         $process = Start-Process -FilePath $cimipkgPath -ArgumentList $cimipkgArgs -Wait -NoNewWindow -PassThru
         
