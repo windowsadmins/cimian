@@ -655,7 +655,9 @@ public class ImportService
     }
 
     /// <summary>
-    /// Runs makecatalogs.
+    /// Runs makecatalogs against the given repo path. Without --repo_path,
+    /// makecatalogs falls back to whatever Config.yaml says, which may not
+    /// be the workspace cimiimport just imported into.
     /// </summary>
     private void RunMakeCatalogs(string repoPath, bool silent)
     {
@@ -667,14 +669,21 @@ public class ImportService
 
         try
         {
-            var args = silent ? "--silent" : "";
             var psi = new ProcessStartInfo
             {
                 FileName = makeCatalogsBinary,
-                Arguments = args,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
             };
+            if (!string.IsNullOrEmpty(repoPath))
+            {
+                psi.ArgumentList.Add("--repo_path");
+                psi.ArgumentList.Add(repoPath);
+            }
+            if (silent)
+            {
+                psi.ArgumentList.Add("--silent");
+            }
             using var process = Process.Start(psi);
             process?.WaitForExit();
         }
