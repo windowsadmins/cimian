@@ -502,85 +502,16 @@ public partial class MetadataExtractor
     }
 
     /// <summary>
-    /// Normalizes version string, handling date-based versions.
+    /// Returns the version string as-is. Date detection was removed because it
+    /// repeatedly mis-identified semver releases like "5.2.1" as "2005.02.01"
+    /// (any major < 100 with minor in 1-12 and patch in 1-31 collided with the
+    /// Chocolatey-truncated date heuristic, and even genuine semvers starting
+    /// with 2000-2100 were rewritten). Installers that already publish their
+    /// version as a real date string keep that format unchanged here.
     /// </summary>
     public static string ParseVersion(string? versionStr)
     {
-        if (string.IsNullOrEmpty(versionStr))
-            return versionStr ?? "";
-
-        var parts = versionStr.Split('.');
-        if (parts.Length < 3 || parts.Length > 4)
-            return versionStr;
-
-        // Try to parse as date format
-        if (int.TryParse(parts[0], out var yearNum))
-        {
-            bool isDateFormat = false;
-
-            // Full 4-digit years
-            if (yearNum is >= 2000 and <= 2100)
-            {
-                isDateFormat = true;
-            }
-            // Chocolatey-truncated 2-digit years
-            else if (yearNum is >= 0 and <= 99)
-            {
-                if (int.TryParse(parts[1], out var monthNum) && monthNum is >= 1 and <= 12 &&
-                    int.TryParse(parts[2], out var dayNum) && dayNum is >= 1 and <= 31)
-                {
-                    isDateFormat = true;
-                }
-            }
-
-            if (isDateFormat)
-            {
-                // Validate all parts are numeric
-                var numericParts = new List<int>();
-                bool allNumeric = true;
-                foreach (var part in parts)
-                {
-                    if (int.TryParse(part, out var num))
-                    {
-                        numericParts.Add(num);
-                    }
-                    else
-                    {
-                        allNumeric = false;
-                        break;
-                    }
-                }
-
-                if (allNumeric && numericParts.Count >= 3)
-                {
-                    var year = numericParts[0];
-                    var month = numericParts[1];
-                    var day = numericParts[2];
-
-                    // Convert 2-digit year to 4-digit year
-                    if (year < 100)
-                    {
-                        year = year <= 50 ? 2000 + year : 1900 + year;
-                    }
-
-                    if (numericParts.Count == 4)
-                    {
-                        // Preserve the original 4th segment string to keep leading zeros
-                        // (e.g. "0838" HHMM timestamps must not become "838"). Month and day
-                        // are still zero-padded from parsed ints so "2026.4.9.0838" normalizes
-                        // to "2026.04.09.0838". Trim incidental whitespace (CR/LF, spaces)
-                        // that int.TryParse accepts but shouldn't bleed into the output.
-                        return $"{year}.{month:D2}.{day:D2}.{parts[3].Trim()}";
-                    }
-                    else
-                    {
-                        return $"{year}.{month:D2}.{day:D2}";
-                    }
-                }
-            }
-        }
-
-        return versionStr;
+        return versionStr ?? "";
     }
 
     /// <summary>
