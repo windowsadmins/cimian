@@ -1880,7 +1880,36 @@ public class UpdateEngine : IDisposable
             PrintManifestTree(node.Children[childNames[i]], childPrefix, i == childNames.Count - 1, packages);
         }
     }
-    
+
+    /// <summary>
+    /// Returns only manifest items resolvable in this device's catalog set, and emits an
+    /// INFO log for each item that's in the manifest but missing from every catalog the
+    /// device subscribes to. Items in unsubscribed catalogs are excluded from display
+    /// because the device cannot act on them.
+    /// </summary>
+    private List<ManifestItem> FilterToDeviceCatalog(
+        List<ManifestItem> items,
+        Dictionary<string, CatalogItem> catalogMap,
+        string sectionLabel)
+    {
+        var inCatalog = new List<ManifestItem>(items.Count);
+        foreach (var item in items)
+        {
+            if (catalogMap.ContainsKey(item.Name.ToLowerInvariant()))
+            {
+                inCatalog.Add(item);
+            }
+            else
+            {
+                var catalogList = _config.Catalogs.Count > 0
+                    ? string.Join(", ", _config.Catalogs)
+                    : "(none configured)";
+                LogInfo($"{sectionLabel}: '{item.Name}' is in the manifest but not in this device's catalog(s) [{catalogList}] — excluded from display");
+            }
+        }
+        return inCatalog;
+    }
+
     /// <summary>
     /// Prints the managed installs status table - matches Go output
     /// </summary>
@@ -1894,9 +1923,12 @@ public class UpdateEngine : IDisposable
         var managedInstalls = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "install")
             .ToList();
-        
+
         if (managedInstalls.Count == 0) return;
-        
+
+        managedInstalls = FilterToDeviceCatalog(managedInstalls, catalogMap, "MANAGED INSTALLS");
+        if (managedInstalls.Count == 0) return;
+
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
         var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
@@ -1972,9 +2004,12 @@ public class UpdateEngine : IDisposable
         var managedUpdates = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "update")
             .ToList();
-        
+
         if (managedUpdates.Count == 0) return;
-        
+
+        managedUpdates = FilterToDeviceCatalog(managedUpdates, catalogMap, "MANAGED UPDATES");
+        if (managedUpdates.Count == 0) return;
+
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
         var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
@@ -2036,9 +2071,12 @@ public class UpdateEngine : IDisposable
         var managedUninstalls = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "uninstall")
             .ToList();
-        
+
         if (managedUninstalls.Count == 0) return;
-        
+
+        managedUninstalls = FilterToDeviceCatalog(managedUninstalls, catalogMap, "MANAGED UNINSTALLS");
+        if (managedUninstalls.Count == 0) return;
+
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
         var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
