@@ -27,25 +27,31 @@ public static class CategoryIcons
     {
         return category.ToLowerInvariant() switch
         {
-            "all" => "\uE8FD",
-            "productivity" => "\uE7C3",
-            "utilities" => "\uE90F",
-            "developer tools" or "developer" or "dev" or "development" => "\uE943",
-            "communication" => "\uE8BD",
-            "design" or "creativity" => "\uE790",
-            "media" => "\uE8B2",
-            "entertainment" => "\uE7F4",
-            "business" or "management" => "\uE821",
-            "security" or "remediation" => "\uE72E",
-            "photo & video" => "\uE722",
-            "music" => "\uE8D6",
-            "education" => "\uE7BE",
-            "gaming" => "\uE7FC",
-            "docs" or "documents" => "\uE8A5",
-            "plugins" => "\uE74D",
-            "prefs" or "preferences" => "\uE713",
-            "printing" => "\uE749",
-            _ => "\uE74C"
+            "all" => "",
+            "productivity" => "",
+            "utilities" => "",
+            "developer tools" or "developer" or "dev" or "development" => "",
+            "communication" => "",
+            "design" or "creativity" => "",
+            "media" => "",
+            "entertainment" => "",
+            "business" or "management" => "",
+            "security" or "remediation" => "",
+            "photo & video" => "",
+            "music" => "",
+            "education" => "",
+            "gaming" => "",
+            "docs" or "documents" => "",
+            "plugins" or "extensions" or "addons" => "",
+            "prefs" or "preferences" => "",
+            "printing" => "",
+            "animation" => "",
+            "browsers" or "browser" => "",
+            "modeling" or "cad" => "",
+            "rendering" or "render" => "",
+            "interactive" => "",
+            "video" => "",
+            _ => ""
         };
     }
 }
@@ -91,7 +97,7 @@ public partial class CategoriesViewModel : ObservableObject
             foreach (var categoryName in categoryNames)
             {
                 var items = await _installInfoService.GetItemsByCategoryAsync(categoryName);
-                
+
                 groups.Add(new CategoryGroup
                 {
                     Name = categoryName,

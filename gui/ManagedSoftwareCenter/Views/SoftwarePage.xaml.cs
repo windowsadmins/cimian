@@ -202,53 +202,51 @@ public partial class SoftwarePage : Page
     private void BuildCategoryPills()
     {
         CategoryPillsPanel.Children.Clear();
-        
+
         var categories = ViewModel.Categories?.ToList() ?? new List<string>();
-        
+
         foreach (var category in categories)
         {
             var isSelected = category == (_selectedCategory ?? "All");
             var button = new Button
             {
-                Content = GetCategoryContent(category, isSelected),
                 Tag = category,
                 Style = isSelected
                     ? (Style)this.Resources["CategoryPillButtonSelected"]
                     : (Style)this.Resources["CategoryPillButton"]
             };
-            
+            // Build content after the Button exists so the icon/text can bind to Button.Foreground,
+            // which carries the ThemeResource set by the style and stays correct across theme changes.
+            button.Content = BuildCategoryContent(button, category);
             button.Click += CategoryPill_Click;
             CategoryPillsPanel.Children.Add(button);
         }
     }
 
-    private object GetCategoryContent(string category, bool isSelected)
+    private static StackPanel BuildCategoryContent(Button host, string category)
     {
-        // Create content with icon + text like Microsoft Store
         var panel = new StackPanel { Orientation = Orientation.Horizontal };
-        
-        // Get the appropriate foreground brush for dark/light mode
-        var foregroundBrush = isSelected 
-            ? new SolidColorBrush(Microsoft.UI.Colors.White)
-            : (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
-        
-        // Add category icon
+
+        var foregroundBinding = new Microsoft.UI.Xaml.Data.Binding
+        {
+            Source = host,
+            Path = new PropertyPath("Foreground"),
+            Mode = Microsoft.UI.Xaml.Data.BindingMode.OneWay
+        };
+
         var icon = new FontIcon
         {
             FontSize = 14,
             Margin = new Thickness(0, 0, 6, 0),
-            Glyph = GetCategoryIcon(category),
-            Foreground = foregroundBrush
+            Glyph = GetCategoryIcon(category)
         };
+        icon.SetBinding(FontIcon.ForegroundProperty, foregroundBinding);
         panel.Children.Add(icon);
-        
-        var text = new TextBlock 
-        { 
-            Text = category,
-            Foreground = foregroundBrush
-        };
+
+        var text = new TextBlock { Text = category };
+        text.SetBinding(TextBlock.ForegroundProperty, foregroundBinding);
         panel.Children.Add(text);
-        
+
         return panel;
     }
 

@@ -43,6 +43,13 @@ public partial class ItemDetailViewModel : ObservableObject
     [ObservableProperty]
     public partial bool ShowCancelButton { get; set; }
 
+    // Install button label/glyph — switches between "Install" and "Update" based on item state
+    [ObservableProperty]
+    public partial string InstallButtonLabel { get; set; } = "Install";
+
+    [ObservableProperty]
+    public partial string InstallButtonGlyph { get; set; } = "";
+
     // Status display
     [ObservableProperty]
     public partial bool ShowStatusBadge { get; set; }
@@ -85,18 +92,19 @@ public partial class ItemDetailViewModel : ObservableObject
     public async Task LoadAsync(InstallableItem item)
     {
         _itemName = item.Name;
-        Item = item;
         IsLoading = true;
         NotFound = false;
 
         try
         {
-            // Load icon
+            // Load icon BEFORE assigning Item so the binding picks it up on first evaluation.
+            // (IconImage is a plain property without change notification, so a later assignment
+            // would not update the bound Image.)
             item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+            Item = item;
 
             await UpdateStatusAsync();
-            
-            // Check for screenshots/release notes
+
             HasScreenshots = false; // TODO: Add screenshot support
             HasReleaseNotes = !string.IsNullOrEmpty(item.Notes);
         }
@@ -118,16 +126,17 @@ public partial class ItemDetailViewModel : ObservableObject
         try
         {
             var item = await _installInfoService.GetItemByNameAsync(itemName);
-            
+
             if (item == null)
             {
                 NotFound = true;
                 return;
             }
 
+            item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
             Item = item;
             await UpdateStatusAsync();
-            
+
             HasScreenshots = false;
             HasReleaseNotes = !string.IsNullOrEmpty(item.Notes);
         }
@@ -170,21 +179,24 @@ public partial class ItemDetailViewModel : ObservableObject
         {
             if (!string.IsNullOrEmpty(Item.InstalledVersion) && Item.InstalledVersion != Item.Version)
             {
-                StatusText = "Update available";
-                ShowInstallButton = true; // Show as "Update"
-                ShowStatusBadge = true;
-                StatusBackground = new SolidColorBrush(Color.FromArgb(255, 0, 120, 212)); // Blue
-                StatusForeground = new SolidColorBrush(Colors.White);
+                // Update available: show "Update" button, suppress redundant status badge
+                InstallButtonLabel = "Update";
+                InstallButtonGlyph = ""; // Sync
+                ShowInstallButton = true;
+                ShowStatusBadge = false;
+                StatusText = string.Empty;
             }
             else
             {
                 StatusText = "Installed";
+                InstallButtonLabel = "Install";
+                InstallButtonGlyph = "";
                 ShowInstallButton = false;
                 ShowStatusBadge = true;
                 StatusBackground = new SolidColorBrush(Color.FromArgb(255, 16, 124, 16)); // Green
                 StatusForeground = new SolidColorBrush(Colors.White);
             }
-            
+
             // Prevent removal if other items depend on this one
             ShowRemoveButton = Item.Uninstallable && (Item.DependentItems == null || Item.DependentItems.Count == 0);
             ShowCancelButton = false;
@@ -203,6 +215,8 @@ public partial class ItemDetailViewModel : ObservableObject
         {
             StatusText = string.Empty;
             ShowStatusBadge = false;
+            InstallButtonLabel = "Install";
+            InstallButtonGlyph = "";
             ShowInstallButton = true;
             ShowRemoveButton = false;
             ShowCancelButton = false;
