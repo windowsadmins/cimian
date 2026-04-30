@@ -107,18 +107,18 @@
 
                     <!-- Action Buttons -->
                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                        <!-- Install Button -->
-                        <Button 
+                        <!-- Install / Update Button -->
+                        <Button
                             x:Name="InstallButton"
                             Style="{StaticResource AccentButtonStyle}"
                             Click="Install_Click"
-                            AutomationProperties.Name="Install this software"
+                            AutomationProperties.Name="Install or update this software"
                             Visibility="Collapsed"
                             MinWidth="120"
                             Padding="16,8">
                             <StackPanel Orientation="Horizontal">
-                                <FontIcon Glyph="&#xE896;" FontSize="14"/>
-                                <TextBlock Text="Install" Margin="8,0,0,0"/>
+                                <FontIcon x:Name="InstallButtonIcon" Glyph="&#xE896;" FontSize="14"/>
+                                <TextBlock x:Name="InstallButtonText" Text="Install" Margin="8,0,0,0"/>
                             </StackPanel>
                         </Button>
 
