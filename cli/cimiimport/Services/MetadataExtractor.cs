@@ -502,12 +502,14 @@ public partial class MetadataExtractor
     }
 
     /// <summary>
-    /// Returns the version string as-is. Date detection was removed because it
-    /// repeatedly mis-identified semver releases like "5.2.1" as "2005.02.01"
-    /// (any major < 100 with minor in 1-12 and patch in 1-31 collided with the
-    /// Chocolatey-truncated date heuristic, and even genuine semvers starting
-    /// with 2000-2100 were rewritten). Installers that already publish their
-    /// version as a real date string keep that format unchanged here.
+    /// Returns the version string unchanged, or an empty string if
+    /// <paramref name="versionStr"/> is null. Date detection was removed
+    /// because it repeatedly mis-identified semver releases like "5.2.1"
+    /// as "2005.02.01" (any major &lt; 100 with minor in 1-12 and patch in
+    /// 1-31 collided with the Chocolatey-truncated date heuristic, and
+    /// even genuine semvers starting with 2000-2100 were rewritten).
+    /// Installers that already publish their version as a real date string
+    /// keep that format unchanged here.
     /// </summary>
     public static string ParseVersion(string? versionStr)
     {
