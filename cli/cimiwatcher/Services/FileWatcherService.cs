@@ -146,6 +146,20 @@ public class FileWatcherService : BackgroundService
             _logger.LogWarning(ex, "Could not read flag file content, using defaults");
         }
 
+        // LoginWindow-only gate: a true bootstrap (no explicit Args: from MSC) on the
+        // GUI flag file must wait for an unattended secure desktop, mirroring Munki's
+        // loginwindow.py behaviour. MSC's in-session triggers (Args: present) and the
+        // headless channel bypass this gate by design.
+        if (withGUI && customArgs == null && SessionProbe.IsInteractiveUserLoggedOn())
+        {
+            _logger.LogInformation(
+                "{UpdateType} bootstrap deferred — interactive user signed in; will re-check after logout",
+                updateType);
+            // Leave the flag file in place and reset lastSeen so the next poll re-detects it.
+            _lastSeenGUI = DateTime.MinValue;
+            return;
+        }
+
         // Delete the flag file immediately after reading it, BEFORE launching MSU.
         // MSC's TriggerService polls for this deletion as the "acknowledged" signal.
         // If we wait until after MSU finishes, MSC's 30s timeout expires and throws.
@@ -184,10 +198,21 @@ public class FileWatcherService : BackgroundService
 
             _logger.LogInformation("Started managedsoftwareupdate process (PID: {Pid})", updateProcess.Id);
 
-            // If GUI mode and caller didn't suppress cimistatus, launch the status UI
+            // If GUI mode and caller didn't suppress cimistatus, decide between:
+            //   - logged-in user → launch cimistatus.exe in their session (existing behaviour)
+            //   - pre-logon → leave the UI to the CimianStatusProvider PLAP loaded
+            //     by LogonUI.exe, which is already listening on 127.0.0.1:19847.
             if (withGUI && !suppressCimistatus)
             {
-                LaunchCimianStatus();
+                if (SessionProbe.IsInteractiveUserLoggedOn())
+                {
+                    LaunchCimianStatus();
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "No interactive user — leaving UI to CimianStatusProvider PLAP on logon screen");
+                }
             }
 
             // Wait for the update process to complete

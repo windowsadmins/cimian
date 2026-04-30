@@ -20,7 +20,8 @@ try {
     $expected = @(
         'cimiwatcher.exe','managedsoftwareupdate.exe','cimitrigger.exe','cimistatus.exe',
         'cimiimport.exe','cimipkg.exe','makecatalogs.exe','makepkginfo.exe','manifestutil.exe','repoclean.exe',
-        'Managed Software Center.exe'
+        'Managed Software Center.exe',
+        'CimianStatusProvider.dll'
     )
     $missing = @()
     foreach ($name in $expected) {
@@ -53,7 +54,23 @@ try {
             $existingService = Get-Service -Name "CimianWatcher" -ErrorAction SilentlyContinue
             if ($existingService) {
                 if ($existingService.Status -eq "Running") {
-                    Write-Host "CimianWatcher service already running; no action needed"
+                    # Aggressive restart so the new binary is loaded from disk.
+                    # Without this, an upgrade where preinstall failed to fully
+                    # stop the service leaves the old binary running in memory
+                    # while the new files sit unused on disk.
+                    Write-Host "CimianWatcher service Running; restarting to load updated binary..."
+                    try {
+                        Restart-Service -Name "CimianWatcher" -Force -ErrorAction Stop
+                        Start-Sleep -Seconds 2
+                        Write-Host "CimianWatcher service restarted"
+                    } catch {
+                        Write-Warning "Restart-Service failed; force-killing cimiwatcher and reinstalling: $_"
+                        try { Get-Process -Name "cimiwatcher" -ErrorAction SilentlyContinue | Stop-Process -Force } catch { }
+                        Start-Sleep -Seconds 2
+                        try { & $cimiwatcherExe uninstall; Start-Sleep -Seconds 2 } catch { }
+                        & $cimiwatcherExe install; Start-Sleep -Seconds 2
+                        & $cimiwatcherExe start; Start-Sleep -Seconds 2
+                    }
                 } else {
                     Write-Host "CimianWatcher service present (Status=$($existingService.Status)); starting..."
                     try {
@@ -133,6 +150,56 @@ try {
         Set-ItemProperty -Path $registryPath -Name "InstallPath" -Value $InstallDir -Type String
     } catch {
         Write-Warning "Failed to write version to registry: $_"
+    }
+
+    # Register the CimianStatusProvider PLAP credential provider so LogonUI.exe
+    # picks it up on next reboot. The DLL self-registers under
+    # HKLM\SOFTWARE\Classes\CLSID\{...} and HKLM\...\PLAP Providers\{...}.
+    # Idempotent — regsvr32 happily overwrites an existing registration.
+    $plapDebugLog = 'C:\ProgramData\ManagedInstalls\Logs\plap_debug.log'
+    function Write-PlapDebug([string]$msg) {
+        try {
+            $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+            $line  = "$stamp pid=$PID tid=postinstall | $msg`r`n"
+            $logDir = Split-Path $plapDebugLog -Parent
+            if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+            Add-Content -Path $plapDebugLog -Value $line -Encoding UTF8
+        } catch { }
+    }
+    try {
+        $plapDll = Join-Path $InstallDir 'CimianStatusProvider.dll'
+        Write-PlapDebug "postinstall start — DLL path candidate: $plapDll (exists=$(Test-Path $plapDll))"
+        if (Test-Path $plapDll) {
+            Write-Host "Registering CimianStatusProvider PLAP..."
+            $regsvr = Join-Path $env:SystemRoot 'System32\regsvr32.exe'
+            Write-PlapDebug "invoking regsvr32: $regsvr /s `"$plapDll`""
+            $regProc = Start-Process -FilePath $regsvr -ArgumentList @('/s', "`"$plapDll`"") `
+                -Wait -PassThru -WindowStyle Hidden
+            Write-PlapDebug "regsvr32 exit code: $($regProc.ExitCode)"
+            if ($regProc.ExitCode -ne 0) {
+                Write-Warning "regsvr32 returned exit code $($regProc.ExitCode) for CimianStatusProvider.dll"
+            } else {
+                # Verify the PLAP key landed.
+                $plapGuid = '{C1819A88-7E61-4C0E-9D77-3F0E4B3C1A55}'
+                $plapKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\PLAP Providers\$plapGuid"
+                if (Test-Path $plapKey) {
+                    Write-Host "CimianStatusProvider PLAP registered"
+                    Write-PlapDebug "PLAP registry key present: $plapKey"
+                    $clsidKey = "HKLM:\SOFTWARE\Classes\CLSID\$plapGuid\InprocServer32"
+                    $inproc = (Get-ItemProperty -Path $clsidKey -ErrorAction SilentlyContinue).'(default)'
+                    Write-PlapDebug "InprocServer32 default: $inproc"
+                } else {
+                    Write-Warning "PLAP registration appears to have failed: $plapKey not present"
+                    Write-PlapDebug "PLAP registry key MISSING: $plapKey"
+                }
+            }
+        } else {
+            Write-Warning "CimianStatusProvider.dll not found at $plapDll - logon screen progress UI will not be available"
+            Write-PlapDebug "CimianStatusProvider.dll missing at $plapDll"
+        }
+    } catch {
+        Write-Warning "Failed to register CimianStatusProvider PLAP: $_"
+        Write-PlapDebug "exception during PLAP registration: $_"
     }
 
     # Start Menu shortcut (idempotent)
