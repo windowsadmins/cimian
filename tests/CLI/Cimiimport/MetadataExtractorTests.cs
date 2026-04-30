@@ -64,20 +64,15 @@ public class MetadataExtractorTests
         Assert.Equal(expected, result);
     }
 
-    [Fact]
-    public void ParseVersion_HandlesSingleDateComponents()
+    [Theory]
+    [InlineData("5.2.1")]          // semver previously misread as 2005.02.01
+    [InlineData("2024.1.5")]       // genuine date kept verbatim, no zero-padding
+    [InlineData("2026.4.9.0838")]  // 4-part date+timestamp passes through
+    [InlineData("1.0.0")]          // plain semver
+    public void ParseVersion_PassesVersionsThroughUnchanged(string version)
     {
-        // Single digit month/day should be zero-padded for date-like versions
-        var result = MetadataExtractor.ParseVersion("2024.1.5");
-        Assert.Equal("2024.01.05", result);
-    }
-
-    [Fact]
-    public void ParseVersion_Returns3PartVersions()
-    {
-        // 3-part non-date versions
-        var result = MetadataExtractor.ParseVersion("1.0.0");
-        Assert.Equal("1.0.0", result);
+        var result = MetadataExtractor.ParseVersion(version);
+        Assert.Equal(version, result);
     }
 
     [Fact]
@@ -197,8 +192,6 @@ public class MetadataExtractorTests
         try
         {
             var msixPath = Path.Combine(tempDir, "TestApp.msix");
-            // Version 4.45.69.0 mirrors real Slack MSIX and avoids the ParseVersion
-            // date-format heuristic (which would rewrite 2.5.1.0 → 2002.05.01.0).
             await WriteMsixFixtureAsync(msixPath, @"<?xml version=""1.0"" encoding=""utf-8""?>
 <Package xmlns=""http://schemas.microsoft.com/appx/manifest/foundation/windows10"">
   <Identity Name=""com.example.testapp"" Version=""4.45.69.0"" ProcessorArchitecture=""x64"" Publisher=""CN=Example Corp"" />
