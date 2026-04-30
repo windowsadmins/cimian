@@ -690,7 +690,7 @@ function Find-MsBuildExe {
     if ($msbuild) { return $msbuild.Source }
 
     # Fall back to vswhere — present on any box with VS 2017+ installed.
-    $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
         $vsRoot = & $vswhere -latest -requires Microsoft.Component.MSBuild `
             -property installationPath -products * 2>$null | Select-Object -First 1

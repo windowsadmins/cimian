@@ -1,4 +1,5 @@
 #include "status_listener.h"
+#include "debug_log.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -35,10 +36,18 @@ bool StatusListener::Start(IStatusSink* sink) {
     m_sink = sink;
 
     WSADATA wsa{};
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return false;
+    int wsaErr = WSAStartup(MAKEWORD(2, 2), &wsa);
+    if (wsaErr != 0) {
+        PLAPLOG(L"StatusListener WSAStartup failed err=%d", wsaErr);
+        return false;
+    }
 
     SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listener == INVALID_SOCKET) { WSACleanup(); return false; }
+    if (listener == INVALID_SOCKET) {
+        PLAPLOG(L"StatusListener socket() failed wsaErr=%d", WSAGetLastError());
+        WSACleanup();
+        return false;
+    }
 
     BOOL reuse = TRUE;
     setsockopt(listener, SOL_SOCKET, SO_REUSEADDR,
@@ -50,14 +59,15 @@ bool StatusListener::Start(IStatusSink* sink) {
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
     if (bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-        // Port likely already in use (e.g. cimistatus.exe is running). Bail out
-        // quietly — LogonUI will keep our tile but updates won't arrive.
+        int err = WSAGetLastError();
+        PLAPLOG(L"StatusListener bind 127.0.0.1:19847 failed wsaErr=%d (port likely in use)", err);
         closesocket(listener);
         WSACleanup();
         return false;
     }
 
     if (listen(listener, 1) == SOCKET_ERROR) {
+        PLAPLOG(L"StatusListener listen() failed wsaErr=%d", WSAGetLastError());
         closesocket(listener);
         WSACleanup();
         return false;
@@ -66,6 +76,7 @@ bool StatusListener::Start(IStatusSink* sink) {
     m_listenSocket = static_cast<unsigned long long>(listener);
     m_running.store(true);
     m_thread = std::thread(&StatusListener::RunLoop, this);
+    PLAPLOG(L"StatusListener listening on 127.0.0.1:19847");
     return true;
 }
 
@@ -91,8 +102,10 @@ void StatusListener::RunLoop() {
             if (!m_running.load()) return;
             continue;
         }
+        PLAPLOG(L"StatusListener client connected from 127.0.0.1:%d", ntohs(client.sin_port));
         HandleClient(static_cast<unsigned long long>(conn));
         closesocket(conn);
+        PLAPLOG(L"StatusListener client disconnected");
     }
 }
 

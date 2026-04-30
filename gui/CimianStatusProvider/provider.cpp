@@ -1,15 +1,19 @@
 #include "provider.h"
 #include "credential.h"
 #include "fields.h"
+#include "debug_log.h"
 
 #include <shlwapi.h>
 #include <new>
 
 namespace CimianStatus {
 
-CCimianProvider::CCimianProvider() = default;
+CCimianProvider::CCimianProvider() {
+    PLAPLOG(L"CCimianProvider ctor this=%p", this);
+}
 
 CCimianProvider::~CCimianProvider() {
+    PLAPLOG(L"CCimianProvider dtor this=%p", this);
     if (m_cred) m_cred->Release();
 }
 
@@ -39,7 +43,10 @@ IFACEMETHODIMP CCimianProvider::QueryInterface(REFIID riid, void** ppv) {
 // ICredentialProvider -------------------------------------------------------
 
 IFACEMETHODIMP CCimianProvider::SetUsageScenario(
-    CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD /*dwFlags*/) {
+    CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD dwFlags) {
+    PLAPLOG(L"SetUsageScenario cpus=%d (CPUS_PLAP=%d) flags=0x%08lx",
+            static_cast<int>(cpus), static_cast<int>(CPUS_PLAP),
+            static_cast<unsigned long>(dwFlags));
     // PLAP is what we register for. Decline every other scenario so this
     // provider never appears on the regular logon, unlock, or change-password
     // surfaces.
@@ -47,10 +54,15 @@ IFACEMETHODIMP CCimianProvider::SetUsageScenario(
         m_isPlap = true;
         if (!m_cred) {
             m_cred = new (std::nothrow) CCimianCredential();
-            if (!m_cred) return E_OUTOFMEMORY;
+            if (!m_cred) {
+                PLAPLOG(L"SetUsageScenario E_OUTOFMEMORY allocating credential");
+                return E_OUTOFMEMORY;
+            }
         }
+        PLAPLOG(L"SetUsageScenario PLAP accepted, credential=%p", m_cred);
         return S_OK;
     }
+    PLAPLOG(L"SetUsageScenario non-PLAP scenario declined (E_NOTIMPL)");
     return E_NOTIMPL;
 }
 
@@ -100,6 +112,8 @@ IFACEMETHODIMP CCimianProvider::GetCredentialCount(
     *pdwCount = (m_isPlap && m_cred) ? 1 : 0;
     *pdwDefault = 0;
     *pbAutoLogonWithDefault = FALSE;
+    PLAPLOG(L"GetCredentialCount returning count=%lu (m_isPlap=%d, m_cred=%p)",
+            static_cast<unsigned long>(*pdwCount), m_isPlap ? 1 : 0, m_cred);
     return S_OK;
 }
 
