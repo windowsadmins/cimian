@@ -53,6 +53,20 @@
             <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}" />
             <Setter Property="Foreground" Value="White" />
         </Style>
+
+        <!-- Card primary action (Install/Update) — toned-down accent so it doesn't dominate in dark mode -->
+        <Style x:Key="CardPrimaryButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+            <Setter Property="Background" Value="{ThemeResource AccentFillColorSecondaryBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource AccentFillColorTertiaryBrush}" />
+        </Style>
+
+        <!-- Card secondary action (Remove/Cancel) — visible against card backgrounds in both themes -->
+        <Style x:Key="CardSecondaryButton" TargetType="Button">
+            <Setter Property="Background" Value="{ThemeResource ControlFillColorSecondaryBrush}" />
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
     </Page.Resources>
 
     <ScrollViewer x:Name="MainScrollViewer"
@@ -344,7 +358,7 @@
                                             Spacing="6"
                                             Margin="0,10,0,0">
                                     <Button Content="{Binding InstallActionLabel}"
-                                            Style="{ThemeResource AccentButtonStyle}"
+                                            Style="{StaticResource CardPrimaryButton}"
                                             Padding="12,4"
                                             FontSize="12"
                                             MinWidth="72"
@@ -352,6 +366,7 @@
                                             Command="{Binding ElementName=RootPage, Path=ViewModel.InstallItemCommand}"
                                             CommandParameter="{Binding}" />
                                     <Button Content="Remove"
+                                            Style="{StaticResource CardSecondaryButton}"
                                             Padding="12,4"
                                             FontSize="12"
                                             MinWidth="72"
@@ -359,6 +374,7 @@
                                             Command="{Binding ElementName=RootPage, Path=ViewModel.RemoveItemCommand}"
                                             CommandParameter="{Binding}" />
                                     <Button Content="Cancel"
+                                            Style="{StaticResource CardSecondaryButton}"
                                             Padding="12,4"
                                             FontSize="12"
                                             MinWidth="72"

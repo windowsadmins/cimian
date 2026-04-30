@@ -64,6 +64,12 @@ public partial class ItemDetailPage : Page
                 case nameof(ViewModel.ShowInstallButton):
                     InstallButton.Visibility = ViewModel.ShowInstallButton ? Visibility.Visible : Visibility.Collapsed;
                     break;
+                case nameof(ViewModel.InstallButtonLabel):
+                    InstallButtonText.Text = ViewModel.InstallButtonLabel;
+                    break;
+                case nameof(ViewModel.InstallButtonGlyph):
+                    InstallButtonIcon.Glyph = ViewModel.InstallButtonGlyph;
+                    break;
                 case nameof(ViewModel.ShowRemoveButton):
                     RemoveButton.Visibility = ViewModel.ShowRemoveButton ? Visibility.Visible : Visibility.Collapsed;
                     break;
@@ -180,6 +186,8 @@ public partial class ItemDetailPage : Page
         
         // Update action buttons
         InstallButton.Visibility = ViewModel.ShowInstallButton ? Visibility.Visible : Visibility.Collapsed;
+        InstallButtonText.Text = ViewModel.InstallButtonLabel;
+        InstallButtonIcon.Glyph = ViewModel.InstallButtonGlyph;
         RemoveButton.Visibility = ViewModel.ShowRemoveButton ? Visibility.Visible : Visibility.Collapsed;
         CancelButton.Visibility = ViewModel.ShowCancelButton ? Visibility.Visible : Visibility.Collapsed;
         StatusBadge.Visibility = ViewModel.ShowStatusBadge ? Visibility.Visible : Visibility.Collapsed;
