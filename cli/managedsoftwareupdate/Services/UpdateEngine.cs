@@ -1880,7 +1880,40 @@ public class UpdateEngine : IDisposable
             PrintManifestTree(node.Children[childNames[i]], childPrefix, i == childNames.Count - 1, packages);
         }
     }
-    
+
+    /// <summary>
+    /// Returns only manifest items present in the loaded catalog map for this device,
+    /// and emits an INFO log for each item that's in the manifest but absent from that
+    /// map. The map is built by <see cref="CatalogService.LoadCatalogsAsync"/>, which
+    /// includes only items from the device's subscribed catalogs that also pass the
+    /// architecture filter — both reasons can cause exclusion here.
+    /// </summary>
+    private List<ManifestItem> FilterToDeviceCatalog(
+        List<ManifestItem> items,
+        Dictionary<string, CatalogItem> catalogMap,
+        string sectionLabel)
+    {
+        var inCatalog = new List<ManifestItem>(items.Count);
+        foreach (var item in items)
+        {
+            if (catalogMap.TryGetValue(item.Name, out _))
+            {
+                inCatalog.Add(item);
+            }
+            else
+            {
+                // Mirror CatalogService.LoadCatalogsAsync defaulting: empty config
+                // resolves to ["Production"] at load time, so report that here too.
+                var effectiveCatalogs = _config.Catalogs.Count > 0
+                    ? _config.Catalogs
+                    : new List<string> { "Production" };
+                var catalogList = string.Join(", ", effectiveCatalogs);
+                LogInfo($"{sectionLabel}: '{item.Name}' is in the manifest but not in this device's loaded catalog(s) [{catalogList}] — excluded from display");
+            }
+        }
+        return inCatalog;
+    }
+
     /// <summary>
     /// Prints the managed installs status table - matches Go output
     /// </summary>
@@ -1894,9 +1927,18 @@ public class UpdateEngine : IDisposable
         var managedInstalls = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "install")
             .ToList();
-        
+
         if (managedInstalls.Count == 0) return;
-        
+
+        // Only filter when a catalog map was actually loaded. An empty map (e.g.
+        // catalog download failed) keeps the prior behavior of showing the section
+        // rather than silently hiding everything.
+        if (catalogMap.Count > 0)
+        {
+            managedInstalls = FilterToDeviceCatalog(managedInstalls, catalogMap, "MANAGED INSTALLS");
+            if (managedInstalls.Count == 0) return;
+        }
+
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
         var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
@@ -1972,9 +2014,15 @@ public class UpdateEngine : IDisposable
         var managedUpdates = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "update")
             .ToList();
-        
+
         if (managedUpdates.Count == 0) return;
-        
+
+        if (catalogMap.Count > 0)
+        {
+            managedUpdates = FilterToDeviceCatalog(managedUpdates, catalogMap, "MANAGED UPDATES");
+            if (managedUpdates.Count == 0) return;
+        }
+
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
         var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
@@ -2036,9 +2084,15 @@ public class UpdateEngine : IDisposable
         var managedUninstalls = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "uninstall")
             .ToList();
-        
+
         if (managedUninstalls.Count == 0) return;
-        
+
+        if (catalogMap.Count > 0)
+        {
+            managedUninstalls = FilterToDeviceCatalog(managedUninstalls, catalogMap, "MANAGED UNINSTALLS");
+            if (managedUninstalls.Count == 0) return;
+        }
+
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
         var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
