@@ -658,9 +658,17 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Deduplicates manifest items, keeping the highest version for each item name.
-    /// Go parity: pkg/status.DeduplicateManifestItems - uses just name as key,
-    /// keeps highest version if duplicate found, preserves original order.
+    /// Deduplicates manifest items by name. When the same name appears with
+    /// different actions across the manifest tree, the strongest action wins
+    /// regardless of encounter order — matching Munki's behavior where an item
+    /// listed in both managed_installs and optional_installs is treated as a
+    /// managed install.
+    ///
+    /// Action precedence (highest to lowest):
+    ///   install &gt; uninstall &gt; update &gt; optional &gt; profile &gt; app
+    ///
+    /// Within the same action, the highest version wins; otherwise the first
+    /// occurrence's position is preserved.
     /// </summary>
     public List<ManifestItem> DeduplicateItems(List<ManifestItem> items)
     {
@@ -673,24 +681,31 @@ public class ManifestService
                 continue;
 
             var key = item.Name.ToLowerInvariant();
-            
+
             if (dedup.TryGetValue(key, out var existing))
             {
-                // If we find a newer version, update it but keep the original position
-                if (IsOlderVersion(existing.Version, item.Version))
+                var existingRank = ActionPrecedence(existing.Action);
+                var incomingRank = ActionPrecedence(item.Action);
+
+                if (incomingRank > existingRank)
                 {
+                    // Stronger action supersedes (e.g. install supersedes optional)
                     dedup[key] = item;
                 }
+                else if (incomingRank == existingRank && IsOlderVersion(existing.Version, item.Version))
+                {
+                    // Same action, prefer the newer version
+                    dedup[key] = item;
+                }
+                // Otherwise keep the existing entry
             }
             else
             {
-                // First time seeing this item - track its order
                 orderedKeys.Add(key);
                 dedup[key] = item;
             }
         }
 
-        // Build result in the original order items were first encountered
         var result = new List<ManifestItem>();
         foreach (var key in orderedKeys)
         {
@@ -698,6 +713,22 @@ public class ManifestService
         }
         return result;
     }
+
+    /// <summary>
+    /// Ranks manifest actions by precedence so that stronger directives win
+    /// when the same item name appears with conflicting actions across
+    /// included manifests. Higher number = stronger directive.
+    /// </summary>
+    private static int ActionPrecedence(string? action) => action?.ToLowerInvariant() switch
+    {
+        "install" => 5,
+        "uninstall" => 4,
+        "update" => 3,
+        "optional" => 2,
+        "profile" => 1,
+        "app" => 1,
+        _ => 0,
+    };
 
     /// <summary>
     /// Compare versions to determine if v1 is older than v2.
