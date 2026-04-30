@@ -1,5 +1,6 @@
 #include "credential.h"
 #include "progress_bitmap.h"
+#include "debug_log.h"
 
 #include <shlwapi.h>
 #include <strsafe.h>
@@ -51,15 +52,18 @@ std::wstring ReadLogTail() {
 } // namespace
 
 CCimianCredential::CCimianCredential() {
+    PLAPLOG(L"CCimianCredential ctor this=%p", this);
     for (DWORD i = 0; i < FIELD_COUNT; ++i) {
         if (g_FieldInitialStrings[i]) m_fields[i] = g_FieldInitialStrings[i];
     }
     // Best-effort: start the TCP listener. If it fails (port in use, no
     // winsock) we still render the static "preparing" tile.
-    m_listener.Start(this);
+    bool started = m_listener.Start(this);
+    PLAPLOG(L"CCimianCredential listener Start -> %s", started ? L"OK" : L"FAILED");
 }
 
 CCimianCredential::~CCimianCredential() {
+    PLAPLOG(L"CCimianCredential dtor this=%p", this);
     m_listener.Stop();
 }
 
@@ -91,6 +95,7 @@ IFACEMETHODIMP CCimianCredential::QueryInterface(REFIID riid, void** ppv) {
 // ICredentialProviderCredential --------------------------------------------
 
 IFACEMETHODIMP CCimianCredential::Advise(ICredentialProviderCredentialEvents* pcpce) {
+    PLAPLOG(L"Credential Advise pcpce=%p", pcpce);
     std::lock_guard<std::mutex> lk(m_mutex);
     if (m_events) m_events->Release();
     m_events = pcpce;
@@ -105,11 +110,13 @@ IFACEMETHODIMP CCimianCredential::UnAdvise() {
 }
 
 IFACEMETHODIMP CCimianCredential::SetSelected(BOOL* pbAutoLogon) {
+    PLAPLOG(L"Credential SetSelected");
     if (pbAutoLogon) *pbAutoLogon = FALSE;
     return S_OK;
 }
 
 IFACEMETHODIMP CCimianCredential::SetDeselected() {
+    PLAPLOG(L"Credential SetDeselected");
     return S_OK;
 }
 

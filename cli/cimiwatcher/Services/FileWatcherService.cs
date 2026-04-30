@@ -145,6 +145,20 @@ public class FileWatcherService : BackgroundService
             _logger.LogWarning(ex, "Could not read flag file content, using defaults");
         }
 
+        // LoginWindow-only gate: a true bootstrap (no explicit Args: from MSC) on the
+        // GUI flag file must wait for an unattended secure desktop, mirroring Munki's
+        // loginwindow.py behaviour. MSC's in-session triggers (Args: present) and the
+        // headless channel bypass this gate by design.
+        if (withGUI && customArgs == null && SessionProbe.IsInteractiveUserLoggedOn())
+        {
+            _logger.LogInformation(
+                "{UpdateType} bootstrap deferred — interactive user signed in; will re-check after logout",
+                updateType);
+            // Leave the flag file in place and reset lastSeen so the next poll re-detects it.
+            _lastSeenGUI = DateTime.MinValue;
+            return;
+        }
+
         // Delete the flag file immediately after reading it, BEFORE launching MSU.
         // MSC's TriggerService polls for this deletion as the "acknowledged" signal.
         // If we wait until after MSU finishes, MSC's 30s timeout expires and throws.

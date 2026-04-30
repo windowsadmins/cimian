@@ -3,12 +3,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <unknwn.h>
+#include <olectl.h>
 #include <new>
 #include <atomic>
 #include <string>
 
 #include "guids.h"
 #include "provider.h"
+#include "debug_log.h"
 
 namespace {
 
@@ -66,6 +68,11 @@ BOOL APIENTRY DllMain(HINSTANCE hinst, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         g_module = hinst;
         DisableThreadLibraryCalls(hinst);
+        wchar_t exe[MAX_PATH] = L"";
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        PLAPLOG(L"DllMain DLL_PROCESS_ATTACH host=%s module=%p", exe, hinst);
+    } else if (reason == DLL_PROCESS_DETACH) {
+        PLAPLOG(L"DllMain DLL_PROCESS_DETACH module=%p", hinst);
     }
     return TRUE;
 }
@@ -73,11 +80,16 @@ BOOL APIENTRY DllMain(HINSTANCE hinst, DWORD reason, LPVOID) {
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
-    if (rclsid != CLSID_CimianStatusProvider) return CLASS_E_CLASSNOTAVAILABLE;
+    if (rclsid != CLSID_CimianStatusProvider) {
+        PLAPLOG(L"DllGetClassObject CLSID mismatch — declined");
+        return CLASS_E_CLASSNOTAVAILABLE;
+    }
+    PLAPLOG(L"DllGetClassObject CLSID match — creating ClassFactory");
     auto* f = new (std::nothrow) CClassFactory();
     if (!f) return E_OUTOFMEMORY;
     HRESULT hr = f->QueryInterface(riid, ppv);
     f->Release();
+    PLAPLOG(L"DllGetClassObject hr=0x%08lx", static_cast<unsigned long>(hr));
     return hr;
 }
 
@@ -117,6 +129,7 @@ LONG SetReg(HKEY parent, const wchar_t* sub, const wchar_t* name, const wchar_t*
 STDAPI DllRegisterServer() {
     std::wstring guid = GuidToString(CLSID_CimianStatusProvider);
     std::wstring dll  = DllPath();
+    PLAPLOG(L"DllRegisterServer entry guid=%s dll=%s", guid.c_str(), dll.c_str());
 
     // 1. COM CLSID registration.
     std::wstring base = L"SOFTWARE\\Classes\\CLSID\\" + guid;
@@ -135,6 +148,7 @@ STDAPI DllRegisterServer() {
     if (SetReg(HKEY_LOCAL_MACHINE, plap.c_str(), nullptr, L"Cimian Status Credential Provider") != ERROR_SUCCESS)
         return SELFREG_E_CLASS;
 
+    PLAPLOG(L"DllRegisterServer success — CLSID + PLAP keys written");
     return S_OK;
 }
 

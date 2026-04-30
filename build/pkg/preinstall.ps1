@@ -53,30 +53,54 @@ try {
         }
     }
 
-    # Stop ALL Cimian processes before file operations
-    Write-Host "Stopping ALL Cimian processes for safe file operations..."
+    # Wait for any in-progress managedsoftwareupdate run to finish naturally.
+    # Killing MSU mid-install could leave packages in an inconsistent state, so
+    # we never force it down. If it outlasts the timeout the MSI's standard
+    # in-use file handling (Restart Manager) will queue replacement on reboot.
+    $msuTimeout = New-TimeSpan -Minutes 30
+    $msuDeadline = (Get-Date).Add($msuTimeout)
+    $msuLastLog = Get-Date
+    $msu = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+    if ($msu) {
+        Write-Host "managedsoftwareupdate is running (PID: $($msu.Id)); waiting up to $($msuTimeout.TotalMinutes) min for it to finish..."
+        while ($msu -and (Get-Date) -lt $msuDeadline) {
+            if (((Get-Date) - $msuLastLog).TotalSeconds -ge 30) {
+                Write-Host "  still waiting for managedsoftwareupdate (PID: $($msu.Id))"
+                $msuLastLog = Get-Date
+            }
+            Start-Sleep -Seconds 5
+            $msu = Get-Process -Name "managedsoftwareupdate" -ErrorAction SilentlyContinue
+        }
+        if ($msu) {
+            Write-Warning "managedsoftwareupdate still running after $($msuTimeout.TotalMinutes) min; proceeding without killing it (MSI will queue file replacement if needed)"
+        } else {
+            Write-Host "managedsoftwareupdate finished — proceeding"
+        }
+    }
+
+    # Aggressively terminate ancillary Cimian processes. Excludes
+    # managedsoftwareupdate (handled above) — everything else is idempotent
+    # and safe to hard-kill so the MSI can replace files cleanly.
+    Write-Host "Stopping ancillary Cimian processes for safe file operations..."
     try {
-        $cimianProcesses = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil", "repoclean" -ErrorAction SilentlyContinue
+        $cimianProcesses = Get-Process -Name "*cimi*", "makecatalogs", "makepkginfo", "manifestutil", "repoclean" -ErrorAction SilentlyContinue
         if ($cimianProcesses) {
-            Write-Host "Found $($cimianProcesses.Count) Cimian process(es) to terminate:"
+            Write-Host "Found $($cimianProcesses.Count) ancillary process(es) to terminate:"
             foreach ($proc in $cimianProcesses) {
                 Write-Host "  - $($proc.Name) (PID: $($proc.Id))"
             }
             $cimianProcesses | Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 5
+            Start-Sleep -Seconds 3
 
-            $remainingProcesses = Get-Process -Name "*cimi*", "managedsoftwareupdate", "makecatalogs", "makepkginfo", "manifestutil", "repoclean" -ErrorAction SilentlyContinue
-            if ($remainingProcesses) {
-                $cimianExes = @("cimiwatcher.exe", "managedsoftwareupdate.exe", "cimitrigger.exe", "cimistatus.exe",
-                               "cimiimport.exe", "cimipkg.exe", "makecatalogs.exe", "makepkginfo.exe", "manifestutil.exe", "repoclean.exe",
-                               "Managed Software Center.exe")
-                foreach ($exeName in $cimianExes) {
-                    try { & taskkill /F /IM $exeName /T 2>$null } catch { }
-                }
-                Start-Sleep -Seconds 3
+            $cimianExes = @("cimiwatcher.exe", "cimitrigger.exe", "cimistatus.exe",
+                           "cimiimport.exe", "cimipkg.exe", "makecatalogs.exe", "makepkginfo.exe",
+                           "manifestutil.exe", "repoclean.exe", "Managed Software Center.exe")
+            foreach ($exeName in $cimianExes) {
+                try { & taskkill /F /IM $exeName /T 2>$null } catch { }
             }
+            Start-Sleep -Seconds 2
         } else {
-            Write-Host "No Cimian processes found running"
+            Write-Host "No ancillary Cimian processes found running"
         }
     } catch {
         Write-Warning "Error during Cimian process termination: $_"
