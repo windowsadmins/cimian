@@ -1882,10 +1882,11 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
-    /// Returns only manifest items resolvable in this device's catalog set, and emits an
-    /// INFO log for each item that's in the manifest but missing from every catalog the
-    /// device subscribes to. Items in unsubscribed catalogs are excluded from display
-    /// because the device cannot act on them.
+    /// Returns only manifest items present in the loaded catalog map for this device,
+    /// and emits an INFO log for each item that's in the manifest but absent from that
+    /// map. The map is built by <see cref="CatalogService.LoadCatalogsAsync"/>, which
+    /// includes only items from the device's subscribed catalogs that also pass the
+    /// architecture filter — both reasons can cause exclusion here.
     /// </summary>
     private List<ManifestItem> FilterToDeviceCatalog(
         List<ManifestItem> items,
@@ -1895,16 +1896,19 @@ public class UpdateEngine : IDisposable
         var inCatalog = new List<ManifestItem>(items.Count);
         foreach (var item in items)
         {
-            if (catalogMap.ContainsKey(item.Name.ToLowerInvariant()))
+            if (catalogMap.TryGetValue(item.Name, out _))
             {
                 inCatalog.Add(item);
             }
             else
             {
-                var catalogList = _config.Catalogs.Count > 0
-                    ? string.Join(", ", _config.Catalogs)
-                    : "(none configured)";
-                LogInfo($"{sectionLabel}: '{item.Name}' is in the manifest but not in this device's catalog(s) [{catalogList}] — excluded from display");
+                // Mirror CatalogService.LoadCatalogsAsync defaulting: empty config
+                // resolves to ["Production"] at load time, so report that here too.
+                var effectiveCatalogs = _config.Catalogs.Count > 0
+                    ? _config.Catalogs
+                    : new List<string> { "Production" };
+                var catalogList = string.Join(", ", effectiveCatalogs);
+                LogInfo($"{sectionLabel}: '{item.Name}' is in the manifest but not in this device's loaded catalog(s) [{catalogList}] — excluded from display");
             }
         }
         return inCatalog;
@@ -1926,8 +1930,14 @@ public class UpdateEngine : IDisposable
 
         if (managedInstalls.Count == 0) return;
 
-        managedInstalls = FilterToDeviceCatalog(managedInstalls, catalogMap, "MANAGED INSTALLS");
-        if (managedInstalls.Count == 0) return;
+        // Only filter when a catalog map was actually loaded. An empty map (e.g.
+        // catalog download failed) keeps the prior behavior of showing the section
+        // rather than silently hiding everything.
+        if (catalogMap.Count > 0)
+        {
+            managedInstalls = FilterToDeviceCatalog(managedInstalls, catalogMap, "MANAGED INSTALLS");
+            if (managedInstalls.Count == 0) return;
+        }
 
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
@@ -2007,8 +2017,11 @@ public class UpdateEngine : IDisposable
 
         if (managedUpdates.Count == 0) return;
 
-        managedUpdates = FilterToDeviceCatalog(managedUpdates, catalogMap, "MANAGED UPDATES");
-        if (managedUpdates.Count == 0) return;
+        if (catalogMap.Count > 0)
+        {
+            managedUpdates = FilterToDeviceCatalog(managedUpdates, catalogMap, "MANAGED UPDATES");
+            if (managedUpdates.Count == 0) return;
+        }
 
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
@@ -2074,8 +2087,11 @@ public class UpdateEngine : IDisposable
 
         if (managedUninstalls.Count == 0) return;
 
-        managedUninstalls = FilterToDeviceCatalog(managedUninstalls, catalogMap, "MANAGED UNINSTALLS");
-        if (managedUninstalls.Count == 0) return;
+        if (catalogMap.Count > 0)
+        {
+            managedUninstalls = FilterToDeviceCatalog(managedUninstalls, catalogMap, "MANAGED UNINSTALLS");
+            if (managedUninstalls.Count == 0) return;
+        }
 
         // Build status for each item
         var packageStatuses = new List<(string Name, string Version, string Status)>();
