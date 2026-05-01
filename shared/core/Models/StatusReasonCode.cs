@@ -123,6 +123,9 @@ public static class StatusReasonCode
     /// <summary>Running OS version is above the package's maximum_os_version</summary>
     public const string OsVersionTooNew = "os_version_too_new";
 
+    /// <summary>Running Cimian agent version is older than the package's minimum_cimian_version</summary>
+    public const string AgentVersionTooOld = "agent_version_too_old";
+
     /// <summary>force_install_after_date deadline has passed — item forced to install</summary>
     public const string ForceInstallDeadline = "force_install_deadline";
 

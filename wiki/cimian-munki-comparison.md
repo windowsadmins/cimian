@@ -38,6 +38,8 @@ For the engineering-level parity ledger (which individual Munki features are imp
 
 Most pkginfo fields transfer verbatim. `name`, `display_name`, `version`, `catalogs`, `requires`, `update_for`, `blocking_applications`, `unattended_install`, `unattended_uninstall`, `installer` / `uninstaller` blocks, `installs` detection arrays, `preinstall_script`, `postinstall_script`, `preuninstall_script`, `postuninstall_script`, `installcheck_script`, `uninstallcheck_script`, `OnDemand`, `force_install_after_date`, `version_script`, `default_installs`, `precache`, `installable_condition`, `supported_architectures`, `minimum_os_version`, and `maximum_os_version` all exist in Cimian and behave as documented in Munki.
 
+Cimian also adds `minimum_cimian_version` as a Cimian-specific extension for gating installs on the running agent's own version. If set, packages are skipped on agents older than the declared minimum, with a structured `agent_version_too_old` reason in the session log. Use it for pkginfos that depend on capabilities introduced in a specific Cimian build.
+
 **`installcheck_script` exit codes match Munki.** This is worth calling out explicitly because it is the question people always ask:
 
 - **Exit 0** means "this package needs installing." Cimian will proceed with the install.

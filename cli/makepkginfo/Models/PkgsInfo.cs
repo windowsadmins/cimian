@@ -97,40 +97,43 @@ public class PkgsInfo
     [YamlMember(Alias = "maximum_os_version", Order = 12, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? MaxOSVersion { get; set; }
 
-    [YamlMember(Alias = "installs", Order = 13, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
+    [YamlMember(Alias = "minimum_cimian_version", Order = 13, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public string? MinCimianVersion { get; set; }
+
+    [YamlMember(Alias = "installs", Order = 14, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
     public List<InstallItem>? Installs { get; set; }
 
-    [YamlMember(Alias = "installcheck_script", Order = 14, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "installcheck_script", Order = 15, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? InstallCheckScript { get; set; }
 
-    [YamlMember(Alias = "uninstallcheck_script", Order = 15, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "uninstallcheck_script", Order = 16, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? UninstallCheckScript { get; set; }
 
-    [YamlMember(Alias = "preinstall_script", Order = 16, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "preinstall_script", Order = 17, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? PreinstallScript { get; set; }
 
-    [YamlMember(Alias = "postinstall_script", Order = 17, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "postinstall_script", Order = 18, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? PostinstallScript { get; set; }
 
-    [YamlMember(Alias = "preuninstall_script", Order = 18, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "preuninstall_script", Order = 19, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? PreuninstallScript { get; set; }
 
-    [YamlMember(Alias = "postuninstall_script", Order = 19, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "postuninstall_script", Order = 20, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? PostuninstallScript { get; set; }
 
-    [YamlMember(Alias = "uninstaller_path", Order = 20, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "uninstaller_path", Order = 21, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? UninstallerPath { get; set; }
 
-    [YamlMember(Alias = "OnDemand", Order = 21, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
+    [YamlMember(Alias = "OnDemand", Order = 22, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
     public bool OnDemand { get; set; }
 
-    [YamlMember(Alias = "managed_profiles", Order = 22, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
+    [YamlMember(Alias = "managed_profiles", Order = 23, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
     public List<string>? ManagedProfiles { get; set; }
 
-    [YamlMember(Alias = "managed_apps", Order = 23, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
+    [YamlMember(Alias = "managed_apps", Order = 24, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
     public List<string>? ManagedApps { get; set; }
 
-    [YamlMember(Alias = "installer", Order = 24, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    [YamlMember(Alias = "installer", Order = 25, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public Installer? Installer { get; set; }
 }
 
