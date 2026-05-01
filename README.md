@@ -321,6 +321,15 @@ The build system uses environment variables for sensitive configuration data suc
 
 > **Security Note**: The `.env` file is automatically ignored by git and should never be committed. Always use `.env.example` as a template for new environments.
 
+### Worktrees
+
+New worktrees should be created with `.\scripts\new-worktree.ps1` so the nested `cli/cimipkg` submodule is initialised automatically. Plain `git worktree add` skips submodules and the build will fail until they are initialised manually.
+
+```pwsh
+# Create a feature worktree with the cli/cimipkg submodule ready to build
+.\scripts\new-worktree.ps1 .claude/worktrees/my-feature -b feature/my-feature
+```
+
 ## Configuration
 
 Cimian uses a YAML-based configuration system located at `C:\ProgramData\ManagedInstalls\Config.yaml`:
