@@ -1,15 +1,17 @@
 using Xunit;
 using FluentAssertions;
+using Cimian.Core.Models;
 using Cimian.Core.Version;
+using Cimian.CLI.managedsoftwareupdate.Services;
+using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
 /// <summary>
 /// Coverage for the OS-version eligibility gate exercised by UpdateEngine.
-/// The gate helper inside UpdateEngine is private static; these tests verify
-/// the building blocks (current OS detection + version comparison) that
-/// drive every branch of the gate. The wired-up skip path is exercised via
-/// integration / dogfooding (see PR description).
+/// Drives UpdateEngine.IsEligibleForOsVersion directly via InternalsVisibleTo
+/// so all branches (no bounds, in-range, below-min, above-max, boundary) are
+/// asserted against the real helper, not just the underlying VersionService.
 /// </summary>
 public class OsVersionGateTests
 {
@@ -19,58 +21,126 @@ public class OsVersionGateTests
         var current = VersionService.GetCurrentOsVersion();
 
         current.Should().NotBeNullOrWhiteSpace();
-        current.Should().Contain(".");
-        current.Split('.')[0].Should().Be("10");
+        current.Should().MatchRegex(@"^\d+(\.\d+)+$");
     }
 
     [Fact]
-    public void GateLogic_BothBoundsEmpty_IsEligible()
+    public void Gate_NoBounds_IsEligible()
     {
-        // Mirrors the early-return branch: no min, no max => always eligible.
-        var min = (string?)null;
-        var max = string.Empty;
+        var item = new CatalogItem { Name = "Test", Version = "1.0" };
 
-        var hasBound = !string.IsNullOrWhiteSpace(min) || !string.IsNullOrWhiteSpace(max);
-        hasBound.Should().BeFalse();
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out var reason, out var code);
+
+        eligible.Should().BeTrue();
+        reason.Should().BeEmpty();
+        code.Should().BeEmpty();
     }
 
     [Fact]
-    public void GateLogic_RunningEqualsMinimum_IsEligible()
+    public void Gate_RunningEqualsMinimum_IsEligible()
+    {
+        // Boundary equality at the minimum bound must be eligible.
+        var current = VersionService.GetCurrentOsVersion();
+        var item = new CatalogItem
+        {
+            Name = "Test",
+            Version = "1.0",
+            MinimumOsVersion = current
+        };
+
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out _, out _);
+
+        eligible.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Gate_RunningEqualsMaximum_IsEligible()
+    {
+        // Boundary equality at the maximum bound must be eligible.
+        var current = VersionService.GetCurrentOsVersion();
+        var item = new CatalogItem
+        {
+            Name = "Test",
+            Version = "1.0",
+            MaximumOsVersion = current
+        };
+
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out _, out _);
+
+        eligible.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Gate_RunningInRange_IsEligible()
     {
         var current = VersionService.GetCurrentOsVersion();
+        var item = new CatalogItem
+        {
+            Name = "Test",
+            Version = "1.0",
+            MinimumOsVersion = "0.0.0.1",
+            MaximumOsVersion = "999999.0"
+        };
 
-        VersionService.CompareVersions(current, current).Should().Be(0);
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out _, out _);
+
+        eligible.Should().BeTrue();
+        // Sanity: current sits strictly inside the constructed range.
+        VersionService.CompareVersions(current, "0.0.0.1").Should().BeGreaterThan(0);
+        VersionService.CompareVersions(current, "999999.0").Should().BeLessThan(0);
     }
 
     [Fact]
-    public void GateLogic_RunningAboveMinimum_IsEligible()
+    public void Gate_RunningBelowMinimum_IsIneligible_TooOld()
     {
-        VersionService.CompareVersions("10.0.22631", "10.0.19045")
-            .Should().BeGreaterThan(0);
+        // A min above any plausible current OS forces the too-old branch.
+        var item = new CatalogItem
+        {
+            Name = "Test",
+            Version = "1.0",
+            MinimumOsVersion = "999999.0"
+        };
+
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out var reason, out var code);
+
+        eligible.Should().BeFalse();
+        reason.Should().Contain("999999.0");
+        reason.Should().Contain("newer");
+        code.Should().Be(StatusReasonCode.OsVersionTooOld);
     }
 
     [Fact]
-    public void GateLogic_RunningBelowMinimum_IsIneligible_TooOld()
+    public void Gate_RunningAboveMaximum_IsIneligible_TooNew()
     {
-        VersionService.CompareVersions("10.0.19045", "10.0.22631")
-            .Should().BeLessThan(0);
+        // A max below any plausible current OS forces the too-new branch.
+        var item = new CatalogItem
+        {
+            Name = "Test",
+            Version = "1.0",
+            MaximumOsVersion = "0.0.0.1"
+        };
+
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out var reason, out var code);
+
+        eligible.Should().BeFalse();
+        reason.Should().Contain("0.0.0.1");
+        reason.Should().Contain("older");
+        code.Should().Be(StatusReasonCode.OsVersionTooNew);
     }
 
     [Fact]
-    public void GateLogic_RunningAboveMaximum_IsIneligible_TooNew()
+    public void Gate_BothBoundsSetAndInRange_IsEligible()
     {
-        VersionService.CompareVersions("10.0.26200", "10.0.22631")
-            .Should().BeGreaterThan(0);
-    }
+        var item = new CatalogItem
+        {
+            Name = "Test",
+            Version = "1.0",
+            MinimumOsVersion = "0.0.0.1",
+            MaximumOsVersion = "999999.0"
+        };
 
-    [Fact]
-    public void GateLogic_RunningInRange_IsEligible()
-    {
-        var min = "10.0.19045";
-        var max = "10.0.26200";
-        var current = "10.0.22631";
+        var eligible = UpdateEngine.IsEligibleForOsVersion(item, out _, out _);
 
-        VersionService.CompareVersions(current, min).Should().BeGreaterThan(0);
-        VersionService.CompareVersions(current, max).Should().BeLessThan(0);
+        eligible.Should().BeTrue();
     }
 }

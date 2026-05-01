@@ -131,7 +131,7 @@ public class UpdateEngine : IDisposable
         return LoopGuard.ComputeFingerprint(sb.ToString());
     }
 
-    private static bool IsEligibleForOsVersion(CatalogItem item, out string reason, out string reasonCode)
+    internal static bool IsEligibleForOsVersion(CatalogItem item, out string reason, out string reasonCode)
     {
         reason = string.Empty;
         reasonCode = string.Empty;
@@ -820,26 +820,29 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
-            if (!IsEligibleForOsVersion(catalogItem, out var osReason, out var osReasonCode))
-            {
-                ConsoleLogger.Info($"Skipping {item.Name}: {osReason}");
-                _sessionLogger?.LogStatusCheck(
-                    catalogItem.Name,
-                    catalogItem.Version,
-                    "skipped",
-                    osReason,
-                    osReasonCode,
-                    DetectionMethod.None,
-                    null,
-                    false);
-                continue;
-            }
-
             switch (item.Action.ToLowerInvariant())
             {
                 case "install":
                 case "update":
                 case "default":
+                    // Gate install-like actions on OS-version eligibility. Uninstall is
+                    // intentionally excluded so an item that becomes unsupported on the
+                    // current OS can still be removed.
+                    if (!IsEligibleForOsVersion(catalogItem, out var osReason, out var osReasonCode))
+                    {
+                        ConsoleLogger.Info($"Skipping {item.Name}: {osReason}");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name,
+                            catalogItem.Version,
+                            "skipped",
+                            osReason,
+                            osReasonCode,
+                            DetectionMethod.None,
+                            null,
+                            false);
+                        break;
+                    }
+
                     // Go treats both install and update actions the same - calls CheckStatus
                     var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
                     ConsoleLogger.Detail($"    CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
@@ -894,9 +897,25 @@ public class UpdateEngine : IDisposable
 
                 case "optional":
                     // Optional items are normally user-selected via the GUI.
-                    // But if force_install_after_date has passed, enforce installation (Munki behavior).
+                    // But if force_install_after_date has passed, enforce installation.
                     if (catalogItem.ForceInstallAfterDate != null && DateTime.Now >= catalogItem.ForceInstallAfterDate.Value)
                     {
+                        // Gate forced-optional installs on OS-version eligibility.
+                        if (!IsEligibleForOsVersion(catalogItem, out var optOsReason, out var optOsReasonCode))
+                        {
+                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optOsReason}");
+                            _sessionLogger?.LogStatusCheck(
+                                catalogItem.Name,
+                                catalogItem.Version,
+                                "skipped",
+                                optOsReason,
+                                optOsReasonCode,
+                                DetectionMethod.None,
+                                null,
+                                false);
+                            break;
+                        }
+
                         var optStatus = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
                         ConsoleLogger.Detail($"    CheckStatus for {item.Name} (forced deadline): NeedsAction={optStatus.NeedsAction}, Status={optStatus.Status}");
 
