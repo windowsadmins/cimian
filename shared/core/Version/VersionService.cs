@@ -84,6 +84,14 @@ public static class VersionService
     }
     
     /// <summary>
+    /// Returns the running Windows OS version as a string in the form "10.0.x.y".
+    /// </summary>
+    public static string GetCurrentOsVersion()
+    {
+        return Environment.OSVersion.Version.ToString();
+    }
+
+    /// <summary>
     /// Normalizes a version string by trimming trailing ".0" segments.
     /// Migrated from Go: pkg/version/version.go Normalize()
     /// </summary>

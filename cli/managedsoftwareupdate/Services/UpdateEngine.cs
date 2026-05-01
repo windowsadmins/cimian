@@ -131,6 +131,37 @@ public class UpdateEngine : IDisposable
         return LoopGuard.ComputeFingerprint(sb.ToString());
     }
 
+    internal static bool IsEligibleForOsVersion(CatalogItem item, out string reason, out string reasonCode)
+    {
+        reason = string.Empty;
+        reasonCode = string.Empty;
+
+        var min = item.MinimumOsVersion;
+        var max = item.MaximumOsVersion;
+        if (string.IsNullOrWhiteSpace(min) && string.IsNullOrWhiteSpace(max))
+            return true;
+
+        var current = Cimian.Core.Version.VersionService.GetCurrentOsVersion();
+
+        if (!string.IsNullOrWhiteSpace(min) &&
+            Cimian.Core.Version.VersionService.CompareVersions(current, min) < 0)
+        {
+            reason = $"requires OS {min} or newer, running {current}";
+            reasonCode = StatusReasonCode.OsVersionTooOld;
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(max) &&
+            Cimian.Core.Version.VersionService.CompareVersions(current, max) > 0)
+        {
+            reason = $"requires OS {max} or older, running {current}";
+            reasonCode = StatusReasonCode.OsVersionTooNew;
+            return false;
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Enable ANSI escape codes for colored output on Windows console
     /// </summary>
@@ -794,6 +825,24 @@ public class UpdateEngine : IDisposable
                 case "install":
                 case "update":
                 case "default":
+                    // Gate install-like actions on OS-version eligibility. Uninstall is
+                    // intentionally excluded so an item that becomes unsupported on the
+                    // current OS can still be removed.
+                    if (!IsEligibleForOsVersion(catalogItem, out var osReason, out var osReasonCode))
+                    {
+                        ConsoleLogger.Info($"Skipping {item.Name}: {osReason}");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name,
+                            catalogItem.Version,
+                            "skipped",
+                            osReason,
+                            osReasonCode,
+                            DetectionMethod.None,
+                            null,
+                            false);
+                        break;
+                    }
+
                     // Go treats both install and update actions the same - calls CheckStatus
                     var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
                     ConsoleLogger.Detail($"    CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
@@ -848,9 +897,25 @@ public class UpdateEngine : IDisposable
 
                 case "optional":
                     // Optional items are normally user-selected via the GUI.
-                    // But if force_install_after_date has passed, enforce installation (Munki behavior).
+                    // But if force_install_after_date has passed, enforce installation.
                     if (catalogItem.ForceInstallAfterDate != null && DateTime.Now >= catalogItem.ForceInstallAfterDate.Value)
                     {
+                        // Gate forced-optional installs on OS-version eligibility.
+                        if (!IsEligibleForOsVersion(catalogItem, out var optOsReason, out var optOsReasonCode))
+                        {
+                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optOsReason}");
+                            _sessionLogger?.LogStatusCheck(
+                                catalogItem.Name,
+                                catalogItem.Version,
+                                "skipped",
+                                optOsReason,
+                                optOsReasonCode,
+                                DetectionMethod.None,
+                                null,
+                                false);
+                            break;
+                        }
+
                         var optStatus = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
                         ConsoleLogger.Detail($"    CheckStatus for {item.Name} (forced deadline): NeedsAction={optStatus.NeedsAction}, Status={optStatus.Status}");
 
@@ -1253,6 +1318,21 @@ public class UpdateEngine : IDisposable
         {
             LogInfo($"Skipping {item.Name}: architecture mismatch (system: {systemArch})");
             return true; // Not an error, just skipped
+        }
+
+        if (!IsEligibleForOsVersion(item, out var osReason, out var osReasonCode))
+        {
+            LogInfo($"Skipping {item.Name}: {osReason}");
+            _sessionLogger?.LogStatusCheck(
+                item.Name,
+                item.Version,
+                "skipped",
+                osReason,
+                osReasonCode,
+                DetectionMethod.None,
+                null,
+                false);
+            return true;
         }
 
         // Check and install requires dependencies first

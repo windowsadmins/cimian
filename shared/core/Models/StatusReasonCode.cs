@@ -117,6 +117,12 @@ public static class StatusReasonCode
     /// <summary>OS version not supported</summary>
     public const string OsVersionMismatch = "os_version_mismatch";
 
+    /// <summary>Running OS version is below the package's minimum_os_version</summary>
+    public const string OsVersionTooOld = "os_version_too_old";
+
+    /// <summary>Running OS version is above the package's maximum_os_version</summary>
+    public const string OsVersionTooNew = "os_version_too_new";
+
     /// <summary>force_install_after_date deadline has passed — item forced to install</summary>
     public const string ForceInstallDeadline = "force_install_deadline";
 
