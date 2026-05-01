@@ -1,68 +1,123 @@
 using Xunit;
 using FluentAssertions;
+using Cimian.Core.Models;
 using Cimian.Core.Version;
+using Cimian.CLI.managedsoftwareupdate.Services;
+using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
 /// <summary>
 /// Coverage for the agent-version eligibility gate exercised by UpdateEngine.
-/// The gate helper inside UpdateEngine is private static; these tests verify
-/// the building blocks (running-agent version lookup + version comparison)
-/// that drive every branch of the gate.
+/// Calls UpdateEngine.IsEligibleForAgentVersion directly (exposed via
+/// InternalsVisibleTo) so the real decision branches and reason codes are
+/// asserted, not just the underlying string/version-comparison primitives.
 /// </summary>
 public class AgentVersionGateTests
 {
+    private static readonly string RunningVersion = VersionService.GetRunningAgentVersion();
+
+    private static CatalogItem ItemWithMinimum(string? minimum)
+        => new() { Name = "test-pkg", Version = "1.0", MinimumCimianVersion = minimum };
+
+    /// <summary>
+    /// Bumps the leading numeric segment by +1 so the resulting version is
+    /// strictly greater than the running agent version under
+    /// VersionService.CompareVersions, regardless of build-time format.
+    /// </summary>
+    private static string OneAboveRunning()
+    {
+        var parts = RunningVersion.Split('.');
+        if (parts.Length == 0 || !long.TryParse(parts[0], out var major))
+        {
+            return "9999.0.0.0";
+        }
+        parts[0] = (major + 1).ToString();
+        return string.Join('.', parts);
+    }
+
     [Fact]
     public void GetRunningAgentVersion_ReturnsNonEmpty()
     {
-        var current = VersionService.GetRunningAgentVersion();
-
-        current.Should().NotBeNullOrWhiteSpace();
+        RunningVersion.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
-    public void GateLogic_MinimumNull_IsEligible()
+    public void IsEligible_MinimumNull_AllowsInstall()
     {
-        string? minimum = null;
+        var item = ItemWithMinimum(null);
 
-        var hasBound = !string.IsNullOrWhiteSpace(minimum);
-        hasBound.Should().BeFalse();
+        var eligible = UpdateEngine.IsEligibleForAgentVersion(item, out var reason, out var code);
+
+        eligible.Should().BeTrue();
+        reason.Should().BeEmpty();
+        code.Should().BeEmpty();
     }
 
     [Fact]
-    public void GateLogic_MinimumEmpty_IsEligible()
+    public void IsEligible_MinimumEmpty_AllowsInstall()
     {
-        var minimum = string.Empty;
+        var item = ItemWithMinimum(string.Empty);
 
-        var hasBound = !string.IsNullOrWhiteSpace(minimum);
-        hasBound.Should().BeFalse();
+        var eligible = UpdateEngine.IsEligibleForAgentVersion(item, out var reason, out var code);
+
+        eligible.Should().BeTrue();
+        reason.Should().BeEmpty();
+        code.Should().BeEmpty();
     }
 
     [Fact]
-    public void GateLogic_RunningEqualsMinimum_IsEligible()
+    public void IsEligible_MinimumWhitespace_AllowsInstall()
     {
-        var version = "2026.05.01.0000";
+        var item = ItemWithMinimum("   ");
 
-        VersionService.CompareVersions(version, version).Should().Be(0);
+        var eligible = UpdateEngine.IsEligibleForAgentVersion(item, out _, out _);
+
+        eligible.Should().BeTrue();
     }
 
     [Fact]
-    public void GateLogic_RunningAboveMinimum_IsEligible()
+    public void IsEligible_RunningEqualsMinimum_AllowsInstall_AtBoundary()
     {
-        VersionService.CompareVersions("2026.05.01.0000", "2025.10.15.1200")
-            .Should().BeGreaterThan(0);
+        var item = ItemWithMinimum(RunningVersion);
+
+        var eligible = UpdateEngine.IsEligibleForAgentVersion(item, out var reason, out var code);
+
+        eligible.Should().BeTrue();
+        reason.Should().BeEmpty();
+        code.Should().BeEmpty();
     }
 
     [Fact]
-    public void GateLogic_RunningBelowMinimum_IsIneligible()
+    public void IsEligible_RunningAboveMinimum_AllowsInstall()
     {
-        VersionService.CompareVersions("2025.10.15.1200", "2026.05.01.0000")
-            .Should().BeLessThan(0);
+        // Use "0.0.0.1" as a minimum that any real running version will exceed.
+        var item = ItemWithMinimum("0.0.0.1");
+
+        var eligible = UpdateEngine.IsEligibleForAgentVersion(item, out _, out _);
+
+        eligible.Should().BeTrue();
     }
 
     [Fact]
-    public void GateLogic_PreReleaseRunning_IsOlderThanRelease()
+    public void IsEligible_RunningBelowMinimum_BlocksInstall_WithReasonCode()
     {
+        var futureMinimum = OneAboveRunning();
+        var item = ItemWithMinimum(futureMinimum);
+
+        var eligible = UpdateEngine.IsEligibleForAgentVersion(item, out var reason, out var code);
+
+        eligible.Should().BeFalse();
+        code.Should().Be(StatusReasonCode.AgentVersionTooOld);
+        reason.Should().Contain(futureMinimum);
+        reason.Should().Contain(RunningVersion);
+    }
+
+    [Fact]
+    public void IsEligible_PreReleaseRunning_TreatedAsOlderThanRelease()
+    {
+        // Sanity check on the underlying comparator that the gate relies on:
+        // pre-release < same numeric release.
         VersionService.CompareVersions("2026.05.01.0000-beta1", "2026.05.01.0000")
             .Should().BeLessThan(0);
     }

@@ -20,9 +20,12 @@ public static class VersionService
     private static readonly Regex PreReleaseRegex = new(@"-(.+)$", RegexOptions.Compiled);
 
     /// <summary>
-    /// Returns the running Cimian agent version (the entry assembly's
-    /// AssemblyInformationalVersion with any "+commit" suffix stripped, falling
-    /// back to AssemblyFileVersion and then AssemblyVersion).
+    /// Returns the running Cimian agent version from assembly metadata.
+    /// Reads the entry assembly's AssemblyInformationalVersion (CI builds embed
+    /// yyyy.MM.dd.HHmm here) with any "+commit" suffix stripped, falling back
+    /// to AssemblyFileVersion and then AssemblyVersion (e.g. "1.0.0.0") for
+    /// dev builds without an informational version stamp. Format is therefore
+    /// build-dependent; do not assume yyyy.MM.dd.HHmm.
     /// </summary>
     public static string GetRunningAgentVersion()
     {

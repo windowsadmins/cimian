@@ -820,29 +820,14 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
-            if (!IsEligibleForAgentVersion(catalogItem, out var agentSkipReason, out var agentSkipCode))
-            {
-                ConsoleLogger.Info($"Skipping {item.Name}: {agentSkipReason}");
-                _sessionLogger?.LogStatusCheck(
-                    catalogItem.Name,
-                    catalogItem.Version,
-                    "skipped",
-                    agentSkipReason,
-                    agentSkipCode,
-                    DetectionMethod.None,
-                    null,
-                    false);
-                continue;
-            }
-
             switch (item.Action.ToLowerInvariant())
             {
                 case "install":
                 case "update":
                 case "default":
-                    // Gate install-like actions on OS-version eligibility. Uninstall is
-                    // intentionally excluded so an item that becomes unsupported on the
-                    // current OS can still be removed.
+                    // Gate install-like actions on OS-version and agent-version eligibility.
+                    // Uninstall is intentionally excluded so an item that becomes unsupported
+                    // on the current OS or requires a newer agent can still be removed.
                     if (!IsEligibleForOsVersion(catalogItem, out var osReason, out var osReasonCode))
                     {
                         ConsoleLogger.Info($"Skipping {item.Name}: {osReason}");
@@ -852,6 +837,21 @@ public class UpdateEngine : IDisposable
                             "skipped",
                             osReason,
                             osReasonCode,
+                            DetectionMethod.None,
+                            null,
+                            false);
+                        break;
+                    }
+
+                    if (!IsEligibleForAgentVersion(catalogItem, out var agentSkipReason, out var agentSkipCode))
+                    {
+                        ConsoleLogger.Info($"Skipping {item.Name}: {agentSkipReason}");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name,
+                            catalogItem.Version,
+                            "skipped",
+                            agentSkipReason,
+                            agentSkipCode,
                             DetectionMethod.None,
                             null,
                             false);
@@ -915,7 +915,7 @@ public class UpdateEngine : IDisposable
                     // But if force_install_after_date has passed, enforce installation.
                     if (catalogItem.ForceInstallAfterDate != null && DateTime.Now >= catalogItem.ForceInstallAfterDate.Value)
                     {
-                        // Gate forced-optional installs on OS-version eligibility.
+                        // Gate forced-optional installs on OS-version and agent-version eligibility.
                         if (!IsEligibleForOsVersion(catalogItem, out var optOsReason, out var optOsReasonCode))
                         {
                             ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optOsReason}");
@@ -925,6 +925,21 @@ public class UpdateEngine : IDisposable
                                 "skipped",
                                 optOsReason,
                                 optOsReasonCode,
+                                DetectionMethod.None,
+                                null,
+                                false);
+                            break;
+                        }
+
+                        if (!IsEligibleForAgentVersion(catalogItem, out var optAgentReason, out var optAgentCode))
+                        {
+                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optAgentReason}");
+                            _sessionLogger?.LogStatusCheck(
+                                catalogItem.Name,
+                                catalogItem.Version,
+                                "skipped",
+                                optAgentReason,
+                                optAgentCode,
                                 DetectionMethod.None,
                                 null,
                                 false);
@@ -1803,7 +1818,9 @@ public class UpdateEngine : IDisposable
     #region Verbose Output Methods (Go Parity)
     
     /// <summary>
-    /// Gets the version string in YYYY.MM.DD.HHMM format
+    /// Gets the running agent version string from assembly metadata.
+    /// CI builds embed yyyy.MM.dd.HHmm via AssemblyInformationalVersion, but
+    /// dev builds may fall back to AssemblyFileVersion (e.g. 1.0.0.0).
     /// </summary>
     private static string GetFormattedVersion() => VersionService.GetRunningAgentVersion();
     
@@ -2558,7 +2575,7 @@ public class UpdateEngine : IDisposable
         return item;
     }
 
-    private static bool IsEligibleForAgentVersion(CatalogItem item, out string reason, out string reasonCode)
+    internal static bool IsEligibleForAgentVersion(CatalogItem item, out string reason, out string reasonCode)
     {
         reason = string.Empty;
         reasonCode = string.Empty;
