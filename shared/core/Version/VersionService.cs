@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace Cimian.Core.Version;
@@ -17,6 +18,31 @@ public static class VersionService
 {
     private static readonly Regex VersionCleanupRegex = new(@"^v", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex PreReleaseRegex = new(@"-(.+)$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Returns the running Cimian agent version (the entry assembly's
+    /// AssemblyInformationalVersion with any "+commit" suffix stripped, falling
+    /// back to AssemblyFileVersion and then AssemblyVersion).
+    /// </summary>
+    public static string GetRunningAgentVersion()
+    {
+        var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(informationalVersion))
+        {
+            var plusIndex = informationalVersion.IndexOf('+');
+            return plusIndex >= 0 ? informationalVersion[..plusIndex] : informationalVersion;
+        }
+
+        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+        if (!string.IsNullOrEmpty(fileVersion))
+        {
+            return fileVersion;
+        }
+
+        return assembly.GetName().Version?.ToString() ?? "UNKNOWN";
+    }
     
     /// <summary>
     /// Compares two version strings and returns true if local is older than remote.

@@ -170,6 +170,7 @@ public class PkgInfoBuilder
             OnDemand = options.OnDemand,
             MinOSVersion = options.MinOSVersion,
             MaxOSVersion = options.MaxOSVersion,
+            MinCimianVersion = options.MinCimianVersion,
             Installs = installs
         };
 
@@ -392,6 +393,7 @@ public class PkgsInfoOptions
     public bool OnDemand { get; set; }
     public string? MinOSVersion { get; set; }
     public string? MaxOSVersion { get; set; }
+    public string? MinCimianVersion { get; set; }
     public string? InstallCheckScriptPath { get; set; }
     public string? UninstallCheckScriptPath { get; set; }
     public string? PreinstallScriptPath { get; set; }

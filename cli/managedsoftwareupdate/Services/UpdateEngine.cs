@@ -1,10 +1,10 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core;
 using Cimian.Core.Models;
 using Cimian.Core.Services;
+using Cimian.Core.Version;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -820,6 +820,21 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
+            if (!IsEligibleForAgentVersion(catalogItem, out var agentSkipReason, out var agentSkipCode))
+            {
+                ConsoleLogger.Info($"Skipping {item.Name}: {agentSkipReason}");
+                _sessionLogger?.LogStatusCheck(
+                    catalogItem.Name,
+                    catalogItem.Version,
+                    "skipped",
+                    agentSkipReason,
+                    agentSkipCode,
+                    DetectionMethod.None,
+                    null,
+                    false);
+                continue;
+            }
+
             switch (item.Action.ToLowerInvariant())
             {
                 case "install":
@@ -1335,6 +1350,21 @@ public class UpdateEngine : IDisposable
             return true;
         }
 
+        if (!IsEligibleForAgentVersion(item, out var agentSkipReason, out var agentSkipCode))
+        {
+            LogInfo($"Skipping {item.Name}: {agentSkipReason}");
+            _sessionLogger?.LogStatusCheck(
+                item.Name,
+                item.Version,
+                "skipped",
+                agentSkipReason,
+                agentSkipCode,
+                DetectionMethod.None,
+                null,
+                false);
+            return true;
+        }
+
         // Check and install requires dependencies first
         if (item.Requires.Count > 0)
         {
@@ -1775,32 +1805,7 @@ public class UpdateEngine : IDisposable
     /// <summary>
     /// Gets the version string in YYYY.MM.DD.HHMM format
     /// </summary>
-    private static string GetFormattedVersion()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        
-        // Try AssemblyInformationalVersion first (has proper YYYY.MM.DD.HHMM format)
-        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        if (!string.IsNullOrEmpty(informationalVersion))
-        {
-            var plusIndex = informationalVersion.IndexOf('+');
-            if (plusIndex >= 0)
-            {
-                return informationalVersion[..plusIndex];
-            }
-            return informationalVersion;
-        }
-        
-        // Fall back to AssemblyFileVersion
-        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
-        if (!string.IsNullOrEmpty(fileVersion))
-        {
-            return fileVersion;
-        }
-        
-        // Last resort - assembly version (may lose leading zeros)
-        return assembly.GetName().Version?.ToString() ?? "Unknown";
-    }
+    private static string GetFormattedVersion() => VersionService.GetRunningAgentVersion();
     
     /// <summary>
     /// Prints the verbose header banner - matches Go output with timestamps
@@ -2551,6 +2556,27 @@ public class UpdateEngine : IDisposable
             ForceInstallAfterDate = cat?.ForceInstallAfterDate,
         };
         return item;
+    }
+
+    private static bool IsEligibleForAgentVersion(CatalogItem item, out string reason, out string reasonCode)
+    {
+        reason = string.Empty;
+        reasonCode = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(item.MinimumCimianVersion))
+        {
+            return true;
+        }
+
+        var currentVersion = VersionService.GetRunningAgentVersion();
+        if (VersionService.CompareVersions(currentVersion, item.MinimumCimianVersion) >= 0)
+        {
+            return true;
+        }
+
+        reason = $"requires Cimian {item.MinimumCimianVersion} or newer, running {currentVersion}";
+        reasonCode = StatusReasonCode.AgentVersionTooOld;
+        return false;
     }
 
     /// <summary>
