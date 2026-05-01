@@ -1281,6 +1281,25 @@ public class UpdateEngine : IDisposable
                     return false;
                 }
 
+                // Verify the dependency actually needs install — defer to its own
+                // installs array / installcheck_script / receipts (Munki parity).
+                // CheckDependencies() only consults in-memory lists; without this the
+                // dep gets reinstalled every run when not yet recorded as installed.
+                var depStatus = _statusService.CheckStatus(depItem, "install", _config.CachePath);
+                if (!depStatus.NeedsAction)
+                {
+                    LogDetail($"Dependency {depName} already installed: {depStatus.Reason}");
+                    if (!installedItems.Contains(depItem.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        installedItems.Add(depItem.Name);
+                    }
+                    if (!scheduledItems.Contains(dep, StringComparer.OrdinalIgnoreCase))
+                    {
+                        scheduledItems.Add(dep);
+                    }
+                    continue;
+                }
+
                 // Download the dependency if not already downloaded
                 if (!downloadedPaths.ContainsKey(depItem.Name))
                 {
