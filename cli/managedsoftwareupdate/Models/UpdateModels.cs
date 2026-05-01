@@ -357,6 +357,9 @@ public class CatalogItem
     [YamlMember(Alias = "maximum_os_version")]
     public string? MaximumOsVersion { get; set; }
 
+    [YamlMember(Alias = "minimum_cimian_version")]
+    public string? MinimumCimianVersion { get; set; }
+
     [YamlMember(Alias = "check")]
     public CheckInfo Check { get; set; } = new();
 

@@ -1,10 +1,10 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core;
 using Cimian.Core.Models;
 using Cimian.Core.Services;
+using Cimian.Core.Version;
 using Microsoft.Win32;
 
 // Resolve ambiguous references between CLI and Core models
@@ -62,30 +62,7 @@ public class StatusService
     /// <summary>
     /// Gets the running version of the managedsoftwareupdate binary
     /// </summary>
-    private static string GetRunningVersion()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        
-        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        if (!string.IsNullOrEmpty(informationalVersion))
-        {
-            var plusIndex = informationalVersion.IndexOf('+');
-            if (plusIndex >= 0)
-            {
-                return informationalVersion[..plusIndex];
-            }
-            return informationalVersion;
-        }
-        
-        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
-        if (!string.IsNullOrEmpty(fileVersion))
-        {
-            return fileVersion;
-        }
-        
-        var version = assembly.GetName().Version;
-        return version?.ToString() ?? "UNKNOWN";
-    }
+    private static string GetRunningVersion() => VersionService.GetRunningAgentVersion();
 
     /// <summary>
     /// Checks if the item needs to be installed/updated

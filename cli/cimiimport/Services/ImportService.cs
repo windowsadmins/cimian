@@ -43,6 +43,7 @@ public class ImportService
         List<string> installsPaths,
         string? minOSVersion,
         string? maxOSVersion,
+        string? minCimianVersion = null,
         bool extractIcon = false,
         string? iconOutputPath = null,
         bool noInteractive = false)
@@ -154,6 +155,7 @@ public class ImportService
             Installs = [],
             MinOSVersion = minOSVersion,
             MaxOSVersion = maxOSVersion,
+            MinCimianVersion = minCimianVersion,
             Installer = new Installer
             {
                 Hash = fileHash,
@@ -837,6 +839,9 @@ public class ImportService
 
         if (!string.IsNullOrEmpty(pkgsInfo.MinOSVersion))
             otherProps["minimum_os_version"] = pkgsInfo.MinOSVersion;
+
+        if (!string.IsNullOrEmpty(pkgsInfo.MinCimianVersion))
+            otherProps["minimum_cimian_version"] = pkgsInfo.MinCimianVersion;
 
         if (!string.IsNullOrEmpty(pkgsInfo.PostinstallScript))
             otherProps["postinstall_script"] = pkgsInfo.PostinstallScript;

@@ -134,6 +134,9 @@ public class PkgsInfo
     [YamlMember(Alias = "maximum_os_version")]
     public string? MaxOSVersion { get; set; }
 
+    [YamlMember(Alias = "minimum_cimian_version")]
+    public string? MinCimianVersion { get; set; }
+
     [YamlMember(Alias = "installer")]
     public Installer? Installer { get; set; }
 

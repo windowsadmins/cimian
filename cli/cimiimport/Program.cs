@@ -46,6 +46,10 @@ public class Program
             "--maximum_os_version",
             "Maximum Windows version supported (e.g. 11.0.22000)");
 
+        var minCimianVersionOption = new Option<string?>(
+            "--minimum_cimian_version",
+            "Minimum Cimian agent version required (e.g. 2026.05.01.0000)");
+
         var preinstallScriptOption = new Option<string?>(
             "--preinstall-script",
             "Path to preinstall script");
@@ -100,6 +104,7 @@ public class Program
         rootCommand.AddOption(uninstallerOption);
         rootCommand.AddOption(minOSVersionOption);
         rootCommand.AddOption(maxOSVersionOption);
+        rootCommand.AddOption(minCimianVersionOption);
         rootCommand.AddOption(preinstallScriptOption);
         rootCommand.AddOption(postinstallScriptOption);
         rootCommand.AddOption(preuninstallScriptOption);
@@ -122,6 +127,7 @@ public class Program
             var uninstaller = context.ParseResult.GetValueForOption(uninstallerOption);
             var minOSVersion = context.ParseResult.GetValueForOption(minOSVersionOption);
             var maxOSVersion = context.ParseResult.GetValueForOption(maxOSVersionOption);
+            var minCimianVersion = context.ParseResult.GetValueForOption(minCimianVersionOption);
             var preinstallScript = context.ParseResult.GetValueForOption(preinstallScriptOption);
             var postinstallScript = context.ParseResult.GetValueForOption(postinstallScriptOption);
             var preuninstallScript = context.ParseResult.GetValueForOption(preuninstallScriptOption);
@@ -220,6 +226,7 @@ public class Program
                     installsArray.ToList(),
                     minOSVersion,
                     maxOSVersion,
+                    minCimianVersion,
                     extractIcon,
                     iconOutput,
                     noInteractive

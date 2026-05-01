@@ -132,6 +132,12 @@ public class CatalogItem
     public string? MaximumOsVersion { get; set; }
 
     /// <summary>
+    /// Minimum Cimian agent version required to install this package
+    /// </summary>
+    [YamlMember(Alias = "minimum_cimian_version")]
+    public string? MinimumCimianVersion { get; set; }
+
+    /// <summary>
     /// Supported architectures (x64, arm64, etc.)
     /// </summary>
     [YamlMember(Alias = "supported_architectures")]
