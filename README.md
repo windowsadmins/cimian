@@ -539,6 +539,7 @@ supported_architectures:
   - x64
   - x86
 minimum_os_version: "10.0.19041"
+minimum_cimian_version: "2026.05.01.0000"  # skip on agents older than this build
 unattended_install: true
 unattended_uninstall: true
 ```
@@ -603,6 +604,7 @@ uninstaller:
 supported_architectures:
   - x64
 minimum_os_version: "10.0.17763"
+minimum_cimian_version: "2026.05.01.0000"  # skip on agents older than this build
 unattended_install: true
 unattended_uninstall: true
 ```
@@ -715,6 +717,7 @@ supported_architectures:
   - x64
 minimum_os_version: "10.0.19041"
 maximum_os_version: ""
+minimum_cimian_version: "2026.05.01.0000"  # skip on agents older than this build
 unattended_install: true
 unattended_uninstall: true
 ```
