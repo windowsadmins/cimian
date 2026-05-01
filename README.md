@@ -1,8 +1,8 @@
 # Cimian
 
-Cimian is an open-source software deployment solution designed for managing and automating software installations on Windows. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and device management services.
+Cimian (C# Simian primate) is an open-source software deployment solution designed for managing and automating software installations on Windows. **Heavily** inspired by the wonderful and dearly loved [Munki](https://github.com/munki/munki) project, Cimian allows Windows admins to manage software packages through a webserver-based repository of packages and metadata, enabling automated deployments, updates, and removals **at scale** in a programmatic manner. Cimian is built with modern Windows environments in mind, supporting both x64 and ARM64 architectures, and is optimized for integration with Microsoft Intune and device management services.
 
-Cimian aims to allow Mac Admins that manage Windows with Munki to have a similar experience on Windows and to provide Windows Admins with a powerful and flexible tool for software management or those looking to transition away from traditional imaging and towards modern management with Git and DevOps principles.
+Cimian aims to allow Mac Admins that manage Windows with Munki to have the exact same experience on Windows and to provide Windows Admins with a powerful and flexible tool for software management or those looking to transition away from traditional imaging and towards modern management with Git and DevOps principles.
 
 Cimian is developed in C# using .NET 10. It leverages a YAML-based configuration system for easy management and customization, and includes native a WPF GUI application for end-user self-service software installation.
 
@@ -21,11 +21,11 @@ Cimian is ideal for organizations of all sizes looking to streamline their Windo
 
 ## Architecture Overview
 
-Cimian consists of a comprehensive suite of command-line tools, services, and GUI applications that work together to provide a complete software management solution:
+Cimian consists of a suite of command-line tools, system services, and apps:
 
 ### Core Binaries
 
-All binaries are built for both x64 and ARM64 architectures and installed to `C:\Program Files\Cimian\`.
+All binaries are built for both x64 and arm64 architectures and installed to `C:\Program Files\Cimian\`.
 
 #### Client-Side Management
 
