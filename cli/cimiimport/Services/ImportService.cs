@@ -218,6 +218,29 @@ public class ImportService
                 }
             ];
         }
+        else if (metadata.InstallerType == "msi"
+            && (!string.IsNullOrEmpty(metadata.ProductCode) || !string.IsNullOrEmpty(metadata.UpgradeCode)))
+        {
+            // MSI packages are verified by querying Windows Installer for the ProductCode
+            // (per-version) or UpgradeCode (stable). Without an installs[] entry of type=msi
+            // the runtime verifier emits "No installs array for X — cannot verify".
+            var productCode = string.IsNullOrEmpty(metadata.ProductCode) ? null : metadata.ProductCode.Trim();
+            var upgradeCode = string.IsNullOrEmpty(metadata.UpgradeCode) ? null : metadata.UpgradeCode.Trim();
+            var codeSummary = !string.IsNullOrEmpty(productCode)
+                ? (!string.IsNullOrEmpty(upgradeCode) ? $"ProductCode={productCode}, UpgradeCode={upgradeCode}" : $"ProductCode={productCode}")
+                : $"UpgradeCode={upgradeCode}";
+            Console.WriteLine($"Using MSI {codeSummary}");
+            finalInstalls =
+            [
+                new InstallItem
+                {
+                    Type = "msi",
+                    ProductCode = productCode,
+                    UpgradeCode = upgradeCode,
+                    Version = pkgsInfo.Version
+                }
+            ];
+        }
         else
         {
             finalInstalls = [];
@@ -920,6 +943,10 @@ public class ImportService
                         sb.AppendLine($"  md5checksum: {item.MD5Checksum}");
                     if (!string.IsNullOrEmpty(item.Version))
                         sb.AppendLine($"  version: {item.Version}");
+                    if (!string.IsNullOrEmpty(item.ProductCode))
+                        sb.AppendLine($"  product_code: {EscapeYamlString(item.ProductCode)}");
+                    if (!string.IsNullOrEmpty(item.UpgradeCode))
+                        sb.AppendLine($"  upgrade_code: {EscapeYamlString(item.UpgradeCode)}");
                     if (!string.IsNullOrEmpty(item.IdentityName))
                         sb.AppendLine($"  identity_name: {item.IdentityName}");
                 }
