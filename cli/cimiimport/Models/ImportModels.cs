@@ -136,6 +136,14 @@ public class InstallItem
     [YamlMember(Alias = "version")]
     public string? Version { get; set; }
 
+    /// <summary>MSI ProductCode (per-version install identity). Used by managedsoftwareupdate to verify MSI registration in Windows Installer.</summary>
+    [YamlMember(Alias = "product_code")]
+    public string? ProductCode { get; set; }
+
+    /// <summary>MSI UpgradeCode (stable across versions). Fallback when ProductCode lookup misses.</summary>
+    [YamlMember(Alias = "upgrade_code")]
+    public string? UpgradeCode { get; set; }
+
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
