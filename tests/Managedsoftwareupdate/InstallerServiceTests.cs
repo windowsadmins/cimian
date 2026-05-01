@@ -91,7 +91,7 @@ public class InstallerServiceTests
         var (success, output) = await _service.InstallAsync(item, null!);
 
         Assert.True(success);
-        Assert.Contains("Script-only", output);
+        Assert.Contains("No install_script defined", output);
     }
 
     [Fact]
