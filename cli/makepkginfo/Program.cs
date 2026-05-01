@@ -85,6 +85,10 @@ class Program
             "--maximum_os_version",
             "Maximum OS version supported");
 
+        var minCimianVersionOption = new Option<string?>(
+            "--minimum_cimian_version",
+            "Minimum Cimian agent version required");
+
         var unattendedInstallOption = new Option<bool>(
             "--unattended_install",
             "Set 'unattended_install: true'");
@@ -133,6 +137,7 @@ class Program
         rootCommand.AddOption(versionOption);
         rootCommand.AddOption(minOSVersionOption);
         rootCommand.AddOption(maxOSVersionOption);
+        rootCommand.AddOption(minCimianVersionOption);
         rootCommand.AddOption(unattendedInstallOption);
         rootCommand.AddOption(unattendedUninstallOption);
         rootCommand.AddOption(onDemandOption);
@@ -159,6 +164,7 @@ class Program
             var version = context.ParseResult.GetValueForOption(versionOption);
             var minOSVersion = context.ParseResult.GetValueForOption(minOSVersionOption);
             var maxOSVersion = context.ParseResult.GetValueForOption(maxOSVersionOption);
+            var minCimianVersion = context.ParseResult.GetValueForOption(minCimianVersionOption);
             var unattendedInstall = context.ParseResult.GetValueForOption(unattendedInstallOption);
             var unattendedUninstall = context.ParseResult.GetValueForOption(unattendedUninstallOption);
             var onDemand = context.ParseResult.GetValueForOption(onDemandOption);
@@ -230,6 +236,7 @@ class Program
                     OnDemand = onDemand,
                     MinOSVersion = minOSVersion,
                     MaxOSVersion = maxOSVersion,
+                    MinCimianVersion = minCimianVersion,
                     InstallCheckScriptPath = installCheckScript,
                     UninstallCheckScriptPath = uninstallCheckScript,
                     PreinstallScriptPath = preinstallScript,
@@ -271,6 +278,7 @@ class Program
                         OnDemand = onDemand,
                         MinOSVersion = minOSVersion,
                         MaxOSVersion = maxOSVersion,
+                        MinCimianVersion = minCimianVersion,
                         Installs = builder.BuildInstallsArray(additionalFiles.ToList())
                     };
 
