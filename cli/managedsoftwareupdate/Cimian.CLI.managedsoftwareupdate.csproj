@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Cimian.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="CommandLineParser" Version="2.9.1" />
     <PackageReference Include="WixToolset.Dtf.WindowsInstaller" Version="5.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.CommandLine" Version="10.0.0-preview.*" />
