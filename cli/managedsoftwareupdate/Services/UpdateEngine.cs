@@ -131,6 +131,37 @@ public class UpdateEngine : IDisposable
         return LoopGuard.ComputeFingerprint(sb.ToString());
     }
 
+    private static bool IsEligibleForOsVersion(CatalogItem item, out string reason, out string reasonCode)
+    {
+        reason = string.Empty;
+        reasonCode = string.Empty;
+
+        var min = item.MinimumOsVersion;
+        var max = item.MaximumOsVersion;
+        if (string.IsNullOrWhiteSpace(min) && string.IsNullOrWhiteSpace(max))
+            return true;
+
+        var current = Cimian.Core.Version.VersionService.GetCurrentOsVersion();
+
+        if (!string.IsNullOrWhiteSpace(min) &&
+            Cimian.Core.Version.VersionService.CompareVersions(current, min) < 0)
+        {
+            reason = $"requires OS {min} or newer, running {current}";
+            reasonCode = StatusReasonCode.OsVersionTooOld;
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(max) &&
+            Cimian.Core.Version.VersionService.CompareVersions(current, max) > 0)
+        {
+            reason = $"requires OS {max} or older, running {current}";
+            reasonCode = StatusReasonCode.OsVersionTooNew;
+            return false;
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Enable ANSI escape codes for colored output on Windows console
     /// </summary>
@@ -789,6 +820,21 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
+            if (!IsEligibleForOsVersion(catalogItem, out var osReason, out var osReasonCode))
+            {
+                ConsoleLogger.Info($"Skipping {item.Name}: {osReason}");
+                _sessionLogger?.LogStatusCheck(
+                    catalogItem.Name,
+                    catalogItem.Version,
+                    "skipped",
+                    osReason,
+                    osReasonCode,
+                    DetectionMethod.None,
+                    null,
+                    false);
+                continue;
+            }
+
             switch (item.Action.ToLowerInvariant())
             {
                 case "install":
@@ -1253,6 +1299,21 @@ public class UpdateEngine : IDisposable
         {
             LogInfo($"Skipping {item.Name}: architecture mismatch (system: {systemArch})");
             return true; // Not an error, just skipped
+        }
+
+        if (!IsEligibleForOsVersion(item, out var osReason, out var osReasonCode))
+        {
+            LogInfo($"Skipping {item.Name}: {osReason}");
+            _sessionLogger?.LogStatusCheck(
+                item.Name,
+                item.Version,
+                "skipped",
+                osReason,
+                osReasonCode,
+                DetectionMethod.None,
+                null,
+                false);
+            return true;
         }
 
         // Check and install requires dependencies first
