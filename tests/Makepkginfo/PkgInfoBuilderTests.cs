@@ -215,17 +215,26 @@ public class PkgInfoBuilderTests
                 Type = "msi",
                 Size = 1024,
                 Location = "test.msi",
-                Hash = "abc123",
-                ProductCode = "{GUID}",
-                UpgradeCode = "{GUID2}"
+                Hash = "abc123"
+            },
+            Installs = new List<InstallItem>
+            {
+                new InstallItem
+                {
+                    Type = "msi",
+                    ProductCode = "{GUID}",
+                    UpgradeCode = "{GUID2}",
+                    Version = "1.0.0"
+                }
             }
         };
-        
+
         var yaml = _builder.SerializePkgsInfo(pkgsinfo);
-        
+
         Assert.Contains("installer:", yaml);
         Assert.Contains("type:", yaml);
         Assert.Contains("msi", yaml);
+        Assert.Contains("installs:", yaml);
         Assert.Contains("product_code:", yaml);
     }
 
@@ -318,17 +327,13 @@ public class PkgsInfoModelTests
             Size = 2048,
             Location = "package.msi",
             Hash = "sha256hash",
-            ProductCode = "{12345}",
-            UpgradeCode = "{67890}",
             Arguments = new List<string> { "/quiet", "/norestart" }
         };
-        
+
         Assert.Equal("msi", installer.Type);
         Assert.Equal(2048, installer.Size);
         Assert.Equal("package.msi", installer.Location);
         Assert.Equal("sha256hash", installer.Hash);
-        Assert.Equal("{12345}", installer.ProductCode);
-        Assert.Equal("{67890}", installer.UpgradeCode);
         Assert.Equal(2, installer.Arguments!.Count);
     }
 

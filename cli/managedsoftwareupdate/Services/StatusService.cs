@@ -188,10 +188,11 @@ public class StatusService
                 return result;
             }
 
-            // Priority 6.5: top-level `installer:` block ProductCode/UpgradeCode (MSI authoritative).
-            // Look the package up in the Windows Uninstall / Installer\UpgradeCodes registry views
-            // — same source `msiexec` ultimately consults — when the pkgsinfo declares
-            // product_code/upgrade_code at the installer level, even with no installs[] array.
+            // Priority 6.5 (legacy): top-level `installer:` block ProductCode/UpgradeCode.
+            // Current cimiimport/makepkginfo emit the MSI install identity in installs[] of
+            // type=msi (handled in Priority 2 → CheckInstallsArray); this branch only fires
+            // for older pkgsinfos written before that move. Same Windows Installer registry
+            // lookup either way.
             var msiInstaller = item.Installer;
             if (msiInstaller != null
                 && string.Equals(msiInstaller.Type, "msi", StringComparison.OrdinalIgnoreCase)

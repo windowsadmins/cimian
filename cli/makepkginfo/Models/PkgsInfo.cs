@@ -20,12 +20,7 @@ public class Installer
     [YamlMember(Alias = "hash", Order = 4)]
     public string? Hash { get; set; }
 
-    [YamlMember(Alias = "product_code", Order = 5)]
-    public string? ProductCode { get; set; }
-
-    [YamlMember(Alias = "upgrade_code", Order = 6)]
-    public string? UpgradeCode { get; set; }
-
+    // MSI ProductCode/UpgradeCode live on the installs[] type=msi entry, not here.
     [YamlMember(Alias = "arguments", Order = 7)]
     public List<string>? Arguments { get; set; }
 }
