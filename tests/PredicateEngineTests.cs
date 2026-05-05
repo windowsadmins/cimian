@@ -502,12 +502,39 @@ public class PredicateEngineTests
     public async Task EvaluateCondition_QuotedValueWithSpaces_ShouldMatch()
     {
         var facts = CreateFacts(machineModel: "Dell OptiPlex 7090");
-        
+
         var result = await _engine.EvaluateConditionAsync(
-            "machine_model == 'Dell OptiPlex 7090'", 
+            "machine_model == 'Dell OptiPlex 7090'",
             facts);
-        
+
         result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_ModelVersion_ContainsLenovoFriendlyName()
+    {
+        // Lenovo Win32_ComputerSystem.Model is the MTM code; the friendly name
+        // lives on Win32_ComputerSystemProduct.Version → exposed as model_version.
+        var facts = CreateFacts(
+            machineModel: "LENOVO 11JQS6CH00",
+            modelVersion: "ThinkCentre M75q Gen 2");
+
+        (await _engine.EvaluateConditionAsync("model_version CONTAINS 'M75q'", facts))
+            .Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("machine_model CONTAINS 'M75q'", facts))
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_ModelVersion_EmptyOnVendorsThatDontPopulateIt()
+    {
+        // Dell leaves Win32_ComputerSystemProduct.Version empty.
+        var facts = CreateFacts(
+            machineModel: "Dell Inc. Precision 3660",
+            modelVersion: "");
+
+        (await _engine.EvaluateConditionAsync("model_version == ''", facts))
+            .Should().BeTrue();
     }
 
     [Theory]
@@ -809,6 +836,7 @@ public class PredicateEngineTests
         string machineType = "desktop",
         string joinedType = "workgroup",
         string machineModel = "Generic PC",
+        string modelVersion = "",
         string[]? catalogs = null,
         string[]? gpuNames = null,
         string gpuDriverVersion = "",
@@ -833,6 +861,7 @@ public class PredicateEngineTests
             MachineType = machineType,
             JoinedType = joinedType,
             MachineModel = machineModel,
+            ModelVersion = modelVersion,
             Catalogs = catalogs?.ToList() ?? new List<string>(),
             GpuNames = gpuNames?.ToList() ?? new List<string>(),
             GpuDriverVersion = gpuDriverVersion,
