@@ -1584,42 +1584,56 @@ if ($results.Count -gt 0) {{
     #region Pending State Detection
 
     /// <summary>
-    /// Checks if any blocking applications are running for the given item
+    /// Returns the set of currently running process names (lowercase, no extension).
+    /// Snapshot once per evaluation pass and reuse via the CheckBlockingApps overload
+    /// rather than re-enumerating processes for every item.
     /// </summary>
-    /// <param name="blockingApps">List of process names or executable paths to check</param>
-    /// <param name="runningApps">Output: list of blocking apps that are currently running</param>
-    /// <returns>True if any blocking apps are running</returns>
-    public static bool CheckBlockingApps(IEnumerable<string>? blockingApps, out List<string> runningApps)
+    public static HashSet<string> GetRunningProcessNames()
     {
-        runningApps = new List<string>();
-        
-        if (blockingApps == null) return false;
-
         try
         {
-            var processes = System.Diagnostics.Process.GetProcesses()
+            return System.Diagnostics.Process.GetProcesses()
                 .Select(p => p.ProcessName.ToLowerInvariant())
                 .ToHashSet();
-
-            foreach (var app in blockingApps)
-            {
-                if (string.IsNullOrEmpty(app)) continue;
-                
-                // Extract process name without extension
-                var processName = Path.GetFileNameWithoutExtension(app).ToLowerInvariant();
-                
-                if (processes.Contains(processName))
-                {
-                    runningApps.Add(app);
-                }
-            }
         }
         catch
         {
-            // On error, assume no blocking apps
+            return new HashSet<string>();
+        }
+    }
+
+    /// <summary>
+    /// Checks if any blocking applications are running, using a precomputed process snapshot.
+    /// </summary>
+    public static bool CheckBlockingApps(IEnumerable<string>? blockingApps, ISet<string> runningProcessNames, out List<string> runningApps)
+    {
+        runningApps = new List<string>();
+
+        if (blockingApps == null) return false;
+
+        foreach (var app in blockingApps)
+        {
+            if (string.IsNullOrEmpty(app)) continue;
+
+            var processName = Path.GetFileNameWithoutExtension(app).ToLowerInvariant();
+
+            if (runningProcessNames.Contains(processName))
+            {
+                runningApps.Add(app);
+            }
         }
 
         return runningApps.Count > 0;
+    }
+
+    /// <summary>
+    /// Checks if any blocking applications are running for the given item.
+    /// Convenience overload that snapshots the process list internally.
+    /// Prefer the overload that accepts a precomputed snapshot when checking many items.
+    /// </summary>
+    public static bool CheckBlockingApps(IEnumerable<string>? blockingApps, out List<string> runningApps)
+    {
+        return CheckBlockingApps(blockingApps, GetRunningProcessNames(), out runningApps);
     }
 
     /// <summary>
