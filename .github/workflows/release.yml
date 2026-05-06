@@ -84,22 +84,7 @@ jobs:
           $buildInfo = @"
           ## Build info
 
-          This release was built with .NET SDK $dotnet on $os via a GitHub Actions workflow here: $runUrl. It is provided **unsigned** — see signing instructions at the bottom.
-
-          Distribution package version: $datestamp
-
-          Components:
-          managedsoftwareupdate $datestamp
-          cimiimport $datestamp
-          cimipkg $datestamp (built from cimian-pkg $cimipkg)
-          cimistatus $datestamp
-          cimitrigger $datestamp
-          cimiwatcher $datestamp
-          makecatalogs $datestamp
-          makepkginfo $datestamp
-          manifestutil $datestamp
-          repoclean $datestamp
-          ManagedSoftwareCenter $datestamp
+          This release was built with .NET SDK $dotnet on $os, using cimian-pkg $cimipkg, via a GitHub Actions workflow here: $runUrl. It is provided **unsigned** — see signing instructions at the bottom.
           "@
 
           $signing = @"
