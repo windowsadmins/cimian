@@ -65,14 +65,22 @@ jobs:
         run: |
           $tag = '${{ github.ref_name }}'
           $datestamp = '${{ steps.version.outputs.datestamp }}'
-          $title = "Cimian $tag — build $datestamp"
+          $title = "Cimian $datestamp"
           $notes = @"
-          **Tag:** ``$tag``
-          **Build:** ``$datestamp``
+          ## Cimian $datestamp (tag ``$tag``)
 
-          Built unsigned from commit ``$env:GITHUB_SHA`` on ``$env:GITHUB_REF_NAME``.
+          Binaries, MSI, and NuGet packages are provided **unsigned**. For enterprise deployment, sign them with your organization's code signing certificate before distribution:
 
-          See the auto-generated changelog below for what's new.
+          ``````powershell
+          # Sign individual binaries (after extracting from the MSI/nupkg)
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /n "Your Certificate Name" managedsoftwareupdate.exe
+
+          # Sign the MSI installers
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /n "Your Certificate Name" Cimian-$datestamp-x64.msi
+          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /n "Your Certificate Name" Cimian-$datestamp-arm64.msi
+          ``````
+
+          Built from commit ``$env:GITHUB_SHA``.
           "@
           $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin' | ForEach-Object { $_.FullName }
           if ($artifacts.Count -eq 0) { throw 'No artifacts to upload' }
