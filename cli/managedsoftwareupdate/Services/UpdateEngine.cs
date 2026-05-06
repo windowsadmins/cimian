@@ -473,17 +473,6 @@ public class UpdateEngine : IDisposable
                 return 0;
             }
 
-            // Exit if auto mode and user is active
-            if (_auto && StatusService.IsUserActive())
-            {
-                LogInfo($"User is active (idle: {StatusService.GetIdleSeconds()}s). Skipping automatic updates.");
-                _sessionLogger?.Log("INFO", $"User is active - skipping automatic updates");
-                ReportStatus("Skipped - user active");
-                
-                EndSessionWithSummary("skipped", 0, 0, 0, 0, 0, manifestItems);
-                return 0;
-            }
-
             // Filter out items outside their install_window (applies to installs, updates, and uninstalls)
             // Exception: force_install_after_date overrides install_window — if deadline has passed, install anyway
             var deferredItems = new List<CatalogItem>();
@@ -524,26 +513,71 @@ public class UpdateEngine : IDisposable
                 LogInfo($"{deferredItems.Count} item(s) deferred due to install_window restrictions");
             }
 
-            // Go/Munki parity: Filter out unattended_install/unattended_uninstall items in --auto mode
-            // When running automatically (not user-initiated), skip items that require user interaction.
-            // This matches Munki's only_unattended behavior in install_with_info() and process_removals().
-            var skippedUnattended = new List<CatalogItem>();
-            if (_auto)
+            // Per-item: defer items whose blocking_applications are running.
+            // Installing while the blocking app is open would fail or destroy
+            // the user's open work. Always applied — independent of mode/user.
+            var blockedItems = new List<CatalogItem>();
+            foreach (var list in new[] { toInstall, toUpdate, toUninstall })
             {
-                // Filter installs/updates: skip items with unattended_install == false
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    var item = list[i];
+                    if (item.BlockingApps.Count == 0) continue;
+
+                    if (StatusService.CheckBlockingApps(item.BlockingApps, out var running))
+                    {
+                        var runningList = string.Join(", ", running);
+                        LogInfo($"Deferred: {item.Name} v{item.Version} (blocking applications running: {runningList})");
+                        _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: blocking applications running ({runningList})");
+                        _sessionLogger?.LogStatusCheck(
+                            item.Name, item.Version, "deferred",
+                            $"Blocking applications running: {runningList}",
+                            Cimian.Core.Models.StatusReasonCode.BlockingApps,
+                            Cimian.Core.Models.DetectionMethod.None, null, false);
+                        blockedItems.Add(item);
+                        list.RemoveAt(i);
+                    }
+                }
+            }
+            if (blockedItems.Count > 0)
+            {
+                LogInfo($"{blockedItems.Count} item(s) deferred while blocking applications are running");
+            }
+
+            // Auto mode + active user: restrict to items that can run silently
+            // without disrupting the session. An item is eligible only if it is
+            // marked unattended AND its restart_action would not log the user
+            // out or reboot. Everything else is deferred to a later run (idle
+            // machine, interactive run, or scheduled maintenance window).
+            var skippedUnattended = new List<CatalogItem>();
+            if (_auto && StatusService.IsUserActive())
+            {
+                LogInfo($"User is active (idle: {StatusService.GetIdleSeconds()}s) - restricting to unattended items that won't disrupt the session");
+                _sessionLogger?.Log("INFO", "User is active - restricting auto run to unattended, non-disruptive items");
+
                 foreach (var list in new[] { toInstall, toUpdate })
                 {
                     for (int i = list.Count - 1; i >= 0; i--)
                     {
                         var item = list[i];
+                        string? skipReason = null;
                         if (!item.UnattendedInstall)
                         {
-                            LogInfo($"Skipping install of {item.Name} v{item.Version} because it's not unattended");
-                            _sessionLogger?.Log("INFO", $"Skipped {item.Name} v{item.Version}: unattended_install is false (auto mode)");
+                            skipReason = "unattended_install is false";
+                        }
+                        else if (RequiresRestart(item) || RequiresLogout(item))
+                        {
+                            skipReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
+                        }
+
+                        if (skipReason != null)
+                        {
+                            LogInfo($"Skipping install of {item.Name} v{item.Version}: {skipReason}");
+                            _sessionLogger?.Log("INFO", $"Skipped {item.Name} v{item.Version}: {skipReason} (auto mode, user active)");
                             _sessionLogger?.LogStatusCheck(
                                 item.Name, item.Version, "skipped",
-                                "Not eligible for unattended install (auto mode)",
-                                Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
+                                skipReason,
+                                Cimian.Core.Models.StatusReasonCode.UserDeferred,
                                 Cimian.Core.Models.DetectionMethod.None, null, false);
                             skippedUnattended.Add(item);
                             list.RemoveAt(i);
@@ -551,14 +585,23 @@ public class UpdateEngine : IDisposable
                     }
                 }
 
-                // Filter uninstalls: skip items with unattended_uninstall == false
                 for (int i = toUninstall.Count - 1; i >= 0; i--)
                 {
                     var item = toUninstall[i];
+                    string? skipReason = null;
                     if (!item.UnattendedUninstall)
                     {
-                        LogInfo($"Skipping removal of {item.Name} v{item.Version} because it's not unattended");
-                        _sessionLogger?.Log("INFO", $"Skipped removal of {item.Name} v{item.Version}: unattended_uninstall is false (auto mode)");
+                        skipReason = "unattended_uninstall is false";
+                    }
+                    else if (RequiresRestart(item) || RequiresLogout(item))
+                    {
+                        skipReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
+                    }
+
+                    if (skipReason != null)
+                    {
+                        LogInfo($"Skipping removal of {item.Name} v{item.Version}: {skipReason}");
+                        _sessionLogger?.Log("INFO", $"Skipped removal of {item.Name} v{item.Version}: {skipReason} (auto mode, user active)");
                         skippedUnattended.Add(item);
                         toUninstall.RemoveAt(i);
                     }
@@ -566,7 +609,7 @@ public class UpdateEngine : IDisposable
 
                 if (skippedUnattended.Count > 0)
                 {
-                    LogInfo($"{skippedUnattended.Count} item(s) skipped due to unattended restrictions (auto mode)");
+                    LogInfo($"{skippedUnattended.Count} item(s) deferred while user is active");
                 }
             }
 
