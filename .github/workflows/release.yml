@@ -40,7 +40,7 @@ jobs:
         shell: pwsh
         run: .\build.ps1 -NoSign
 
-      - name: Capture build version
+      - name: Capture build info
         id: version
         shell: pwsh
         run: |
@@ -51,8 +51,18 @@ jobs:
           } else {
             throw "Could not parse datestamp version from $($msi.Name)"
           }
-          "datestamp=$datestamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Build datestamp version: $datestamp"
+          $dotnetVersion = (dotnet --version).Trim()
+          $osCaption = (Get-CimInstance Win32_OperatingSystem).Caption.Trim()
+          $cimipkgVersion = (& git -C cli/cimipkg describe --tags --always 2>$null).Trim()
+          if (-not $cimipkgVersion) { $cimipkgVersion = 'unknown' }
+          "datestamp=$datestamp"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "dotnet=$dotnetVersion"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "os=$osCaption"                  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "cimipkg=$cimipkgVersion"        | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "datestamp: $datestamp"
+          Write-Host "dotnet:    $dotnetVersion"
+          Write-Host "os:        $osCaption"
+          Write-Host "cimipkg:   $cimipkgVersion"
 
       - name: List release artifacts
         shell: pwsh
@@ -65,9 +75,37 @@ jobs:
         run: |
           $tag = '${{ github.ref_name }}'
           $datestamp = '${{ steps.version.outputs.datestamp }}'
+          $dotnet = '${{ steps.version.outputs.dotnet }}'
+          $os = '${{ steps.version.outputs.os }}'
+          $cimipkg = '${{ steps.version.outputs.cimipkg }}'
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $title = "Cimian $datestamp"
-          $notes = @"
-          Binaries, MSI, and NuGet packages are provided **unsigned**. For enterprise deployment, sign them with your organization's code signing certificate before distribution:
+
+          $buildInfo = @"
+          ## Build info
+
+          This release was built with .NET SDK $dotnet on $os via a GitHub Actions workflow here: $runUrl. It is provided **unsigned** — see signing instructions at the bottom.
+
+          Distribution package version: $datestamp
+
+          Components:
+          managedsoftwareupdate $datestamp
+          cimiimport $datestamp
+          cimipkg $datestamp (built from cimian-pkg $cimipkg)
+          cimistatus $datestamp
+          cimitrigger $datestamp
+          cimiwatcher $datestamp
+          makecatalogs $datestamp
+          makepkginfo $datestamp
+          manifestutil $datestamp
+          repoclean $datestamp
+          ManagedSoftwareCenter $datestamp
+          "@
+
+          $signing = @"
+          ## Signing for enterprise deployment
+
+          Sign the binaries and MSIs with your organization's code signing certificate before distribution:
 
           ``````powershell
           `$cert = "Your Certificate Name"
@@ -86,6 +124,10 @@ jobs:
 
           Built from commit ``$env:GITHUB_SHA``.
           "@
+
+          $autoNotes = gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body
+          $notes = "$buildInfo`n`n$autoNotes`n`n$signing"
+
           $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin' | ForEach-Object { $_.FullName }
           if ($artifacts.Count -eq 0) { throw 'No artifacts to upload' }
-          gh release create $tag @artifacts --title $title --notes $notes --generate-notes
+          gh release create $tag @artifacts --title $title --notes $notes
