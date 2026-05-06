@@ -192,6 +192,82 @@ public class ItemsJsonFinalizationTests
         Assert.Empty(fresh.RecentAttempts);
     }
 
+    // ── LoopGuard suppression surfacing ─────────────────────────────────────
+
+    [Fact]
+    public void DataExporter_LoopSuppressedSessionItem_PopulatesWarningFields()
+    {
+        // Given a loop-suppressed item produced by CollectSessionItems, DataExporter
+        // must propagate WarningMessage into LastWarning + WarningCount and stamp
+        // last_seen_in_session because ActionPerformed is set.
+        using var fixture = new SessionsFixture();
+        var exporter = new DataExporter(fixture.BaseDir);
+
+        const string reason = "LOOP SUPPRESSED: WinAdminsAccount — suppressed for 6h 0m " +
+                              "(Rapid-fire loop). Clear with: managedsoftwareupdate --clear-loop WinAdminsAccount";
+
+        var items = exporter.GenerateCurrentItemsFromPackagesInfo(
+            new List<SessionPackageInfo>
+            {
+                new()
+                {
+                    Name = "WinAdminsAccount",
+                    Version = "1.0",
+                    Status = "Warning",
+                    ItemType = "managed_installs",
+                    DisplayName = "WinAdminsAccount",
+                    WarningMessage = reason,
+                    StatusReason = reason,
+                    StatusReasonCode = StatusReasonCode.LoopSuppressed,
+                    DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
+                    ActionPerformed = "loop_suppressed",
+                    OutcomeTimestamp = DateTime.UtcNow
+                }
+            },
+            currentSessionId: "2026-05-06-1532");
+
+        var record = items.Single();
+        Assert.Equal("Warning", record.CurrentStatus);
+        Assert.Equal(reason, record.LastWarning);
+        Assert.Equal(1, record.WarningCount);
+        Assert.Equal("2026-05-06-1532", record.LastSeenInSession);
+    }
+
+    [Fact]
+    public void LoopGuard_GetSuppressedReport_ReturnsActiveSuppressionsWithClearCommand()
+    {
+        var stateDir = Path.Combine(Path.GetTempPath(), "CimianTests", "LoopGuard", Guid.NewGuid().ToString());
+        Directory.CreateDirectory(stateDir);
+        var statePath = Path.Combine(stateDir, "state.json");
+        var logsDir   = Path.Combine(stateDir, "logs");
+        Directory.CreateDirectory(logsDir);
+
+        try
+        {
+            var guard = new LoopGuard(statePath, logsDir);
+
+            // Three rapid attempts within 2h trigger the rapid-fire loop policy.
+            for (var i = 0; i < 3; i++)
+            {
+                guard.RecordAttempt("WinAdminsAccount", "1.0", success: false, catalogFingerprint: "fp1");
+            }
+
+            var report = guard.GetSuppressedReport();
+            var entry = Assert.Single(report);
+            Assert.Equal("WinAdminsAccount", entry.Name);
+            Assert.Equal("1.0", entry.Version);
+            // Stored reason is the policy-level cause (LoopGuard composes the
+            // operator-facing "LOOP SUPPRESSED: <name> ..." string at ShouldSuppress
+            // time, not at storage time).
+            Assert.Contains("Rapid-fire", entry.Reason);
+            Assert.Equal("managedsoftwareupdate --clear-loop WinAdminsAccount", entry.ClearCommand);
+        }
+        finally
+        {
+            try { Directory.Delete(stateDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static string EventLine(string action, string status, string packageName, string packageVersion) =>

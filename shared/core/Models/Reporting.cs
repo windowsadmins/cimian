@@ -705,6 +705,32 @@ public record ItemOutcome(
     DateTime Timestamp);
 
 /// <summary>
+/// Reports a single loop-suppressed package for reports/loop_suppressed.json.
+/// Surfaces broken packages so operators can see them even when items.json
+/// reports them as Warning rather than Pending Install.
+/// </summary>
+public class LoopSuppressedReportItem
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = string.Empty;
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>UTC time at which suppression expires; null when suppressed indefinitely.</summary>
+    [JsonPropertyName("suppressed_until")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? SuppressedUntil { get; set; }
+
+    /// <summary>Operator-actionable command string (matches LoopGuard's WARN log line).</summary>
+    [JsonPropertyName("clear_command")]
+    public string ClearCommand { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// Pure helper that resolves the per-item session status reported in items.json.
 /// Prefers the actual install/uninstall outcome over the pre-install plan so a
 /// successful install does not stay stamped as "Pending Install".

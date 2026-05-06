@@ -503,11 +503,33 @@ public class SessionLogger : IDisposable
 
             // Generate items.json - current managed items snapshot
             GenerateItemsReport();
+
+            // Generate loop_suppressed.json - LoopGuard suppressions surfaced for
+            // dashboards. Skipped silently if no suppressions were registered.
+            GenerateLoopSuppressedReport();
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[ERROR] Failed to generate reports: {ex.Message}");
         }
+    }
+
+    private List<LoopSuppressedReportItem> _currentLoopSuppressed = new();
+
+    /// <summary>
+    /// Sets the current run's loop-suppressed package list. Pass an empty list (or
+    /// don't call) when LoopGuard isn't active. UpdateEngine populates this from
+    /// <see cref="LoopGuard.GetSuppressedReport"/> before EndSession.
+    /// </summary>
+    public void SetCurrentLoopSuppressed(List<LoopSuppressedReportItem> items)
+    {
+        _currentLoopSuppressed = items ?? new List<LoopSuppressedReportItem>();
+    }
+
+    private void GenerateLoopSuppressedReport()
+    {
+        var path = Path.Combine(ReportsDir, "loop_suppressed.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(_currentLoopSuppressed, JsonOptions));
     }
 
     /// <summary>

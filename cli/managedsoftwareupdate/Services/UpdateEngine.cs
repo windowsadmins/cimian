@@ -395,7 +395,14 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
+            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap);
+
+            // Dictionary of items LoopGuard refused this run, keyed by lower-invariant
+            // name. Surfaces in items.json as Warning + last_warning + status_reason_code,
+            // and in a sibling reports/loop_suppressed.json for dashboards.
+            var loopSuppressedByName = loopSuppressed.ToDictionary(
+                x => x.Item.Name.ToLowerInvariant(),
+                x => (x.Reason, x.InstalledVersion, x.WasUpdate));
 
             // AutoRemove: queue uninstall for packages installed by Cimian but no longer in any manifest
             if (_config.AutoRemove)
@@ -464,7 +471,9 @@ public class UpdateEngine : IDisposable
                 
                 // Collect items data for items.json report (Go parity: SetCurrentSessionPackagesInfo)
                 // Check-only mode never runs installs/uninstalls, so no outcomes exist.
-                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, new Dictionary<string, ItemOutcome>());
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap,
+                    new Dictionary<string, ItemOutcome>(),
+                    loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
@@ -772,7 +781,7 @@ public class UpdateEngine : IDisposable
                 ReportPercent(100);
                 
                 // Collect items data for items.json report
-                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName);
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: actions completed)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
@@ -799,7 +808,7 @@ public class UpdateEngine : IDisposable
                 ReportError("Some operations failed");
 
                 // Collect items data for items.json report
-                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName);
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
@@ -849,12 +858,16 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall) 
+    private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
+             List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
     {
         var toInstall = new List<CatalogItem>();
         var toUpdate = new List<CatalogItem>();
         var toUninstall = new List<CatalogItem>();
+        // Items LoopGuard refused this run. Tracked separately so CollectSessionItems
+        // can stamp them as Warning instead of letting them fall through to "Installed".
+        var loopSuppressed = new List<(CatalogItem, string, string?, bool)>();
 
         var sysArch = StatusService.GetSystemArchitecture();
 
@@ -955,6 +968,7 @@ public class UpdateEngine : IDisposable
                                     Cimian.Core.Models.DetectionMethod.None,
                                     status.InstalledVersion,
                                     false);
+                                loopSuppressed.Add((catalogItem, loopReason, status.InstalledVersion, status.IsUpdate));
                                 break; // Skip this item
                             }
                         }
@@ -1050,7 +1064,7 @@ public class UpdateEngine : IDisposable
             }
         }
 
-        return (toInstall, toUpdate, toUninstall);
+        return (toInstall, toUpdate, toUninstall, loopSuppressed);
     }
 
     /// <summary>
@@ -2377,7 +2391,8 @@ public class UpdateEngine : IDisposable
         List<CatalogItem> toUpdate,
         List<CatalogItem> toUninstall,
         Dictionary<string, CatalogItem> catalogMap,
-        IReadOnlyDictionary<string, ItemOutcome> outcomesByName)
+        IReadOnlyDictionary<string, ItemOutcome> outcomesByName,
+        IReadOnlyDictionary<string, (string Reason, string? InstalledVersion, bool WasUpdate)> loopSuppressedByName)
     {
         if (_sessionLogger == null) return;
 
@@ -2416,6 +2431,32 @@ public class UpdateEngine : IDisposable
                     displayName = catItem.DisplayName;
             }
 
+            // LoopGuard suppression takes precedence: the item was deliberately not
+            // acted on, but it is broken — surface as Warning so dashboards flag it.
+            // Keep the conditional short-circuited so suppressed items don't fall
+            // through to outcome/plan logic below.
+            if (loopSuppressedByName.TryGetValue(key, out var suppression))
+            {
+                items.Add(new SessionPackageInfo
+                {
+                    Name = mi.Name,
+                    Version = version,
+                    Status = "Warning",
+                    ItemType = itemType,
+                    DisplayName = displayName,
+                    InstalledVersion = suppression.InstalledVersion,
+                    WarningMessage = suppression.Reason,
+                    StatusReason = suppression.Reason,
+                    StatusReasonCode = Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
+                    DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
+                    // Mark as touched this run so DataExporter stamps last_seen_in_session.
+                    // Distinct from install/update/remove so consumers can filter on it.
+                    ActionPerformed = "loop_suppressed",
+                    OutcomeTimestamp = DateTime.UtcNow
+                });
+                continue;
+            }
+
             // Determine status — prefer the actual install/uninstall outcome over the
             // pre-install plan. Only fall back to "Pending …" when nothing was attempted.
             var hadOutcome = outcomesByName.TryGetValue(key, out var outcome) && outcome is not null;
@@ -2440,6 +2481,14 @@ public class UpdateEngine : IDisposable
         }
 
         _sessionLogger.SetCurrentSessionItems(items);
+
+        // Surface LoopGuard suppressions for reports/loop_suppressed.json. Pulled from
+        // LoopGuard rather than this run's list so packages suppressed in earlier runs
+        // (still active backoff) also appear.
+        if (_loopGuard != null)
+        {
+            _sessionLogger.SetCurrentLoopSuppressed(_loopGuard.GetSuppressedReport());
+        }
     }
 
     /// <summary>

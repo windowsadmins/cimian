@@ -288,11 +288,38 @@ public class LoopGuard
         var result = new List<(string, string, DateTime?)>();
         foreach (var (key, pkgState) in _state.Packages)
         {
-            if (pkgState.SuppressedUntil.HasValue && 
+            if (pkgState.SuppressedUntil.HasValue &&
                 (pkgState.SuppressedUntil.Value == DateTime.MaxValue || DateTime.UtcNow < pkgState.SuppressedUntil.Value))
             {
                 result.Add((pkgState.PackageName, pkgState.SuppressionReason ?? "Unknown", pkgState.SuppressedUntil));
             }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Returns a report-ready list of currently suppressed packages, suitable for
+    /// serialization into reports/loop_suppressed.json. Includes the last-attempted
+    /// version and the operator-facing clear command for each entry.
+    /// </summary>
+    public List<LoopSuppressedReportItem> GetSuppressedReport()
+    {
+        var result = new List<LoopSuppressedReportItem>();
+        foreach (var (_, pkgState) in _state.Packages)
+        {
+            if (!pkgState.SuppressedUntil.HasValue) continue;
+            var until = pkgState.SuppressedUntil.Value;
+            // Indefinite (DateTime.MaxValue) and not-yet-expired entries both qualify.
+            if (until != DateTime.MaxValue && DateTime.UtcNow >= until) continue;
+
+            result.Add(new LoopSuppressedReportItem
+            {
+                Name            = pkgState.PackageName,
+                Version         = pkgState.LastVersion ?? "",
+                Reason          = pkgState.SuppressionReason ?? "Unknown",
+                SuppressedUntil = until == DateTime.MaxValue ? null : until,
+                ClearCommand    = $"managedsoftwareupdate --clear-loop {pkgState.PackageName}"
+            });
         }
         return result;
     }
