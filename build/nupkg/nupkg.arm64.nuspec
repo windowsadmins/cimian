@@ -1,8 +1,8 @@
-﻿<?xml version="1.0"?>
+<?xml version="1.0"?>
 <package>
   <metadata>
     <id>CimianTools-arm64</id>
-    <version>26.4.24.1221</version>
+    <version>{{VERSION}}</version>
     <title>Cimian Tools (arm64)</title>
     <authors>WindowsAdmins</authors>
     <owners>WindowsAdmins</owners>
