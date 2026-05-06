@@ -688,20 +688,27 @@ public class InstallerService
         }
         else
         {
-            // Self-uninstallable MSI: cimipkg-built MSI pkginfos already carry the
-            // ProductCode in installer.product_code (PR #10). The same GUID is what
-            // msiexec /x needs to remove the package — there is no reason to require
-            // a hand-rolled uninstaller: block when we already have authoritative data.
-            var msiInstaller = item.Installer;
-            if (msiInstaller != null
-                && string.Equals(msiInstaller.Type, "msi", StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrEmpty(msiInstaller.ProductCode))
+            // Self-uninstallable MSI: prefer the installs[] type=msi ProductCode (canonical
+            // Munki shape, emitted by current cimiimport/makepkginfo). Fall back to legacy
+            // installer.product_code for pkginfos written before that change. Either GUID
+            // is what msiexec /x needs.
+            var msiProductCode = item.Installs
+                .FirstOrDefault(i => string.Equals(i.Type, "msi", StringComparison.OrdinalIgnoreCase)
+                                     && !string.IsNullOrEmpty(i.ProductCode))?.ProductCode;
+            if (string.IsNullOrEmpty(msiProductCode)
+                && item.Installer is { } legacyMsi
+                && string.Equals(legacyMsi.Type, "msi", StringComparison.OrdinalIgnoreCase))
             {
-                ConsoleLogger.Debug($"Synthesizing MSI uninstaller from installer.product_code item: {item.Name} productCode: {msiInstaller.ProductCode}");
+                msiProductCode = legacyMsi.ProductCode;
+            }
+
+            if (!string.IsNullOrEmpty(msiProductCode))
+            {
+                ConsoleLogger.Debug($"Synthesizing MSI uninstaller from product_code item: {item.Name} productCode: {msiProductCode}");
                 var synthetic = new UninstallerInfo
                 {
                     Type = "msi",
-                    ProductCode = msiInstaller.ProductCode
+                    ProductCode = msiProductCode
                 };
                 result = await UninstallMsiAsync(synthetic, cancellationToken);
             }
