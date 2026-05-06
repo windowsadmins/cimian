@@ -98,13 +98,14 @@ public class PkgInfoBuilder
                 // Munki convention: MSI install identity belongs in installs[] of type=msi,
                 // not as a hash-only file entry pointing at the .msi artifact itself. The
                 // ProductCode/UpgradeCode here are what managedsoftwareupdate uses to
-                // verify Windows Installer registration.
+                // verify Windows Installer registration. Empty extractor results pass
+                // through as null so OmitNull suppresses the keys.
                 installs.Add(new InstallItem
                 {
                     Type = "msi",
-                    ProductCode = productCode,
-                    UpgradeCode = upgradeCode,
-                    Version = metaVersion
+                    ProductCode = string.IsNullOrEmpty(productCode) ? null : productCode,
+                    UpgradeCode = string.IsNullOrEmpty(upgradeCode) ? null : upgradeCode,
+                    Version = string.IsNullOrEmpty(metaVersion) ? null : metaVersion
                 });
                 break;
 

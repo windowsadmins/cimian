@@ -34,8 +34,10 @@ public class InstallItem
     [YamlMember(Alias = "type")]
     public string Type { get; set; } = "file";
 
+    // Nullable so OmitNull suppresses the key on type=msi entries (which have
+    // no path — install identity comes from product_code/upgrade_code).
     [YamlMember(Alias = "path")]
-    public string Path { get; set; } = string.Empty;
+    public string? Path { get; set; }
 
     [YamlMember(Alias = "md5checksum")]
     public string? Md5Checksum { get; set; }
