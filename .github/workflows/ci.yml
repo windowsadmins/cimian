@@ -40,15 +40,15 @@ jobs:
 
       - name: Restore
         shell: pwsh
-        run: dotnet restore CimianTools.sln --runtime win-x64
+        run: dotnet restore CimianTools.sln
 
       - name: Build
         shell: pwsh
-        run: dotnet build CimianTools.sln --configuration Release --runtime win-x64 --no-restore --verbosity minimal
+        run: dotnet build CimianTools.sln --configuration Release --no-restore --verbosity minimal
 
       - name: Test
         shell: pwsh
-        run: dotnet test tests/Cimian.Tests/Cimian.Tests.csproj --configuration Release --runtime win-x64 --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+        run: dotnet test tests/Cimian.Tests/Cimian.Tests.csproj --configuration Release --runtime win-x64 --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
 
       - name: Upload test results
         if: always()
