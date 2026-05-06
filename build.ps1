@@ -1731,9 +1731,10 @@ try {
     
     # Summary
     Show-BuildSummary -Version $version
-    
+
     $elapsed = (Get-Date) - $startTime
     Write-BuildLog "Build completed in $($elapsed.TotalSeconds.ToString('F1')) seconds" -Level 'SUCCESS'
+    exit 0
 }
 catch {
     Write-BuildLog "Build failed: $_" -Level 'ERROR'
