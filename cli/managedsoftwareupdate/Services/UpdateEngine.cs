@@ -516,6 +516,8 @@ public class UpdateEngine : IDisposable
             // Per-item: defer items whose blocking_applications are running.
             // Installing while the blocking app is open would fail or destroy
             // the user's open work. Always applied — independent of mode/user.
+            // Snapshot the running-process set once so the per-item check is O(1).
+            var runningProcessNames = StatusService.GetRunningProcessNames();
             var blockedItems = new List<CatalogItem>();
             foreach (var list in new[] { toInstall, toUpdate, toUninstall })
             {
@@ -524,7 +526,7 @@ public class UpdateEngine : IDisposable
                     var item = list[i];
                     if (item.BlockingApps.Count == 0) continue;
 
-                    if (StatusService.CheckBlockingApps(item.BlockingApps, out var running))
+                    if (StatusService.CheckBlockingApps(item.BlockingApps, runningProcessNames, out var running))
                     {
                         var runningList = string.Join(", ", running);
                         LogInfo($"Deferred: {item.Name} v{item.Version} (blocking applications running: {runningList})");
@@ -533,7 +535,7 @@ public class UpdateEngine : IDisposable
                             item.Name, item.Version, "deferred",
                             $"Blocking applications running: {runningList}",
                             Cimian.Core.Models.StatusReasonCode.BlockingApps,
-                            Cimian.Core.Models.DetectionMethod.None, null, false);
+                            Cimian.Core.Models.DetectionMethod.None, null, true);
                         blockedItems.Add(item);
                         list.RemoveAt(i);
                     }
@@ -546,10 +548,11 @@ public class UpdateEngine : IDisposable
 
             // Auto mode + active user: restrict to items that can run silently
             // without disrupting the session. An item is eligible only if it is
-            // marked unattended AND its restart_action would not log the user
-            // out or reboot. Everything else is deferred to a later run (idle
-            // machine, interactive run, or scheduled maintenance window).
-            var skippedUnattended = new List<CatalogItem>();
+            // marked unattended AND its restart_action would not reboot or log
+            // the user out (Require* and Recommend* are both treated as
+            // disruptive here). Everything else is deferred to a later run
+            // (idle machine, interactive run, or scheduled maintenance window).
+            var deferredForUser = new List<CatalogItem>();
             if (_auto && StatusService.IsUserActive())
             {
                 LogInfo($"User is active (idle: {StatusService.GetIdleSeconds()}s) - restricting to unattended items that won't disrupt the session");
@@ -565,7 +568,7 @@ public class UpdateEngine : IDisposable
                         {
                             deferReason = "unattended_install is false";
                         }
-                        else if (RequiresRestart(item) || RequiresLogout(item))
+                        else if (WouldInterruptUser(item))
                         {
                             deferReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
                         }
@@ -578,8 +581,8 @@ public class UpdateEngine : IDisposable
                                 item.Name, item.Version, "deferred",
                                 deferReason,
                                 Cimian.Core.Models.StatusReasonCode.DeferredUserActive,
-                                Cimian.Core.Models.DetectionMethod.None, null, false);
-                            skippedUnattended.Add(item);
+                                Cimian.Core.Models.DetectionMethod.None, null, true);
+                            deferredForUser.Add(item);
                             list.RemoveAt(i);
                         }
                     }
@@ -593,7 +596,7 @@ public class UpdateEngine : IDisposable
                     {
                         deferReason = "unattended_uninstall is false";
                     }
-                    else if (RequiresRestart(item) || RequiresLogout(item))
+                    else if (WouldInterruptUser(item))
                     {
                         deferReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
                     }
@@ -606,15 +609,15 @@ public class UpdateEngine : IDisposable
                             item.Name, item.Version, "deferred",
                             deferReason,
                             Cimian.Core.Models.StatusReasonCode.DeferredUserActive,
-                            Cimian.Core.Models.DetectionMethod.None, null, false);
-                        skippedUnattended.Add(item);
+                            Cimian.Core.Models.DetectionMethod.None, null, true);
+                        deferredForUser.Add(item);
                         toUninstall.RemoveAt(i);
                     }
                 }
 
-                if (skippedUnattended.Count > 0)
+                if (deferredForUser.Count > 0)
                 {
-                    LogInfo($"{skippedUnattended.Count} item(s) deferred while user is active");
+                    LogInfo($"{deferredForUser.Count} item(s) deferred while user is active");
                 }
             }
 
@@ -2655,7 +2658,19 @@ public class UpdateEngine : IDisposable
 
     private static bool RequiresLogout(CatalogItem item)
     {
-        return item.RestartAction is "RequireLogout" or "RecommendLogout";
+        return item.RestartAction is "RequireLogout";
+    }
+
+    /// <summary>
+    /// True for any restart_action that would disrupt an active user session
+    /// (Require/Recommend × Restart/Logout). Use this for auto-mode deferral
+    /// decisions; do NOT use it to drive PerformLogoutAction/PerformRestartAction,
+    /// which honour only the stricter Require* variants.
+    /// </summary>
+    private static bool WouldInterruptUser(CatalogItem item)
+    {
+        return item.RestartAction is "RequireRestart" or "RecommendRestart"
+            or "RequireLogout" or "RecommendLogout";
     }
 
     /// <summary>
