@@ -955,49 +955,38 @@ function Build-NuGetPackage {
         return $null
     }
     
-    $nuspecPath = Join-Path $nuspecDir "nupkg.$Architecture.nuspec"
-    
-    # Create or update nuspec file
-    $nuspecContent = @"
-<?xml version="1.0"?>
-<package>
-  <metadata>
-    <id>CimianTools-$Architecture</id>
-    <version>$($Version.Semantic)</version>
-    <title>Cimian Tools ($Architecture)</title>
-    <authors>WindowsAdmins</authors>
-    <owners>WindowsAdmins</owners>
-    <description>Enterprise Software Deployment System for Windows - $Architecture binaries</description>
-    <projectUrl>https://github.com/windowsadmins/cimian</projectUrl>
-    <license type="expression">MIT</license>
-    <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <tags>deployment;software-management;windows;enterprise;intune</tags>
-  </metadata>
-  <files>
-    <!-- Include full publish tree so WinUI 3 apps (MSC) ship with their runtime. -->
-    <file src="..\..\..\release\$Architecture\**\*" target="tools" />
-  </files>
-</package>
-"@
+    # Source-controlled template carries `{{VERSION}}` so the build version isn't
+    # committed back into git on every build. Resolve into a sibling `.generated.nuspec`
+    # (gitignored) and pack from that — the source template stays clean.
+    $nuspecTemplate = Join-Path $nuspecDir "nupkg.$Architecture.nuspec"
+    $nuspecPath = Join-Path $nuspecDir "nupkg.$Architecture.generated.nuspec"
+
+    if (-not (Test-Path $nuspecTemplate)) {
+        Write-BuildLog "Nuspec template missing: $nuspecTemplate" "ERROR"
+        return $null
+    }
+
+    $nuspecContent = (Get-Content $nuspecTemplate -Raw) -replace '\{\{VERSION\}\}', $Version.Semantic
     [System.IO.File]::WriteAllText($nuspecPath, $nuspecContent, [System.Text.Encoding]::UTF8)
-    
+
     $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
-    
+
     # Method 1: Try using nuget.exe directly (simplest, most reliable)
     if (Test-Command "nuget") {
         Write-BuildLog "Using nuget.exe to create package..." "INFO"
         try {
             Push-Location $nuspecDir
-            & nuget pack "nupkg.$Architecture.nuspec" -OutputDirectory $OutputDir -NonInteractive -ForceEnglishOutput 2>&1 | Out-Null
+            & nuget pack "nupkg.$Architecture.generated.nuspec" -OutputDirectory $OutputDir -NonInteractive -ForceEnglishOutput 2>&1 | Out-Null
             Pop-Location
-            
+
             if ($LASTEXITCODE -eq 0 -and (Test-Path $nupkgOutput)) {
                 Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
-                
+
                 if ($Sign) {
                     Invoke-SignNuget -NupkgPath $nupkgOutput -Thumbprint $Thumbprint
                 }
-                
+
+                Remove-Item $nuspecPath -Force -ErrorAction SilentlyContinue
                 return $nupkgOutput
             }
         }
@@ -1082,13 +1071,14 @@ function Build-NuGetPackage {
         
         if (Test-Path $nupkgOutput) {
             Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
-            
+
             # Note: NuGet signing requires nuget.exe. For ZIP-based packages, signing is skipped.
             # To sign: install nuget.commandline and run: .\build.ps1 -NupkgOnly -Sign
             if ($Sign -and (Test-Command "nuget")) {
                 Invoke-SignNuget -NupkgPath $nupkgOutput -Thumbprint $Thumbprint | Out-Null
             }
-            
+
+            Remove-Item $nuspecPath -Force -ErrorAction SilentlyContinue
             return $nupkgOutput
         }
     }
@@ -1096,7 +1086,8 @@ function Build-NuGetPackage {
         Write-BuildLog "NuGet package creation failed: $_" "ERROR"
         Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    
+
+    Remove-Item $nuspecPath -Force -ErrorAction SilentlyContinue
     Write-BuildLog "NuGet package creation failed for $Architecture" "WARNING"
     return $null
 }

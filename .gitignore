@@ -400,3 +400,9 @@ npm-debug.log*
 
 # Docker test results
 tests/docker/results/
+
+# Build-time resolved nuspec — template at build/nupkg/*.nuspec carries
+# `{{VERSION}}`; build.ps1 writes a sibling .generated.nuspec with the build
+# version, packs from it, then removes it. Ignored as a safety net so a
+# crashed build doesn't leak the version into git.
+build/nupkg/*.generated.nuspec
