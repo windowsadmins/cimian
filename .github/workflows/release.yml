@@ -67,8 +67,6 @@ jobs:
           $datestamp = '${{ steps.version.outputs.datestamp }}'
           $title = "Cimian $datestamp"
           $notes = @"
-          ## Cimian $datestamp (tag ``$tag``)
-
           Binaries, MSI, and NuGet packages are provided **unsigned**. For enterprise deployment, sign them with your organization's code signing certificate before distribution:
 
           ``````powershell
