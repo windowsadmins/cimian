@@ -673,6 +673,68 @@ public class SessionPackageInfo
     public string? DetectionMethod { get; set; }
 
     #endregion
+
+    /// <summary>
+    /// Action actually performed on this item during the run
+    /// ("install", "update", "remove"). Null when the item was only status-checked.
+    /// Used by DataExporter to decide whether to stamp last_seen_in_session.
+    /// </summary>
+    [JsonPropertyName("action_performed")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ActionPerformed { get; set; }
+
+    /// <summary>
+    /// UTC timestamp when the install/uninstall outcome was recorded.
+    /// </summary>
+    [JsonPropertyName("outcome_timestamp")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? OutcomeTimestamp { get; set; }
+}
+
+/// <summary>
+/// Per-item outcome captured during an install or uninstall pass.
+/// Used to bridge the gap between the pre-install plan and the post-install
+/// truth that <see cref="SessionPackageInfo"/> needs to surface in items.json.
+/// </summary>
+public record ItemOutcome(
+    string Name,
+    string Version,
+    string Action,         // "install" | "update" | "remove"
+    bool Success,
+    string? ErrorMessage,
+    DateTime Timestamp);
+
+/// <summary>
+/// Pure helper that resolves the per-item session status reported in items.json.
+/// Prefers the actual install/uninstall outcome over the pre-install plan so a
+/// successful install does not stay stamped as "Pending Install".
+/// </summary>
+public static class SessionItemStatusResolver
+{
+    public static string Resolve(
+        ItemOutcome? outcome,
+        bool isPendingInstall,
+        bool isPendingUpdate,
+        bool isPendingUninstall,
+        string manifestAction)
+    {
+        if (outcome is not null)
+        {
+            return outcome.Action switch
+            {
+                "install" or "update" => outcome.Success ? "Installed" : "Failed",
+                "remove"              => outcome.Success ? "Removed"   : "Failed",
+                _                     => outcome.Success ? "Installed" : "Failed"
+            };
+        }
+
+        if (isPendingInstall) return "Pending Install";
+        if (isPendingUpdate)  return "Pending Update";
+        if (isPendingUninstall) return "Pending Removal";
+        if (string.Equals(manifestAction, "uninstall", StringComparison.OrdinalIgnoreCase))
+            return "Removed";
+        return "Installed";
+    }
 }
 
 /// <summary>

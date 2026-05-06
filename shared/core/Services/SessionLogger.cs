@@ -627,7 +627,7 @@ public class SessionLogger : IDisposable
         {
             // Use DataExporter for historical enrichment + loop detection
             var exporter = new DataExporter();
-            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems);
+            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems, _sessionId);
 
             var itemsPath = Path.Combine(ReportsDir, "items.json");
             File.WriteAllText(itemsPath, JsonSerializer.Serialize(items, JsonOptions));
@@ -652,6 +652,7 @@ public class SessionLogger : IDisposable
         {
             var displayName = !string.IsNullOrEmpty(pkg.DisplayName) ? pkg.DisplayName : pkg.Name;
             var normalizedStatus = NormalizeItemStatus(pkg.Status);
+            var actedOnThisRun = !string.IsNullOrEmpty(pkg.ActionPerformed);
 
             records.Add(new Cimian.Core.Models.ItemRecord
             {
@@ -662,7 +663,10 @@ public class SessionLogger : IDisposable
                 CurrentStatus = normalizedStatus,
                 LatestVersion = pkg.Version,
                 InstalledVersion = pkg.InstalledVersion,
-                LastSeenInSession = now,
+                // Stamp session id (yyyy-MM-dd-HHmm) only when this run touched the
+                // item; status-checked items get an empty string so consumers can
+                // filter to "what the last run actually did."
+                LastSeenInSession = actedOnThisRun ? _sessionId : "",
                 LastAttemptTime = now,
                 LastAttemptStatus = normalizedStatus,
                 LastUpdate = now,

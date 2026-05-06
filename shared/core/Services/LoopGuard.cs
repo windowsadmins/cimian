@@ -483,12 +483,16 @@ public class LoopGuard
                     if (!string.Equals(action, "install", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var packageName = eventData.TryGetValue("package", out var p) ? p.GetString() : null;
+                    var packageName =
+                        (eventData.TryGetValue("package_name", out var pn) ? pn.GetString() : null) ??
+                        (eventData.TryGetValue("package",      out var p)  ? p.GetString()  : null);
                     if (string.IsNullOrEmpty(packageName))
                         continue;
 
                     var status = eventData.TryGetValue("status", out var s) ? s.GetString() : "";
-                    var version = eventData.TryGetValue("version", out var v) ? v.GetString() : "";
+                    var version =
+                        (eventData.TryGetValue("package_version", out var pv) ? pv.GetString() : null) ??
+                        (eventData.TryGetValue("version",         out var v)  ? v.GetString()  : "");
                     var timestamp = eventData.TryGetValue("timestamp", out var ts) ? ts.GetString() : null;
 
                     var key = packageName.ToLowerInvariant();
