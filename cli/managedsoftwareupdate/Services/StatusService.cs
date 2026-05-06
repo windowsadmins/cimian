@@ -395,7 +395,7 @@ public class StatusService
 
         foreach (var installItem in item.Installs)
         {
-            switch (installItem.Type?.ToLowerInvariant())
+            switch (installItem.EffectiveType())
             {
                 case "file":
                     if (!string.IsNullOrEmpty(installItem.Path))

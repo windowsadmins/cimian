@@ -654,4 +654,70 @@ public class UpdateModelsTests
     }
 
     #endregion
+
+    #region InstallCheckItem.EffectiveType Tests
+
+    [Fact]
+    public void EffectiveType_ExplicitType_IsLowercased()
+    {
+        var item = new InstallCheckItem { Type = "MSI" };
+        Assert.Equal("msi", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithProductCode_InfersMsi()
+    {
+        var item = new InstallCheckItem
+        {
+            ProductCode = "{12345678-1234-1234-1234-123456789012}"
+        };
+        Assert.Equal("msi", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithUpgradeCodeOnly_InfersMsi()
+    {
+        var item = new InstallCheckItem
+        {
+            UpgradeCode = "{abcdef01-2345-6789-abcd-ef0123456789}"
+        };
+        Assert.Equal("msi", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithIdentityName_InfersMsix()
+    {
+        var item = new InstallCheckItem { IdentityName = "Microsoft.WindowsTerminal" };
+        Assert.Equal("msix", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithPath_InfersFile()
+    {
+        var item = new InstallCheckItem { Path = @"C:\Program Files\App\app.exe" };
+        Assert.Equal("file", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankItem_ReturnsEmpty()
+    {
+        var item = new InstallCheckItem();
+        Assert.Equal(string.Empty, item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_ExplicitTypeWins_OverInferredFields()
+    {
+        // Hand-written pkginfo with both type and identity_name should honour
+        // the explicit type rather than re-inferring.
+        var item = new InstallCheckItem
+        {
+            Type = "file",
+            ProductCode = "{12345678-1234-1234-1234-123456789012}",
+            Path = @"C:\path\to\file"
+        };
+        Assert.Equal("file", item.EffectiveType());
+    }
+
+    #endregion
 }

@@ -1483,7 +1483,7 @@ exit 0
 
         foreach (var install in item.Installs)
         {
-            switch (install.Type?.ToLowerInvariant())
+            switch (install.EffectiveType())
             {
                 case "file":
                     if (!string.IsNullOrEmpty(install.Path) && !File.Exists(install.Path))

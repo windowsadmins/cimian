@@ -525,6 +525,25 @@ public class InstallCheckItem
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name)</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
+
+    /// <summary>
+    /// Returns the lowercased install-check type. When the YAML omits `type:`,
+    /// infer it from which identity field is set so a hand-written entry like
+    /// `{product_code: ..., upgrade_code: ...}` is treated as an MSI rather than
+    /// silently skipped by the consumer's switch.
+    /// </summary>
+    public string EffectiveType()
+    {
+        if (!string.IsNullOrWhiteSpace(Type))
+            return Type.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(IdentityName))
+            return "msix";
+        if (!string.IsNullOrWhiteSpace(ProductCode) || !string.IsNullOrWhiteSpace(UpgradeCode))
+            return "msi";
+        if (!string.IsNullOrWhiteSpace(Path))
+            return "file";
+        return string.Empty;
+    }
 }
 
 /// <summary>
