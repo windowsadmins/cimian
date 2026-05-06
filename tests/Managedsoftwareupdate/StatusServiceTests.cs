@@ -318,6 +318,53 @@ public class StatusServiceTests
         Assert.NotEqual(Cimian.Core.Models.DetectionMethod.Msi, result.DetectionMethod);
     }
 
+    [Fact]
+    public void CheckStatus_TypelessInstallsEntry_WithProductCode_RoutesThroughMsi()
+    {
+        // Hand-written pkginfo with bare {product_code} on an installs entry (no `type:`).
+        // EffectiveType() infers msi, the switch in CheckInstallsArray runs the MSI registry
+        // lookup, and a fake GUID surfaces as ProductCodeMissing instead of silently
+        // "installed". This is the regression guard for the inference behavior.
+        var item = new CatalogItem
+        {
+            Name = "TypelessMsiInstallsEntry",
+            Version = "1.0.0",
+            Installs =
+            [
+                new InstallCheckItem
+                {
+                    ProductCode = "{00000000-0000-0000-0000-000000000000}"
+                }
+            ]
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("pending", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.ProductCodeMissing, result.ReasonCode);
+        Assert.Equal(Cimian.Core.Models.DetectionMethod.Msi, result.DetectionMethod);
+    }
+
+    [Fact]
+    public void CheckStatus_InstallsEntry_WithoutTypeOrIdentity_ReturnsErrorNotSilentSuccess()
+    {
+        // Misconfigured installs entry with no fields EffectiveType() can infer from.
+        // Must not fall through to "All N install checks passed" — surface as error.
+        var item = new CatalogItem
+        {
+            Name = "EmptyInstallsEntry",
+            Version = "1.0.0",
+            Installs = [new InstallCheckItem()]
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("error", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.CheckFailed, result.ReasonCode);
+    }
+
     #endregion
 
     #region Script Check Tests
