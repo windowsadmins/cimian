@@ -690,11 +690,11 @@ public class InstallerService
         {
             // Self-uninstallable MSI: prefer the installs[] type=msi ProductCode (canonical
             // Munki shape, emitted by current cimiimport/makepkginfo). Fall back to legacy
-            // installer.product_code for pkginfos written before that change. Either GUID
-            // is what msiexec /x needs.
+            // installer.product_code for pkginfos written before that change. EffectiveType()
+            // also covers typeless installs entries that carry product_code/upgrade_code.
+            // Either GUID is what msiexec /x needs.
             var msiProductCode = item.Installs
-                .FirstOrDefault(i => string.Equals(i.Type, "msi", StringComparison.OrdinalIgnoreCase)
-                                     && !string.IsNullOrEmpty(i.ProductCode))?.ProductCode;
+                .FirstOrDefault(i => i.EffectiveType() == "msi" && !string.IsNullOrEmpty(i.ProductCode))?.ProductCode;
             if (string.IsNullOrEmpty(msiProductCode)
                 && item.Installer is { } legacyMsi
                 && string.Equals(legacyMsi.Type, "msi", StringComparison.OrdinalIgnoreCase))
@@ -718,8 +718,7 @@ public class InstallerService
                 // msix but no explicit uninstaller block. Synthesize one from the installs
                 // entry — the identity_name there carries everything we need.
                 var msixInstall = item.Installs.FirstOrDefault(i =>
-                    string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
+                    i.EffectiveType() is "msix" or "appx");
 
                 if (msixInstall != null && !string.IsNullOrEmpty(msixInstall.IdentityName))
                 {
@@ -1483,7 +1482,7 @@ exit 0
 
         foreach (var install in item.Installs)
         {
-            switch (install.Type?.ToLowerInvariant())
+            switch (install.EffectiveType())
             {
                 case "file":
                     if (!string.IsNullOrEmpty(install.Path) && !File.Exists(install.Path))
@@ -1555,7 +1554,10 @@ exit 0
                     break;
 
                 default:
-                    ConsoleLogger.Debug($"Unknown install type '{install.Type}' for {item.Name}, skipping verification");
+                    // Misconfigured installs entry: neither an explicit type nor an
+                    // identity field EffectiveType() can infer from. Warn loudly so
+                    // verify doesn't fall through to "verification successful".
+                    ConsoleLogger.Warn($"Installs entry for {item.Name} has no usable type or identity field — verification skipped (rawType: '{install.Type}')");
                     break;
             }
         }
