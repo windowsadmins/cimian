@@ -192,6 +192,28 @@ public class UpdateModelsTests
         Assert.False(item.IsUninstallable());
     }
 
+    [Fact]
+    public void CatalogItem_IsUninstallable_TypelessInstallsEntry_WithProductCode_ReturnsTrue()
+    {
+        // Hand-written pkginfo with a typeless installs entry carrying just product_code
+        // must qualify as self-uninstallable: EffectiveType() infers msi and the IsUninstallable
+        // clause uses EffectiveType, so UninstallAsync can synthesize a msiexec /x call.
+        var item = new CatalogItem
+        {
+            Uninstallable = true,
+            Uninstaller = [],
+            Installs =
+            [
+                new InstallCheckItem
+                {
+                    ProductCode = "{12345678-1234-1234-1234-123456789012}"
+                }
+            ]
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
     #endregion
 
     #region InstallerInfo Tests
@@ -651,6 +673,72 @@ public class UpdateModelsTests
         // Feb 24 2026 is Tuesday. Previous day is Monday — not Friday.
         var tuesdayEarlyMorning = new DateTime(2026, 2, 24, 1, 0, 0);
         Assert.False(window.IsWithinWindow(tuesdayEarlyMorning));
+    }
+
+    #endregion
+
+    #region InstallCheckItem.EffectiveType Tests
+
+    [Fact]
+    public void EffectiveType_ExplicitType_IsLowercased()
+    {
+        var item = new InstallCheckItem { Type = "MSI" };
+        Assert.Equal("msi", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithProductCode_InfersMsi()
+    {
+        var item = new InstallCheckItem
+        {
+            ProductCode = "{12345678-1234-1234-1234-123456789012}"
+        };
+        Assert.Equal("msi", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithUpgradeCodeOnly_InfersMsi()
+    {
+        var item = new InstallCheckItem
+        {
+            UpgradeCode = "{abcdef01-2345-6789-abcd-ef0123456789}"
+        };
+        Assert.Equal("msi", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithIdentityName_InfersMsix()
+    {
+        var item = new InstallCheckItem { IdentityName = "Microsoft.WindowsTerminal" };
+        Assert.Equal("msix", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankType_WithPath_InfersFile()
+    {
+        var item = new InstallCheckItem { Path = @"C:\Program Files\App\app.exe" };
+        Assert.Equal("file", item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_BlankItem_ReturnsEmpty()
+    {
+        var item = new InstallCheckItem();
+        Assert.Equal(string.Empty, item.EffectiveType());
+    }
+
+    [Fact]
+    public void EffectiveType_ExplicitTypeWins_OverInferredFields()
+    {
+        // Hand-written pkginfo with both type and identity_name should honour
+        // the explicit type rather than re-inferring.
+        var item = new InstallCheckItem
+        {
+            Type = "file",
+            ProductCode = "{12345678-1234-1234-1234-123456789012}",
+            Path = @"C:\path\to\file"
+        };
+        Assert.Equal("file", item.EffectiveType());
     }
 
     #endregion
