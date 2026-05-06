@@ -160,9 +160,7 @@ public class ImportService
             {
                 Hash = fileHash,
                 Type = metadata.InstallerType,
-                Size = fileSizeKB,
-                ProductCode = string.IsNullOrEmpty(metadata.ProductCode) ? null : metadata.ProductCode.Trim(),
-                UpgradeCode = string.IsNullOrEmpty(metadata.UpgradeCode) ? null : metadata.UpgradeCode.Trim()
+                Size = fileSizeKB
             },
             Uninstaller = uninstaller != null ? [uninstaller] : null,
             UnattendedInstall = metadata.UnattendedInstall,
@@ -914,7 +912,9 @@ public class ImportService
             else if (kvp.Value is Installer installer)
             {
                 sb.AppendLine($"{kvp.Key}:");
-                // Output installer properties in a specific order
+                // MSI ProductCode/UpgradeCode belong in installs[] (type=msi), not here —
+                // installer is the artifact metadata (hash/size/location), installs[] is
+                // the install identity used to verify registration.
                 if (!string.IsNullOrEmpty(installer.Type))
                     sb.AppendLine($"  type: {installer.Type}");
                 if (installer.Size > 0)
@@ -923,10 +923,6 @@ public class ImportService
                     sb.AppendLine($"  location: {installer.Location}");
                 if (!string.IsNullOrEmpty(installer.Hash))
                     sb.AppendLine($"  hash: {installer.Hash}");
-                if (!string.IsNullOrEmpty(installer.ProductCode))
-                    sb.AppendLine($"  product_code: {EscapeYamlString(installer.ProductCode)}");
-                if (!string.IsNullOrEmpty(installer.UpgradeCode))
-                    sb.AppendLine($"  upgrade_code: {EscapeYamlString(installer.UpgradeCode)}");
                 if (installer.Arguments != null && installer.Arguments.Count > 0)
                 {
                     sb.AppendLine("  arguments:");

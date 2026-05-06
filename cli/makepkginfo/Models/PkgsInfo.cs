@@ -20,12 +20,7 @@ public class Installer
     [YamlMember(Alias = "hash", Order = 4)]
     public string? Hash { get; set; }
 
-    [YamlMember(Alias = "product_code", Order = 5)]
-    public string? ProductCode { get; set; }
-
-    [YamlMember(Alias = "upgrade_code", Order = 6)]
-    public string? UpgradeCode { get; set; }
-
+    // MSI ProductCode/UpgradeCode live on the installs[] type=msi entry, not here.
     [YamlMember(Alias = "arguments", Order = 7)]
     public List<string>? Arguments { get; set; }
 }
@@ -39,8 +34,10 @@ public class InstallItem
     [YamlMember(Alias = "type")]
     public string Type { get; set; } = "file";
 
+    // Nullable so OmitNull suppresses the key on type=msi entries (which have
+    // no path — install identity comes from product_code/upgrade_code).
     [YamlMember(Alias = "path")]
-    public string Path { get; set; } = string.Empty;
+    public string? Path { get; set; }
 
     [YamlMember(Alias = "md5checksum")]
     public string? Md5Checksum { get; set; }

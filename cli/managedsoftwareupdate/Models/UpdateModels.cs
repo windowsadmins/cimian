@@ -414,9 +414,13 @@ public class CatalogItem
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0
         || Check.Registry.Name != null
-        // Self-uninstallable MSI: cimipkg-built MSI pkginfos carry the ProductCode in
-        // installer.product_code. Same GUID is what msiexec /x needs — UninstallAsync
-        // synthesizes an UninstallerInfo from it.
+        // Self-uninstallable MSI (canonical): installs[] entry of type=msi with a
+        // ProductCode. UninstallAsync synthesizes an UninstallerInfo from it.
+        || Installs.Any(i =>
+            string.Equals(i.Type, "msi", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrEmpty(i.ProductCode))
+        // Self-uninstallable MSI (legacy): pkginfos written before product_code moved
+        // out of the installer: block. Same msiexec /x path either way.
         || (Installer is { } msi
             && string.Equals(msi.Type, "msi", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrEmpty(msi.ProductCode))
