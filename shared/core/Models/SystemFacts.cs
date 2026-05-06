@@ -85,6 +85,16 @@ public class SystemFacts
     public string MachineModel { get; set; } = string.Empty;
 
     /// <summary>
+    /// Friendly model name from Win32_ComputerSystemProduct.Version
+    /// (e.g., "ThinkCentre M75q Gen 2", "ThinkPad X1 Carbon Gen 11").
+    /// On Lenovo hardware, Win32_ComputerSystem.Model returns the raw MTM code
+    /// (e.g., "11JQS6CH00") and the human-readable model lives here. May be
+    /// empty on vendors that don't populate this field (e.g., Dell).
+    /// Maps to 'model_version' fact key.
+    /// </summary>
+    public string ModelVersion { get; set; } = string.Empty;
+
+    /// <summary>
     /// Domain join type: workgroup, domain, entra, hybrid
     /// Maps to 'joined_type' fact key
     /// </summary>
@@ -271,6 +281,7 @@ public class SystemFacts
             "username" => Username,
             "machine_type" => MachineType,
             "machine_model" => MachineModel,
+            "model_version" => ModelVersion,
             "joined_type" => JoinedType,
             "battery_state" => BatteryState,
             "date" => Date,
