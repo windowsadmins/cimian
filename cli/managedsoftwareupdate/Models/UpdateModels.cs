@@ -415,10 +415,11 @@ public class CatalogItem
         Uninstaller.Count > 0
         || Check.Registry.Name != null
         // Self-uninstallable MSI (canonical): installs[] entry of type=msi with a
-        // ProductCode. UninstallAsync synthesizes an UninstallerInfo from it.
+        // ProductCode. EffectiveType() handles both explicit type=msi and typeless
+        // entries that carry product_code/upgrade_code so a hand-written pkginfo
+        // is treated consistently across status, verify, and uninstall paths.
         || Installs.Any(i =>
-            string.Equals(i.Type, "msi", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrEmpty(i.ProductCode))
+            i.EffectiveType() == "msi" && !string.IsNullOrEmpty(i.ProductCode))
         // Self-uninstallable MSI (legacy): pkginfos written before product_code moved
         // out of the installer: block. Same msiexec /x path either way.
         || (Installer is { } msi
@@ -428,8 +429,7 @@ public class CatalogItem
         // usable identity_name. Without identity_name, UninstallAsync can't
         // synthesize an uninstaller — so in that case this clause must be false.
         || Installs.Any(i =>
-            (string.Equals(i.Type, "msix", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase))
+            (i.EffectiveType() == "msix" || i.EffectiveType() == "appx")
             && !string.IsNullOrWhiteSpace(i.IdentityName)));
 }
 
@@ -525,6 +525,25 @@ public class InstallCheckItem
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name)</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
+
+    /// <summary>
+    /// Returns the lowercased install-check type. When the YAML omits `type:`,
+    /// infer it from which identity field is set so a hand-written entry like
+    /// `{product_code: ..., upgrade_code: ...}` is treated as an MSI rather than
+    /// silently skipped by the consumer's switch.
+    /// </summary>
+    public string EffectiveType()
+    {
+        if (!string.IsNullOrWhiteSpace(Type))
+            return Type.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(IdentityName))
+            return "msix";
+        if (!string.IsNullOrWhiteSpace(ProductCode) || !string.IsNullOrWhiteSpace(UpgradeCode))
+            return "msi";
+        if (!string.IsNullOrWhiteSpace(Path))
+            return "file";
+        return string.Empty;
+    }
 }
 
 /// <summary>

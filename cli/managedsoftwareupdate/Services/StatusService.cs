@@ -395,7 +395,7 @@ public class StatusService
 
         foreach (var installItem in item.Installs)
         {
-            switch (installItem.Type?.ToLowerInvariant())
+            switch (installItem.EffectiveType())
             {
                 case "file":
                     if (!string.IsNullOrEmpty(installItem.Path))
@@ -638,6 +638,18 @@ public class StatusService
                     ConsoleLogger.Info($"MSIX verification passed item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
                     result.InstalledVersion = msixVersion;
                     break;
+
+                default:
+                    // Misconfigured installs entry — neither an explicit type nor any
+                    // identity field EffectiveType() can infer from. Surface it loudly
+                    // rather than fall through to "All N install checks passed".
+                    ConsoleLogger.Warn($"Installs entry for {item.Name} has no usable type or identity field — skipping (rawType: '{installItem.Type}')");
+                    result.Status = "error";
+                    result.NeedsAction = true;
+                    result.Reason = "Installs entry missing type and identity fields";
+                    result.ReasonCode = StatusReasonCode.CheckFailed;
+                    result.DetectionMethod = DetectionMethod.None;
+                    return result;
             }
         }
 

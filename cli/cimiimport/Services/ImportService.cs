@@ -230,14 +230,16 @@ public class ImportService
                 ? (!string.IsNullOrEmpty(upgradeCode) ? $"ProductCode={productCode}, UpgradeCode={upgradeCode}" : $"ProductCode={productCode}")
                 : $"UpgradeCode={upgradeCode}";
             Console.WriteLine($"Using MSI {codeSummary}");
+            // Version is intentionally omitted — StatusService falls back to the
+            // top-level pkginfo version when the installs entry has none, and the
+            // MSI's per-version identity is already the ProductCode.
             finalInstalls =
             [
                 new InstallItem
                 {
                     Type = "msi",
                     ProductCode = productCode,
-                    UpgradeCode = upgradeCode,
-                    Version = pkgsInfo.Version
+                    UpgradeCode = upgradeCode
                 }
             ];
         }
