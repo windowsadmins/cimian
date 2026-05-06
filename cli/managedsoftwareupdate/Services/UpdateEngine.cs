@@ -560,24 +560,24 @@ public class UpdateEngine : IDisposable
                     for (int i = list.Count - 1; i >= 0; i--)
                     {
                         var item = list[i];
-                        string? skipReason = null;
+                        string? deferReason = null;
                         if (!item.UnattendedInstall)
                         {
-                            skipReason = "unattended_install is false";
+                            deferReason = "unattended_install is false";
                         }
                         else if (RequiresRestart(item) || RequiresLogout(item))
                         {
-                            skipReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
+                            deferReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
                         }
 
-                        if (skipReason != null)
+                        if (deferReason != null)
                         {
-                            LogInfo($"Skipping install of {item.Name} v{item.Version}: {skipReason}");
-                            _sessionLogger?.Log("INFO", $"Skipped {item.Name} v{item.Version}: {skipReason} (auto mode, user active)");
+                            LogInfo($"Deferred install of {item.Name} v{item.Version}: {deferReason}");
+                            _sessionLogger?.Log("INFO", $"Deferred {item.Name} v{item.Version}: {deferReason} (auto mode, user active)");
                             _sessionLogger?.LogStatusCheck(
-                                item.Name, item.Version, "skipped",
-                                skipReason,
-                                Cimian.Core.Models.StatusReasonCode.UserDeferred,
+                                item.Name, item.Version, "deferred",
+                                deferReason,
+                                Cimian.Core.Models.StatusReasonCode.DeferredUserActive,
                                 Cimian.Core.Models.DetectionMethod.None, null, false);
                             skippedUnattended.Add(item);
                             list.RemoveAt(i);
@@ -588,20 +588,25 @@ public class UpdateEngine : IDisposable
                 for (int i = toUninstall.Count - 1; i >= 0; i--)
                 {
                     var item = toUninstall[i];
-                    string? skipReason = null;
+                    string? deferReason = null;
                     if (!item.UnattendedUninstall)
                     {
-                        skipReason = "unattended_uninstall is false";
+                        deferReason = "unattended_uninstall is false";
                     }
                     else if (RequiresRestart(item) || RequiresLogout(item))
                     {
-                        skipReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
+                        deferReason = $"restart_action '{item.RestartAction}' would interrupt the active user";
                     }
 
-                    if (skipReason != null)
+                    if (deferReason != null)
                     {
-                        LogInfo($"Skipping removal of {item.Name} v{item.Version}: {skipReason}");
-                        _sessionLogger?.Log("INFO", $"Skipped removal of {item.Name} v{item.Version}: {skipReason} (auto mode, user active)");
+                        LogInfo($"Deferred removal of {item.Name} v{item.Version}: {deferReason}");
+                        _sessionLogger?.Log("INFO", $"Deferred removal of {item.Name} v{item.Version}: {deferReason} (auto mode, user active)");
+                        _sessionLogger?.LogStatusCheck(
+                            item.Name, item.Version, "deferred",
+                            deferReason,
+                            Cimian.Core.Models.StatusReasonCode.DeferredUserActive,
+                            Cimian.Core.Models.DetectionMethod.None, null, false);
                         skippedUnattended.Add(item);
                         toUninstall.RemoveAt(i);
                     }
@@ -2650,7 +2655,7 @@ public class UpdateEngine : IDisposable
 
     private static bool RequiresLogout(CatalogItem item)
     {
-        return item.RestartAction is "RequireLogout";
+        return item.RestartAction is "RequireLogout" or "RecommendLogout";
     }
 
     /// <summary>
