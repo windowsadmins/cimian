@@ -70,12 +70,18 @@ jobs:
           Binaries, MSI, and NuGet packages are provided **unsigned**. For enterprise deployment, sign them with your organization's code signing certificate before distribution:
 
           ``````powershell
-          # Sign individual binaries (after extracting from the MSI/nupkg)
-          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /n "Your Certificate Name" managedsoftwareupdate.exe
+          `$cert = "Your Certificate Name"
+          `$timestampUrl = "http://timestamp.digicert.com"
 
-          # Sign the MSI installers
-          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /n "Your Certificate Name" Cimian-$datestamp-x64.msi
-          signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /n "Your Certificate Name" Cimian-$datestamp-arm64.msi
+          # Sign all binaries (run after extracting the MSI/nupkg payload)
+          Get-ChildItem -Recurse -Include *.exe,*.dll | ForEach-Object {
+              signtool sign /fd SHA256 /tr `$timestampUrl /td SHA256 /n `$cert `$_.FullName
+          }
+
+          # Sign the MSI installers (run separately, after binaries are signed and repackaged)
+          Get-ChildItem -Filter "Cimian-*.msi" | ForEach-Object {
+              signtool sign /fd SHA256 /tr `$timestampUrl /td SHA256 /n `$cert `$_.FullName
+          }
           ``````
 
           Built from commit ``$env:GITHUB_SHA``.
