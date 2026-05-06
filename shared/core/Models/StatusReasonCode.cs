@@ -132,6 +132,9 @@ public static class StatusReasonCode
     /// <summary>force_install_after_date overrides install_window deferral</summary>
     public const string DeadlineOverridesWindow = "deadline_overrides_window";
 
+    /// <summary>Auto run deferred this item because a user is active — either it is not unattended-eligible, or its restart_action would interrupt the session</summary>
+    public const string DeferredUserActive = "deferred_user_active";
+
     #endregion
 
     #region Removed Reasons - Package confirmed removed
