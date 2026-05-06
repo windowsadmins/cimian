@@ -192,6 +192,28 @@ public class UpdateModelsTests
         Assert.False(item.IsUninstallable());
     }
 
+    [Fact]
+    public void CatalogItem_IsUninstallable_TypelessInstallsEntry_WithProductCode_ReturnsTrue()
+    {
+        // Hand-written pkginfo with a typeless installs entry carrying just product_code
+        // must qualify as self-uninstallable: EffectiveType() infers msi and the IsUninstallable
+        // clause uses EffectiveType, so UninstallAsync can synthesize a msiexec /x call.
+        var item = new CatalogItem
+        {
+            Uninstallable = true,
+            Uninstaller = [],
+            Installs =
+            [
+                new InstallCheckItem
+                {
+                    ProductCode = "{12345678-1234-1234-1234-123456789012}"
+                }
+            ]
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
     #endregion
 
     #region InstallerInfo Tests
