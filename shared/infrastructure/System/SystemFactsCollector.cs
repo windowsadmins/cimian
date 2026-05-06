@@ -191,6 +191,26 @@ public class SystemFactsCollector : ISystemFactsCollector
                 }
             }
 
+            // Friendly model name lives on Win32_ComputerSystemProduct.Version on Lenovo
+            // (Win32_ComputerSystem.Model returns the MTM code there).
+            try
+            {
+                using var productSearcher = new ManagementObjectSearcher("SELECT Version FROM Win32_ComputerSystemProduct");
+                foreach (ManagementObject mo in productSearcher.Get())
+                {
+                    var version = mo["Version"]?.ToString()?.Trim() ?? "";
+                    if (!string.IsNullOrEmpty(version))
+                    {
+                        facts.ModelVersion = version;
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to read Win32_ComputerSystemProduct.Version");
+            }
+
             // Determine machine type (laptop, desktop, virtual, server)
             facts.MachineType = DetermineMachineType();
             facts.BatteryState = GetBatteryState();
