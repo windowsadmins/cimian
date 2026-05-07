@@ -358,10 +358,25 @@ public class DataExporter
                     record.Message = msg.GetString() ?? "";
                 if (eventData.TryGetValue("event_type", out var eventType))
                     record.EventType = eventType.GetString() ?? "";
-                if (eventData.TryGetValue("package", out var pkg))
-                    record.Package = pkg.GetString();
-                if (eventData.TryGetValue("version", out var ver))
-                    record.Version = ver.GetString();
+                // Read canonical package_name/package_version with legacy fallback.
+                // Populate both new and legacy fields so downstream consumers that
+                // still read either spelling continue to work.
+                var pkgName =
+                    (eventData.TryGetValue("package_name", out var pn) ? pn.GetString() : null) ??
+                    (eventData.TryGetValue("package",      out var pkg) ? pkg.GetString() : null);
+                if (!string.IsNullOrEmpty(pkgName))
+                {
+                    record.PackageName = pkgName;
+                    record.Package = pkgName;
+                }
+                var pkgVersion =
+                    (eventData.TryGetValue("package_version", out var pv) ? pv.GetString() : null) ??
+                    (eventData.TryGetValue("version",         out var ver) ? ver.GetString() : null);
+                if (!string.IsNullOrEmpty(pkgVersion))
+                {
+                    record.PackageVersion = pkgVersion;
+                    record.Version = pkgVersion;
+                }
                 if (eventData.TryGetValue("action", out var action))
                     record.Action = action.GetString() ?? "";
                 if (eventData.TryGetValue("status", out var status))
@@ -420,7 +435,13 @@ public class DataExporter
     /// Generates item records from current session packages info, enriched with historical
     /// event data for accurate install loop detection.
     /// </summary>
-    public List<ItemRecord> GenerateCurrentItemsFromPackagesInfo(List<SessionPackageInfo> packagesInfo)
+    /// <param name="packagesInfo">Current session package info collected by the engine.</param>
+    /// <param name="currentSessionId">Session id (yyyy-MM-dd-HHmm). Stamped onto items the
+    /// run actually acted on; left empty for items only status-checked. Pass null in
+    /// contexts where no current session exists (e.g., one-off exports).</param>
+    public List<ItemRecord> GenerateCurrentItemsFromPackagesInfo(
+        List<SessionPackageInfo> packagesInfo,
+        string? currentSessionId = null)
     {
         var records = new List<ItemRecord>();
         var now = DateTime.UtcNow.ToString("o");
@@ -450,14 +471,20 @@ public class DataExporter
                         if (eventData == null)
                             continue;
 
-                        var packageName = eventData.TryGetValue("package", out var p) ? p.GetString() : null;
+                        // Read canonical package_name; fall back to legacy "package" for
+                        // events.jsonl files written before the schema rename.
+                        var packageName =
+                            (eventData.TryGetValue("package_name", out var pn) ? pn.GetString() : null) ??
+                            (eventData.TryGetValue("package",      out var p)  ? p.GetString()  : null);
                         if (string.IsNullOrEmpty(packageName))
                             continue;
 
                         var action = eventData.TryGetValue("action", out var a) ? a.GetString() : "";
                         var status = eventData.TryGetValue("status", out var s) ? s.GetString() : "";
                         var timestamp = eventData.TryGetValue("timestamp", out var ts) ? ts.GetString() : "";
-                        var version = eventData.TryGetValue("version", out var v) ? v.GetString() : "";
+                        var version =
+                            (eventData.TryGetValue("package_version", out var pv) ? pv.GetString() : null) ??
+                            (eventData.TryGetValue("version",         out var v)  ? v.GetString()  : "");
 
                         if (!packageHistory.ContainsKey(packageName))
                             packageHistory[packageName] = new List<ItemAttempt>();
@@ -496,6 +523,7 @@ public class DataExporter
         {
             // Normalize status: convert session statuses (completed/success) to item statuses (Installed)
             var normalizedStatus = NormalizeItemStatus(pkg.Status);
+            var actedOnThisRun = !string.IsNullOrEmpty(pkg.ActionPerformed);
 
             var record = new ItemRecord
             {
@@ -503,13 +531,26 @@ public class DataExporter
                 ItemName = pkg.Name,
                 DisplayName = pkg.DisplayName,
                 ItemType = pkg.ItemType,
-                CurrentStatus = normalizedStatus,  // NORMALIZED STATUS - maps completed/success to Installed
+                CurrentStatus = normalizedStatus,
                 LatestVersion = pkg.Version,
                 InstalledVersion = pkg.InstalledVersion,
                 LastUpdate = now,
                 LastAttemptTime = now,
-                LastAttemptStatus = normalizedStatus,  // NORMALIZED attempt status
-                Type = "cimian"
+                LastAttemptStatus = normalizedStatus,
+                Type = "cimian",
+
+                // Stamp the session id only when this run actually touched the item;
+                // status-checked items get an empty string so consumers can filter to
+                // "what the last run actually did" rather than catalog membership.
+                LastSeenInSession = actedOnThisRun ? (currentSessionId ?? "") : "",
+
+                // Always populate counts — GetValueOrDefault returns 0 cleanly when
+                // there is no event history for the package.
+                InstallCount = packageInstallCounts.GetValueOrDefault(pkg.Name),
+                FailureCount = packageFailureCounts.GetValueOrDefault(pkg.Name),
+                RecentAttempts = packageHistory.TryGetValue(pkg.Name, out var hist)
+                                    ? hist.TakeLast(5).ToList()
+                                    : new List<ItemAttempt>()
             };
 
             if (!string.IsNullOrEmpty(pkg.ErrorMessage))
@@ -523,14 +564,9 @@ public class DataExporter
                 record.WarningCount = 1;
             }
 
-            // Enrich with historical data for loop detection
-            if (packageHistory.TryGetValue(pkg.Name, out var history) && history.Count > 0)
+            if (record.RecentAttempts.Count > 0)
             {
-                record.InstallCount = packageInstallCounts.GetValueOrDefault(pkg.Name);
-                record.FailureCount = packageFailureCounts.GetValueOrDefault(pkg.Name);
-                record.RecentAttempts = history.TakeLast(5).ToList();
-
-                var (loopDetected, loopDetails) = DetectInstallLoopEnhanced(history, pkg.Name);
+                var (loopDetected, loopDetails) = DetectInstallLoopEnhanced(record.RecentAttempts, pkg.Name);
                 record.InstallLoopDetected = loopDetected;
                 record.LoopDetails = loopDetails;
             }
@@ -991,7 +1027,9 @@ public class DataExporter
                 if (status?.ToLowerInvariant() != "failed")
                     continue;
 
-                var packageName = eventData.TryGetValue("package", out var p) ? p.GetString() : null;
+                var packageName =
+                    (eventData.TryGetValue("package_name", out var pn) ? pn.GetString() : null) ??
+                    (eventData.TryGetValue("package",      out var p)  ? p.GetString()  : null);
                 if (string.IsNullOrEmpty(packageName))
                     continue;
 
@@ -1117,7 +1155,9 @@ public class DataExporter
                 if (eventData == null)
                     continue;
 
-                var packageName = eventData.TryGetValue("package", out var p) ? p.GetString() : null;
+                var packageName =
+                    (eventData.TryGetValue("package_name", out var pn) ? pn.GetString() : null) ??
+                    (eventData.TryGetValue("package",      out var p)  ? p.GetString()  : null);
                 if (string.IsNullOrEmpty(packageName))
                     continue;
 
@@ -1137,7 +1177,9 @@ public class DataExporter
                 var action = eventData.TryGetValue("action", out var a) ? a.GetString() : "";
                 var status = eventData.TryGetValue("status", out var s) ? s.GetString() : "";
                 var timestamp = eventData.TryGetValue("timestamp", out var ts) ? ts.GetString() : "";
-                var version = eventData.TryGetValue("version", out var v) ? v.GetString() : "";
+                var version =
+                    (eventData.TryGetValue("package_version", out var pv) ? pv.GetString() : null) ??
+                    (eventData.TryGetValue("version",         out var v)  ? v.GetString()  : "");
                 var error = eventData.TryGetValue("error", out var e) ? e.GetString() : "";
 
                 // Update statistics
