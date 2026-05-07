@@ -503,11 +503,33 @@ public class SessionLogger : IDisposable
 
             // Generate items.json - current managed items snapshot
             GenerateItemsReport();
+
+            // Generate loop_suppressed.json - LoopGuard suppressions surfaced for
+            // dashboards. Skipped silently if no suppressions were registered.
+            GenerateLoopSuppressedReport();
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[ERROR] Failed to generate reports: {ex.Message}");
         }
+    }
+
+    private List<LoopSuppressedReportItem> _currentLoopSuppressed = new();
+
+    /// <summary>
+    /// Sets the current run's loop-suppressed package list. Pass an empty list (or
+    /// don't call) when LoopGuard isn't active. UpdateEngine populates this from
+    /// <see cref="LoopGuard.GetSuppressedReport"/> before EndSession.
+    /// </summary>
+    public void SetCurrentLoopSuppressed(List<LoopSuppressedReportItem> items)
+    {
+        _currentLoopSuppressed = items ?? new List<LoopSuppressedReportItem>();
+    }
+
+    private void GenerateLoopSuppressedReport()
+    {
+        var path = Path.Combine(ReportsDir, "loop_suppressed.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(_currentLoopSuppressed, JsonOptions));
     }
 
     /// <summary>
@@ -627,7 +649,7 @@ public class SessionLogger : IDisposable
         {
             // Use DataExporter for historical enrichment + loop detection
             var exporter = new DataExporter();
-            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems);
+            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems, _sessionId);
 
             var itemsPath = Path.Combine(ReportsDir, "items.json");
             File.WriteAllText(itemsPath, JsonSerializer.Serialize(items, JsonOptions));
@@ -652,6 +674,7 @@ public class SessionLogger : IDisposable
         {
             var displayName = !string.IsNullOrEmpty(pkg.DisplayName) ? pkg.DisplayName : pkg.Name;
             var normalizedStatus = NormalizeItemStatus(pkg.Status);
+            var actedOnThisRun = !string.IsNullOrEmpty(pkg.ActionPerformed);
 
             records.Add(new Cimian.Core.Models.ItemRecord
             {
@@ -662,7 +685,10 @@ public class SessionLogger : IDisposable
                 CurrentStatus = normalizedStatus,
                 LatestVersion = pkg.Version,
                 InstalledVersion = pkg.InstalledVersion,
-                LastSeenInSession = now,
+                // Stamp session id (yyyy-MM-dd-HHmm) only when this run touched the
+                // item; status-checked items get an empty string so consumers can
+                // filter to "what the last run actually did."
+                LastSeenInSession = actedOnThisRun ? _sessionId : "",
                 LastAttemptTime = now,
                 LastAttemptStatus = normalizedStatus,
                 LastUpdate = now,

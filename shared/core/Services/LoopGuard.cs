@@ -288,11 +288,38 @@ public class LoopGuard
         var result = new List<(string, string, DateTime?)>();
         foreach (var (key, pkgState) in _state.Packages)
         {
-            if (pkgState.SuppressedUntil.HasValue && 
+            if (pkgState.SuppressedUntil.HasValue &&
                 (pkgState.SuppressedUntil.Value == DateTime.MaxValue || DateTime.UtcNow < pkgState.SuppressedUntil.Value))
             {
                 result.Add((pkgState.PackageName, pkgState.SuppressionReason ?? "Unknown", pkgState.SuppressedUntil));
             }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Returns a report-ready list of currently suppressed packages, suitable for
+    /// serialization into reports/loop_suppressed.json. Includes the last-attempted
+    /// version and the operator-facing clear command for each entry.
+    /// </summary>
+    public List<LoopSuppressedReportItem> GetSuppressedReport()
+    {
+        var result = new List<LoopSuppressedReportItem>();
+        foreach (var (_, pkgState) in _state.Packages)
+        {
+            if (!pkgState.SuppressedUntil.HasValue) continue;
+            var until = pkgState.SuppressedUntil.Value;
+            // Indefinite (DateTime.MaxValue) and not-yet-expired entries both qualify.
+            if (until != DateTime.MaxValue && DateTime.UtcNow >= until) continue;
+
+            result.Add(new LoopSuppressedReportItem
+            {
+                Name            = pkgState.PackageName,
+                Version         = pkgState.LastVersion ?? "",
+                Reason          = pkgState.SuppressionReason ?? "Unknown",
+                SuppressedUntil = until == DateTime.MaxValue ? null : until,
+                ClearCommand    = $"managedsoftwareupdate --clear-loop {pkgState.PackageName}"
+            });
         }
         return result;
     }
@@ -483,12 +510,16 @@ public class LoopGuard
                     if (!string.Equals(action, "install", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var packageName = eventData.TryGetValue("package", out var p) ? p.GetString() : null;
+                    var packageName =
+                        (eventData.TryGetValue("package_name", out var pn) ? pn.GetString() : null) ??
+                        (eventData.TryGetValue("package",      out var p)  ? p.GetString()  : null);
                     if (string.IsNullOrEmpty(packageName))
                         continue;
 
                     var status = eventData.TryGetValue("status", out var s) ? s.GetString() : "";
-                    var version = eventData.TryGetValue("version", out var v) ? v.GetString() : "";
+                    var version =
+                        (eventData.TryGetValue("package_version", out var pv) ? pv.GetString() : null) ??
+                        (eventData.TryGetValue("version",         out var v)  ? v.GetString()  : "");
                     var timestamp = eventData.TryGetValue("timestamp", out var ts) ? ts.GetString() : null;
 
                     var key = packageName.ToLowerInvariant();
