@@ -395,7 +395,14 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            var (toInstall, toUpdate, toUninstall) = IdentifyActions(manifestItems, catalogMap);
+            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap);
+
+            // Dictionary of items LoopGuard refused this run, keyed by lower-invariant
+            // name. Surfaces in items.json as Warning + last_warning + status_reason_code,
+            // and in a sibling reports/loop_suppressed.json for dashboards.
+            var loopSuppressedByName = loopSuppressed.ToDictionary(
+                x => x.Item.Name.ToLowerInvariant(),
+                x => (x.Reason, x.InstalledVersion, x.WasUpdate));
 
             // AutoRemove: queue uninstall for packages installed by Cimian but no longer in any manifest
             if (_config.AutoRemove)
@@ -463,11 +470,14 @@ public class UpdateEngine : IDisposable
                 ReportPercent(100);
                 
                 // Collect items data for items.json report (Go parity: SetCurrentSessionPackagesInfo)
-                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
-                
+                // Check-only mode never runs installs/uninstalls, so no outcomes exist.
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap,
+                    new Dictionary<string, ItemOutcome>(),
+                    loopSuppressedByName);
+
                 // Write InstallInfo.yaml for MSC GUI
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
-                
+
                 // End session for check-only
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 0, 0, manifestItems);
                 return 0;
@@ -629,6 +639,8 @@ public class UpdateEngine : IDisposable
             var installSuccess = true;
             var successCount = 0;
             var failCount = 0;
+            var installOutcomes = new List<ItemOutcome>();
+            var uninstallOutcomes = new List<ItemOutcome>();
             if (toInstall.Count > 0 || toUpdate.Count > 0)
             {
                 var allToInstall = toInstall.Concat(toUpdate).ToList();
@@ -703,11 +715,12 @@ public class UpdateEngine : IDisposable
                 {
                     ReportStatus("Installing updates...");
                     _sessionLogger?.Log("INFO", $"Installing {allToInstall.Count} items...");
-                    installSuccess = await PerformInstallationsAsync(allToInstall, cancellationToken);
-                    
-                    // Count successes/failures based on result
-                    successCount = installSuccess ? allToInstall.Count : 0;
-                    failCount = installSuccess ? 0 : allToInstall.Count;
+                    installOutcomes = await PerformInstallationsAsync(allToInstall, cancellationToken);
+
+                    // Per-item outcome counts (includes dependencies + update_for items)
+                    successCount = installOutcomes.Count(o => o.Success);
+                    failCount = installOutcomes.Count(o => !o.Success);
+                    installSuccess = failCount == 0;
                 }
                 else if (selfUpdateItems.Count > 0)
                 {
@@ -723,8 +736,15 @@ public class UpdateEngine : IDisposable
             if (toUninstall.Count > 0)
             {
                 _sessionLogger?.Log("INFO", $"Removing {toUninstall.Count} items...");
-                uninstallSuccess = await PerformUninstallsAsync(toUninstall, cancellationToken);
+                uninstallOutcomes = await PerformUninstallsAsync(toUninstall, cancellationToken);
+                uninstallSuccess = uninstallOutcomes.All(o => o.Success);
             }
+
+            // Combine install + uninstall outcomes keyed by lower-invariant name so
+            // CollectSessionItems can stamp each manifest item with its real result.
+            var outcomesByName = new Dictionary<string, ItemOutcome>(StringComparer.OrdinalIgnoreCase);
+            foreach (var o in installOutcomes) outcomesByName[o.Name.ToLowerInvariant()] = o;
+            foreach (var o in uninstallOutcomes) outcomesByName[o.Name.ToLowerInvariant()] = o;
 
             // Run postflight unless skipped
             if (!skipPostflight && !_config.NoPostflight)
@@ -761,12 +781,12 @@ public class UpdateEngine : IDisposable
                 ReportPercent(100);
                 
                 // Collect items data for items.json report
-                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
-                
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
+
                 // Write InstallInfo.yaml for MSC GUI (post-install: actions completed)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
-                
-                EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 
+
+                EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
                 
                 // Handle restart_action: restart takes precedence over logout (Munki parity)
@@ -788,7 +808,7 @@ public class UpdateEngine : IDisposable
                 ReportError("Some operations failed");
 
                 // Collect items data for items.json report
-                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
@@ -838,12 +858,16 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall) 
+    private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
+             List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
     {
         var toInstall = new List<CatalogItem>();
         var toUpdate = new List<CatalogItem>();
         var toUninstall = new List<CatalogItem>();
+        // Items LoopGuard refused this run. Tracked separately so CollectSessionItems
+        // can stamp them as Warning instead of letting them fall through to "Installed".
+        var loopSuppressed = new List<(CatalogItem, string, string?, bool)>();
 
         var sysArch = StatusService.GetSystemArchitecture();
 
@@ -944,6 +968,7 @@ public class UpdateEngine : IDisposable
                                     Cimian.Core.Models.DetectionMethod.None,
                                     status.InstalledVersion,
                                     false);
+                                loopSuppressed.Add((catalogItem, loopReason, status.InstalledVersion, status.IsUpdate));
                                 break; // Skip this item
                             }
                         }
@@ -1039,7 +1064,7 @@ public class UpdateEngine : IDisposable
             }
         }
 
-        return (toInstall, toUpdate, toUninstall);
+        return (toInstall, toUpdate, toUninstall, loopSuppressed);
     }
 
     /// <summary>
@@ -1216,12 +1241,13 @@ public class UpdateEngine : IDisposable
         Log();
     }
 
-    private async Task<bool> PerformInstallationsAsync(
+    private async Task<List<ItemOutcome>> PerformInstallationsAsync(
         List<CatalogItem> items,
         CancellationToken cancellationToken)
     {
         LogInfo($"Installing/updating {items.Count} items with dependency processing...");
 
+        var outcomes = new List<ItemOutcome>();
         var successCount = 0;
         var failCount = 0;
         var totalItems = items.Count;
@@ -1287,6 +1313,7 @@ public class UpdateEngine : IDisposable
                 installedItems,
                 scheduledItems,
                 downloadedPaths,
+                outcomes,
                 cancellationToken);
 
             if (success)
@@ -1300,7 +1327,7 @@ public class UpdateEngine : IDisposable
         }
 
         LogInfo($"Installation summary: {successCount} succeeded, {failCount} failed");
-        return failCount == 0;
+        return outcomes;
     }
 
     /// <summary>
@@ -1380,6 +1407,7 @@ public class UpdateEngine : IDisposable
         List<string> installedItems,
         List<string> scheduledItems,
         Dictionary<string, string> downloadedPaths,
+        List<ItemOutcome> outcomes,
         CancellationToken cancellationToken)
     {
         LogDetail($"ProcessInstallWithDependencies: {itemName}");
@@ -1488,7 +1516,7 @@ public class UpdateEngine : IDisposable
 
                 // Recursively process the dependency
                 var newScheduled = new List<string>(scheduledItems) { dep };
-                if (!await ProcessInstallWithDependenciesAsync(dep, installedItems, newScheduled, downloadedPaths, cancellationToken))
+                if (!await ProcessInstallWithDependenciesAsync(dep, installedItems, newScheduled, downloadedPaths, outcomes, cancellationToken))
                 {
                     ConsoleLogger.Error($"Failed to install required dependency: {dep}");
                     return false;
@@ -1539,10 +1567,12 @@ public class UpdateEngine : IDisposable
             ConsoleLogger.Error(msg);
             _sessionLogger?.Log("ERROR", msg);
             _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", msg);
+            outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", false, msg, DateTime.UtcNow));
             return false;
         }
 
         var (success, output) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
+        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow));
 
         if (success)
         {
@@ -1634,7 +1664,7 @@ public class UpdateEngine : IDisposable
                     }
 
                     // Process the update item (which may have its own dependencies)
-                    if (!await ProcessInstallWithDependenciesAsync(updateItemName, installedItems, scheduledItems, downloadedPaths, cancellationToken))
+                    if (!await ProcessInstallWithDependenciesAsync(updateItemName, installedItems, scheduledItems, downloadedPaths, outcomes, cancellationToken))
                     {
                         LogInfo($"[WARNING] Failed to install update item: {updateItemName} (continuing)");
                         // Don't fail the main install just because an update_for item failed
@@ -1658,6 +1688,7 @@ public class UpdateEngine : IDisposable
     private async Task<bool> ProcessUninstallWithDependenciesAsync(
         string itemName,
         List<string> installedItems,
+        List<ItemOutcome> outcomes,
         CancellationToken cancellationToken)
     {
         LogDetail($"ProcessUninstallWithDependencies: {itemName}");
@@ -1672,7 +1703,7 @@ public class UpdateEngine : IDisposable
             if (CatalogService.IsItemInstalled(depItem.Name, installedItems))
             {
                 LogInfo($"Removing dependent item first: {depItem.Name} (requires {itemName})");
-                if (!await ProcessUninstallWithDependenciesAsync(depItem.Name, installedItems, cancellationToken))
+                if (!await ProcessUninstallWithDependenciesAsync(depItem.Name, installedItems, outcomes, cancellationToken))
                 {
                     ConsoleLogger.Error($"Failed to remove dependent item: {depItem.Name}");
                     return false;
@@ -1697,6 +1728,7 @@ public class UpdateEngine : IDisposable
 
         LogInfo($"Removing: {item.Name}");
         var (success, output) = await _installerService.UninstallAsync(item, cancellationToken);
+        outcomes.Add(new ItemOutcome(item.Name, item.Version, "remove", success, success ? null : output, DateTime.UtcNow));
 
         if (success)
         {
@@ -1728,12 +1760,13 @@ public class UpdateEngine : IDisposable
 
     #endregion
 
-    private async Task<bool> PerformUninstallsAsync(
+    private async Task<List<ItemOutcome>> PerformUninstallsAsync(
         List<CatalogItem> items,
         CancellationToken cancellationToken)
     {
         LogInfo($"Removing {items.Count} items with dependency processing...");
 
+        var outcomes = new List<ItemOutcome>();
         var successCount = 0;
         var failCount = 0;
 
@@ -1758,6 +1791,7 @@ public class UpdateEngine : IDisposable
             var success = await ProcessUninstallWithDependenciesAsync(
                 item.Name,
                 installedItems,
+                outcomes,
                 cancellationToken);
 
             if (success)
@@ -1771,7 +1805,7 @@ public class UpdateEngine : IDisposable
         }
 
         LogInfo($"Uninstall summary: {successCount} succeeded, {failCount} failed");
-        return failCount == 0;
+        return outcomes;
     }
 
     private void CleanManifestsAndCatalogsPreRun()
@@ -2356,7 +2390,9 @@ public class UpdateEngine : IDisposable
         List<CatalogItem> toInstall,
         List<CatalogItem> toUpdate,
         List<CatalogItem> toUninstall,
-        Dictionary<string, CatalogItem> catalogMap)
+        Dictionary<string, CatalogItem> catalogMap,
+        IReadOnlyDictionary<string, ItemOutcome> outcomesByName,
+        IReadOnlyDictionary<string, (string Reason, string? InstalledVersion, bool WasUpdate)> loopSuppressedByName)
     {
         if (_sessionLogger == null) return;
 
@@ -2395,30 +2431,64 @@ public class UpdateEngine : IDisposable
                     displayName = catItem.DisplayName;
             }
 
-            // Determine status
-            string status;
-            if (toInstallNames.Contains(key))
-                status = "Pending Install";
-            else if (toUpdateNames.Contains(key))
-                status = "Pending Update";
-            else if (toUninstallNames.Contains(key))
-                status = "Pending Removal";
-            else if (action == "uninstall")
-                status = "Removed";
-            else
-                status = "Installed";
+            // LoopGuard suppression takes precedence: the item was deliberately not
+            // acted on, but it is broken — surface as Warning so dashboards flag it.
+            // Keep the conditional short-circuited so suppressed items don't fall
+            // through to outcome/plan logic below.
+            if (loopSuppressedByName.TryGetValue(key, out var suppression))
+            {
+                items.Add(new SessionPackageInfo
+                {
+                    Name = mi.Name,
+                    Version = version,
+                    Status = "Warning",
+                    ItemType = itemType,
+                    DisplayName = displayName,
+                    InstalledVersion = suppression.InstalledVersion,
+                    WarningMessage = suppression.Reason,
+                    StatusReason = suppression.Reason,
+                    StatusReasonCode = Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
+                    DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
+                    // Mark as touched this run so DataExporter stamps last_seen_in_session.
+                    // Distinct from install/update/remove so consumers can filter on it.
+                    ActionPerformed = "loop_suppressed",
+                    OutcomeTimestamp = DateTime.UtcNow
+                });
+                continue;
+            }
+
+            // Determine status — prefer the actual install/uninstall outcome over the
+            // pre-install plan. Only fall back to "Pending …" when nothing was attempted.
+            var hadOutcome = outcomesByName.TryGetValue(key, out var outcome) && outcome is not null;
+            var status = SessionItemStatusResolver.Resolve(
+                hadOutcome ? outcome : null,
+                isPendingInstall:   toInstallNames.Contains(key),
+                isPendingUpdate:    toUpdateNames.Contains(key),
+                isPendingUninstall: toUninstallNames.Contains(key),
+                manifestAction:     action);
 
             items.Add(new SessionPackageInfo
             {
                 Name = mi.Name,
-                Version = version,
+                Version = hadOutcome && !string.IsNullOrEmpty(outcome!.Version) ? outcome.Version : version,
                 Status = status,
                 ItemType = itemType,
-                DisplayName = displayName
+                DisplayName = displayName,
+                ErrorMessage = hadOutcome && !outcome!.Success ? outcome.ErrorMessage : null,
+                ActionPerformed = hadOutcome ? outcome!.Action : null,
+                OutcomeTimestamp = hadOutcome ? outcome!.Timestamp : null
             });
         }
 
         _sessionLogger.SetCurrentSessionItems(items);
+
+        // Surface LoopGuard suppressions for reports/loop_suppressed.json. Pulled from
+        // LoopGuard rather than this run's list so packages suppressed in earlier runs
+        // (still active backoff) also appear.
+        if (_loopGuard != null)
+        {
+            _sessionLogger.SetCurrentLoopSuppressed(_loopGuard.GetSuppressedReport());
+        }
     }
 
     /// <summary>
