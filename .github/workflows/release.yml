@@ -10,6 +10,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TZ: 'America/Vancouver'
 
 jobs:
   release:
@@ -79,7 +80,7 @@ jobs:
           $os = '${{ steps.version.outputs.os }}'
           $cimipkg = '${{ steps.version.outputs.cimipkg }}'
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-          $title = "Cimian $datestamp"
+          $title = "Cimian $tag"
 
           $buildInfo = @"
           ## Build info
@@ -110,7 +111,7 @@ jobs:
           Built from commit ``$env:GITHUB_SHA``.
           "@
 
-          $autoNotes = gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body
+          $autoNotes = (gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body) -join "`n"
           $notes = "$buildInfo`n`n$autoNotes`n`n$signing"
 
           $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin' | ForEach-Object { $_.FullName }
