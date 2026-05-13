@@ -33,7 +33,13 @@ public class ImportService
     }
 
     /// <summary>
-    /// Performs the full import workflow.
+    /// Performs the full import workflow. User interaction is routed through
+    /// <paramref name="prompter"/>; pass <see cref="ConsolePrompter"/> for the
+    /// classic CLI experience, <see cref="NoInteractivePrompter"/> for
+    /// <c>--nointeractive</c>, or a custom implementation (e.g. CimianAdmin's
+    /// WinUI prompter). When <paramref name="prompter"/> is null and
+    /// <paramref name="noInteractive"/> is true we use <see cref="NoInteractivePrompter"/>,
+    /// otherwise <see cref="ConsolePrompter"/>.
     /// </summary>
     public async Task<bool> ImportAsync(
         string packagePath,
@@ -46,76 +52,55 @@ public class ImportService
         string? minCimianVersion = null,
         bool extractIcon = false,
         string? iconOutputPath = null,
-        bool noInteractive = false)
+        bool noInteractive = false,
+        IImportPrompter? prompter = null,
+        CancellationToken cancellationToken = default)
     {
+        prompter ??= noInteractive ? new NoInteractivePrompter() : new ConsolePrompter();
         // Step 1: Check file exists
         if (!File.Exists(packagePath))
         {
-            Console.WriteLine($"[ERROR] Package '{packagePath}' does not exist");
+            prompter.ReportError($"Package '{packagePath}' does not exist");
             return false;
         }
 
         // Step 2: Extract metadata
-        Console.WriteLine("Extracting metadata...");
+        prompter.ReportInfo("Extracting metadata...");
         var metadata = _metadataExtractor.ExtractMetadata(packagePath, config);
         if (string.IsNullOrEmpty(metadata.ID))
         {
             metadata.ID = Path.GetFileNameWithoutExtension(packagePath);
         }
 
-        // Detect architecture from filename (this takes priority)
+        // Detect architecture from filename (this takes priority over MSI/MSIX metadata).
         var filenameArch = MetadataExtractor.DetectArchFromFilename(Path.GetFileName(packagePath));
         var hasFilenameArch = !string.IsNullOrEmpty(filenameArch);
-        
+
         if (hasFilenameArch)
         {
-            Console.WriteLine($"Detected architecture '{filenameArch}' from filename");
+            prompter.ReportInfo($"Detected architecture '{filenameArch}' from filename");
         }
 
-        // Step 3: Check for existing item in All.yaml
+        // Step 3: Check for existing item in All.yaml; if found, ask whether to template.
         var (existingPkg, found) = FindMatchingItemInAllCatalog(config.RepoPath, metadata.ID);
         if (found && existingPkg != null)
         {
-            Console.WriteLine("This item has the same Name as an existing item in the repo:");
-            Console.WriteLine($"    Name: {existingPkg.Name}");
-            Console.WriteLine($"    Version: {existingPkg.Version}");
-            Console.WriteLine($"    Description: {existingPkg.Description}");
-
-            if (noInteractive)
+            var useTemplate = await prompter.AskUseTemplateAsync(existingPkg, cancellationToken).ConfigureAwait(false);
+            if (useTemplate)
             {
-                // Auto-apply template in non-interactive mode
                 ApplyTemplate(metadata, existingPkg, scripts);
 
-                // Restore the detected architecture from filename if it was detected
+                // Filename-detected arch wins over template arch.
                 if (hasFilenameArch)
                 {
                     metadata.Architecture = filenameArch;
                     metadata.SupportedArch = [filenameArch];
                 }
             }
-            else
-            {
-                Console.Write("Use existing item as a template? [Y/n]: ");
-                var ans = Console.ReadLine()?.Trim();
-                if (string.IsNullOrEmpty(ans) || ans.Equals("y", StringComparison.OrdinalIgnoreCase))
-                {
-                    ApplyTemplate(metadata, existingPkg, scripts);
-
-                    // Restore the detected architecture from filename if it was detected
-                    if (hasFilenameArch)
-                    {
-                        metadata.Architecture = filenameArch;
-                        metadata.SupportedArch = [filenameArch];
-                    }
-                }
-            }
         }
 
-        // Step 4: Let user override fields (skip in non-interactive mode)
-        if (!noInteractive)
-        {
-            metadata = PromptForMetadata(packagePath, metadata, config);
-        }
+        // Step 4: Let the user review/edit the seven metadata fields.
+        metadata = await prompter.EditMetadataAsync(metadata, config, cancellationToken).ConfigureAwait(false);
 
         // Step 5: Gather script contents
         var preinstallScript = LoadScriptContent(scripts.Preinstall, existingPkg, "preinstall");
@@ -129,11 +114,11 @@ public class ImportService
         Installer? uninstaller = null;
         if (!string.IsNullOrEmpty(uninstallerPath))
         {
-            uninstaller = ProcessUninstaller(uninstallerPath, config.RepoPath);
+            uninstaller = ProcessUninstaller(uninstallerPath, config.RepoPath, prompter);
         }
 
         // Step 7: Calculate file hash and size
-        Console.WriteLine("Calculating file hash...");
+        prompter.ReportInfo("Calculating file hash...");
         var fileHash = MetadataExtractor.CalculateSHA256(packagePath);
         var fileInfo = new FileInfo(packagePath);
         var fileSizeKB = fileInfo.Length / 1024;
@@ -181,19 +166,19 @@ public class ImportService
             ? $"-{pkgsInfo.SupportedArch[0].ToLowerInvariant()}-" 
             : "-";
 
-        // Step 9: Prompt for repo subdirectory (use default in non-interactive mode)
-        var repoSubPath = PromptInstallerPath(metadata.RepoPath, noInteractive);
+        // Step 9: Where in the repo should the installer + pkginfo live?
+        var repoSubPath = await prompter.AskRepoSubdirAsync(metadata.RepoPath ?? @"\mgmt", cancellationToken).ConfigureAwait(false);
 
         // Step 10: Build installs array
         List<InstallItem> finalInstalls;
         if (installsPaths.Count > 0)
         {
-            finalInstalls = BuildInstallsArray(installsPaths);
+            finalInstalls = BuildInstallsArray(installsPaths, prompter);
         }
         else if (metadata.InstallerType == "exe")
         {
             var fallbackExe = $@"C:\Program Files\{pkgsInfo.Name}\{pkgsInfo.Name}.exe";
-            Console.WriteLine($"Using fallback .exe => {fallbackExe}");
+            prompter.ReportInfo($"Using fallback .exe => {fallbackExe}");
             finalInstalls =
             [
                 new InstallItem
@@ -207,7 +192,7 @@ public class ImportService
         else if (metadata.InstallerType == "msix" && !string.IsNullOrEmpty(metadata.IdentityName))
         {
             // MSIX packages are detected via Get-AppxProvisionedPackage filtered by Identity.Name
-            Console.WriteLine($"Using MSIX identity => {metadata.IdentityName}");
+            prompter.ReportInfo($"Using MSIX identity => {metadata.IdentityName}");
             finalInstalls =
             [
                 new InstallItem
@@ -229,7 +214,7 @@ public class ImportService
             var codeSummary = !string.IsNullOrEmpty(productCode)
                 ? (!string.IsNullOrEmpty(upgradeCode) ? $"ProductCode={productCode}, UpgradeCode={upgradeCode}" : $"ProductCode={productCode}")
                 : $"UpgradeCode={upgradeCode}";
-            Console.WriteLine($"Using MSI {codeSummary}");
+            prompter.ReportInfo($"Using MSI {codeSummary}");
             // Version is intentionally omitted — StatusService falls back to the
             // top-level pkginfo version when the installs entry has none, and the
             // MSI's per-version identity is already the ProductCode.
@@ -271,37 +256,21 @@ public class ImportService
             ];
         }
 
-        // Step 11: Show final details
-        Console.WriteLine();
-        Console.WriteLine("Pkginfo details:");
-        Console.WriteLine($"     Name: {pkgsInfo.Name}");
-        Console.WriteLine($"     Display Name: {pkgsInfo.DisplayName}");
-        Console.WriteLine($"     Version: {pkgsInfo.Version}");
-        Console.WriteLine($"     Description: {pkgsInfo.Description}");
-        Console.WriteLine($"     Category: {pkgsInfo.Category}");
-        Console.WriteLine($"     Developer: {pkgsInfo.Developer}");
-        Console.WriteLine($"     Architectures: {string.Join(", ", pkgsInfo.SupportedArch)}");
-        Console.WriteLine($"     Catalogs: {string.Join(", ", pkgsInfo.Catalogs)}");
-        Console.WriteLine($"     Installer Type: {pkgsInfo.Installer?.Type}");
-        Console.WriteLine();
-
-        // Confirm import (auto-yes in non-interactive mode)
-        if (!noInteractive)
+        // Step 11: Final review + confirm. Prompter renders the summary; we just supply
+        // the assembled pkginfo so any frontend can present it however it likes.
+        var confirmed = await prompter.ConfirmImportAsync(pkgsInfo, cancellationToken).ConfigureAwait(false);
+        if (!confirmed)
         {
-            Console.Write("Import this item? (y/n) [n]: ");
-            var confirm = Console.ReadLine()?.Trim();
-            if (!confirm?.Equals("y", StringComparison.OrdinalIgnoreCase) ?? true)
-            {
-                Console.WriteLine("Import canceled.");
-                return false;
-            }
+            prompter.ReportInfo("Import canceled.");
+            return false;
         }
 
-        // Step 12a: Extract icon if requested
+        // Step 12a: Extract icon if requested. Failures here are non-fatal — we surface
+        // them as warnings and let the import continue without an icon.
         string? iconName = null;
         if (extractIcon)
         {
-            Console.WriteLine("Extracting icon (EXPERIMENTAL)...");
+            prompter.ReportInfo("Extracting icon (EXPERIMENTAL)...");
             try
             {
                 var iconExtractor = new IconExtractor();
@@ -310,20 +279,20 @@ public class ImportService
                 {
                     iconName = iconResult;
                     pkgsInfo.IconName = iconName;
-                    Console.WriteLine($"Icon extracted: {iconName}");
+                    prompter.ReportInfo($"Icon extracted: {iconName}");
                 }
                 else
                 {
-                    Console.WriteLine("[WARN] Could not extract icon from this installer type");
+                    prompter.ReportWarning("Could not extract icon from this installer type");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[WARN] Icon extraction failed: {ex.Message}");
+                prompter.ReportWarning($"Icon extraction failed: {ex.Message}");
             }
         }
         // Step 12: Copy installer to pkgs subdir
-        Console.WriteLine("Copying installer to repo...");
+        prompter.ReportInfo("Copying installer to repo...");
         repoSubPath = repoSubPath.TrimStart('\\');
         var installerFolderPath = Path.Combine(config.RepoPath, "pkgs", repoSubPath);
         Directory.CreateDirectory(installerFolderPath);
@@ -336,7 +305,7 @@ public class ImportService
         pkgsInfo.Installer!.Location = MetadataExtractor.NormalizeWindowsPath(subpathAndFile);
 
         // Step 13: Write pkginfo YAML
-        Console.WriteLine("Writing pkginfo file...");
+        prompter.ReportInfo("Writing pkginfo file...");
         var pkginfoFolderPath = Path.Combine(config.RepoPath, "pkgsinfo", repoSubPath);
         Directory.CreateDirectory(pkginfoFolderPath);
 
@@ -346,7 +315,7 @@ public class ImportService
         var yaml = SerializePkgsInfoWithKeyOrder(pkgsInfo);
         await File.WriteAllTextAsync(pkginfoPath, yaml);
 
-        Console.WriteLine($"Pkginfo created at: {pkginfoPath}");
+        prompter.ReportInfo($"Pkginfo created at: {pkginfoPath}");
 
         // Open in editor if configured. Suppressed under --nointeractive: the editor
         // (VS Code / Notepad) inherits the parent process's stdio, and when cimiimport
@@ -358,7 +327,7 @@ public class ImportService
             TryOpenFile(pkginfoPath);
         }
 
-        Console.WriteLine("Installer imported successfully!");
+        prompter.ReportInfo("Installer imported successfully!");
         return true;
     }
 
@@ -480,82 +449,6 @@ public class ImportService
     }
 
     /// <summary>
-    /// Prompts user for metadata fields.
-    /// </summary>
-    private InstallerMetadata PromptForMetadata(string packagePath, InstallerMetadata m, ImportConfiguration config)
-    {
-        var defaultID = !string.IsNullOrEmpty(m.ID) ? m.ID : Path.GetFileNameWithoutExtension(packagePath);
-        var defaultVersion = !string.IsNullOrEmpty(m.Version) ? m.Version : "1.0.0";
-
-        m.ID = ReadLineWithDefault("Name", defaultID);
-        m.Version = MetadataExtractor.ParseVersion(ReadLineWithDefault("Version", defaultVersion));
-        m.Developer = ReadLineWithDefault("Developer", m.Developer);
-        m.Description = ReadLineWithDefault("Description", m.Description);
-        m.Category = ReadLineWithDefault("Category", m.Category);
-
-        // Architectures
-        var archDefault = string.Join(",", m.SupportedArch);
-        var archLine = ReadLineWithDefault("Architecture(s)", archDefault).Trim();
-        if (!string.IsNullOrEmpty(archLine))
-        {
-            var parts = archLine.Split([',', ';', ' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-            m.SupportedArch = parts.Select(p => p.Trim().ToLowerInvariant()).ToList();
-            if (m.SupportedArch.Count > 0)
-            {
-                m.Architecture = m.SupportedArch[0];
-            }
-        }
-
-        // Catalogs
-        var fallbackCatalogs = m.Catalogs.Count > 0 ? m.Catalogs : [config.DefaultCatalog];
-        var catalogsStr = string.Join(", ", fallbackCatalogs);
-        var typedCatalogs = ReadLineWithDefault("Catalogs", catalogsStr);
-        if (typedCatalogs == catalogsStr)
-        {
-            m.Catalogs = fallbackCatalogs;
-        }
-        else
-        {
-            m.Catalogs = typedCatalogs.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                .Select(c => c.Trim())
-                .ToList();
-        }
-
-        return m;
-    }
-
-    /// <summary>
-    /// Prompts for installer location in repo.
-    /// </summary>
-    private string PromptInstallerPath(string? defaultPath, bool noInteractive = false)
-    {
-        defaultPath ??= @"\mgmt";
-        
-        if (noInteractive)
-        {
-            // Use default path without prompting
-            var result = defaultPath;
-            if (!result.StartsWith('\\'))
-            {
-                result = "\\" + result;
-            }
-            return result.TrimEnd('\\');
-        }
-        
-        Console.Write($"Location in repo [{defaultPath}]: ");
-        var path = Console.ReadLine()?.Trim();
-        if (string.IsNullOrEmpty(path))
-        {
-            path = defaultPath;
-        }
-        if (!path.StartsWith('\\'))
-        {
-            path = "\\" + path;
-        }
-        return path.TrimEnd('\\');
-    }
-
-    /// <summary>
     /// Loads script content from file or template.
     /// </summary>
     private string? LoadScriptContent(string? path, PkgsInfo? template, string scriptType)
@@ -590,11 +483,11 @@ public class ImportService
     /// <summary>
     /// Processes uninstaller file.
     /// </summary>
-    private Installer? ProcessUninstaller(string uninstallerPath, string repoPath)
+    private Installer? ProcessUninstaller(string uninstallerPath, string repoPath, IImportPrompter prompter)
     {
         if (!File.Exists(uninstallerPath))
         {
-            Console.WriteLine($"[WARN] Uninstaller '{uninstallerPath}' does not exist");
+            prompter.ReportWarning($"Uninstaller '{uninstallerPath}' does not exist");
             return null;
         }
 
@@ -614,7 +507,7 @@ public class ImportService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[WARN] Failed to process uninstaller: {ex.Message}");
+            prompter.ReportWarning($"Failed to process uninstaller: {ex.Message}");
             return null;
         }
     }
@@ -622,7 +515,7 @@ public class ImportService
     /// <summary>
     /// Builds installs array from file paths.
     /// </summary>
-    private List<InstallItem> BuildInstallsArray(List<string> paths)
+    private List<InstallItem> BuildInstallsArray(List<string> paths, IImportPrompter prompter)
     {
         var items = new List<InstallItem>();
         foreach (var p in paths)
@@ -630,7 +523,7 @@ public class ImportService
             var absPath = Path.GetFullPath(p);
             if (!File.Exists(absPath) || Directory.Exists(absPath))
             {
-                Console.WriteLine($"Skipping -i path: '{p}'");
+                prompter.ReportWarning($"Skipping -i path: '{p}'");
                 continue;
             }
 
@@ -770,15 +663,6 @@ public class ImportService
         return null;
     }
 
-    /// <summary>
-    /// Reads a line with default value.
-    /// </summary>
-    private static string ReadLineWithDefault(string prompt, string defaultVal)
-    {
-        Console.Write($"{prompt} [{defaultVal}]: ");
-        var line = Console.ReadLine()?.Trim();
-        return string.IsNullOrEmpty(line) ? defaultVal : line;
-    }
 
     /// <summary>
     /// Serializes PkgsInfo with custom key ordering:
