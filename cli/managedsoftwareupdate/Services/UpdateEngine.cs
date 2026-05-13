@@ -395,7 +395,7 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap);
+            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap, itemFilterService);
 
             // Dictionary of items LoopGuard refused this run, keyed by lower-invariant
             // name. Surfaces in items.json as Warning + last_warning + status_reason_code,
@@ -860,7 +860,8 @@ public class UpdateEngine : IDisposable
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate)> LoopSuppressed)
-        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
+        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
+                        ItemFilterService? itemFilterService = null)
     {
         var toInstall = new List<CatalogItem>();
         var toUpdate = new List<CatalogItem>();
@@ -950,8 +951,22 @@ public class UpdateEngine : IDisposable
                     
                     if (status.NeedsAction)
                     {
+                        // --item targets specific packages by name; bypass LoopGuard for those
+                        // (run-scoped only — persistent suppression state is left intact so
+                        // future runs without --item still honor it).
+                        var bypassLoopGuard = itemFilterService != null
+                            && itemFilterService.HasFilter
+                            && itemFilterService.Items.Contains(catalogItem.Name);
+
+                        if (bypassLoopGuard)
+                        {
+                            var msg = $"--item: bypassing LoopGuard for '{catalogItem.Name}'";
+                            ConsoleLogger.Info(msg);
+                            _sessionLogger?.Log("INFO", msg);
+                        }
+
                         // Check LoopGuard before adding to install list
-                        if (_loopGuard != null)
+                        if (_loopGuard != null && !bypassLoopGuard)
                         {
                             var fingerprint = ComputeCatalogFingerprint(catalogItem);
                             var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
