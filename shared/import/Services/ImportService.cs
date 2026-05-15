@@ -299,6 +299,16 @@ public class ImportService
         var pkginfoFilename = $"{sanitizedName}{archTag}{pkgsInfo.Version}.yaml";
         var pkginfoPath = Path.Combine(pkginfoFolderPath, pkginfoFilename);
 
+        // Preserve any existing _metadata block (cimian-promoter / autopkg
+        // stamps like created_by / creation_date / cimian-promoter_edit_date).
+        // Without this an in-place re-import would silently strip them, since
+        // we're about to overwrite the file from a freshly-built PkgsInfo.
+        if (File.Exists(pkginfoPath))
+        {
+            var existing = await File.ReadAllTextAsync(pkginfoPath).ConfigureAwait(false);
+            pkgsInfo.Metadata = YamlUtils.ExtractMetadataBlock(existing);
+        }
+
         var yaml = YamlUtils.SerializePkgInfo(pkgsInfo);
         await File.WriteAllTextAsync(pkginfoPath, yaml);
 
