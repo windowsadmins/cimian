@@ -262,9 +262,12 @@ public static class YamlUtils
         return result;
     }
 
-    // Walks `obj` (and one level of nested objects/lists), normalizing CRLF
-    // and trailing whitespace in string properties that look like scripts or
-    // descriptions. Keeps multiline `|` blocks clean across Windows/Linux.
+    // Walks the direct string properties of `obj`, normalizing CRLF to LF and
+    // collapsing sequences of three or more consecutive blank lines to two.
+    // Keeps multiline `|` blocks clean across Windows/Linux checkouts.
+    // Note: only processes the immediate object's properties — nested objects
+    // (e.g. List<InstallItem>) are not walked, but PkgsInfo script properties
+    // are all flat so this is sufficient for all current callers.
     private static void NormalizeMultilineStrings(object? obj)
     {
         if (obj == null) return;
