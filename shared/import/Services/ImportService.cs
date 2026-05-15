@@ -2,7 +2,6 @@ using System.Diagnostics;
 using Cimian.CLI.Cimiimport.Models;
 using Cimian.Core;
 using Cimian.Core.Services;
-using YamlDotNet.Serialization;
 
 namespace Cimian.CLI.Cimiimport.Services;
 
@@ -13,17 +12,11 @@ public class ImportService
 {
     private readonly MetadataExtractor _metadataExtractor;
     private readonly ConfigurationService _configService;
-    private readonly IDeserializer _deserializer;
 
     public ImportService(MetadataExtractor? metadataExtractor = null, ConfigurationService? configService = null)
     {
         _metadataExtractor = metadataExtractor ?? new MetadataExtractor();
         _configService = configService ?? new ConfigurationService();
-
-        // YAML serialization is centralized in YamlUtils. Deserialization keeps
-        // a local handle so legacy MetadataExtractor/ConfigurationService calls
-        // that take an IDeserializer don't need to change yet.
-        _deserializer = YamlUtils.Deserializer;
     }
 
     /// <summary>
@@ -343,7 +336,7 @@ public class ImportService
             }
 
             var yaml = File.ReadAllText(allCatalogPath);
-            var catalog = _deserializer.Deserialize<AllCatalog>(yaml);
+            var catalog = YamlUtils.Deserializer.Deserialize<AllCatalog>(yaml);
 
             var newNameLower = newItemName.Trim().ToLowerInvariant();
             var matches = catalog?.Items?
