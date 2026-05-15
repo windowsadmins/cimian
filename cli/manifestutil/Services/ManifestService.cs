@@ -1,6 +1,5 @@
 using Cimian.CLI.Manifestutil.Models;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.Manifestutil.Services;
 
@@ -10,20 +9,8 @@ namespace Cimian.CLI.Manifestutil.Services;
 /// </summary>
 public class ManifestService
 {
-    private readonly IDeserializer _deserializer;
-    private readonly ISerializer _serializer;
-
     public ManifestService()
     {
-        _deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
-
-        _serializer = new SerializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections)
-            .Build();
     }
 
     /// <summary>
@@ -54,16 +41,11 @@ public class ManifestService
         }
 
         var yaml = File.ReadAllText(manifestPath);
-        var manifest = _deserializer.Deserialize<PackageManifest>(yaml);
-
-        // Normalize included_manifests paths to forward slashes
-        if (manifest.IncludedManifests != null)
-        {
-            manifest.IncludedManifests = manifest.IncludedManifests
-                .Select(path => path.Replace('\\', '/'))
-                .ToList();
-        }
-
+        // YamlUtils.DeserializeManifest does the included_manifests \ → /
+        // normalization for us — every manifest consumer (manifestutil,
+        // CimianStudio) gets the same path shape without duplicating the loop.
+        var manifest = YamlUtils.DeserializeManifest<PackageManifest>(yaml)
+            ?? throw new InvalidDataException($"Manifest is empty or malformed: {manifestPath}");
         return manifest;
     }
 
@@ -72,17 +54,10 @@ public class ManifestService
     /// </summary>
     public void SaveManifest(string manifestPath, PackageManifest manifest)
     {
-        // Normalize included_manifests paths to forward slashes before saving
-        if (manifest.IncludedManifests != null)
-        {
-            manifest.IncludedManifests = manifest.IncludedManifests
-                .Select(path => path.Replace('\\', '/'))
-                .ToList();
-        }
+        // SerializeManifest performs included_manifests path normalization
+        // before emit.
+        var yaml = YamlUtils.SerializeManifest(manifest);
 
-        var yaml = _serializer.Serialize(manifest);
-        
-        // Ensure directory exists
         var directory = Path.GetDirectoryName(manifestPath);
         if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
         {
@@ -156,7 +131,7 @@ public class ManifestService
         }
 
         var yaml = File.ReadAllText(configPath);
-        return _deserializer.Deserialize<CimianConfig>(yaml);
+        return YamlUtils.Deserializer.Deserialize<CimianConfig>(yaml);
     }
 
     private List<string> GetOrCreateSection(PackageManifest manifest, ManifestSection section)

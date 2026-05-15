@@ -1,7 +1,6 @@
 using Cimian.CLI.Makepkginfo.Models;
 using Cimian.Core;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.Makepkginfo.Services;
 
@@ -34,11 +33,7 @@ public class PkgInfoBuilder
     public CimianConfig LoadConfig(string configPath)
     {
         var yaml = File.ReadAllText(configPath);
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
-        return deserializer.Deserialize<CimianConfig>(yaml);
+        return YamlUtils.Deserializer.Deserialize<CimianConfig>(yaml);
     }
 
     /// <summary>
@@ -306,16 +301,13 @@ public class PkgInfoBuilder
     }
 
     /// <summary>
-    /// Serializes a PkgsInfo object to YAML
+    /// Serializes a PkgsInfo object to YAML via the canonical Cimian pkginfo
+    /// writer (priority key order, OmitNull, literal multiline). The model's
+    /// per-field [YamlMember(Order=N)] attributes are ignored — YamlUtils
+    /// imposes the cross-tool canonical ordering instead.
     /// </summary>
     public string SerializePkgsInfo(PkgsInfo pkgsinfo)
-    {
-        var serializer = new SerializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections)
-            .Build();
-        return serializer.Serialize(pkgsinfo);
-    }
+        => YamlUtils.SerializePkgInfo(pkgsinfo);
 
     /// <summary>
     /// Parses the package name from a filename (removes extension)
