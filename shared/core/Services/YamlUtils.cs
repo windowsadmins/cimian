@@ -70,11 +70,37 @@ public static class YamlUtils
         NormalizeMultilineStrings(pkgInfo);
 
         var raw = Serializer.Serialize(pkgInfo);
+
+        // If the model carries a `Metadata : Dictionary<string, object?>`
+        // property (any of our pkginfo models — PkgsInfo, CimianStudio's
+        // Package — can opt in by declaring one with [YamlIgnore]), splice
+        // its contents in as a `_metadata:` block. Workaround for YamlDotNet
+        // 16.3's leading-underscore alias regression. ReorderTopLevelKeys
+        // moves the block to its canonical EOF position.
+        var metadata = ExtractMetadataFromModel(pkgInfo);
+        if (metadata is { Count: > 0 } md)
+        {
+            var metaYaml = Serializer.Serialize(new Dictionary<string, object?> { [MetadataKey] = md });
+            raw = raw.TrimEnd('\n') + "\n" + metaYaml;
+        }
+
         return ReorderTopLevelKeys(raw, PkgInfoPriorityKeys, MetadataKey);
     }
 
     public static T? DeserializePkgInfo<T>(string yaml) where T : class
-        => Deserializer.Deserialize<T>(yaml);
+    {
+        var pkg = Deserializer.Deserialize<T>(yaml);
+        if (pkg is null) return null;
+
+        // Round-trip the _metadata block into the model's Metadata property
+        // when it has one. Symmetric with SerializePkgInfo's emit path.
+        var metadata = ExtractMetadataBlock(yaml);
+        if (metadata is { Count: > 0 })
+        {
+            AssignMetadataToModel(pkg, metadata);
+        }
+        return pkg;
+    }
 
     /// <summary>
     /// Serializes a manifest, normalizing `included_manifests` entries from
@@ -286,6 +312,27 @@ public static class YamlUtils
                 }
             }
         }
+    }
+
+    // Reflection-based read of a `Metadata : Dictionary<string, object?>`
+    // property, if present. Returns null when the model doesn't declare one
+    // (most upstream models don't; PkgsInfo is the seed, CimianStudio's
+    // Package follows). Same marker-less convention as
+    // NormalizeIncludedManifestPaths below.
+    private static Dictionary<string, object?>? ExtractMetadataFromModel(object obj)
+    {
+        var prop = obj.GetType().GetProperty("Metadata", BindingFlags.Public | BindingFlags.Instance);
+        if (prop?.PropertyType != typeof(Dictionary<string, object?>)) return null;
+        return prop.GetValue(obj) as Dictionary<string, object?>;
+    }
+
+    // Symmetric setter for the round-trip path. No-op when the model has no
+    // writable Metadata property.
+    private static void AssignMetadataToModel(object obj, Dictionary<string, object?> metadata)
+    {
+        var prop = obj.GetType().GetProperty("Metadata", BindingFlags.Public | BindingFlags.Instance);
+        if (prop?.PropertyType != typeof(Dictionary<string, object?>) || !prop.CanWrite) return;
+        prop.SetValue(obj, metadata);
     }
 
     // Reflection-based normalization for any model with an

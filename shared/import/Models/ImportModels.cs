@@ -89,6 +89,21 @@ public class PkgsInfo
 
     [YamlMember(Alias = "uninstallcheck_script")]
     public string? UninstallCheckScript { get; set; }
+
+    /// <summary>
+    /// Free-form trailing dictionary used by tools like cimian-promoter and
+    /// autopkg (e.g. <c>created_by</c>, <c>creation_date</c>,
+    /// <c>cimian-promoter_edit_date</c>). Always emitted last.
+    /// <see cref="YamlIgnoreAttribute"/> because YamlDotNet 16.3 silently drops
+    /// any <c>[YamlMember(Alias = "_metadata")]</c> binding (leading-underscore
+    /// alias regression). <see cref="Cimian.Core.Services.YamlUtils"/> picks
+    /// this up via reflection: <c>SerializePkgInfo</c> appends a
+    /// <c>_metadata:</c> block when the value is non-empty, and
+    /// <c>DeserializePkgInfo</c> populates it from the source YAML via
+    /// <c>ExtractMetadataBlock</c>. Round-trip is automatic.
+    /// </summary>
+    [YamlIgnore]
+    public Dictionary<string, object?>? Metadata { get; set; }
 }
 
 /// <summary>
