@@ -62,15 +62,17 @@ public class YamlUtilsTests
         Assert.StartsWith("catalogs:", lines[3]);
     }
 
-    // ─── _metadata at EOF ──────────────────────────────────────────────────
+    // ─── _metadata round-trip via the strongly-typed PkgsInfo.Metadata ─────
 
     [Fact]
-    public void SerializePkgInfo_PreservesMetadataAtEof_WhenRoundTrippedAsDictionary()
+    public void PkgsInfo_RoundTrips_MetadataBlock_AtEof()
     {
-        // The strongly-typed PkgsInfo model can't carry _metadata (YamlDotNet
-        // 16.3 silently drops underscore-prefix aliases). The post-processing
-        // reorder logic does keep it last if the input mapping had it though,
-        // so this exercises the reorder layer directly via the raw Serializer.
+        // PkgsInfo gained a `Metadata : Dictionary<string, object?>` property
+        // (with [YamlIgnore] because YamlDotNet 16.3 silently drops underscore-
+        // prefix aliases). YamlUtils.SerializePkgInfo / DeserializePkgInfo
+        // splice the block in/out via reflection, so the round-trip is
+        // automatic for any model that opts in by declaring a Metadata
+        // property of that exact type.
         const string source = """
             name: Test
             version: '1.0'
@@ -80,13 +82,31 @@ public class YamlUtilsTests
             _metadata:
               created_by: autopkg
               creation_date: '2026-04-21T14:04:12Z'
+
             """;
 
-        var meta = YamlUtils.ExtractMetadataBlock(source);
+        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(source);
+        Assert.NotNull(pkg);
+        Assert.NotNull(pkg!.Metadata);
+        Assert.Equal("autopkg", pkg.Metadata!["created_by"]);
+        Assert.Equal("2026-04-21T14:04:12Z", pkg.Metadata["creation_date"]);
 
-        Assert.NotNull(meta);
-        Assert.Equal("autopkg", meta!["created_by"]);
-        Assert.Equal("2026-04-21T14:04:12Z", meta["creation_date"]);
+        // Re-emit and verify the block is back at EOF in canonical form.
+        var emitted = YamlUtils.SerializePkgInfo(pkg);
+        Assert.Contains("_metadata:", emitted);
+        Assert.Contains("created_by: autopkg", emitted);
+        // _metadata must remain the trailing key — the reorder step's job.
+        var lastNonEmpty = emitted.Split('\n').Reverse().FirstOrDefault(l => !string.IsNullOrWhiteSpace(l));
+        Assert.NotNull(lastNonEmpty);
+        Assert.StartsWith("  ", lastNonEmpty); // last line is indented under _metadata, not a top-level key.
+    }
+
+    [Fact]
+    public void PkgsInfo_RoundTrip_OmitsMetadata_WhenNotPresent()
+    {
+        var pkg = new PkgsInfo { Name = "Test", Version = "1.0" };
+        var emitted = YamlUtils.SerializePkgInfo(pkg);
+        Assert.DoesNotContain("_metadata:", emitted);
     }
 
     // ─── OnDemand: PascalCase must survive round-trip ──────────────────────
