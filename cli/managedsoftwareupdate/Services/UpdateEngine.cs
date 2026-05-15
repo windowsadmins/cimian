@@ -5,9 +5,6 @@ using Cimian.Core;
 using Cimian.Core.Models;
 using Cimian.Core.Services;
 using Cimian.Core.Version;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
-
 using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 using SessionPackageInfo = Cimian.Core.Models.SessionPackageInfo;
 
@@ -2675,12 +2672,7 @@ public class UpdateEngine : IDisposable
             }
 
             // Serialize and write
-            var serializer = new SerializerBuilder()
-                .WithNamingConvention(UnderscoredNamingConvention.Instance)
-                .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
-                .Build();
-
-            var yaml = serializer.Serialize(info);
+            var yaml = YamlUtils.SerializeInstallInfo(info);
             var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
             File.WriteAllText(path, yaml);
 
