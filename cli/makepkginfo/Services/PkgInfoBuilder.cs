@@ -94,14 +94,20 @@ public class PkgInfoBuilder
                 // not as a hash-only file entry pointing at the .msi artifact itself. The
                 // ProductCode/UpgradeCode here are what managedsoftwareupdate uses to
                 // verify Windows Installer registration. Empty extractor results pass
-                // through as null so OmitNull suppresses the keys. Version is intentionally
-                // omitted — StatusService falls back to the top-level pkginfo version, and
-                // MSI per-version identity is already the ProductCode.
+                // through as null so OmitNull suppresses the keys.
+                //
+                // Version is populated from the MSI's ProductVersion (the truncated form
+                // that lands in the uninstall registry, e.g. 26.5.612 for cimipkg-built
+                // date-format catalogs). StatusService's installs[] check compares against
+                // DisplayVersion, so omitting installs[].version makes it fall back to the
+                // top-level catalog version — which for date-format builds (YYYY.MM.DD.HHMM)
+                // will never match the registry's truncated form and loops on every cycle.
                 installs.Add(new InstallItem
                 {
                     Type = "msi",
                     ProductCode = string.IsNullOrEmpty(productCode) ? null : productCode,
-                    UpgradeCode = string.IsNullOrEmpty(upgradeCode) ? null : upgradeCode
+                    UpgradeCode = string.IsNullOrEmpty(upgradeCode) ? null : upgradeCode,
+                    Version = string.IsNullOrEmpty(msiMeta.ProductVersion) ? null : msiMeta.ProductVersion
                 });
                 break;
 
