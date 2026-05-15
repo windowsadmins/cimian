@@ -1,6 +1,5 @@
 using Cimian.CLI.Makecatalogs.Models;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.Makecatalogs.Services;
 
@@ -10,8 +9,6 @@ namespace Cimian.CLI.Makecatalogs.Services;
 /// </summary>
 public class CatalogBuilder
 {
-    private readonly IDeserializer _deserializer;
-    private readonly ISerializer _serializer;
     private readonly Action<string> _log;
     private readonly Action<string> _warn;
     private readonly Action<string> _success;
@@ -24,18 +21,6 @@ public class CatalogBuilder
         _log = log ?? Console.WriteLine;
         _warn = warn ?? (msg => Console.WriteLine($"WARNING: {msg}"));
         _success = success ?? (msg => Console.WriteLine($"SUCCESS: {msg}"));
-
-        _deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
-
-        _serializer = new SerializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections | DefaultValuesHandling.OmitDefaults)
-            .WithIndentedSequences()
-            .WithEventEmitter(next => new LiteralMultilineEmitter(next))
-            .Build();
     }
 
     /// <summary>
@@ -56,7 +41,7 @@ public class CatalogBuilder
             try
             {
                 var yaml = File.ReadAllText(file);
-                var pkgInfo = _deserializer.Deserialize<PkgsInfo>(yaml);
+                var pkgInfo = YamlUtils.Deserializer.Deserialize<PkgsInfo>(yaml);
                 if (pkgInfo != null)
                 {
                     pkgInfo.FilePath = file;
@@ -311,7 +296,7 @@ public class CatalogBuilder
             }
 
             var catalogWrapper = new CatalogFile { Items = items };
-            var yaml = _serializer.Serialize(catalogWrapper);
+            var yaml = YamlUtils.SerializeCatalog(catalogWrapper);
 
             File.WriteAllText(outPath, yaml);
 
