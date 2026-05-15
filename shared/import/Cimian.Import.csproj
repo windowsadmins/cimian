@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Override the repo-wide Directory.Build.props which sets OutputType=Exe
+         and SelfContained=true. This is a class library so admin UIs (e.g.
+         CimianAdmin) can ProjectReference it without falling foul of
+         NETSDK1151 ("self-contained executable cannot be referenced"). -->
+    <OutputType>Library</OutputType>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+    <!-- Existing types live under Cimian.CLI.Cimiimport.* so consumers (cimiimport CLI,
+         tests, CimianAdmin) keep their using statements. Keep the same root namespace. -->
+    <RootNamespace>Cimian.CLI.Cimiimport</RootNamespace>
+    <AssemblyName>Cimian.Import</AssemblyName>
+    <Description>Cimian installer import — workflow services + models, hosted by cimiimport CLI and CimianAdmin GUI</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="9.0.5" />
+    <PackageReference Include="WixToolset.Dtf.WindowsInstaller" Version="5.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\core\Cimian.Core.csproj" />
+  </ItemGroup>
+
+</Project>
