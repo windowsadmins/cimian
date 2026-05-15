@@ -305,12 +305,12 @@ public class ImportService
         // we're about to overwrite the file from a freshly-built PkgsInfo.
         if (File.Exists(pkginfoPath))
         {
-            var existing = await File.ReadAllTextAsync(pkginfoPath).ConfigureAwait(false);
+            var existing = await File.ReadAllTextAsync(pkginfoPath, cancellationToken).ConfigureAwait(false);
             pkgsInfo.Metadata = YamlUtils.ExtractMetadataBlock(existing);
         }
 
         var yaml = YamlUtils.SerializePkgInfo(pkgsInfo);
-        await File.WriteAllTextAsync(pkginfoPath, yaml);
+        await File.WriteAllTextAsync(pkginfoPath, yaml, cancellationToken).ConfigureAwait(false);
 
         prompter.ReportInfo($"Pkginfo created at: {pkginfoPath}");
 
