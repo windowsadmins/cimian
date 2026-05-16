@@ -741,5 +741,28 @@ public class UpdateModelsTests
         Assert.Equal("file", item.EffectiveType());
     }
 
+    [Fact]
+    public void InstallCheckItem_DeserializesKeyPathFromYaml()
+    {
+        // key_path is the defense-in-depth field that pins MSI verification to a
+        // specific on-disk file version. The YAML attribute is `key_path` (snake
+        // case); regression guard so the field can't silently get renamed.
+        var yaml = """
+            type: msi
+            product_code: '{12345678-1234-1234-1234-123456789012}'
+            upgrade_code: '{abcdef01-2345-6789-abcd-ef0123456789}'
+            key_path: 'C:\Program Files\ReportMate\managedreportsrunner.exe'
+            """;
+
+        var deserializer = new YamlDotNet.Serialization.DeserializerBuilder()
+            .IgnoreUnmatchedProperties()
+            .Build();
+
+        var item = deserializer.Deserialize<InstallCheckItem>(yaml);
+
+        Assert.Equal("msi", item.EffectiveType());
+        Assert.Equal(@"C:\Program Files\ReportMate\managedreportsrunner.exe", item.KeyPath);
+    }
+
     #endregion
 }

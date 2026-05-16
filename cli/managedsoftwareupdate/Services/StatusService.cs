@@ -578,6 +578,44 @@ public class StatusService
                     {
                         ConsoleLogger.Info($"MSI verification passed - version current or newer item: {item.Name} installedVersion: {msiInstalledVersion} catalogVersion: {catalogVersion}");
                         result.InstalledVersion = msiInstalledVersion;
+
+                        // Defense in depth: registry says installed at the right version, but
+                        // verify the primary executable on disk matches. Catches silent file
+                        // overwrites where another installer (e.g. a downgrade MSI with a
+                        // different ProductCode) lays older binaries on top while leaving
+                        // this product's ARP DisplayVersion intact.
+                        if (!string.IsNullOrEmpty(installItem.KeyPath))
+                        {
+                            if (!File.Exists(installItem.KeyPath))
+                            {
+                                ConsoleLogger.Info($"MSI registry OK but key_path file missing - reinstall needed item: {item.Name} keyPath: {installItem.KeyPath}");
+                                result.Status = "pending";
+                                result.NeedsAction = true;
+                                result.IsUpdate = true;
+                                result.Reason = $"key_path file missing despite MSI registry hit: {installItem.KeyPath}";
+                                result.ReasonCode = StatusReasonCode.FileMissing;
+                                result.DetectionMethod = DetectionMethod.File;
+                                return result;
+                            }
+
+                            var diskVersion = GetFileVersion(installItem.KeyPath);
+                            if (!string.IsNullOrEmpty(diskVersion) && !string.IsNullOrEmpty(catalogVersion))
+                            {
+                                var cmp = CatalogService.CompareVersions(catalogVersion, diskVersion);
+                                if (cmp > 0)
+                                {
+                                    ConsoleLogger.Info($"MSI registry reports {msiInstalledVersion} but key_path file is older - reinstall needed item: {item.Name} keyPath: {installItem.KeyPath} diskVersion: {diskVersion} catalogVersion: {catalogVersion}");
+                                    result.Status = "pending";
+                                    result.NeedsAction = true;
+                                    result.IsUpdate = true;
+                                    result.InstalledVersion = diskVersion;
+                                    result.Reason = $"key_path version mismatch: disk={diskVersion} catalog={catalogVersion} (ARP reported {msiInstalledVersion})";
+                                    result.ReasonCode = StatusReasonCode.VersionOutdated;
+                                    result.DetectionMethod = DetectionMethod.File;
+                                    return result;
+                                }
+                            }
+                        }
                     }
                     break;
 
