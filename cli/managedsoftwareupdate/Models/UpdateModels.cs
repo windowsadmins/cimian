@@ -527,6 +527,16 @@ public class InstallCheckItem
     public string? IdentityName { get; set; }
 
     /// <summary>
+    /// Optional absolute path to the primary executable installed by this MSI.
+    /// When set, MSI verification also checks that this file's FileVersion is
+    /// >= the catalog version, even after the ARP/UpgradeCode registry check
+    /// passes. Catches silent file overwrites where another installer lays
+    /// older binaries on top of a current MSI without updating the ARP entry.
+    /// </summary>
+    [YamlMember(Alias = "key_path")]
+    public string? KeyPath { get; set; }
+
+    /// <summary>
     /// Returns the lowercased install-check type. When the YAML omits `type:`,
     /// infer it from which identity field is set so a hand-written entry like
     /// `{product_code: ..., upgrade_code: ...}` is treated as an MSI rather than

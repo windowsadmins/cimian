@@ -165,6 +165,15 @@ public class InstallItem
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
+
+    /// <summary>
+    /// Optional absolute path to the primary binary installed by this MSI.
+    /// Mirrors the runtime InstallCheckItem.KeyPath field — emitted in pkginfos
+    /// so managedsoftwareupdate can verify the on-disk FileVersion in addition
+    /// to the MSI registry check.
+    /// </summary>
+    [YamlMember(Alias = "key_path")]
+    public string? KeyPath { get; set; }
 }
 
 /// <summary>
@@ -207,6 +216,14 @@ public class InstallerMetadata
 
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
     public string IdentityName { get; set; } = "";
+
+    /// <summary>
+    /// Resolved absolute path of the primary installed binary for MSI packages.
+    /// Populated by ExtractMsiMetadata from either the build-info.yaml override
+    /// or the auto-detect heuristic against the MSI's File/Component/Directory
+    /// tables. Empty when unresolvable.
+    /// </summary>
+    public string KeyPath { get; set; } = "";
 }
 
 /// <summary>
