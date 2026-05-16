@@ -217,7 +217,17 @@ public partial class MetadataExtractor
             // Third-party MSI — emit top-N file checks instead of a single key_path.
             // type=msi entry (registry/ProductCode check) is still emitted by
             // ImportService.cs; these stack on top as defense-in-depth file checks.
-            foreach (var f in exes.Take(ThirdPartyFileCheckCap))
+            //
+            // Filter to versioned files only. The runtime file verifier compares
+            // the catalog version against the on-disk FileVersionInfo, and when
+            // the disk file has no embedded version it marks the item pending
+            // ("File version metadata unavailable and no hash verification") —
+            // which would loop forever for unversioned vendor binaries. Better
+            // to not emit a check we can't make pass than to ship an install
+            // loop. Files with version metadata get the full file-version check;
+            // unversioned binaries fall back to ARP-only verification.
+            foreach (var f in exes.Where(f => !string.IsNullOrWhiteSpace(f.Version))
+                                  .Take(ThirdPartyFileCheckCap))
             {
                 metadata.Installs.Add(new InstallItem
                 {
@@ -234,24 +244,30 @@ public partial class MetadataExtractor
     }
 
     /// <summary>
-    /// Resolves a <c>key_path</c> value from build-info.yaml. Absolute paths
-    /// pass through; relative paths are anchored to the package's
-    /// <c>install_location</c>. Returns empty when neither yields an absolute path.
+    /// Resolves a <c>key_path</c> value from build-info.yaml. Fully-qualified
+    /// paths pass through; everything else (including drive-relative forms like
+    /// <c>C:foo\bar</c>, which <see cref="Path.IsPathRooted"/> reports as
+    /// rooted but aren't fully qualified) is treated as a relative path anchored
+    /// to the package's <c>install_location</c>. Returns empty when there's no
+    /// install_location to anchor against and the value isn't fully qualified.
     /// </summary>
     private static string ResolveBuildInfoKeyPath(string keyPath, string? installLocation)
     {
         var trimmed = keyPath.Trim();
         if (string.IsNullOrEmpty(trimmed)) return "";
 
-        // Already an absolute Windows path (e.g. starts with "C:\" or "\\").
-        if (Path.IsPathRooted(trimmed))
-            return trimmed.Replace('/', '\\');
+        var normalized = trimmed.Replace('/', '\\');
+
+        // Use IsPathFullyQualified (not IsPathRooted) so drive-relative forms like
+        // "C:foo\bar" — which resolve at the runtime CWD of drive C: — don't sneak
+        // through as if they were absolute paths.
+        if (Path.IsPathFullyQualified(normalized))
+            return normalized;
 
         if (string.IsNullOrWhiteSpace(installLocation))
             return "";
 
-        var combined = Path.Combine(installLocation.TrimEnd('\\', '/'), trimmed.Replace('/', '\\'));
-        return combined;
+        return Path.Combine(installLocation.TrimEnd('\\', '/'), normalized);
     }
 
     /// <summary>

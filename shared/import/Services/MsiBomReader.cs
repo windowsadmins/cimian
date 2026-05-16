@@ -1,4 +1,3 @@
-using System.Collections;
 using WixToolset.Dtf.WindowsInstaller;
 
 namespace Cimian.CLI.Cimiimport.Services;
@@ -27,26 +26,49 @@ public static class MsiBomReader
 {
     /// <summary>
     /// Standard Windows Installer system folder identifiers. Resolved to their
-    /// canonical absolute paths. Anything not in this map is treated as a
-    /// custom directory and resolved via Directory.DefaultDir.
+    /// canonical absolute paths from the running environment so a non-default
+    /// system drive (e.g. Windows installed on D:\) produces correct keypaths.
+    /// Anything not in this map is treated as a custom directory and resolved
+    /// via Directory.DefaultDir.
     /// See https://learn.microsoft.com/en-us/windows/win32/msi/property-reference#system-folder-properties
+    /// Caveat: cimiimport runs at packaging time, so the resolved roots reflect
+    /// the build host. In a homogeneous fleet (all machines on the same system
+    /// drive) this is correct. Mixed-drive fleets would need install-time path
+    /// resolution, which a static pkginfo can't express anyway.
     /// </summary>
-    private static readonly Dictionary<string, string> WellKnownFolders = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> WellKnownFolders = BuildWellKnownFolders();
+
+    private static Dictionary<string, string> BuildWellKnownFolders()
     {
-        ["TARGETDIR"]            = @"C:\",
-        ["ProgramFiles64Folder"] = @"C:\Program Files",
-        ["ProgramFilesFolder"]   = @"C:\Program Files (x86)",
-        ["CommonFiles64Folder"]  = @"C:\Program Files\Common Files",
-        ["CommonFilesFolder"]    = @"C:\Program Files (x86)\Common Files",
-        ["CommonAppDataFolder"]  = @"C:\ProgramData",
-        ["WindowsFolder"]        = @"C:\Windows",
-        ["SystemFolder"]         = @"C:\Windows\System32",
-        ["System64Folder"]       = @"C:\Windows\System32",
-        ["FontsFolder"]          = @"C:\Windows\Fonts",
-        ["TempFolder"]           = @"C:\Windows\Temp",
-        ["DesktopFolder"]        = @"C:\Users\Public\Desktop",
-        ["ProgramMenuFolder"]    = @"C:\ProgramData\Microsoft\Windows\Start Menu\Programs",
-    };
+        var sysDrive = Environment.GetEnvironmentVariable("SystemDrive") ?? "C:";
+        var programFiles    = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var commonFiles     = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        var commonFilesX86  = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86);
+        var commonAppData   = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        var windows         = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var system          = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var fonts           = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+        var commonDesktop   = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+        var commonPrograms  = Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms);
+
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["TARGETDIR"]            = sysDrive + @"\",
+            ["ProgramFiles64Folder"] = programFiles,
+            ["ProgramFilesFolder"]   = string.IsNullOrEmpty(programFilesX86) ? programFiles : programFilesX86,
+            ["CommonFiles64Folder"]  = commonFiles,
+            ["CommonFilesFolder"]    = string.IsNullOrEmpty(commonFilesX86) ? commonFiles : commonFilesX86,
+            ["CommonAppDataFolder"]  = commonAppData,
+            ["WindowsFolder"]        = windows,
+            ["SystemFolder"]         = system,
+            ["System64Folder"]       = system,
+            ["FontsFolder"]          = fonts,
+            ["TempFolder"]           = Path.Combine(windows, "Temp"),
+            ["DesktopFolder"]        = commonDesktop,
+            ["ProgramMenuFolder"]    = commonPrograms,
+        };
+    }
 
     /// <summary>
     /// Enumerates files installed by the MSI whose extension matches one of
