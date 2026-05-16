@@ -447,4 +447,46 @@ public class MetadataExtractorTests
             }
         }
     }
+
+    [Fact]
+    public void InstallItem_SerializesKeyPathAsYaml_KeyPathField()
+    {
+        // Regression guard: the YAML attribute is `key_path`, matching the
+        // runtime InstallCheckItem.KeyPath alias on the StatusService side.
+        // A rename on either side without the matching change here would
+        // break the pkginfo wire format silently.
+        var item = new InstallItem
+        {
+            Type = "msi",
+            ProductCode = "{12345678-1234-1234-1234-123456789012}",
+            UpgradeCode = "{abcdef01-2345-6789-abcd-ef0123456789}",
+            KeyPath = @"C:\Program Files\Foo\foo.exe",
+        };
+
+        var serializer = new YamlDotNet.Serialization.SerializerBuilder().Build();
+        var yaml = serializer.Serialize(item);
+
+        Assert.Contains("key_path:", yaml);
+        Assert.Contains(@"C:\Program Files\Foo\foo.exe", yaml);
+    }
+
+    [Fact]
+    public void InstallItem_KeyPathRoundtripsThroughYaml()
+    {
+        var yaml = """
+            type: msi
+            product_code: '{12345678-1234-1234-1234-123456789012}'
+            upgrade_code: '{abcdef01-2345-6789-abcd-ef0123456789}'
+            key_path: 'C:\Program Files\ReportMate\managedreportsrunner.exe'
+            """;
+
+        var deserializer = new YamlDotNet.Serialization.DeserializerBuilder()
+            .IgnoreUnmatchedProperties()
+            .Build();
+
+        var item = deserializer.Deserialize<InstallItem>(yaml);
+
+        Assert.Equal("msi", item.Type);
+        Assert.Equal(@"C:\Program Files\ReportMate\managedreportsrunner.exe", item.KeyPath);
+    }
 }

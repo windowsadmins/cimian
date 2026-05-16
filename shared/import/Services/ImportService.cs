@@ -205,13 +205,20 @@ public class ImportService
             // Version is intentionally omitted — StatusService falls back to the
             // top-level pkginfo version when the installs entry has none, and the
             // MSI's per-version identity is already the ProductCode.
+            //
+            // KeyPath is populated by ExtractMsiMetadata for cimipkg-built MSIs
+            // (either an explicit build-info override or the BOM heuristic pick).
+            // Third-party MSIs leave KeyPath empty here — those packages get up
+            // to 3 companion type=file entries appended further down via
+            // metadata.Installs (see PopulateMsiBom).
             finalInstalls =
             [
                 new InstallItem
                 {
                     Type = "msi",
                     ProductCode = productCode,
-                    UpgradeCode = upgradeCode
+                    UpgradeCode = upgradeCode,
+                    KeyPath = string.IsNullOrWhiteSpace(metadata.KeyPath) ? null : metadata.KeyPath
                 }
             ];
         }
