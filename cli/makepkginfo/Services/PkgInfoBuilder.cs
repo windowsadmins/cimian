@@ -62,6 +62,33 @@ public class PkgInfoBuilder
     }
 
     /// <summary>
+    /// Builds the InstallItem that represents MSI install identity in the pkgsinfo.
+    /// Internal so unit tests can verify the mapping from MsiMetadata without
+    /// needing a real MSI on disk.
+    ///
+    /// Munki convention: MSI install identity belongs in installs[] of type=msi,
+    /// not as a hash-only file entry pointing at the .msi artifact itself. The
+    /// ProductCode/UpgradeCode are what managedsoftwareupdate uses to verify
+    /// Windows Installer registration. Empty extractor results pass through as
+    /// null so OmitNull suppresses the keys.
+    ///
+    /// Version is populated from the MSI's ProductVersion (the truncated form
+    /// that lands in the uninstall registry, e.g. 26.5.612 for cimipkg-built
+    /// date-format catalogs). StatusService's installs[] check compares against
+    /// DisplayVersion, so omitting installs[].version makes it fall back to the
+    /// top-level catalog version — which for date-format builds (YYYY.MM.DD.HHMM)
+    /// will never match the registry's truncated form and loops on every cycle.
+    /// </summary>
+    public static InstallItem BuildMsiInstallItem(MetadataExtractor.MsiMetadata meta) =>
+        new()
+        {
+            Type = "msi",
+            ProductCode = string.IsNullOrEmpty(meta.ProductCode) ? null : meta.ProductCode,
+            UpgradeCode = string.IsNullOrEmpty(meta.UpgradeCode) ? null : meta.UpgradeCode,
+            Version = string.IsNullOrEmpty(meta.ProductVersion) ? null : meta.ProductVersion
+        };
+
+    /// <summary>
     /// Gathers installer information and builds a PkgsInfo object
     /// </summary>
     public PkgsInfo BuildFromInstaller(string installerPath, PkgsInfoOptions options)
@@ -90,19 +117,7 @@ public class PkgInfoBuilder
                 productCode = msiMeta.ProductCode;
                 upgradeCode = msiMeta.UpgradeCode;
 
-                // Munki convention: MSI install identity belongs in installs[] of type=msi,
-                // not as a hash-only file entry pointing at the .msi artifact itself. The
-                // ProductCode/UpgradeCode here are what managedsoftwareupdate uses to
-                // verify Windows Installer registration. Empty extractor results pass
-                // through as null so OmitNull suppresses the keys. Version is intentionally
-                // omitted — StatusService falls back to the top-level pkginfo version, and
-                // MSI per-version identity is already the ProductCode.
-                installs.Add(new InstallItem
-                {
-                    Type = "msi",
-                    ProductCode = string.IsNullOrEmpty(productCode) ? null : productCode,
-                    UpgradeCode = string.IsNullOrEmpty(upgradeCode) ? null : upgradeCode
-                });
+                installs.Add(BuildMsiInstallItem(msiMeta));
                 break;
 
             case ".exe":

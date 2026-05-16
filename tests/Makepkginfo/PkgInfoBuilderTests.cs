@@ -239,6 +239,67 @@ public class PkgInfoBuilderTests
     }
 
     [Fact]
+    public void BuildMsiInstallItem_PopulatesVersionFromProductVersion()
+    {
+        // Cimipkg-built MSIs land DisplayVersion=26.5.612 in the registry (compressed
+        // from catalog version 2026.05.06.1248). installs[].version must match that
+        // truncated form so StatusService.CheckMsiWithUpgradeCode resolves correctly --
+        // omitting it makes Cimian fall back to the date-format catalog version, which
+        // never equals 26.5.612 and triggers a permanent reinstall loop.
+        var meta = new MetadataExtractor.MsiMetadata(
+            ProductName:    "SbinInstaller",
+            ProductVersion: "26.4.2716",
+            Developer:      "Windows Admins",
+            Description:    "",
+            ProductCode:    "{a3d0871c-e0e8-4f11-827f-6507a08dc00b}",
+            UpgradeCode:    "{eb666390-ff65-55da-aac4-8eebc7b45db0}");
+
+        var item = PkgInfoBuilder.BuildMsiInstallItem(meta);
+
+        Assert.Equal("msi", item.Type);
+        Assert.Equal("{a3d0871c-e0e8-4f11-827f-6507a08dc00b}", item.ProductCode);
+        Assert.Equal("{eb666390-ff65-55da-aac4-8eebc7b45db0}", item.UpgradeCode);
+        Assert.Equal("26.4.2716", item.Version);
+    }
+
+    [Fact]
+    public void BuildMsiInstallItem_EmptyProductVersion_LeavesVersionNull()
+    {
+        // OmitNull must suppress an absent ProductVersion (some MSIs ship without one) --
+        // emitting empty-string would serialize as `version: ''` and break version compare.
+        var meta = new MetadataExtractor.MsiMetadata(
+            ProductName:    "Blender",
+            ProductVersion: "",
+            Developer:      "Blender Foundation",
+            Description:    "",
+            ProductCode:    "{26068070-A31E-4DCD-8D17-F40B06CB413D}",
+            UpgradeCode:    "{4C6AD1CE-C11B-54CD-83AE-A801252310E4}");
+
+        var item = PkgInfoBuilder.BuildMsiInstallItem(meta);
+
+        Assert.Null(item.Version);
+        Assert.Equal("{26068070-A31E-4DCD-8D17-F40B06CB413D}", item.ProductCode);
+    }
+
+    [Fact]
+    public void BuildMsiInstallItem_EmptyCodes_LeavesCodesNull()
+    {
+        var meta = new MetadataExtractor.MsiMetadata(
+            ProductName:    "UnknownMSI",
+            ProductVersion: "1.2.3",
+            Developer:      "",
+            Description:    "",
+            ProductCode:    "",
+            UpgradeCode:    "");
+
+        var item = PkgInfoBuilder.BuildMsiInstallItem(meta);
+
+        Assert.Null(item.ProductCode);
+        Assert.Null(item.UpgradeCode);
+        Assert.Equal("1.2.3", item.Version);
+    }
+
+    [Fact]
     public void CreateNewPkgsInfo_CreatesFileWithDefaults()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
