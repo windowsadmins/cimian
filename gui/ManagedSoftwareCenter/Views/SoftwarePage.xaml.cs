@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
@@ -75,7 +76,14 @@ public partial class SoftwarePage : Page
                 
                 // Load data - bindings will auto-update
                 await ViewModel.LoadAsync();
-                
+
+                // Apply category passed via navigation (e.g. cimian://category/Browsers)
+                if (!string.IsNullOrEmpty(_selectedCategory) && _selectedCategory != "All")
+                {
+                    ViewModel.SelectedCategory = _selectedCategory;
+                    SectionHeader.Text = _selectedCategory;
+                }
+
                 // Build category pills after data loaded
                 BuildCategoryPills();
                 
@@ -93,6 +101,15 @@ public partial class SoftwarePage : Page
         {
             _carouselTimer.Stop();
         };
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string category && !string.IsNullOrWhiteSpace(category))
+        {
+            _selectedCategory = category;
+        }
     }
 
     #region Branding Images & Carousel

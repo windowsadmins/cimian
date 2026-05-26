@@ -53,10 +53,9 @@ public partial class CategoriesPage : Page
     {
         if (CategoriesList.SelectedItem is CategoryGroup category)
         {
-            // Navigate to Software page with category filter via MainWindow
             if (App.MainWindow is MainWindow mainWindow)
             {
-                mainWindow.NavigateToPage("software");
+                mainWindow.NavigateToCategory(category.Name);
             }
             CategoriesList.SelectedItem = null; // Reset selection
         }

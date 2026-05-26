@@ -225,6 +225,31 @@ public partial class MainWindow : Window
             new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight });
     }
 
+    // Navigates to the updates page first so a Back gesture returns there, then drills into the
+    // item detail. Mirrors Munki's `updatedetail-` deep link semantics.
+    public void NavigateToUpdateDetail(string itemName)
+    {
+        NavigateToPage("updates");
+        NavigateToItemDetail(itemName);
+    }
+
+    // Navigates to the software browser with a category pre-selected.
+    public void NavigateToCategory(string category)
+    {
+        ViewModel.NavigationParameter = category;
+        ContentFrame.Navigate(typeof(SoftwarePage), category,
+            new EntranceNavigationTransitionInfo());
+
+        foreach (var item in NavView.MenuItems)
+        {
+            if (item is NavigationViewItem navItem && navItem.Tag?.ToString() == "software")
+            {
+                NavView.SelectedItem = navItem;
+                break;
+            }
+        }
+    }
+
     /// <summary>
     /// Navigate back to previous page
     /// </summary>
