@@ -12,6 +12,10 @@ using Cimian.GUI.ManagedSoftwareCenter.Views;
 
 namespace Cimian.GUI.ManagedSoftwareCenter;
 
+// Typed marker so SoftwarePage can distinguish a category deep-link from the
+// generic ShellViewModel.NavigationParameter (which carries item names).
+public sealed record CategoryNavigationRequest(string CategoryName);
+
 /// <summary>
 /// Main application window with NavigationView shell
 /// </summary>
@@ -233,11 +237,13 @@ public partial class MainWindow : Window
         NavigateToItemDetail(itemName);
     }
 
-    // Navigates to the software browser with a category pre-selected.
+    // Navigates to the software browser with a category pre-selected. The request is passed
+    // as a typed CategoryNavigationRequest directly via ContentFrame.Navigate so it does not
+    // leak into ShellViewModel.NavigationParameter (which is reused by other pages).
     public void NavigateToCategory(string category)
     {
-        ViewModel.NavigationParameter = category;
-        ContentFrame.Navigate(typeof(SoftwarePage), category,
+        ContentFrame.Navigate(typeof(SoftwarePage),
+            new CategoryNavigationRequest(category),
             new EntranceNavigationTransitionInfo());
 
         foreach (var item in NavView.MenuItems)

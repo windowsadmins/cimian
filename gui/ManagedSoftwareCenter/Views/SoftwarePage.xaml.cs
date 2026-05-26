@@ -77,11 +77,29 @@ public partial class SoftwarePage : Page
                 // Load data - bindings will auto-update
                 await ViewModel.LoadAsync();
 
-                // Apply category passed via navigation (e.g. cimian://category/Browsers)
-                if (!string.IsNullOrEmpty(_selectedCategory) && _selectedCategory != "All")
+                // Apply category passed via navigation (e.g. cimian://category/Browsers).
+                // Canonicalize against the loaded category list so pill highlighting and
+                // filtering work regardless of the casing used in the deep link.
+                if (!string.IsNullOrEmpty(_selectedCategory) &&
+                    !string.Equals(_selectedCategory, "All", StringComparison.OrdinalIgnoreCase))
                 {
-                    ViewModel.SelectedCategory = _selectedCategory;
-                    SectionHeader.Text = _selectedCategory;
+                    var canonical = ViewModel.Categories?.FirstOrDefault(c =>
+                        string.Equals(c, _selectedCategory, StringComparison.OrdinalIgnoreCase));
+                    if (canonical != null)
+                    {
+                        _selectedCategory = canonical;
+                        ViewModel.SelectedCategory = canonical;
+                        SectionHeader.Text = canonical;
+                    }
+                    else
+                    {
+                        // Unknown category name -- fall back to showing everything.
+                        _selectedCategory = "All";
+                    }
+                }
+                else
+                {
+                    _selectedCategory = "All";
                 }
 
                 // Build category pills after data loaded
@@ -106,9 +124,13 @@ public partial class SoftwarePage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        if (e.Parameter is string category && !string.IsNullOrWhiteSpace(category))
+        // Only honor a typed CategoryNavigationRequest. ShellViewModel.NavigationParameter
+        // also flows through here as a raw string (it can carry an item name set by
+        // NavigateToItemDetail), so plain strings must not be treated as categories.
+        if (e.Parameter is CategoryNavigationRequest request &&
+            !string.IsNullOrWhiteSpace(request.CategoryName))
         {
-            _selectedCategory = category;
+            _selectedCategory = request.CategoryName;
         }
     }
 
