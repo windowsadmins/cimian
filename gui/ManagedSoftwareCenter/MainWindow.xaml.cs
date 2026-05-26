@@ -12,6 +12,10 @@ using Cimian.GUI.ManagedSoftwareCenter.Views;
 
 namespace Cimian.GUI.ManagedSoftwareCenter;
 
+// Typed marker so SoftwarePage can distinguish a category deep-link from the
+// generic ShellViewModel.NavigationParameter (which carries item names).
+public sealed record CategoryNavigationRequest(string CategoryName);
+
 /// <summary>
 /// Main application window with NavigationView shell
 /// </summary>
@@ -223,6 +227,33 @@ public partial class MainWindow : Window
         ViewModel.NavigationParameter = itemName;
         ContentFrame.Navigate(typeof(ItemDetailPage), itemName,
             new SlideNavigationTransitionInfo { Effect = SlideNavigationTransitionEffect.FromRight });
+    }
+
+    // Navigates to the updates page first so a Back gesture returns there, then drills into the
+    // item detail. Mirrors Munki's `updatedetail-` deep link semantics.
+    public void NavigateToUpdateDetail(string itemName)
+    {
+        NavigateToPage("updates");
+        NavigateToItemDetail(itemName);
+    }
+
+    // Navigates to the software browser with a category pre-selected. The request is passed
+    // as a typed CategoryNavigationRequest directly via ContentFrame.Navigate so it does not
+    // leak into ShellViewModel.NavigationParameter (which is reused by other pages).
+    public void NavigateToCategory(string category)
+    {
+        ContentFrame.Navigate(typeof(SoftwarePage),
+            new CategoryNavigationRequest(category),
+            new EntranceNavigationTransitionInfo());
+
+        foreach (var item in NavView.MenuItems)
+        {
+            if (item is NavigationViewItem navItem && navItem.Tag?.ToString() == "software")
+            {
+                NavView.SelectedItem = navItem;
+                break;
+            }
+        }
     }
 
     /// <summary>
