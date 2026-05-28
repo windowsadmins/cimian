@@ -235,15 +235,36 @@ public class StatusService
                 return result;
             }
 
-            // Go parity: If no checks are defined and no installs array,
-            // assume item doesn't need action (it may not have verification methods)
-            // Don't fall back to ManagedInstalls registry as Go doesn't do this
-            ConsoleLogger.Debug($"No file tracking needed - registry/product code verification sufficient item: {item.Name}");
-            result.Status = "installed";
-            result.Reason = "No explicit checks defined - assuming installed";
-            result.ReasonCode = StatusReasonCode.NoChecks;
+            // No verification method matched. For items with a real installer payload
+            // (msi/exe/pkg/nupkg/copy) and no ManagedInstalls registry trace, defaulting
+            // to "installed" gave the wrong answer in MSC — optional items the user had
+            // never installed showed up as Installed because the pkgsinfo didn't declare
+            // installs[]/installcheck_script/check.* and Cimian had no entry to compare.
+            //
+            // Treat real installers as not-installed when nothing else confirms presence;
+            // script-only items (nopkg / empty type) keep the legacy "assume installed"
+            // default because they have no file artifact to verify.
+            var installerType = (item.Installer?.Type ?? string.Empty).Trim().ToLowerInvariant();
+            var isScriptOnly = installerType is "" or "nopkg" or "script";
+
+            if (isScriptOnly)
+            {
+                ConsoleLogger.Debug($"No file tracking needed - script-only item assumed installed item: {item.Name}");
+                result.Status = "installed";
+                result.Reason = "No explicit checks defined - script-only item assumed installed";
+                result.ReasonCode = StatusReasonCode.NoChecks;
+                result.DetectionMethod = DetectionMethod.None;
+                ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
+                return result;
+            }
+
+            ConsoleLogger.Info($"No verification method matched and no ManagedInstalls trace - treating as not-installed item: {item.Name} installerType: {installerType}");
+            result.Status = "pending";
+            result.NeedsAction = true;
+            result.IsUpdate = false;
+            result.Reason = $"No verification succeeded for installer type '{installerType}' and item has no ManagedInstalls registry entry";
+            result.ReasonCode = StatusReasonCode.NotInstalled;
             result.DetectionMethod = DetectionMethod.None;
-            ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
             return result;
         }
         catch (Exception ex)
