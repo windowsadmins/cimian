@@ -220,8 +220,8 @@ public partial class SoftwareViewModel : ObservableObject
         item.Status = ItemStatus.InstallRequested;
         item.UserRequested = true;
 
-        // Trigger immediate check/install
-        await _triggerService.TriggerInstallAsync();
+        // Targeted, preflight-skipping trigger — fast feedback for the just-clicked item.
+        await _triggerService.TriggerInstallItemAsync(item.Name);
 
         ApplyFilters();
     }
@@ -242,8 +242,8 @@ public partial class SoftwareViewModel : ObservableObject
         // Update item status
         item.Status = ItemStatus.RemovalRequested;
 
-        // Trigger immediate check/install
-        await _triggerService.TriggerInstallAsync();
+        // Targeted, preflight-skipping trigger — fast feedback for the just-clicked item.
+        await _triggerService.TriggerInstallItemAsync(item.Name);
 
         ApplyFilters();
     }

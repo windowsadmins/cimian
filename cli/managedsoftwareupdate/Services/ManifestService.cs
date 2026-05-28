@@ -84,6 +84,12 @@ public class ManifestService
             items.AddRange(conditionalResults);
         }
 
+        // PASS 3: Merge user-driven self-service requests (Munki parity: pkg/selfservice).
+        // The GUI writes SelfServeManifest.yaml when a user clicks Install/Remove on an
+        // optional item; without this merge MSU sees the item only as `optional` and
+        // never queues an action.
+        await MergeSelfServeManifestAsync(items);
+
         return items;
     }
 
@@ -523,6 +529,97 @@ public class ManifestService
         };
     }
     
+    /// <summary>
+    /// Merges the user-writable SelfServeManifest into the manifest item list.
+    /// `managed_installs` entries promote a matching optional item to action=install, or add a
+    /// new install item if no server manifest references it. `managed_uninstalls` entries
+    /// flip the action to uninstall (or add a new uninstall item).
+    ///
+    /// Honors Config.SkipSelfService so admins can disable self-service end-to-end. The user
+    /// entries persist in SelfServeManifest.yaml until the user cancels the request; once the
+    /// software is installed, normal status checks suppress further action.
+    /// </summary>
+    private async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
+    {
+        if (_config.SkipSelfService)
+        {
+            ConsoleLogger.Debug("SelfServe merge skipped (SkipSelfService=true)");
+            return;
+        }
+
+        SelfServiceManifest selfServe;
+        try
+        {
+            var svc = new SelfServiceManifestService();
+            selfServe = await svc.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to load SelfServeManifest: {ex.Message}");
+            return;
+        }
+
+        if (selfServe.ManagedInstalls.Count == 0 && selfServe.ManagedUninstalls.Count == 0)
+        {
+            return;
+        }
+
+        ConsoleLogger.Info($"    Merging SelfServeManifest: {selfServe.ManagedInstalls.Count} install request(s), {selfServe.ManagedUninstalls.Count} uninstall request(s)");
+
+        const string selfServeSource = "SelfServeManifest";
+
+        foreach (var name in selfServe.ManagedInstalls)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var existing = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+            {
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "install",
+                    SourceManifest = selfServeSource
+                });
+                SetItemSource(name, selfServeSource, "managed_installs");
+                ConsoleLogger.Debug($"SelfServe: added install request item: {name}");
+            }
+            else if (string.Equals(existing.Action, "optional", StringComparison.OrdinalIgnoreCase))
+            {
+                existing.Action = "install";
+                SetItemSource(name, selfServeSource, "managed_installs");
+                ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {existing.SourceManifest}");
+            }
+            // If the item is already managed_installs / update / uninstall by server policy,
+            // leave it alone — admin policy wins.
+        }
+
+        foreach (var name in selfServe.ManagedUninstalls)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var existing = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+            {
+                items.Add(new ManifestItem
+                {
+                    Name = name,
+                    Action = "uninstall",
+                    SourceManifest = selfServeSource
+                });
+                SetItemSource(name, selfServeSource, "managed_uninstalls");
+                ConsoleLogger.Debug($"SelfServe: added uninstall request item: {name}");
+            }
+            else if (!string.Equals(existing.Action, "uninstall", StringComparison.OrdinalIgnoreCase))
+            {
+                // User explicitly wants this removed — override even server-side install policy.
+                existing.Action = "uninstall";
+                SetItemSource(name, selfServeSource, "managed_uninstalls");
+                ConsoleLogger.Debug($"SelfServe: flipped to uninstall item: {name} originalSource: {existing.SourceManifest}");
+            }
+        }
+    }
+
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)
     {
         var items = new List<ManifestItem>();

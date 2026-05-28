@@ -46,6 +46,20 @@ public class TriggerService : ITriggerService, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task TriggerInstallItemAsync(string itemName)
+    {
+        if (string.IsNullOrWhiteSpace(itemName))
+        {
+            throw new ArgumentException("itemName must be provided", nameof(itemName));
+        }
+
+        _logger?.LogInformation("Triggering targeted install for {Item} via CimianWatcher", itemName);
+        // --no-preflight skips the preflight script (catalogs/config were just refreshed by
+        // the most recent --checkonly), turning a ~30s pipeline into a ~5-10s targeted run.
+        await TriggerViaFlagFileAsync($"--item {itemName} --no-preflight --show-status -vv");
+    }
+
+    /// <inheritdoc />
     public Task TriggerStopAsync()
     {
         // With the flag-file approach we don't hold a process handle.
