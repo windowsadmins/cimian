@@ -610,12 +610,17 @@ public class ManifestService
                 SetItemSource(name, selfServeSource, "managed_uninstalls");
                 ConsoleLogger.Debug($"SelfServe: added uninstall request item: {name}");
             }
-            else if (!string.Equals(existing.Action, "uninstall", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(existing.Action, "optional", StringComparison.OrdinalIgnoreCase))
             {
-                // User explicitly wants this removed — override even server-side install policy.
+                // Optional item — user is the only authority, so honor the removal request.
                 existing.Action = "uninstall";
                 SetItemSource(name, selfServeSource, "managed_uninstalls");
-                ConsoleLogger.Debug($"SelfServe: flipped to uninstall item: {name} originalSource: {existing.SourceManifest}");
+                ConsoleLogger.Debug($"SelfServe: flipped optional to uninstall item: {name} originalSource: {existing.SourceManifest}");
+            }
+            else if (!string.Equals(existing.Action, "uninstall", StringComparison.OrdinalIgnoreCase))
+            {
+                // install / update from server policy — admin wins, suppress the user request.
+                ConsoleLogger.Info($"SelfServe: ignoring uninstall request for {name}; admin policy requires {existing.Action} (source: {existing.SourceManifest})");
             }
         }
     }
