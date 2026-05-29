@@ -199,7 +199,32 @@ public class ImportServiceTests
             Type = type,
             Location = $"pkgs/TestApp/TestApp.{type}"
         };
-        
+
         Assert.Equal(type, installer.Type);
+    }
+
+    [Theory]
+    [InlineData(@"mgmt", "mgmt")]
+    [InlineData(@"\mgmt", "mgmt")]
+    [InlineData("/mgmt", "mgmt")]
+    [InlineData(@"mgmt\apps", @"mgmt\apps")]
+    [InlineData("mgmt/apps", @"mgmt\apps")]
+    [InlineData("/mgmt/sub/deep", @"mgmt\sub\deep")]
+    [InlineData("", "")]
+    [InlineData("   ", "")]
+    public void NormalizeRepoSubPath_StripsLeadingSeparatorsAndForwardSlashes(string input, string expected)
+    {
+        var result = ImportService.NormalizeRepoSubPath(input);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Windows")]
+    [InlineData(@"D:\foo\bar")]
+    [InlineData(@"\\server\share\path")]
+    [InlineData(@"\\mgmt")] // ambiguous: UNC prefix; reject so caller clarifies
+    public void NormalizeRepoSubPath_RejectsRootedOrUncPaths(string input)
+    {
+        Assert.Throws<ArgumentException>(() => ImportService.NormalizeRepoSubPath(input));
     }
 }

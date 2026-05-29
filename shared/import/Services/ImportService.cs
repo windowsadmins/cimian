@@ -167,7 +167,13 @@ public class ImportService
             : "-";
 
         // Step 9: Where in the repo should the installer + pkginfo live?
-        var repoSubPath = await prompter.AskRepoSubdirAsync(metadata.RepoPath ?? @"\mgmt", cancellationToken).ConfigureAwait(false);
+        // RepoPath is a non-nullable string defaulting to "" (the null-coalesce
+        // never fires for empty strings) and templated values can arrive
+        // forward-slashed ("/mgmt") because pkginfo is normalized that way on
+        // disk. IsNullOrEmpty + an explicit \mgmt default keeps NoInteractive
+        // runs from collapsing into the repo root.
+        var defaultRepoSub = string.IsNullOrEmpty(metadata.RepoPath) ? @"\mgmt" : metadata.RepoPath;
+        var repoSubPath = await prompter.AskRepoSubdirAsync(defaultRepoSub, cancellationToken).ConfigureAwait(false);
 
         // Step 10: Build installs array
         List<InstallItem> finalInstalls;
@@ -293,7 +299,11 @@ public class ImportService
         }
         // Step 12: Copy installer to pkgs subdir
         prompter.ReportInfo("Copying installer to repo...");
-        repoSubPath = repoSubPath.TrimStart('\\');
+        // Templated values can arrive forward-slashed ("/mgmt") because
+        // Installer.Location is normalized that way. A rooted or drive-
+        // qualified value silently makes Path.Combine ignore config.RepoPath
+        // and write outside the repo — coerce to a relative subpath first.
+        repoSubPath = NormalizeRepoSubPath(repoSubPath);
         var installerFolderPath = Path.Combine(config.RepoPath, "pkgs", repoSubPath);
         Directory.CreateDirectory(installerFolderPath);
         
@@ -313,7 +323,7 @@ public class ImportService
         var pkginfoPath = Path.Combine(pkginfoFolderPath, pkginfoFilename);
 
         var yaml = SerializePkgsInfoWithKeyOrder(pkgsInfo);
-        await File.WriteAllTextAsync(pkginfoPath, yaml);
+        await File.WriteAllTextAsync(pkginfoPath, yaml, cancellationToken).ConfigureAwait(false);
 
         prompter.ReportInfo($"Pkginfo created at: {pkginfoPath}");
 
@@ -513,6 +523,50 @@ public class ImportService
     }
 
     /// <summary>
+    /// Coerces a user-supplied repo subdirectory string to a strictly relative
+    /// subpath. Forward slashes (from templated Installer.Location values like
+    /// "/mgmt") are converted to backslashes, leading separators are stripped,
+    /// and rooted / drive-qualified / UNC inputs are rejected outright. Without
+    /// this, <c>Path.Combine(config.RepoPath, "pkgs", repoSubPath)</c> would
+    /// silently treat a rooted input as absolute and write outside the repo.
+    /// </summary>
+    public static string NormalizeRepoSubPath(string repoSubPath)
+    {
+        if (string.IsNullOrWhiteSpace(repoSubPath))
+        {
+            return string.Empty;
+        }
+
+        var normalized = repoSubPath.Replace('/', '\\').Trim();
+
+        // Reject UNC and drive-qualified paths before trimming separators —
+        // after trimming "\\server\share" would silently become "server\share".
+        if (normalized.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Repo subdirectory must be relative, got UNC path: '{repoSubPath}'",
+                nameof(repoSubPath));
+        }
+        if (normalized.Length >= 2 && normalized[1] == ':')
+        {
+            throw new ArgumentException(
+                $"Repo subdirectory must be relative, got drive-qualified path: '{repoSubPath}'",
+                nameof(repoSubPath));
+        }
+
+        normalized = normalized.TrimStart('\\');
+
+        if (Path.IsPathRooted(normalized))
+        {
+            throw new ArgumentException(
+                $"Repo subdirectory must be relative: '{repoSubPath}'",
+                nameof(repoSubPath));
+        }
+
+        return normalized;
+    }
+
+    /// <summary>
     /// Builds installs array from file paths.
     /// </summary>
     private List<InstallItem> BuildInstallsArray(List<string> paths, IImportPrompter prompter)
@@ -523,7 +577,11 @@ public class ImportService
             var absPath = Path.GetFullPath(p);
             if (!File.Exists(absPath) || Directory.Exists(absPath))
             {
-                prompter.ReportWarning($"Skipping -i path: '{p}'");
+                // Use ReportInfo (no prefix) to preserve the prior
+                // `Console.WriteLine("Skipping -i path: ...")` output verbatim.
+                // ReportWarning would prepend "[WARN] " and break the
+                // byte-identical claim from the PR description.
+                prompter.ReportInfo($"Skipping -i path: '{p}'");
                 continue;
             }
 
