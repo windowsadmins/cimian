@@ -7,8 +7,8 @@ CimianWatcher now supports two different modes for triggering software updates:
 **Trigger File:** `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
 
 **Behavior:** 
-- Launches `managedsoftwareupdate.exe --auto --show-status`
-- Shows the CimianStatus GUI window with progress updates
+- Launches `managedsoftwareupdate.exe --auto --show-status -vv`
+- Also launches `cimistatus.exe` so the status window is visible
 - User can see real-time progress and status messages
 - Ideal for interactive updates or when user feedback is desired
 
@@ -22,10 +22,13 @@ CimianWatcher now supports two different modes for triggering software updates:
 **Trigger File:** `C:\ProgramData\ManagedInstalls\.cimian.headless`
 
 **Behavior:**
-- Launches `managedsoftwareupdate.exe --auto` (without --show-status)
-- Runs completely in the background with no GUI
+- Launches `managedsoftwareupdate.exe --auto --show-status`
+- Runs in the background with no visible window (`CreateNoWindow = true`) and does **not** launch `cimistatus.exe`
+- The only command-line difference from GUI mode is the omission of the `-vv` verbosity flag
 - Updates happen silently without user interaction
 - Ideal for automated systems, scheduled tasks, or unattended updates
+
+> **Note:** A flag file may include an `Args:` line to override the default arguments. When present, the service uses those arguments verbatim and skips launching `cimistatus.exe`, allowing callers such as Managed Software Center to manage their own UI.
 
 **How to Trigger:**
 - From command line: `cimitrigger.exe headless`
@@ -38,8 +41,8 @@ The CimianWatcher Windows service monitors both trigger files simultaneously:
 
 1. **File Detection:** Polls every 10 seconds for both `.cimian.bootstrap` and `.cimian.headless`
 2. **Process Execution:** Starts the appropriate `managedsoftwareupdate.exe` command based on the trigger file
-3. **Cleanup:** Automatically removes the trigger file after the update process completes
-4. **Logging:** Records all activities in the Windows Event Log under "CimianWatcher"
+3. **Cleanup:** Deletes the trigger file *immediately after reading it* (before the update process starts). This early acknowledgement lets the Managed Software Center poll for deletion as the "trigger accepted" signal without timing out.
+4. **Logging:** Records activity to the rolling Serilog file at `C:\ProgramData\ManagedInstalls\Logs\cimiwatcher.log` and to the Windows Event Log under the `CimianWatcher` source.
 
 ## File Format
 
