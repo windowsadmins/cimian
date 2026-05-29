@@ -118,6 +118,7 @@ public partial class MetadataExtractor
             // For cimipkg-built MSI, extract rich metadata from embedded build-info.yaml.
             // cimipkg stores the YAML base64-encoded so the property value stays single-line
             // (multi-line values corrupt the MSI Property dump and PREVIOUSVERSIONSINSTALLED).
+            PkgBuildInfo? buildInfo = null;
             var buildInfoYaml = DecodeBuildInfoYaml(ReadProp("CIMIAN_PKG_BUILD_INFO"));
             if (!string.IsNullOrEmpty(buildInfoYaml))
             {
@@ -127,7 +128,7 @@ public partial class MetadataExtractor
                         .WithNamingConvention(UnderscoredNamingConvention.Instance)
                         .IgnoreUnmatchedProperties()
                         .Build();
-                    var buildInfo = deserializer.Deserialize<PkgBuildInfo>(buildInfoYaml);
+                    buildInfo = deserializer.Deserialize<PkgBuildInfo>(buildInfoYaml);
 
                     if (buildInfo?.Product != null)
                     {
@@ -157,6 +158,16 @@ public partial class MetadataExtractor
             var fullVersion = ReadProp("CIMIAN_PKG_FULL_VERSION");
             if (!string.IsNullOrEmpty(fullVersion))
                 metadata.Version = ParseVersion(fullVersion);
+
+            // Auto-populate the defense-in-depth file checks from the MSI's
+            // native bill of materials (File ⨯ Component ⨯ Directory tables).
+            // The pkginfo gets either:
+            //   - cimipkg MSI: a single resolved key_path on the type=msi
+            //     entry (explicit build-info override OR auto-detect heuristic).
+            //   - third-party MSI: up to 3 type=file entries for the largest
+            //     .exe files. Caps the array so a vendor MSI with 50 binaries
+            //     doesn't produce a 50-entry pkginfo.
+            PopulateMsiBom(db, metadata, buildInfo);
         }
         catch
         {
@@ -164,6 +175,99 @@ public partial class MetadataExtractor
             metadata.Title = ParsePackageName(Path.GetFileName(packagePath));
             metadata.ID = metadata.Title;
         }
+    }
+
+    /// <summary>
+    /// Populates <see cref="InstallerMetadata.KeyPath"/> and (for third-party MSIs)
+    /// up to three <c>type: file</c> entries in <see cref="InstallerMetadata.Installs"/>
+    /// from the MSI's native bill of materials.
+    /// </summary>
+    /// <remarks>
+    /// Decision tree:
+    ///   1. cimipkg MSI + explicit <c>key_path</c> in build-info → use it verbatim
+    ///      (resolved relative to <c>install_location</c> when not absolute).
+    ///   2. cimipkg MSI without override → run heuristic against enumerated .exe
+    ///      files: single .exe ⇒ it, name-match ⇒ it, largest ⇒ it.
+    ///   3. Third-party MSI (no build-info) → no <c>key_path</c> on the MSI entry;
+    ///      append up to 3 file entries by descending FileSize. Caps the array.
+    /// All branches fail-soft — a BOM read error leaves metadata unchanged.
+    /// </remarks>
+    private void PopulateMsiBom(Database db, InstallerMetadata metadata, PkgBuildInfo? buildInfo)
+    {
+        const int ThirdPartyFileCheckCap = 3;
+
+        try
+        {
+            var exes = MsiBomReader.EnumerateInstalledFiles(db, [".exe"]);
+
+            if (buildInfo != null && !string.IsNullOrWhiteSpace(buildInfo.KeyPath))
+            {
+                metadata.KeyPath = ResolveBuildInfoKeyPath(buildInfo.KeyPath, buildInfo.InstallLocation);
+                return;
+            }
+
+            if (buildInfo != null)
+            {
+                // cimipkg MSI, no override — pick single primary binary by heuristic.
+                var productName = buildInfo.Product?.Name ?? metadata.Title;
+                metadata.KeyPath = MsiBomReader.PickPrimaryBinary(exes, productName) ?? "";
+                return;
+            }
+
+            // Third-party MSI — emit top-N file checks instead of a single key_path.
+            // type=msi entry (registry/ProductCode check) is still emitted by
+            // ImportService.cs; these stack on top as defense-in-depth file checks.
+            //
+            // Filter to versioned files only. The runtime file verifier compares
+            // the catalog version against the on-disk FileVersionInfo, and when
+            // the disk file has no embedded version it marks the item pending
+            // ("File version metadata unavailable and no hash verification") —
+            // which would loop forever for unversioned vendor binaries. Better
+            // to not emit a check we can't make pass than to ship an install
+            // loop. Files with version metadata get the full file-version check;
+            // unversioned binaries fall back to ARP-only verification.
+            foreach (var f in exes.Where(f => !string.IsNullOrWhiteSpace(f.Version))
+                                  .Take(ThirdPartyFileCheckCap))
+            {
+                metadata.Installs.Add(new InstallItem
+                {
+                    Type = "file",
+                    Path = f.AbsolutePath,
+                    Version = f.Version,
+                });
+            }
+        }
+        catch
+        {
+            // BOM read failure is non-fatal; ProductCode/UpgradeCode-only verification stands.
+        }
+    }
+
+    /// <summary>
+    /// Resolves a <c>key_path</c> value from build-info.yaml. Fully-qualified
+    /// paths pass through; everything else (including drive-relative forms like
+    /// <c>C:foo\bar</c>, which <see cref="Path.IsPathRooted"/> reports as
+    /// rooted but aren't fully qualified) is treated as a relative path anchored
+    /// to the package's <c>install_location</c>. Returns empty when there's no
+    /// install_location to anchor against and the value isn't fully qualified.
+    /// </summary>
+    private static string ResolveBuildInfoKeyPath(string keyPath, string? installLocation)
+    {
+        var trimmed = keyPath.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return "";
+
+        var normalized = trimmed.Replace('/', '\\');
+
+        // Use IsPathFullyQualified (not IsPathRooted) so drive-relative forms like
+        // "C:foo\bar" — which resolve at the runtime CWD of drive C: — don't sneak
+        // through as if they were absolute paths.
+        if (Path.IsPathFullyQualified(normalized))
+            return normalized;
+
+        if (string.IsNullOrWhiteSpace(installLocation))
+            return "";
+
+        return Path.Combine(installLocation.TrimEnd('\\', '/'), normalized);
     }
 
     /// <summary>
@@ -614,6 +718,13 @@ internal class PkgBuildInfo
     public string? InstallLocation { get; set; }
     public string? PostinstallAction { get; set; }
     public PkgInstallerInfo? Installer { get; set; }
+
+    /// <summary>
+    /// Mirrors cimipkg's BuildInfo.KeyPath — explicit override for the
+    /// auto-detected primary binary. Value may be a path absolute to
+    /// install_location or an absolute Windows path.
+    /// </summary>
+    public string? KeyPath { get; set; }
 }
 
 /// <summary>

@@ -117,30 +117,53 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Handles cimian:// protocol URIs.
-    /// Supported: cimian://showitem?name=AppName, cimian://updates, cimian://history, cimian://categories
+    /// Handles cimian:// protocol URIs. Accepts both host-based and path-based shapes:
+    ///   cimian://item/Firefox            (path form, preferred)
+    ///   cimian://showitem?name=Firefox   (legacy query form)
+    ///   cimian://category/Browsers
+    ///   cimian://updatedetail/Firefox
+    ///   cimian://updates | history | categories | myitems | software
     /// </summary>
     public static void HandleProtocolActivation(Uri uri)
     {
         if (s_mainWindow is not MainWindow mainWindow) return;
 
-        var host = uri.Host.ToLowerInvariant();
-        switch (host)
+        var verb = uri.Host.ToLowerInvariant();
+        var pathSegments = (uri.AbsolutePath ?? string.Empty)
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var argument = pathSegments.Length > 0
+            ? Uri.UnescapeDataString(pathSegments[0])
+            : query["name"];
+
+        switch (verb)
         {
+            case "item":
             case "showitem":
-                var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
-                var itemName = query["name"];
-                if (!string.IsNullOrEmpty(itemName))
-                    mainWindow.NavigateToItemDetail(itemName);
+                if (!string.IsNullOrEmpty(argument))
+                    mainWindow.NavigateToItemDetail(argument);
+                else
+                    mainWindow.NavigateToPage("software");
+                break;
+            case "updatedetail":
+                if (!string.IsNullOrEmpty(argument))
+                    mainWindow.NavigateToUpdateDetail(argument);
+                else
+                    mainWindow.NavigateToPage("updates");
+                break;
+            case "category":
+                if (!string.IsNullOrEmpty(argument))
+                    mainWindow.NavigateToCategory(argument);
+                else
+                    mainWindow.NavigateToPage("categories");
                 break;
             case "updates":
-                mainWindow.NavigateToPage("updates");
-                break;
             case "history":
-                mainWindow.NavigateToPage("history");
-                break;
             case "categories":
-                mainWindow.NavigateToPage("categories");
+            case "myitems":
+            case "software":
+                mainWindow.NavigateToPage(verb);
                 break;
             default:
                 mainWindow.NavigateToPage("software");

@@ -5,9 +5,6 @@ using Cimian.Core;
 using Cimian.Core.Models;
 using Cimian.Core.Services;
 using Cimian.Core.Version;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
-
 using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 using SessionPackageInfo = Cimian.Core.Models.SessionPackageInfo;
 
@@ -395,7 +392,7 @@ public class UpdateEngine : IDisposable
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap);
+            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap, itemFilterService);
 
             // Dictionary of items LoopGuard refused this run, keyed by lower-invariant
             // name. Surfaces in items.json as Warning + last_warning + status_reason_code,
@@ -860,7 +857,8 @@ public class UpdateEngine : IDisposable
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate)> LoopSuppressed)
-        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
+        IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
+                        ItemFilterService? itemFilterService = null)
     {
         var toInstall = new List<CatalogItem>();
         var toUpdate = new List<CatalogItem>();
@@ -950,8 +948,22 @@ public class UpdateEngine : IDisposable
                     
                     if (status.NeedsAction)
                     {
+                        // --item targets specific packages by name; bypass LoopGuard for those
+                        // (run-scoped only — persistent suppression state is left intact so
+                        // future runs without --item still honor it).
+                        var bypassLoopGuard = itemFilterService != null
+                            && itemFilterService.HasFilter
+                            && itemFilterService.Items.Contains(catalogItem.Name);
+
+                        if (bypassLoopGuard)
+                        {
+                            var msg = $"--item: bypassing LoopGuard for '{catalogItem.Name}'";
+                            ConsoleLogger.Info(msg);
+                            _sessionLogger?.Log("INFO", msg);
+                        }
+
                         // Check LoopGuard before adding to install list
-                        if (_loopGuard != null)
+                        if (_loopGuard != null && !bypassLoopGuard)
                         {
                             var fingerprint = ComputeCatalogFingerprint(catalogItem);
                             var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
@@ -2660,12 +2672,7 @@ public class UpdateEngine : IDisposable
             }
 
             // Serialize and write
-            var serializer = new SerializerBuilder()
-                .WithNamingConvention(UnderscoredNamingConvention.Instance)
-                .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
-                .Build();
-
-            var yaml = serializer.Serialize(info);
+            var yaml = YamlUtils.SerializeInstallInfo(info);
             var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
             File.WriteAllText(path, yaml);
 

@@ -1,7 +1,6 @@
 using Cimian.CLI.Makepkginfo.Models;
 using Cimian.Core;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.Makepkginfo.Services;
 
@@ -34,11 +33,7 @@ public class PkgInfoBuilder
     public CimianConfig LoadConfig(string configPath)
     {
         var yaml = File.ReadAllText(configPath);
-        var deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
-        return deserializer.Deserialize<CimianConfig>(yaml);
+        return YamlUtils.Deserializer.Deserialize<CimianConfig>(yaml);
     }
 
     /// <summary>
@@ -65,6 +60,33 @@ public class PkgInfoBuilder
 
         File.WriteAllText(pkgsinfoPath, yaml);
     }
+
+    /// <summary>
+    /// Builds the InstallItem that represents MSI install identity in the pkgsinfo.
+    /// Internal so unit tests can verify the mapping from MsiMetadata without
+    /// needing a real MSI on disk.
+    ///
+    /// Munki convention: MSI install identity belongs in installs[] of type=msi,
+    /// not as a hash-only file entry pointing at the .msi artifact itself. The
+    /// ProductCode/UpgradeCode are what managedsoftwareupdate uses to verify
+    /// Windows Installer registration. Empty extractor results pass through as
+    /// null so OmitNull suppresses the keys.
+    ///
+    /// Version is populated from the MSI's ProductVersion (the truncated form
+    /// that lands in the uninstall registry, e.g. 26.5.612 for cimipkg-built
+    /// date-format catalogs). StatusService's installs[] check compares against
+    /// DisplayVersion, so omitting installs[].version makes it fall back to the
+    /// top-level catalog version — which for date-format builds (YYYY.MM.DD.HHMM)
+    /// will never match the registry's truncated form and loops on every cycle.
+    /// </summary>
+    public static InstallItem BuildMsiInstallItem(MetadataExtractor.MsiMetadata meta) =>
+        new()
+        {
+            Type = "msi",
+            ProductCode = string.IsNullOrEmpty(meta.ProductCode) ? null : meta.ProductCode,
+            UpgradeCode = string.IsNullOrEmpty(meta.UpgradeCode) ? null : meta.UpgradeCode,
+            Version = string.IsNullOrEmpty(meta.ProductVersion) ? null : meta.ProductVersion
+        };
 
     /// <summary>
     /// Gathers installer information and builds a PkgsInfo object
@@ -95,19 +117,7 @@ public class PkgInfoBuilder
                 productCode = msiMeta.ProductCode;
                 upgradeCode = msiMeta.UpgradeCode;
 
-                // Munki convention: MSI install identity belongs in installs[] of type=msi,
-                // not as a hash-only file entry pointing at the .msi artifact itself. The
-                // ProductCode/UpgradeCode here are what managedsoftwareupdate uses to
-                // verify Windows Installer registration. Empty extractor results pass
-                // through as null so OmitNull suppresses the keys. Version is intentionally
-                // omitted — StatusService falls back to the top-level pkginfo version, and
-                // MSI per-version identity is already the ProductCode.
-                installs.Add(new InstallItem
-                {
-                    Type = "msi",
-                    ProductCode = string.IsNullOrEmpty(productCode) ? null : productCode,
-                    UpgradeCode = string.IsNullOrEmpty(upgradeCode) ? null : upgradeCode
-                });
+                installs.Add(BuildMsiInstallItem(msiMeta));
                 break;
 
             case ".exe":
@@ -306,16 +316,13 @@ public class PkgInfoBuilder
     }
 
     /// <summary>
-    /// Serializes a PkgsInfo object to YAML
+    /// Serializes a PkgsInfo object to YAML via the canonical Cimian pkginfo
+    /// writer (priority key order, OmitNull, literal multiline). The model's
+    /// per-field [YamlMember(Order=N)] attributes are ignored — YamlUtils
+    /// imposes the cross-tool canonical ordering instead.
     /// </summary>
     public string SerializePkgsInfo(PkgsInfo pkgsinfo)
-    {
-        var serializer = new SerializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull | DefaultValuesHandling.OmitEmptyCollections)
-            .Build();
-        return serializer.Serialize(pkgsinfo);
-    }
+        => YamlUtils.SerializePkgInfo(pkgsinfo);
 
     /// <summary>
     /// Parses the package name from a filename (removes extension)
