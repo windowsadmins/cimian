@@ -525,9 +525,15 @@ public class StatusService
                     var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
                         installItem.ProductCode, installItem.UpgradeCode, catalogVersion, item.Name);
 
-                    // If MSI detection failed, try registry lookup using item's display_name or name as fallback
-                    // This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update)
-                    if (!msiInstalled)
+                    // If MSI detection failed, try registry lookup using item's display_name or name as fallback.
+                    // This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update).
+                    // Only run when pkginfo did NOT declare a ProductCode/UpgradeCode -- when codes are
+                    // declared they are authoritative, and their absence means the item is genuinely
+                    // not installed. Fuzzy name matching against unrelated apps (e.g. "OculusPatch"
+                    // collapsing onto "Oculus") would otherwise mark patches as already current.
+                    if (!msiInstalled
+                        && string.IsNullOrEmpty(installItem.ProductCode)
+                        && string.IsNullOrEmpty(installItem.UpgradeCode))
                     {
                         var displayNameToSearch = !string.IsNullOrEmpty(item.DisplayName) ? item.DisplayName : item.Name;
                         var fallbackVersion = FindVersionByDisplayName(displayNameToSearch);
@@ -1068,9 +1074,11 @@ if ($results.Count -gt 0) {{
                     if (string.IsNullOrEmpty(regDisplayName) || string.IsNullOrEmpty(regVersion))
                         continue;
 
-                    // Partial match - either contains the other
-                    if (regDisplayName.Contains(displayName, StringComparison.OrdinalIgnoreCase) ||
-                        displayName.Contains(regDisplayName, StringComparison.OrdinalIgnoreCase))
+                    // Partial match: only accept registry entries whose name CONTAINS our search
+                    // string (e.g. "Google Chrome" -> "Google Chrome 142.x"). The reverse direction
+                    // (our string contains the registry name) is unsafe -- "OculusPatch" would match
+                    // the unrelated "Oculus" app and adopt its version.
+                    if (regDisplayName.Contains(displayName, StringComparison.OrdinalIgnoreCase))
                     {
                         ConsoleLogger.Debug($"Found partial display name match in registry displayName: {displayName} registryName: {regDisplayName} version: {regVersion}");
                         return regVersion;
