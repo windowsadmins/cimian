@@ -33,15 +33,10 @@ jobs:
         with:
           dotnet-version: '10.0.x'
           dotnet-quality: preview
-          # Built-in NuGet cache — shipped with setup-dotnet, no separate
-          # actions/cache step. Avoids the Node 24 / DEP0169 url.parse() crash
-          # that took down actions/cache@v4 once FORCE_JAVASCRIPT_ACTIONS_TO_NODE24
-          # was enabled.
-          cache: true
-          cache-dependency-path: |
-            **/*.csproj
-            Directory.Build.props
 
+      # No NuGet caching: actions/cache@v4 throws on Node 24 runners (DEP0169
+      # url.parse) and setup-dotnet's built-in cache crashes on its tar/zstd
+      # post-step write on Windows. Cold restore adds ~60s and is reliable.
       - name: Restore
         shell: pwsh
         run: dotnet restore CimianTools.sln
