@@ -46,6 +46,76 @@ public class TriggerService : ITriggerService, IDisposable
     }
 
     /// <inheritdoc />
+    public async Task TriggerInstallItemAsync(string itemName)
+    {
+        if (string.IsNullOrWhiteSpace(itemName))
+        {
+            throw new ArgumentException("itemName must be provided", nameof(itemName));
+        }
+
+        // The args string is written verbatim to the flag file, then handed to
+        // ProcessStartInfo.Arguments by CimianWatcher. Names containing spaces,
+        // tabs, quotes, or trailing backslashes would otherwise be split or
+        // misparsed and the --item filter would not match. Quote the name and
+        // reject control characters / embedded double quotes that no legitimate
+        // catalog item should ever contain.
+        var quoted = QuoteArgument(itemName);
+
+        _logger?.LogInformation("Triggering targeted install for {Item} via CimianWatcher", itemName);
+        // --no-preflight skips the preflight script (catalogs/config were just refreshed by
+        // the most recent --checkonly), turning a ~30s pipeline into a ~5-10s targeted run.
+        await TriggerViaFlagFileAsync($"--item {quoted} --no-preflight --show-status -vv");
+    }
+
+    /// <summary>
+    /// Quotes a single argument for safe round-trip through a flag-file "Args:"
+    /// line and ProcessStartInfo.Arguments. Follows the Windows C-runtime
+    /// convention (backslash-escape any embedded double-quote and any run of
+    /// backslashes immediately preceding a quote or the closing quote).
+    /// </summary>
+    internal static string QuoteArgument(string value)
+    {
+        if (value.IndexOfAny(new[] { '\r', '\n', '\0' }) >= 0)
+        {
+            throw new ArgumentException("Item name contains control characters", nameof(value));
+        }
+
+        // Fast path: no whitespace, no quotes, no trailing backslash — no quoting needed.
+        if (value.Length > 0
+            && value.IndexOfAny(new[] { ' ', '\t', '"' }) < 0
+            && value[value.Length - 1] != '\\')
+        {
+            return value;
+        }
+
+        var sb = new System.Text.StringBuilder(value.Length + 2);
+        sb.Append('"');
+        var backslashes = 0;
+        foreach (var c in value)
+        {
+            if (c == '\\')
+            {
+                backslashes++;
+            }
+            else if (c == '"')
+            {
+                sb.Append('\\', backslashes * 2 + 1);
+                sb.Append('"');
+                backslashes = 0;
+            }
+            else
+            {
+                if (backslashes > 0) sb.Append('\\', backslashes);
+                backslashes = 0;
+                sb.Append(c);
+            }
+        }
+        if (backslashes > 0) sb.Append('\\', backslashes * 2);
+        sb.Append('"');
+        return sb.ToString();
+    }
+
+    /// <inheritdoc />
     public Task TriggerStopAsync()
     {
         // With the flag-file approach we don't hold a process handle.
