@@ -8,27 +8,31 @@ Cimian's enhanced logging system provides structured, timestamped logging design
 
 ```
 C:\ProgramData\ManagedInstalls\logs\
-├── 20250712-140530/          # Individual session data (YYYY-MM-DD-HHMMss)
-│   ├── session.json          # Session metadata
-│   ├── events.jsonl          # Streaming event log (JSON Lines)
-│   ├── summary.json          # Session summary
-│   ├── install.log           # Human-readable format
-│   └── debug.log             # Debug information
-├── 20250712-120000/          # Previous sessions...
-├── 20250711-160000/          # Yesterday's session
+├── 2025-07-12/                  # Day directory (YYYY-MM-DD)
+│   ├── 1405/                    # Session directory (HHMM)
+│   │   ├── session.json         # Session metadata
+│   │   ├── events.jsonl         # Streaming event log (JSON Lines)
+│   │   ├── install.log          # Human-readable format
+│   │   └── run.log              # Per-session run log
+│   └── 1200/                    # Earlier session today
+├── 2025-07-11/
+│   └── 1600/                    # Yesterday's session
 
 C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external tools
 ├── sessions.json             # Session summary table
 ├── events.json               # Event detail table  
-└── packages.json             # Package statistics table
+├── items.json                # Per-item status table
+├── packages.json             # Package statistics table
+└── run.log                   # Truncated each session — latest run trace
 ```
 
 ## Key Features
 
 ### Timestamped Directory Structure
-- **Format**: `YYYY-MM-DD-HHMMss` subdirectories
-- **Retention**: Last 10 days (daily) + Last 24 hours (hourly)
-- **Organization**: Automatic cleanup of old logs
+- **Format**: `logs/YYYY-MM-DD/HHMM/` — day-nested directories with per-session minute subdirectories (no seconds)
+- **Collision handling**: Same-minute collisions append `_2`..`_9` suffix to the time directory
+- **Session ID**: `YYYY-MM-DD-HHMM` (matches the directory path)
+- **Retention**: Background cleanup runs at session start (see `PerformRetentionCleanup` in `SessionLogger.cs`)
 
 ### External Tool Integration
 - **Compatible Tables**: Pre-configured table schemas for external monitoring tools
@@ -54,7 +58,7 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
 ```json
 [
   {
-    "session_id": "cimian-1736689852-20250112-143052",
+    "session_id": "2025-01-12-1430",
     "start_time": "2025-01-12T14:30:52Z",
     "end_time": "2025-01-12T14:31:16Z",
     "run_type": "manual",
@@ -81,8 +85,8 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
 ```json
 [
   {
-    "event_id": "evt_001_install_firefox",
-    "session_id": "cimian-1736689852-20250112-143052",
+    "event_id": "2025-01-12-1430-1736689853000000000",
+    "session_id": "2025-01-12-1430",
     "timestamp": "2025-01-12T14:30:53Z",
     "level": "INFO",
     "event_type": "install",
@@ -131,10 +135,10 @@ C:\ProgramData\ManagedInstalls\reports\   # Pre-computed tables for external too
 - **`ondemand`**: Triggered by external events
 
 ### Session Lifecycle
-1. **Start**: Create timestamped directory and session.json
-2. **Logging**: Stream events to events.jsonl
-3. **Progress**: Update session.json with progress
-4. **Completion**: Generate summary.json and cleanup
+1. **Start**: Create day/time-nested directory (`logs/YYYY-MM-DD/HHMM/`) and `session.json`
+2. **Logging**: Stream events to `events.jsonl`, human log to `install.log`, run trace to `run.log`
+3. **Progress**: Periodically rewrite `session.json` and `reports/run.log`
+4. **Completion**: Finalize `session.json`, regenerate `reports/sessions.json`, `events.json`, and `items.json` aggregates
 
 ## API Usage
 
@@ -280,8 +284,8 @@ The data is automatically exported in a format compatible with ReportMate's data
 ```json
 {
   "hostname": "DESKTOP-ABC123",
-  "timestamp": 1720800930,
-  "session_id": "cimian-1720800900-20250712-140530",
+  "timestamp": "2025-07-12T14:05:30Z",
+  "session_id": "2025-07-12-1405",
   "event_type": "install",
   "package_name": "Firefox",
   "version": "119.0.1",
@@ -329,15 +333,17 @@ C:\ProgramData\ManagedInstalls\logs\
 ### After (Structured & Organized)
 ```
 C:\ProgramData\ManagedInstalls\logs\
-├── 20250712-140530/    # Session directory
-│   ├── session.json      # Session metadata
-│   ├── events.jsonl      # Event stream
-│   ├── summary.json      # Session summary  
-│   └── install.log       # Human-readable log
-├── 20250712-120000/    # Previous session
+├── 2025-07-12/
+│   ├── 1405/             # Session directory (HHMM)
+│   │   ├── session.json      # Session metadata
+│   │   ├── events.jsonl      # Event stream
+│   │   ├── install.log       # Human-readable log
+│   │   └── run.log           # Per-session run trace
+│   └── 1200/             # Earlier session
 C:\ProgramData\ManagedInstalls\reports\   # Pre-computed aggregated views
 ├── sessions.json
 ├── events.json
+├── items.json
 └── packages.json
 ```
 

@@ -12,7 +12,7 @@ Cimian is a Windows software deployment and management system, similar to Munki 
 ```
 CimianTools/
 │
-├── apps/                                # GUI Applications
+├── gui/                                 # GUI Applications
 │   ├── ManagedSoftwareCenter/           # End-user self-service app (WPF)
 │   │   ├── Cimian.GUI.ManagedSoftwareCenter.csproj
 │   │   ├── Models/
@@ -89,7 +89,7 @@ Solution
 │   ├── Cimian.CLI.managedsoftwareupdate
 │   ├── Cimian.CLI.makepkginfo
 │   └── ... (10 total)
-├── apps
+├── gui
 │   ├── Cimian.GUI.ManagedSoftwareCenter
 │   └── Cimian.GUI.CimianStatus
 └── tests
@@ -104,7 +104,8 @@ Solution
 | shared/engine | `Cimian.Engine` |
 | shared/infrastructure | `Cimian.Infrastructure` |
 | cli/* | `Cimian.CLI.<ToolName>` |
-| apps/ManagedSoftwareCenter | `Cimian.GUI.ManagedSoftwareCenter` |
+| gui/ManagedSoftwareCenter | `Cimian.GUI.ManagedSoftwareCenter` |
+| gui/CimianStatus | `Cimian.GUI.CimianStatus` |
 | tests | `Cimian.Tests` |
 
 ## Output Executables
@@ -121,8 +122,8 @@ Solution
 | cli/cimitrigger | `cimitrigger.exe` |
 | cli/cimiwatcher | `cimiwatcher.exe` |
 | cli/cimistatus | `cimistatus.exe` |
-| apps/ManagedSoftwareCenter | `ManagedSoftwareCenter.exe` |
-| apps/CimianStatus | `CimianStatus.exe` |
+| gui/ManagedSoftwareCenter | `ManagedSoftwareCenter.exe` |
+| gui/CimianStatus | `CimianStatus.exe` |
 
 ## Build Commands
 
@@ -131,7 +132,7 @@ Solution
 dotnet build CimianTools.sln
 
 # Build specific project
-dotnet build apps/ManagedSoftwareCenter/Cimian.GUI.ManagedSoftwareCenter.csproj
+dotnet build gui/ManagedSoftwareCenter/Cimian.GUI.ManagedSoftwareCenter.csproj
 
 # Run tests
 dotnet test tests/Cimian.Tests.csproj
@@ -142,7 +143,7 @@ dotnet publish cli/managedsoftwareupdate/Cimian.CLI.managedsoftwareupdate.csproj
 
 ## Key Dependencies
 
-- **.NET 8.0 / 10.0** - Target framework
+- **.NET 10.0 (windows)** - Target framework (`net10.0-windows`)
 - **WPF** - GUI framework for apps
 - **System.CommandLine** - CLI argument parsing
 - **YamlDotNet** - YAML serialization
