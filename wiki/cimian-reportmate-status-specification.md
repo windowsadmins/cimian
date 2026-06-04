@@ -11,62 +11,55 @@ This document defines the complete status vocabulary and data structures that Ci
 
 ## Report File Structure
 
-Cimian generates three primary JSON files in `C:\ProgramData\ManagedInstalls\reports\`:
+Cimian generates these primary JSON files in `C:\ProgramData\ManagedInstalls\reports\`:
 
 - **`sessions.json`** - Session-level execution summaries
 - **`events.json`** - Detailed event logs with package context
 - **`items.json`** - Comprehensive package status inventory
+- **`packages.json`** - Aggregated package statistics
+- **`run.log`** - Truncated each session — latest run trace
 
 ## Status Vocabularies
 
 ### 1. Event Status Values (`events.json`)
 
-The `status` field in event records uses these standardized values:
+Each record in `events.json` is built from one line of the session's `events.jsonl` stream (see `DataExporter.GenerateEventsTable` in `shared/core/Services/DataExporter.cs`). The `status` field is **passed through from the event source** — Cimian does not enforce a fixed enum here. Common observed values include:
 
-| Status | Description | Trigger Conditions |
+| Status | Typical Meaning |
+|--------|------------------|
+| `started` | Action began (download, install, script execution) |
+| `completed` / `success` | Action finished successfully |
+| `failed` / `error` | Action failed |
+| `warning` | Action emitted a non-fatal issue (architecture mismatch, deferred, etc.) |
+| `skipped` | Action bypassed |
+| `pending` | Action queued or awaiting prerequisite |
+
+For triage, combine `status` with `level` (`DEBUG`/`INFO`/`WARN`/`ERROR`), `action`, and `event_type` (`install`, `update`, `remove`, `download`, `config`, etc.).
+
+This event-level vocabulary is **distinct from per-item `current_status`** in `items.json` (described below).
+
+### 2. Per-Item Status (`items.json`)
+
+The `current_status` field is normalized via `NormalizeItemStatus` (see `shared/core/Services/SessionLogger.cs`) and takes one of these values:
+
+| Status | Description | Source Conditions |
 |--------|-------------|-------------------|
-| `"Success"` | Operation completed successfully | Status contains: "completed", "success", "ok", "installed"<br/>Log level: "INFO", "DEBUG" |
-| `"Failed"` | Operation failed with error | Error message present<br/>Log level: "ERROR"<br/>Status contains: "fail" |
-| `"Warning"` | Operation completed with warnings | Log level: "WARN", "WARNING"<br/>Status contains: "warn" |
-| `"Pending"` | Operation waiting/queued | Status contains: "pending", "waiting", "blocked", "queued" |
-| `"Skipped"` | Operation bypassed/skipped | Status contains: "skip", "bypass" |
-| `"Unknown"` | Default/unrecognized status | Fallback for unmatched conditions |
+| `"Installed"` | Verification succeeded | StatusService returned `installed` (file/registry/script/MSI match, or script-only item with no verifier) |
+| `"Pending"` | Item needs action | StatusService returned `pending` (not installed, version outdated, blocking apps, dependency missing, etc.) — also used for `skipped` and `not installed` inputs |
+| `"Error"` | Action failed or check errored | StatusService returned `error`, or a session attempt was `failed`/`error` |
+| `"Warning"` | Non-fatal issue during session | Session attempt was `warning` (architecture mismatch logged as warning, etc.) |
+| `"Removed"` | Package successfully uninstalled | Session attempt was `removed`/`uninstalled` |
+| `"Not Available"` | Item not present in any catalog | Input status `not available` |
 
-#### Event Status Normalization Logic
+The underlying per-item `StatusService.Status` (lowercase) is one of `installed`, `pending`, `error`; the accompanying `ReasonCode` (see `shared/core/Models/StatusReasonCode.cs`) explains *why* and is exposed on the record as `status_reason_code`.
 
-```go
-// Cimian applies this priority order:
-1. Error conditions (errorMsg != "" OR level == "error") → "Failed"
-2. Warning conditions (level == "warn/warning") → "Warning" 
-3. Success conditions (status matches success patterns) → "Success"
-4. Pending conditions (status matches pending patterns) → "Pending"
-5. Skipped conditions (status matches skip patterns) → "Skipped"
-6. Default by log level → "Success"/"Failed"/"Warning"/"Unknown"
-```
+#### Install Loop is a Flag, Not a Status
 
-### 2. Package Status Values (`items.json`)
+Install loops are tracked as a **boolean** on each item record: `install_loop_detected` plus a `loop_details` sub-object describing the detection criteria and recommendation. `DataExporter.DetectInstallLoopEnhanced` fires on patterns such as repeated same-version reinstalls or sustained low success-rate over recent attempts. Install loop is NOT a `current_status` value.
 
-The `current_status` field represents the definitive package state:
+#### Default Behavior for Installers Without a Verification Path
 
-| Status | Description | Business Logic |
-|--------|-------------|----------------|
-| `"Installed"` | Package successfully installed and operational | Last installation/update attempt was successful |
-| `"Failed"` | Package installation/update failed | Most recent attempt failed (persists until success) |
-| `"Warning"` | Package installed but with warnings | Non-critical issues during installation (doesn't override "Failed") |
-| `"Install Loop"` | Package stuck in reinstall cycle | ≥3 attempts in 7 days with <50% success rate |
-| `"Not Installed"` | Package removed or never installed | Last operation was removal or no install history |
-| `"Pending Install"` | Package available but not yet installed | "Not Installed" + latest version available in catalog |
-| `"Error"` | Package version/state unknown | Missing version information or catalog lookup failed |
-
-#### Package Status Priority Logic
-
-```go
-// Status determination follows this hierarchy:
-1. Install Loop Detection → "Install Loop"
-2. Version Unknown → "Error" 
-3. Not Installed + Available → "Pending Install"
-4. Last Attempt Status → "Installed"/"Failed"/"Warning"/"Not Installed"
-```
+As of commit `abdac1e`, an item with a real installer payload (`msi`/`exe`/`pkg`/`nupkg`/`copy`) and **no** verification metadata (no `installs[]`, no `installcheck_script`, no `Check.*`, no MSI ProductCode, and no `ManagedInstalls` registry entry) defaults to `Status=pending` with `ReasonCode=not_installed` — surfacing as `current_status: "Pending"` in `items.json`. Script-only items (`installer.type` of `nopkg`, `script`, or empty) still default to `Installed` with `ReasonCode=no_checks`.
 
 ### 3. Session Status Indicators (`sessions.json`)
 
@@ -110,7 +103,7 @@ Session-level status tracking includes multiple dimensions:
   
   // Status information
   "action": "install_package",
-  "status": "Success|Failed|Warning|Pending|Skipped|Unknown",
+  "status": "started|completed|failed|warning|skipped|pending",
   "message": "Human readable description",
   
   // Error details (NEW)
@@ -143,15 +136,20 @@ Session-level status tracking includes multiple dimensions:
   "item_type": "managed_installs",
   
   // Version information  
-  "current_status": "Installed|Failed|Warning|Install Loop|Not Installed|Pending Install|Error",
+  "current_status": "Installed|Pending|Error|Warning|Removed|Not Available",
   "latest_version": "119.0.1",
   "installed_version": "119.0.1",
-  
+
+  // Status reason — machine-readable explanation of current_status
+  "status_reason_code": "version_match|not_installed|version_outdated|architecture_mismatch|loop_suppressed|check_failed|...",
+  "status_reason": "Human-readable explanation",
+  "detection_method": "registry|file|directory|wmi|script|msi|msix|self_update|installs_array|managed_installs|none",
+
   // Status tracking
-  "last_seen_in_session": "2025-09-04-143052", 
+  "last_seen_in_session": "2025-09-04-1430",
   "last_successful_time": "2025-09-04T14:30:58Z",
   "last_attempt_time": "2025-09-04T14:30:58Z",
-  "last_attempt_status": "Success|Failed|Warning",
+  "last_attempt_status": "Installed|Pending|Error|Warning|Removed|Not Available",
   
   // Statistics
   "install_count": 3,
@@ -183,11 +181,11 @@ Session-level status tracking includes multiple dimensions:
 
 ```json
 {
-  "session_id": "2025-09-04-143052",
+  "session_id": "2025-09-04-1430",
   "start_time": "2025-09-04T14:30:52Z",
   "end_time": "2025-09-04T14:35:28Z", 
-  "run_type": "auto|manual|triggered",
-  "status": "completed|failed|terminated",
+  "run_type": "auto|manual|bootstrap|checkonly|installonly",
+  "status": "completed|failed|terminated|running",
   "duration": 276,
   
   // Operation summary
@@ -242,14 +240,14 @@ Session-level status tracking includes multiple dimensions:
 
 **Package Health Overview:**
 - **Green (Healthy):** `current_status` = `"Installed"`
-- **Red (Critical):** `current_status` = `"Failed"` OR `"Install Loop"` OR `"Error"`
-- **Yellow (Warning):** `current_status` = `"Warning"` OR `"Pending Install"`
-- **Gray (Inactive):** `current_status` = `"Not Installed"`
+- **Red (Critical):** `current_status` = `"Error"` OR `install_loop_detected = true`
+- **Yellow (Warning):** `current_status` IN (`"Warning"`, `"Pending"`)
+- **Gray (Inactive):** `current_status` IN (`"Removed"`, `"Not Available"`)
 
 **Event Trend Analysis:**
-- **Success Rate:** Count of `status` = `"Success"` vs total events
-- **Failure Rate:** Count of `status` = `"Failed"` vs total events  
-- **Warning Rate:** Count of `status` = `"Warning"` vs total events
+- **Success Rate:** Count of event `status` IN (`completed`, `success`) vs total events
+- **Failure Rate:** Count of event `status` IN (`failed`, `error`) or `level = ERROR` vs total events
+- **Warning Rate:** Count of event `status` = `warning` or `level = WARN` vs total events
 
 ### 2. Key Performance Indicators (KPIs)
 
@@ -275,7 +273,7 @@ WHERE install_loop_detected = true;
 ### 3. Alert Thresholds
 
 **Critical Alerts:**
-- Package `current_status` = `"Failed"` for >24 hours
+- Package `current_status` = `"Error"` for >24 hours
 - Package `install_loop_detected` = `true`
 - Session `failures` > 50% of `total_actions`
 
@@ -342,7 +340,12 @@ ReportMate should validate:
 For questions about this specification or ReportMate integration:
 - **Development Team:** Cimian Core Team
 - **Documentation:** `/docs/cimian-reportmate-status-specification.md`
-- **Implementation Reference:** `shared/core/Models/Reporting.cs`
+- **Implementation References:**
+- `shared/core/Models/Reporting.cs` — `SessionRecord`, `EventRecord`, `ItemRecord`, `InstallLoopDetail`
+- `shared/core/Models/StatusReasonCode.cs` — machine-readable `ReasonCode` values
+- `shared/core/Services/SessionLogger.cs` — `NormalizeItemStatus`, session lifecycle, log paths
+- `shared/core/Services/DataExporter.cs` — `GenerateEventsTable`, `DetectInstallLoopEnhanced`, items export
+- `cli/managedsoftwareupdate/Services/StatusService.cs` — per-item status determination
 
 ---
 

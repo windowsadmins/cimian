@@ -6,31 +6,39 @@ This document provides the structure and location of error data in Cimian's `/re
 
 ## Status Classification System
 
-Cimian uses a simplified 5-status classification system to categorize installation states:
+Cimian distinguishes between **per-item status** (what `StatusService.cs` actually sets on a `StatusResult`) and **event-level status** (what appears on individual `events.json` records).
 
-### **The 5 Status Types**
+### Per-Item Status (`StatusResult.Status`)
 
-1. **`installed`** - Package is successfully installed and current
-2. **`warning`** - Repository/configuration issues (e.g., architecture mismatches, package obsolete)  
-3. **`error`** - Actual software installation failures (installer execution problems)
-4. **`pending`** - Waiting for installation or in progress
-5. **`removed`** - Package has been uninstalled
+The status engine (`cli/managedsoftwareupdate/Services/StatusService.cs`) sets one of three lowercase values on a per-item check:
 
-### **Status Usage Guidelines**
+1. **`installed`** - Verification succeeded (file/registry/script/MSI product code match), or a script-only item with no verification path
+2. **`pending`** - Item needs action: not installed, version outdated, dependency missing, blocking apps, etc.
+3. **`error`** - The status check itself failed (script error, exception, unparseable version)
 
-**When to use `warning` vs `error`:**
-- **`warning`**: Repository configuration issues, architecture mismatches, package not available, policy restrictions
-- **`error`**: Actual installer execution failures, download corruption, dependency failures
+The accompanying `ReasonCode` (see `shared/core/Models/StatusReasonCode.cs`) explains *why* — e.g. `not_installed`, `version_outdated`, `architecture_mismatch`, `loop_suppressed`, `check_failed`, `script_error`.
 
-This simplified classification helps distinguish between:
-- **Real software installation problems** (`error`) - Issues requiring software fixes
-- **Repository/configuration issues** (`warning`) - Issues requiring environment/policy changes
+Note: As of commit `abdac1e`, an item with a real installer payload (msi/exe/pkg/nupkg/copy) that has no `installs[]`, no `installcheck_script`, no `Check.*`, no MSI ProductCode, and no `ManagedInstalls` registry entry now defaults to `pending` / `not_installed` instead of `installed`. Script-only items (`nopkg`, empty type, or `script`) still default to `installed` because they have no file artifact to verify.
+
+### Per-Item Status After Normalization (`items.json`)
+
+When item state is written to `reports/items.json`, the session logger normalizes the per-item value into one of: **`Installed`**, **`Error`**, **`Warning`**, **`Pending`**, **`Removed`**, **`Not Available`** (see `NormalizeItemStatus` in `shared/core/Services/SessionLogger.cs`). `Removed` is derived from operational signals (uninstall completed); `Warning` is reserved for non-fatal issues surfaced during a session. There is no `Install Loop` value here — install-loop state is tracked via the boolean `install_loop_detected` field and accompanying `loop_details` object.
+
+### Event Status (`events.json`)
+
+The `status` field on individual event records is passed through from the original log entry — Cimian does not impose a fixed vocabulary on event statuses. Common values include `started`, `completed`, `failed`, `warning`, `success`, `skipped`. ReportMate consumers should treat the event `status` as a free-form indicator scoped to the event's `action`.
+
+### Errors vs Warnings (Conceptual)
+
+The distinction is still useful for triage:
+
+- **Errors** — actual installer execution failures, script failures, unrecoverable check failures. These show up as `error` per-item status or `failed`/`error` event status.
+- **Warnings** — repository/configuration issues (architecture mismatch, missing dependency, unsupported OS, deferred install window). These show up as event `status: warning` and on the per-item record via `warning_count` / `last_warning`, but per-item `current_status` will typically be `Pending` (with a `ReasonCode` such as `architecture_mismatch`) rather than `Warning`.
 
 ### Important: Status vs Log Level
 
-**For ReportMate integration, focus only on the `status` field:**
-- `status`: Uses our 5-type classification (`installed`, `warning`, `error`, `pending`, `removed`)
-- `level`: Console logging severity (`DEBUG`, `INFO`, `WARN`, `ERROR`) - **ignore for reporting**
+- `status`: The semantic state of the item or event
+- `level`: Console logging severity (`DEBUG`, `INFO`, `WARN`, `ERROR`) — useful for filtering raw logs, but not authoritative for reporting
 
 ## Report Directory Structure
 
@@ -64,7 +72,7 @@ C:\ProgramData\ManagedInstalls\reports\
 }
 ```
 
-**Note**: The `level` field (DEBUG, INFO, WARN, ERROR) is just for console logging severity. For ReportMate integration, focus only on the `status` field which uses our 5-status classification system.
+**Note**: The `level` field (DEBUG, INFO, WARN, ERROR) is just for console logging severity. For ReportMate integration, focus on the `status` field combined with `action` and `event_type` for context.
 
 ### Installation Failure Error Example
 
@@ -132,8 +140,8 @@ C:\ProgramData\ManagedInstalls\reports\
 ```
 
 **Key Status Indicators**:
-- `status`: Uses a 5-status classification (`installed`, `warning`, `error`, `pending`, `removed`)
-- `level`: Console log level (`WARN` vs `ERROR`)
+- `status`: Free-form event status scoped to `action` (e.g. `started`, `completed`, `failed`, `warning`, `skipped`)
+- `level`: Console log level (`DEBUG`, `INFO`, `WARN`, `ERROR`)
 - `event_type`: Type of operation (`install`, `update`, `remove`, etc.)
 - `action`: Specific action (`architecture_check`, `execute`, `download`, etc.)
 
@@ -148,11 +156,11 @@ C:\ProgramData\ManagedInstalls\reports\
   "item_name": "DotNetRuntime",
   "display_name": "DotNetRuntime",
   "item_type": "managed_installs",
-  "current_status": "warning",
+  "current_status": "Pending",
   "latest_version": "9.0.8.35115",
   "installed_version": "9.0.8.35115",
   "last_attempt_time": "2025-08-30T14:58:48-07:00",
-  "last_attempt_status": "warning",
+  "last_attempt_status": "Warning",
   "warning_count": 3,
   "failure_count": 0,
   "last_warning": "Architecture mismatch: arm64 not in [x64]",
@@ -168,10 +176,11 @@ C:\ProgramData\ManagedInstalls\reports\
 ```
 
 **Status Field Mapping**:
-- `current_status`: Uses our 5-status classification (`installed`, `warning`, `error`, `pending`, `removed`)
-- `last_attempt_status`: Same simplified status classification (`installed`, `warning`, `error`, `pending`, `removed`)
-- `failure_count`: Count of actual installation failures (errors only)
-- `warning_count`: Count of warnings (repository/config issues)
+- `current_status`: Normalized to one of `Installed`, `Error`, `Warning`, `Pending`, `Removed`, `Not Available` (`NormalizeItemStatus` in `SessionLogger.cs`)
+- `last_attempt_status`: Same normalized vocabulary as `current_status`
+- `failure_count`: Count of attempts in `recent_attempts` whose status was `failed`/`error`
+- `warning_count`: Count of attempts whose status was `warning`
+- `install_loop_detected` (bool) and `loop_details` (object): Set by `DetectInstallLoopEnhanced` in `DataExporter.cs` when loop heuristics fire
 
 ### 4. Session-Level Data (`sessions.json`)
 
@@ -350,28 +359,26 @@ Each error event includes:
 ### Critical Installation Failures
 ```sql
 SELECT 
-    context.item as package_name,
+    package_name,
     status as error_type,
     COUNT(*) as failure_count,
     MAX(timestamp) as last_failure,
-    context.exit_code,
-    context.installer_output
+    error_details.error_code,
+    error_details.stderr
 FROM events 
-WHERE status = 'error'
-GROUP BY package_name, error_type, exit_code
+WHERE level = 'ERROR' OR status IN ('failed', 'error')
+GROUP BY package_name, error_type, error_details.error_code
 ORDER BY failure_count DESC, last_failure DESC
 ```
 
 ### Architecture Compatibility Analysis
 ```sql
 SELECT 
-    context.item as package_name,
-    context.system_arch,
-    context.supported_arch,
+    package_name,
     COUNT(*) as occurrence_count
 FROM events 
-WHERE status = 'warning' AND action = 'architecture_check'
-GROUP BY package_name, system_arch, supported_arch
+WHERE action = 'architecture_check' AND level = 'WARN'
+GROUP BY package_name
 ORDER BY occurrence_count DESC
 ```
 
