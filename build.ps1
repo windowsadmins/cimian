@@ -632,15 +632,18 @@ function Publish-Binary {
     )
     
     # WinUI 3 does not support PublishSingleFile without MSIX packaging.
-    # EnableCompressionInSingleFile is only valid with --self-contained true
-    # (NETSDK1176 since .NET SDK 10.0.300); Directory.Build.props sets it
-    # globally, so framework-dependent CLIs must override to false here.
+    # Several Directory.Build.props properties (EnableCompressionInSingleFile,
+    # PublishTrimmed, IncludeNativeLibrariesForSelfExtract) require self-contained
+    # publishes (NETSDK1176 / NETSDK1102 since .NET SDK 10.0.300). Override them
+    # off explicitly for framework-dependent CLIs.
     if (-not $IsWinUI) {
         $publishArgs += '-p:PublishSingleFile=true'
         if ($IsSelfContained) {
             $publishArgs += '-p:EnableCompressionInSingleFile=true'
         } else {
             $publishArgs += '-p:EnableCompressionInSingleFile=false'
+            $publishArgs += '-p:PublishTrimmed=false'
+            $publishArgs += '-p:IncludeNativeLibrariesForSelfExtract=false'
         }
     }
     
