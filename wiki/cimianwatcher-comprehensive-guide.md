@@ -9,17 +9,19 @@ CimianWatcher is a Windows service that monitors for bootstrap triggers and auto
 ## Architecture
 
 ### Components
-- **Service Executable**: `cimiwatcher.exe` - Native Windows service written in Go
+- **Service Executable**: `cimiwatcher.exe` - Windows service written in C# (.NET 10)
 - **Service Name**: `CimianWatcher`
 - **Display Name**: `Cimian Bootstrap File Watcher`
 - **Dependencies**: None (standalone service)
 - **Installation Path**: `C:\Program Files\Cimian\cimiwatcher.exe`
 
 ### Bootstrap Monitoring
-- **Flag File Location**: `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
-- **Polling Interval**: 10 seconds (configurable in source)
+- **GUI Flag File**: `C:\ProgramData\ManagedInstalls\.cimian.bootstrap`
+- **Headless Flag File**: `C:\ProgramData\ManagedInstalls\.cimian.headless`
+- **Polling Interval**: 10 seconds (compile-time constant)
 - **Trigger Method**: File existence and modification time detection
-- **Action**: Executes `managedsoftwareupdate.exe --auto --show-status`
+- **Action (GUI flag)**: Executes `managedsoftwareupdate.exe --auto --show-status -vv` and launches `cimistatus.exe`
+- **Action (Headless flag)**: Executes `managedsoftwareupdate.exe --auto --show-status`
 
 ### Service Configuration
 - **Start Type**: Automatic
@@ -156,7 +158,7 @@ if ($events) {
 #### 1. Service Resource Usage Test
 ```powershell
 # Monitor service resource usage
-$process = Get-Process -Name "cimianwatcher" -ErrorAction SilentlyContinue
+$process = Get-Process -Name "cimiwatcher" -ErrorAction SilentlyContinue
 if ($process) {
     Write-Host "Service process running" -ForegroundColor Green
     Write-Host "  Process ID: $($process.Id)"
@@ -292,7 +294,7 @@ Get-EventLog -LogName Application -Source "CimianWatcher" -Newest 1 -Wait
 
 ### Resource Usage (Typical)
 - **CPU Usage**: < 0.1% average, brief spikes during file checks
-- **Memory Usage**: ~5-10 MB resident set size
+- **Memory Usage**: Minimal (low single-digit MB observed in practice)
 - **Disk I/O**: Minimal, periodic file existence checks only
 - **Network Usage**: None (local file monitoring only)
 
@@ -403,17 +405,20 @@ cimiwatcher.exe remove     # Remove service
 cimiwatcher.exe start      # Start service
 cimiwatcher.exe stop       # Stop service
 cimiwatcher.exe pause      # Pause service
-cimiwatcher.exe continue   # Resume service
-cimiwatcher.exe debug      # Run in debug mode (console)
+cimiwatcher.exe continue   # Resume service after pause
+cimiwatcher.exe status     # Show service status
+cimiwatcher.exe debug      # Run the file watcher in console mode (not as a service)
 ```
 
 ### Exit Codes
+
+Produced by `cimiwatcher.exe`:
 - **0**: Success
-- **1**: General error
-- **2**: Invalid arguments
-- **5**: Access denied
-- **1056**: Service already running
-- **1060**: Service not installed
+- **1**: General error (subcommand failure, service start-up exception)
+
+Returned by the Windows Service Control Manager (not by the binary itself, but commonly seen when invoking `sc` or `net` against `CimianWatcher`):
+- **1056**: An instance of the service is already running
+- **1060**: The specified service does not exist as an installed service
 
 ### Configuration
 
@@ -433,10 +438,11 @@ Currently, configuration is compile-time only. Key constants in source:
 - Event logging support
 - Debug mode for troubleshooting
 
-### Future Enhancements
+### Future / Not Yet Implemented
+The items below are aspirational and are **not** present in the current source. Do not rely on them:
 - Configuration file support
 - Multiple monitor paths
-- Custom polling intervals
+- Custom polling intervals (currently a compile-time constant of 10 seconds)
 - Web interface for status
 - Performance metrics collection
 
