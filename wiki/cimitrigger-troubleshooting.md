@@ -53,20 +53,15 @@ If you see `Session#` as `0` (Services), the GUI is running but hidden from user
 
 ## Diagnostic Steps
 
-### Step 1: Use the Enhanced Diagnostic Tools
+### Step 1: Run the Built-in Diagnostics
 
-I've created enhanced tools to help diagnose this exact issue:
+`cimitrigger` ships with a `debug` subcommand that exercises the same code paths used by `gui` and `headless` and prints diagnostic output:
 
 ```cmd
-# Run the enhanced cimitrigger with debugging
 cimitrigger debug
-
-# Or use the dedicated diagnostic tool
-cimitrigger-debug.exe
-
-# Or use the PowerShell test script
-PowerShell -ExecutionPolicy Bypass -File Test-CimianTrigger.ps1
 ```
+
+There is no separate `cimitrigger-debug.exe` binary — the debug command is part of `cimitrigger.exe`.
 
 ### Step 2: Manual Service Test
 
@@ -177,8 +172,8 @@ sc query CimianWatcher
 sc start CimianWatcher
 cimitrigger gui
 
-# 2. If service issues persist, use direct method
-cimitrigger --direct gui
+# 2. If service issues persist, force direct elevation (skip the service)
+cimitrigger --force gui
 
 # 3. If all else fails, manual elevation
 PowerShell -Command "Start-Process -FilePath 'C:\Program Files\Cimian\managedsoftwareupdate.exe' -ArgumentList '--auto','--show-status','-vv' -Verb RunAs"
@@ -186,9 +181,21 @@ PowerShell -Command "Start-Process -FilePath 'C:\Program Files\Cimian\managedsof
 
 ## Next Steps
 
-1. **Deploy the enhanced tools** to your test device (rebuilt cimitrigger.exe, cimitrigger-debug.exe, Test-CimianTrigger.ps1)
-2. **Run diagnostics** to identify the specific issue
+1. **Deploy the current `cimitrigger.exe`** to your test device
+2. **Run `cimitrigger debug`** to identify the specific issue
 3. **Fix the CimianWatcher service** if that's the problem
-4. **Use direct elevation** as a reliable fallback for domain environments
+4. **Use `cimitrigger --force gui` (or `--force headless`)** as a reliable fallback for domain environments
 
-The enhanced tools will give you much better visibility into what's failing, which will help determine if this is a service issue, permissions issue, or something else entirely.
+`cimitrigger debug` will give you much better visibility into what's failing, which will help determine if this is a service issue, permissions issue, or something else entirely.
+
+## Command Reference
+
+The `cimitrigger.exe` binary supports the following subcommands (verified in `cli/cimitrigger/Program.cs`):
+
+```cmd
+cimitrigger gui              # Update with GUI - shows CimianStatus window when logged in
+cimitrigger headless         # Smart headless update (tries service, falls back to direct)
+cimitrigger debug            # Run diagnostics to troubleshoot issues
+cimitrigger --force gui      # Skip the service and force direct elevation in GUI mode
+cimitrigger --force headless # Skip the service and force direct elevation in headless mode
+```

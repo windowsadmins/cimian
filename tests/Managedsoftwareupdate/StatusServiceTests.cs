@@ -277,16 +277,63 @@ public class StatusServiceTests
     }
 
     [Fact]
-    public void CheckStatus_MsiInstaller_WithoutProductCodeOrUpgradeCode_FallsThroughToNoChecks()
+    public void CheckStatus_MsiInstaller_WithoutProductCodeOrUpgradeCode_FallsThroughToNotInstalled()
     {
-        // Regression guard: an MSI pkginfo that doesn't declare product_code/upgrade_code
-        // should keep the existing "no checks" fall-through behavior — Priority 6.5 only
-        // engages when authoritative MSI identity is provided.
+        // An MSI pkginfo with no product_code/upgrade_code (and no installs[] /
+        // installcheck_script / Check.*) has no verification path at all. Defaulting
+        // to "installed" caused optional items to surface as Installed in MSC even
+        // when nothing was on disk. The fallback now treats real installer payloads
+        // as not-installed so MSU schedules the install instead of skipping it.
         var item = new CatalogItem
         {
             Name = "MsiWithoutCodes",
             Version = "1.0.0",
             Installer = new InstallerInfo { Type = "msi" }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("pending", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.NotInstalled, result.ReasonCode);
+        Assert.Equal(Cimian.Core.Models.DetectionMethod.None, result.DetectionMethod);
+    }
+
+    [Fact]
+    public void CheckStatus_ExeInstaller_NoVerification_FallsThroughToNotInstalled()
+    {
+        // Same as the MSI-without-codes case for installer.type == "exe" — was the
+        // motivating regression (Krita/VLC pkginfo had only installer.type=exe with
+        // no other verification, and showed up as Installed in MSC despite nothing
+        // on disk).
+        var item = new CatalogItem
+        {
+            Name = "ExeWithoutChecks",
+            Version = "1.0.0",
+            Installer = new InstallerInfo { Type = "exe" }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("pending", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.NotInstalled, result.ReasonCode);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("nopkg")]
+    [InlineData("script")]
+    public void CheckStatus_ScriptOnlyInstaller_NoVerification_AssumesInstalled(string installerType)
+    {
+        // Script-only items (nopkg / script / empty type) have no file artifact to
+        // check — keep the legacy "assume installed" default so postinstall-only
+        // recipes don't loop forever on every run.
+        var item = new CatalogItem
+        {
+            Name = "ScriptOnlyItem",
+            Version = "1.0.0",
+            Installer = new InstallerInfo { Type = installerType }
         };
 
         var result = _service.CheckStatus(item, "install", _testDir);
