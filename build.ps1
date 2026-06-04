@@ -735,7 +735,11 @@ function Build-AllBinaries {
             }
             
             $csproj = $csprojFiles[0].FullName
-            $isSelfContained = ($toolInfo.Type -eq 'GUI')
+            # All tools publish self-contained. CLIs are invoked at build time
+            # by build.ps1 itself (e.g. cimipkg.exe to build MSIs); framework-
+            # dependent publishes break when the runner SDK is preview but the
+            # published runtimeconfig wants a matching stable framework.
+            $isSelfContained = $true
             
             Publish-Binary -ToolName $tool -ProjectPath $csproj -RuntimeIdentifier $runtime -OutputPath $outputPath -IsSelfContained $isSelfContained -BuildVersion $BuildVersion
         }
