@@ -1,22 +1,42 @@
 # Cimian CSP OMA-URI Configuration Guide
 
+> **Status note (verified 2026-05-29):** The current `ConfigurationService` in
+> `cli/managedsoftwareupdate/Services/ConfigurationService.cs` loads
+> configuration exclusively from the YAML file at
+> `C:\ProgramData\ManagedInstalls\Config.yaml`. When that file is missing it
+> falls back to a hard-coded default object, **not** to registry/CSP values.
+> The CSP/OMA-URI registry fallback described in this document is a
+> deployment pattern and design target rather than a feature implemented in
+> source today. The registry path and OMA-URI examples below are guidance
+> for how policy could be pre-staged via Intune/GPO so that an external
+> tool (or a future Cimian release) can materialize Config.yaml from it.
+
 ## Overview
 
-Cimian now supports **CSP OMA-URI registry settings as a fallback configuration mechanism**. This enhancement enables enterprise deployment scenarios where configuration files might be missing during initial deployment, but CSP policies have been applied via Intune, Group Policy, or other management tools.
+Cimian's primary configuration source is `Config.yaml`. This guide describes
+how to express the same settings via CSP OMA-URI policies so that Intune,
+Group Policy, or another management tool can deliver them to a device. A
+common pattern is to apply registry values via CSP, then have a provisioning
+script write `Config.yaml` from those values before `managedsoftwareupdate`
+runs for the first time.
 
-## Configuration Priority
+## Configuration Priority (as implemented today)
 
-1. **Primary**: `C:\ProgramData\ManagedInstalls\Config.yaml` (YAML file)
-2. **Fallback**: CSP OMA-URI registry settings
+1. **Primary (and only) source read by managedsoftwareupdate**:
+   `C:\ProgramData\ManagedInstalls\Config.yaml` (YAML file)
+2. **If the file is missing**: built-in defaults are used (placeholder
+   `SoftwareRepoURL`, machine name as `ClientIdentifier`, `Production`
+   catalog). The process does **not** read the registry today.
 
-## How It Works
+## Intended CSP-staging Flow
 
-When `managedsoftwareupdate` starts:
+When a CSP-driven deployment is used:
 
-1. **Attempts to load Config.yaml** from `C:\ProgramData\ManagedInstalls\Config.yaml`
-2. **If Config.yaml doesn't exist**, automatically attempts to load configuration from CSP registry settings
-3. **If CSP settings are found**, uses them to configure Cimian
-4. **If neither exists**, reports configuration error and exits
+1. CSP OMA-URI policy writes values under `HKLM\SOFTWARE\Cimian\Config` (or a
+   Policies hive) at device enrollment time.
+2. A provisioning step (Intune Win32 app, custom script, or bootstrap task)
+   reads those registry values and writes `Config.yaml`.
+3. `managedsoftwareupdate` then loads `Config.yaml` normally.
 
 ## CSP Registry Path
 
@@ -28,45 +48,63 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Cimian\Config
 
 ## Supported Configuration Values
 
-All major Cimian configuration options are supported via CSP registry settings:
+The names below mirror the fields on the `CimianConfig` model
+(`cli/managedsoftwareupdate/Models/UpdateModels.cs`) — i.e. the keys that
+appear in `Config.yaml`. A provisioning script that materializes
+`Config.yaml` from CSP-applied registry values should use these names.
 
 ### String Values
-| Registry Value | Type | Description | Example |
+| Name | Reg type | Description | Example |
 |---|---|---|---|
 | `SoftwareRepoURL` | REG_SZ | Primary software repository URL | `https://cimian.company.com` |
 | `ClientIdentifier` | REG_SZ | Unique client identifier | `DESKTOP-ABC123` |
-| `CloudBucket` | REG_SZ | Cloud storage bucket name | `cimian-packages` |
-| `CloudProvider` | REG_SZ | Cloud provider type | `azure`, `aws`, `none` |
-| `DefaultArch` | REG_SZ | Default architecture(s) | `x64,arm64` |
-| `DefaultCatalog` | REG_SZ | Default catalog name | `production` |
-| `InstallPath` | REG_SZ | Installation directory | `C:\Program Files\Cimian` |
-| `LocalOnlyManifest` | REG_SZ | Path to local-only manifest | `C:\Local\manifest.yaml` |
 | `LogLevel` | REG_SZ | Logging verbosity | `ERROR`, `WARN`, `INFO`, `DEBUG` |
-| `RepoPath` | REG_SZ | Local repository path | `C:\ProgramData\ManagedInstalls\repo` |
-| `CachePath` | REG_SZ | Cache directory path | `C:\ProgramData\ManagedInstalls\cache` |
-| `CatalogsPath` | REG_SZ | Catalogs directory path | `C:\ProgramData\ManagedInstalls\catalogs` |
+| `CachePath` | REG_SZ | Cache directory path | `C:\ProgramData\ManagedInstalls\Cache` |
+| `CatalogsPath` | REG_SZ | Catalogs directory path | `C:\ProgramData\ManagedInstalls\Catalogs` |
+| `ManifestsPath` | REG_SZ | Manifests directory path | `C:\ProgramData\ManagedInstalls\Manifests` |
+| `LocalOnlyManifest` | REG_SZ | Path to local-only manifest | `C:\Local\manifest.yaml` |
+| `PreflightFailureAction` | REG_SZ | `continue` or `abort` | `continue` |
+| `PostflightFailureAction` | REG_SZ | `continue` or `abort` | `continue` |
+| `AuthUser` / `AuthPassword` / `AuthToken` | REG_SZ | Repo credentials (store via secure means) | — |
+| `SbinInstallerPath` | REG_SZ | Path to `sbin\installer.exe` | `C:\Program Files\sbin\installer.exe` |
+| `SbinInstallerTargetRoot` | REG_SZ | sbin-installer target root | `/` |
+| `ClientCertificatePath` / `ClientCertificateThumbprint` / `ClientCertificatePassword` / `ClientKeyPath` | REG_SZ | SSL client cert auth | — |
+| `SoftwareRepoCACertificate` | REG_SZ | CA certificate for repo TLS | — |
 
-### Boolean Values  
-| Registry Value | Type | Description | Example |
-|---|---|---|---|
-| `Debug` | REG_DWORD or REG_SZ | Enable debug logging | `1` or `"true"` |
-| `Verbose` | REG_DWORD or REG_SZ | Enable verbose output | `1` or `"true"` |
-| `CheckOnly` | REG_DWORD or REG_SZ | Check-only mode | `0` or `"false"` |
-| `ForceBasicAuth` | REG_DWORD or REG_SZ | Force basic authentication | `1` or `"true"` |
-| `NoPreflight` | REG_DWORD or REG_SZ | Skip preflight scripts | `0` or `"false"` |
-| `OpenImportedYaml` | REG_DWORD or REG_SZ | Auto-open imported YAML | `1` or `"true"` |
-| `ForceExecutionPolicyBypass` | REG_DWORD or REG_SZ | Force PowerShell execution policy bypass for all scripts | `1` or `"true"` (default: true) |
+### Boolean Values
+| Name | Reg type | Description |
+|---|---|---|
+| `Verbose` | REG_DWORD or REG_SZ | Enable verbose output |
+| `Debug` | REG_DWORD or REG_SZ | Enable debug logging |
+| `CheckOnly` | REG_DWORD or REG_SZ | Check-only mode |
+| `NoPreflight` | REG_DWORD or REG_SZ | Skip preflight scripts |
+| `NoPostflight` | REG_DWORD or REG_SZ | Skip postflight scripts |
+| `SkipSelfService` | REG_DWORD or REG_SZ | Skip self-service manifest processing |
+| `UseCache` | REG_DWORD or REG_SZ | Use the local download cache (default `true`) |
+| `ForceChocolatey` | REG_DWORD or REG_SZ | Force Chocolatey provider |
+| `PreferSbinInstaller` | REG_DWORD or REG_SZ | Prefer sbin-installer (default `true`) |
+| `PkgRequireSignature` | REG_DWORD or REG_SZ | Require signature on .pkg packages |
+| `AutoRemove` | REG_DWORD or REG_SZ | Auto-remove orphaned packages |
+| `UseClientCertificate` | REG_DWORD or REG_SZ | Use SSL client certificate auth |
+| `UseClientCertificateCNAsClientIdentifier` | REG_DWORD or REG_SZ | Use cert CN as `ClientIdentifier` |
 
 ### Integer Values
-| Registry Value | Type | Description | Example |
+| Name | Reg type | Description | Default |
 |---|---|---|---|
-| `InstallerTimeoutMinutes` | REG_DWORD or REG_SZ | Timeout for installer execution (minutes) | `15` or `"30"` |
+| `InstallerTimeout` | REG_DWORD or REG_SZ | Installer timeout in **seconds** | `900` |
+| `CacheRetentionDays` | REG_DWORD or REG_SZ | Days to retain cached downloads | `30` |
 
 ### Array Values
-| Registry Value | Type | Description | Example |
+| Name | Reg type | Description | Example |
 |---|---|---|---|
-| `Catalogs` | REG_MULTI_SZ or REG_SZ | Available catalogs | Multi-string or `"production,testing"` |
-| `LocalManifests` | REG_MULTI_SZ or REG_SZ | Local manifest paths | Multi-string or `"C:\Local\app1.yaml,C:\Local\app2.yaml"` |
+| `Catalogs` | REG_MULTI_SZ | Available catalogs | `Production` |
+
+> Fields that do not exist on `CimianConfig` (such as `CloudBucket`,
+> `CloudProvider`, `DefaultArch`, `InstallPath`, `RepoPath`,
+> `ForceBasicAuth`, `OpenImportedYaml`, `ForceExecutionPolicyBypass`,
+> `LocalManifests`) have been removed from this list. PowerShell
+> execution-policy bypass is applied unconditionally — see the link in the
+> section below.
 
 ## Microsoft Intune Deployment
 
@@ -193,43 +231,44 @@ Get-ItemProperty -Path "HKLM:\SOFTWARE\Cimian\Config" -ErrorAction SilentlyConti
 Get-Item -Path "HKLM:\SOFTWARE\Cimian\Config" | Select-Object -ExpandProperty Property
 ```
 
-### Test Configuration Loading
+### Inspect Effective Configuration
 ```cmd
-# Run with verbose output to see CSP loading
+# Print the effective CimianConfig fields managedsoftwareupdate is using
 managedsoftwareupdate.exe --show-config -v
 ```
 
 ### Simulate Missing Config.yaml
-```powershell
-# Temporarily rename config file to test CSP fallback
-Rename-Item "C:\ProgramData\ManagedInstalls\Config.yaml" "C:\ProgramData\ManagedInstalls\Config.yaml.backup"
 
-# Run Cimian - should fall back to CSP
-managedsoftwareupdate.exe --show-config -v
-
-# Restore config file
-Rename-Item "C:\ProgramData\ManagedInstalls\Config.yaml.backup" "C:\ProgramData\ManagedInstalls\Config.yaml"
-```
+Without `Config.yaml`, `ConfigurationService.LoadConfig` returns hard-coded
+defaults (placeholder `SoftwareRepoURL`, machine name as
+`ClientIdentifier`, `Production` catalog). Policy-applied registry values
+are **not** read in the current implementation, so this is only a useful
+test if you have a provisioning step that materializes `Config.yaml` from
+the registry beforehand.
 
 ## Deployment Scenarios
 
 ### Scenario 1: New Device Provisioning
-1. **Intune** applies CSP OMA-URI policies during device enrollment
-2. **Cimian MSI** is deployed via Intune Win32 app
-3. **First run** uses CSP settings since Config.yaml doesn't exist yet
-4. **cimiimport** can optionally create Config.yaml from CSP settings
+1. **Intune** applies CSP OMA-URI policies during device enrollment, writing
+   the desired settings into `HKLM\SOFTWARE\Cimian\Config`.
+2. **A provisioning script** (run before the Cimian MSI or as part of it)
+   reads those registry values and writes `Config.yaml`.
+3. **Cimian MSI** is deployed via Intune Win32 app.
+4. **First `managedsoftwareupdate` run** loads `Config.yaml` normally.
 
 ### Scenario 2: Existing Device Migration
-1. **Existing Config.yaml** remains primary configuration source
-2. **CSP policies** applied as backup/compliance measure
-3. **If Config.yaml** is deleted or corrupted, CSP provides fallback
-4. **Consistent behavior** across all managed devices
+1. `Config.yaml` remains the configuration source read by Cimian.
+2. CSP policies can be applied as a compliance/auditing signal — but on
+   their own they do not change Cimian's runtime behavior today.
+3. If `Config.yaml` is deleted, defaults take over until a provisioning
+   step regenerates the file.
 
 ### Scenario 3: Zero-Touch Deployment
-1. **Autopilot** enrolls device and applies CSP policies
-2. **Cimian** deployed during ESP (Enrollment Status Page)
-3. **Immediate functionality** without manual configuration
-4. **Self-service portal** available immediately
+1. **Autopilot** enrolls the device and applies CSP policies.
+2. A bootstrap step (CimianWatcher, Win32 app, or custom script)
+   materializes `Config.yaml` from the policy-applied registry values.
+3. Cimian is deployed during ESP and immediately uses the generated
+   `Config.yaml`.
 
 ## Troubleshooting
 
@@ -253,78 +292,26 @@ Rename-Item "C:\ProgramData\ManagedInstalls\Config.yaml.backup" "C:\ProgramData\
 
 ### Debug Logging
 
-Enable verbose logging to see CSP fallback in action:
+Run with verbose output to inspect the loaded configuration:
 
 ```cmd
-managedsoftwareupdate.exe -vv --show-config
+managedsoftwareupdate.exe --show-config -v
 ```
 
-Expected output when using CSP fallback:
-```
-2025/08/15 11:13:54 Configuration file does not exist: C:\ProgramData\ManagedInstalls\Config.yaml
-2025/08/15 11:13:54 Attempting to load configuration from CSP OMA-URI registry settings...
-2025/08/15 11:13:54 Loaded CSP configuration from primary registry path: SOFTWARE\Policies\Cimian
-2025/08/15 11:13:54 CSP: Loaded SoftwareRepoURL = https://cimian.yourcompany.com
-2025/08/15 11:13:54 CSP: Loaded DefaultCatalog = production
-2025/08/15 11:13:54 CSP: Loaded Debug = true
-2025/08/15 11:13:54 Successfully loaded configuration from CSP OMA-URI registry settings
-```
+`--show-config` prints the effective `CimianConfig` field values. Cimian
+itself does **not** currently log "CSP fallback" messages — if `Config.yaml`
+is missing, defaults are used silently. To confirm policy-applied registry
+values, inspect `HKLM\SOFTWARE\Cimian\Config` with `reg query` or
+`Get-ItemProperty`.
 
 ## PowerShell Execution Policy Bypass
 
-### Built-in Execution Policy Management
+Cimian always invokes PowerShell with `-NoProfile -ExecutionPolicy Bypass` for
+every script it runs (preinstall, postinstall, install-check, uninstall,
+nopkg, etc.). The bypass is built into `ScriptService` and is **not**
+controlled by a config or CSP setting today.
 
-Cimian includes **built-in PowerShell execution policy bypass** to prevent OS execution policy restrictions from blocking script execution. This feature ensures that all PowerShell scripts run reliably in enterprise environments.
-
-### How It Works
-
-- **All PowerShell script executions** in Cimian automatically include `-ExecutionPolicy Bypass`
-- **Applies to all script types**: preinstall, postinstall, check scripts, uninstall scripts, etc.
-- **Enabled by default** for maximum compatibility
-- **Configurable** via `ForceExecutionPolicyBypass` setting
-
-### Affected Script Types
-
-The execution policy bypass applies to:
-- **Installation scripts** (.ps1 installers)
-- **Preinstall scripts** (chocolateyBeforeInstall.ps1, PreScript)
-- **Postinstall scripts** (custom postinstall scripts)
-- **Check scripts** (install verification scripts)
-- **Uninstall scripts** (PowerShell uninstallers)
-- **nopkg scripts** (script-only packages)
-
-### Configuration Options
-
-#### YAML Configuration (Config.yaml)
-```yaml
-# Force execution policy bypass for all PowerShell scripts (default: true)
-ForceExecutionPolicyBypass: true
-```
-
-#### CSP OMA-URI Configuration
-```
-Name: Cimian Force Execution Policy Bypass
-Description: Force PowerShell execution policy bypass for all scripts
-OMA-URI: ./Device/Vendor/MSFT/Policy/Config/Software/Cimian/Config/ForceExecutionPolicyBypass
-Data type: Integer
-Value: 1
-```
-
-### Security Considerations
-
-- **Scripts run with same privileges** as managedsoftwareupdate.exe (typically SYSTEM)
-- **Only affects Cimian-executed scripts**, not system-wide PowerShell policy
-- **Temporary bypass** for specific script execution only
-- **No permanent policy changes** to the system
-
-### Example Script Headers
-
-All Cimian PowerShell executions automatically include:
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File script.ps1
-```
-
-This ensures consistent script execution regardless of system execution policy settings.
+See [PowerShell Execution Policy Bypass](powershell-execution-policy-bypass.md) for details.
 
 ## Best Practices
 

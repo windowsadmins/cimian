@@ -33,7 +33,7 @@ cli/repoclean/
 - `--keep/-k`: Number of versions to retain (default: 2)
 - `--show-all`: Display all items including those not marked for deletion
 - `--remove`: Actually perform deletions (default is dry-run mode)
-- `--auto/-a`: Automatic deletion without prompts when using --remove
+- `--auto/-y`: Automatic deletion without prompts when using --remove
 - `--version/-v`: Version information
 - `--help/-h`: Usage help
 
@@ -113,7 +113,7 @@ The tool uses a multi-layered approach for parsing YAML files:
 - **Ecosystem**: Rich .NET ecosystem vs limited Go packages
 - **Object-Oriented**: Full OOP support vs Go's limited OOP
 - **Memory Management**: Automatic garbage collection
-- **Cross-Platform**: Runs on Windows, Linux, macOS with .NET 8.0
+- **Cross-Platform**: Runs on Windows with .NET 10.0 (`net10.0-windows`)
 
 ## Build Integration
 
@@ -213,7 +213,7 @@ Run with --remove to actually delete these items.
 ### Project Structure
 - Added to existing CimianTools.sln solution
 - Follows established project conventions
-- Uses .NET 8.0 target framework
+- Uses .NET 10.0 (`net10.0-windows`) target framework
 - Consistent naming and structure patterns
 
 ### Code Signing
