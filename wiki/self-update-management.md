@@ -35,14 +35,18 @@ managedsoftwareupdate --clear-selfupdate
 ### Trigger Self-Update
 
 ```cmd
-# Restart CimianWatcher service (triggers self-update if pending)
+# Restart the CimianWatcher Windows service via sc.exe stop/start.
+# Any pending self-update flag is then picked up the next time the service starts.
 managedsoftwareupdate --restart-service
 ```
+
+`--restart-service` invokes `sc.exe stop CimianWatcher` followed by `sc.exe start CimianWatcher`. It does not perform the install itself — it simply restarts the service so the queued self-update can run.
 
 ### Advanced Commands
 
 ```cmd
-# Manually perform self-update (advanced/internal use)
+# Manually perform a pending self-update in the current process
+# (advanced/internal use; normally handled by CimianWatcher)
 managedsoftwareupdate --perform-selfupdate
 ```
 
@@ -55,10 +59,17 @@ managedsoftwareupdate --perform-selfupdate
 
 ## Package Format Support
 
-The self-update system supports both package formats:
+`SelfUpdateService` (in `shared/core/Services/SelfUpdateService.cs`) dispatches on
+`InstallerType` and supports:
 
-- **MSI Packages**: Windows Installer packages for system-wide installation
-- **NUPKG Packages**: Chocolatey/NuGet packages for managed environments
+- **MSI** — installed via `msiexec.exe /i ... /quiet /norestart` with verbose
+  logging to `CimianPaths.LogsDir`.
+- **PKG** — installed via the sbin-installer at
+  `C:\Program Files\sbin\installer.exe`.
+- **NUPKG** — also installed via the sbin-installer (same code path as PKG).
+
+Any other installer type returns "Unsupported installer type for
+self-update".
 
 ## Integration with Existing Workflows
 
@@ -83,19 +94,22 @@ Self-updates integrate seamlessly with existing Cimian workflows:
 managedsoftwareupdate --selfupdate-status
 ```
 
-Output example:
+Illustrative output when an update is pending (exact wording is produced by `ShowSelfUpdateStatus` in `cli/managedsoftwareupdate/Program.cs`):
 ```
 Cimian Self-Update Status
 ════════════════════════════
-Status: Self-update pending
-Update details:
-   version: 2025.08.19
-   package: Cimian-x64-2025.08.19.msi
-   scheduled: 2025-08-18T15:30:00Z
+[STATUS]: Self-update pending
+
+   Item: Cimian
+   Version: 2025.08.19
+   Installer: msi
+   Scheduled: 2025-08-18T15:30:00.0000000-07:00
 
 To trigger the update:
    managedsoftwareupdate --restart-service
 ```
+
+When no update is pending the command prints `[STATUS]: No self-update pending` followed by `Cimian is up to date`.
 
 ### Trigger Self-Update
 
@@ -103,13 +117,15 @@ To trigger the update:
 managedsoftwareupdate --restart-service
 ```
 
-Output example:
+Illustrative output:
 ```
-Restarting CimianWatcher service...
-CimianWatcher service stopped
-   Waiting for service to stop... done
-CimianWatcher service restarted successfully
-ℹ Self-update will be processed if pending
+Restarting Cimian Watcher Service
+══════════════════════════════════
+Stopping CimianWatcher...
+Starting CimianWatcher...
+CimianWatcher restarted successfully
+
+Note: If a self-update was pending, it will be applied now.
 ```
 
 ### Clear Self-Update Flag
@@ -122,12 +138,12 @@ managedsoftwareupdate --clear-selfupdate
 
 ## Integration with Scripts
 
-The self-update status can be checked in scripts:
+The self-update status can be checked in scripts. Note that `--check-selfupdate` currently returns exit code `0` in both the "pending" and "no update pending" cases (only a metadata read error returns `1`), so scripts should parse stdout rather than rely solely on `$LASTEXITCODE`:
 
 ```powershell
 # Check if self-update is pending
-& managedsoftwareupdate --check-selfupdate
-if ($LASTEXITCODE -eq 0) {
+$output = & managedsoftwareupdate --check-selfupdate
+if ($output -match 'Update available') {
     Write-Host "Self-update is pending"
     # Optionally trigger the update
     & managedsoftwareupdate --restart-service

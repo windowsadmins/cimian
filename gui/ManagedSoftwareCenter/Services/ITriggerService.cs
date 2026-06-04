@@ -19,6 +19,13 @@ public interface ITriggerService
     Task TriggerInstallAsync();
 
     /// <summary>
+    /// Trigger a fast targeted install/uninstall for a single item just requested via
+    /// the self-service manifest. Uses `--item <name> --no-preflight` so the run skips
+    /// the full preflight pipeline and only touches the affected package.
+    /// </summary>
+    Task TriggerInstallItemAsync(string itemName);
+
+    /// <summary>
     /// Trigger stop of current operation (during download phase)
     /// </summary>
     Task TriggerStopAsync();

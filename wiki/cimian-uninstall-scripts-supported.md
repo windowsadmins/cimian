@@ -6,67 +6,7 @@ This document provides a comprehensive overview of the uninstall script types an
 
 Cimian supports multiple uninstall methods and script types to accommodate different software packaging formats and uninstallation requirements. The system follows Munki's proven approach to package uninstallability with both explicit control and automatic determination.
 
-## Complex Application with Uninstalls Array
-```yaml
-name: complex-application
-version: 2.1.0
-installer:
-  type: exe
-  location: /packages/complex-app-2.1.0.exe 
-  arguments: [/S, /INSTALLDIR=C:\Program Files\ComplexApp]
-uninstaller:
-  location: /packages/complex-app-uninstaller.exe
-  arguments: [/S]
-uninstalls:
-  # Remove specific files
-  - type: file
-    path: C:\Program Files\ComplexApp\app.exe
-    force: true
-  - type: file 
-    path: C:\Program Files\ComplexApp\legacy.dll
-    force: true
-  # Remove directories
-  - type: directory
-    path: C:\ProgramData\ComplexApp
-    recursive: true
-    force: true
-  - type: directory
-    path: C:\Users\Public\ComplexApp
-    recursive: true
-    force: true
-  # Remove registry entries
-  - type: registry
-    path: HKLM\SOFTWARE\ComplexApp
-  - type: registry
-    path: HKCU\SOFTWARE\ComplexApp
-  # Terminate and uninstall services/applications
-  - type: application
-    name: ComplexAppService.exe
-    switches: [stop, remove]          # Windows-style switches (/stop, /remove)
-    flags: [force, no-prompt]         # Unix-style flags (--force, --no-prompt)
-  - type: application  
-    name: ComplexAppAgent.exe
-    switches: [terminate]             # Windows-style switch (/terminate)
-    flags: [immediate]                # Unix-style flag (--immediate)
-# Auto-determined as uninstallable (has both uninstaller and uninstalls array)
-```
-
-### Development Tools (Auto-uninstallable)
-```yaml
-name: visual-studio-code
-version: 1.85.0
-installer:
-  type: exe
-  location: /packages/VSCode-1.85.0.exe
-uninstaller:
-  location: /packages/VSCode-uninstaller.exe
-  arguments: [/SILENT]
-# Auto-determined as uninstallable (has uninstaller)
-```
-
-## Overview
-
-Cimian supports multiple uninstall methods and script types to accommodate different software packaging formats and uninstallation requirements. The system follows Munki's proven approach to package uninstallability with both explicit control and automatic determination.
+The uninstall execution path is `InstallerService.UninstallAsync` in `cli/managedsoftwareupdate/Services/InstallerService.cs`. The auto-uninstallability rules are defined by `CatalogItem.IsUninstallable()` in `cli/managedsoftwareupdate/Models/UpdateModels.cs`.
 
 ## Flags vs Switches Support
 
@@ -85,89 +25,88 @@ Cimian provides distinct support for `flags` and `switches` to accommodate diffe
 
 ### Usage Examples
 
+`uninstaller` is a list in the pkginfo model, but only the first entry (`item.Uninstaller[0]`) is executed by `UninstallAsync`. Supported `type` values are `msi`, `exe`, `powershell`/`ps1`, and `msix`/`appx`.
+
 ```yaml
 uninstaller:
   - type: msi
     product_code: "{12345678-1234-1234-1234-123456789012}"
     switches:
       - q                    # Becomes /q
-      - norestart           # Becomes /norestart  
+      - norestart            # Becomes /norestart
       - log=c:\temp\uninstall.log  # Becomes /log=c:\temp\uninstall.log
     flags:
-      - passive             # Becomes --passive
-      - force               # Becomes --force
-      - "-v"                # Preserved as -v (explicit single dash)
-      - "--debug"           # Preserved as --debug (explicit double dash)
+      - passive              # Becomes --passive
+      - force                # Becomes --force
+      - "-v"                 # Preserved as -v (explicit single dash)
+      - "--debug"            # Preserved as --debug (explicit double dash)
 
+# For type: exe / powershell, the executable or script is given in `command`:
+uninstaller:
   - type: exe
-    path: C:\Program Files\MyApp\uninstall.exe
+    command: C:\Program Files\MyApp\uninstall.exe
     switches:
-      - S                   # Becomes /S (silent mode)
-      - REMOVEDATA         # Becomes /REMOVEDATA
+      - S                    # Becomes /S (silent mode)
+      - REMOVEDATA           # Becomes /REMOVEDATA
     flags:
-      - quiet              # Becomes --quiet
-      - force              # Becomes --force
-      - config=production  # Becomes --config=production
+      - quiet                # Becomes --quiet
+      - force                # Becomes --force
+      - config=production    # Becomes --config=production
 ```
 
-**Smart Flag Prefix Detection**: When flags don't have explicit prefixes, Cimian intelligently defaults to `--` for compatibility with modern applications while respecting explicitly provided prefixes.
+**Smart prefix detection**: When switches/flags are given without an explicit prefix, `UninstallerInfo.GetAllArgs()` normalizes switches to `/` and flags to `--` (single-character flags are normalized to `-`). Explicit prefixes (`-v`, `--debug`, `/SILENT`) are preserved as-is.
 
 ## Supported Uninstall Script Types
 
 ### 1. MSI Packages (Built-in Support)
 - **Type**: `msi`
 - **Method**: Uses Windows Installer's built-in uninstall functionality
-- **Command**: `msiexec /x <package.msi> /qn /norestart`
-- **Auto-uninstallable**: Yes
+- **Command**: `msiexec /x <ProductCode> /qn /norestart` (the `ProductCode` is read from the `uninstaller` block, from `installs[]` of `type: msi`, or from a legacy `installer.product_code` field)
+- **Auto-uninstallable**: Yes — when a `ProductCode` is available
 - **Example**:
 ```yaml
 installer:
   type: msi
   location: /packages/app-1.0.0.msi
-# Automatically uninstallable via MSI uninstall
+# Automatically uninstallable via msiexec /x — ProductCode is captured by
+# cimiimport/makepkginfo into installs[] (type: msi) and used at uninstall time.
 ```
 
 ### 2. PowerShell Scripts (.ps1)
-- **Type**: `ps1`
-- **Method**: Executes PowerShell uninstall scripts
-- **Command**: `powershell -NoProfile -ExecutionPolicy Bypass -File <script.ps1>`
-- **Auto-uninstallable**: Only if explicit uninstaller defined or has tracking
+- **Type**: `powershell` or `ps1`
+- **Method**: Executes the script defined by `command:` via the script service
+- **Auto-uninstallable**: Only when an explicit `uninstaller` block is defined; an installer of `type: ps1` alone does NOT make the package self-uninstallable
 - **Example**:
 ```yaml
 installer:
   type: ps1
   location: /scripts/install-app.ps1
 uninstaller:
-  location: /scripts/uninstall-app.ps1
-  arguments: [-Force, -Quiet]
+  - type: powershell
+    command: /scripts/uninstall-app.ps1
+    flags: [Force, Quiet]
 ```
 
 ### 3. EXE Uninstallers
 - **Type**: `exe`
-- **Method**: Executes dedicated uninstaller executables
-- **Auto-uninstallable**: Only if explicit uninstaller defined or has tracking
+- **Method**: Executes the uninstaller given in `command:` with switches/flags/args
+- **Auto-uninstallable**: Only when an explicit `uninstaller` block is defined
 - **Example**:
 ```yaml
 installer:
   type: exe
   location: /packages/app-installer.exe
 uninstaller:
-  location: /packages/app-uninstaller.exe
-  arguments: [/S, /NORESTART]
+  - type: exe
+    command: C:\Program Files\MyApp\uninstall.exe
+    switches: [S, NORESTART]
 ```
 
 ### 4. Chocolatey Packages (.nupkg)
 - **Type**: `nupkg`
-- **Method**: Uses Chocolatey's built-in uninstall functionality
-- **Command**: `choco uninstall <packageId> --version <version> --source <cache> -y --force`
-- **Auto-uninstallable**: Yes
-- **Example**:
-```yaml
-installer:
-  type: nupkg
-  location: /packages/app.1.5.0.nupkg
-# Automatically uninstallable via Chocolatey
-```
+- **Install**: Routed through sbin-installer with a Chocolatey fallback
+- **Uninstall**: Not currently handled as a first-class case — `UninstallAsync` has no `nupkg` branch and falls back to the MSI handler, which requires a `ProductCode`. To remove a nupkg-installed package, supply an explicit `uninstaller` block (e.g., `type: powershell` invoking `choco uninstall`) or rely on `installs[]`-based tracking with a separate uninstall mechanism.
+- **Status**: Planned — first-class `choco uninstall` support is not yet implemented.
 
 ### 5. MSIX / APPX Packages
 - **Type**: `msix` (also covers `appx`, `msixbundle`, `appxbundle`)
@@ -265,32 +204,9 @@ uninstaller:
     identity_name: com.tinyspeck.slackdesktop
 ```
 
-### 7. Uninstalls Array (Advanced Feature)
-- **Type**: Array of uninstall operations
-- **Method**: Executes multiple uninstall operations with specific parameters
-- **Auto-uninstallable**: Yes (when present)
-- **Supported Operations**:
-  - `file`: Remove specific files with force option
-  - `directory`: Remove directories with recursive option
-  - `registry`: Remove registry keys and values
-  - `application`: Terminate/uninstall applications with custom arguments
-- **Example**:
-```yaml
-uninstalls:
-  - type: file
-    path: C:\Program Files\MyApp\app.exe
-    force: true
-  - type: directory
-    path: C:\ProgramData\MyApp
-    recursive: true
-    force: true
-  - type: registry
-    path: HKLM\SOFTWARE\MyApp
-  - type: application
-    name: MyAppService.exe
-    arguments: [/stop, /uninstall]
-    switches: [--force, --no-restart]
-```
+### 7. Uninstalls Array
+- **Status**: **Planned — not yet implemented.** The current `CatalogItem` model does NOT define an `uninstalls:` property, and `InstallerService.UninstallAsync` does not consume one. The dispatch path only branches on `item.Uninstaller[0]` (the first entry of the `uninstaller:` list) or `item.UninstallScript`, with self-uninstallable fallbacks for MSI and MSIX. A typed multi-operation `uninstalls:` array (file/directory/registry/application removal) is a Munki-inspired feature that has not been wired into the C# code yet.
+- **Workaround today**: For multi-step cleanup, use a `postuninstall_script` (PowerShell) that runs after `UninstallAsync` succeeds.
 
 ### 6. Batch Scripts (.bat)
 - **Type**: Pre/post install scripts support batch format
@@ -302,45 +218,41 @@ uninstalls:
 
 ### Automatic Uninstallability
 
-Cimian automatically determines if a package can be uninstalled based on:
+`CatalogItem.IsUninstallable()` returns true when `uninstallable` is not explicitly `false` AND any of the following applies:
 
-1. **Explicit uninstaller defined**
+1. **Explicit uninstaller defined** — `uninstaller:` has at least one entry
    ```yaml
    uninstaller:
-     location: /packages/uninstaller.exe
-     arguments: [/quiet]
+     - type: exe
+       command: C:\Program Files\MyApp\uninstall.exe
+       switches: [S]
    ```
 
-2. **Package type with built-in uninstall support**
-   - MSI packages
-   - Chocolatey packages (nupkg)
-   - MSIX packages
-
-3. **Registry tracking defined**
+2. **Registry tracking defined** — `check.registry.name` is set
    ```yaml
    check:
      registry:
        name: MyApplication
        version: 1.0.0
    ```
+   > Note: `IsUninstallable()` returns true in this case, but `UninstallAsync` will only succeed if there is also a usable uninstaller (explicit `uninstaller:` block, an `installs[]` MSI/MSIX entry as below, or an `uninstall_script`). Otherwise it returns "No uninstaller defined".
 
-4. **File/directory tracking defined**
+3. **Self-uninstallable MSI via `installs[]`** — an `installs` entry of `type: msi` with a `product_code`. `UninstallAsync` synthesizes an MSI uninstaller from this entry.
    ```yaml
    installs:
-     - type: file
-       path: C:\Program Files\MyApp\app.exe
+     - type: msi
+       product_code: "{12345678-1234-1234-1234-123456789012}"
        version: 1.0.0
    ```
 
-5. **Uninstalls array defined**
+4. **Self-uninstallable MSI via legacy `installer.product_code`** — for pkginfos written before `product_code` moved to `installs[]`.
+
+5. **Self-uninstallable MSIX/APPX via `installs[]`** — an `installs` entry of `type: msix` or `type: appx` with `identity_name`. `UninstallAsync` synthesizes an MSIX uninstaller using the two-step `Remove-AppxProvisionedPackage` + `Remove-AppxPackage` flow.
    ```yaml
-   uninstalls:
-     - type: file
-       path: C:\Program Files\MyApp\app.exe
-       force: true
-     - type: directory
-       path: C:\ProgramData\MyApp
-       recursive: true
+   installs:
+     - type: msix
+       identity_name: com.tinyspeck.slackdesktop
+       version: 4.45.69.0
    ```
 
 ### Explicit Control
@@ -360,68 +272,23 @@ uninstallable: null  # or omit the key
 
 ## Uninstall Process Flow
 
-1. **Check uninstallability**: Verify the item can be uninstalled
-2. **Dependency checking**: Remove dependent items first
-3. **Update handling**: Remove any update items
-4. **Execute uninstall**: Run the appropriate uninstall method
-   - If `uninstalls` array is present: Process each uninstall item with specific arguments/switches
-   - Fallback to traditional uninstaller (exe, msi, ps1, etc.)
-5. **Registry cleanup**: Remove installation tracking from registry
-6. **Cache cleanup**: Clean up cached installer files
+`InstallerService.UninstallAsync` executes the following steps for an item flagged for uninstall:
+
+1. **Run `preuninstall_script`** if defined; abort on failure.
+2. **Dispatch by uninstaller type** (first entry of `uninstaller:`):
+   - `msi` → `msiexec /x <ProductCode> /qn /norestart` plus any switches/flags
+   - `exe` → execute `command:` with combined switches/flags/args
+   - `powershell` / `ps1` → run the script in `command:` via the script service
+   - `msix` / `appx` → two-step `Remove-AppxProvisionedPackage` + `Remove-AppxPackage -AllUsers`
+   - Anything else falls through to the MSI handler (which will fail without a `ProductCode`)
+3. **If no `uninstaller:` block**, fall back to:
+   - `uninstall_script` (raw script body) if present, or
+   - A synthesized MSI uninstall if `installs[]` carries a `product_code`, or
+   - A synthesized MSIX uninstall if `installs[]` carries `type: msix`/`appx` with `identity_name`.
+4. **Run `postuninstall_script`** if the uninstall succeeded (warns but does not fail on script error).
+5. **Unregister from `HKLM\SOFTWARE\ManagedInstalls\<Name>`** to clear installation tracking.
 
 ## Advanced Features
-
-### Uninstalls Array (New Feature)
-- **Enhanced uninstall control**: Define specific files, directories, registry keys, and applications to remove
-- **Flexible arguments**: Support for custom flags, switches, and arguments per uninstall item
-- **Multiple uninstall methods**: Mix different uninstall approaches in a single package
-- **Granular control**: Specify exact uninstall behavior for each component
-
-Example `uninstalls` array:
-```yaml
-uninstalls:
-  - type: file
-    path: C:\Program Files\MyApp\uninstall.exe
-    switches:
-      - silent
-      - force
-    flags:
-      - quiet
-      - no-restart
-  - type: msi
-    product_code: "{12345678-1234-1234-1234-123456789012}"
-    switches:
-      - "REBOOT=Suppress"
-    flags:
-      - "ALLUSERS=1"
-  - type: directory 
-    path: C:\ProgramData\MyApp
-  - type: registry
-    path: HKLM\SOFTWARE\MyApp
-  - type: ps1
-    path: C:\Scripts\cleanup.ps1
-    flags:
-      - "Force"
-      - "RemoveData=true"
-```
-
-#### Uninstalls Array Item Types
-
-- **file**: Remove specific files from the system
-- **directory**: Remove directories and their contents  
-- **msi**: Uninstall MSI packages using ProductCode
-- **exe**: Execute uninstaller executables with arguments
-- **ps1/powershell**: Run PowerShell scripts for custom uninstall logic
-- **registry**: Remove registry keys/values (placeholder for future enhancement)
-
-#### Switches vs Flags
-
-The uninstalls array supports both `switches` and `flags` for different argument styles:
-
-- **switches**: Traditional Windows-style arguments with `/` prefix (e.g., `/silent`, `/force`)
-- **flags**: Unix-style arguments with `-` or `--` prefix (e.g., `--quiet`, `-no-restart`)
-
-This distinction mirrors the `installs` array pattern and provides maximum flexibility for different installer types.
 
 ### Dependency-Aware Uninstallation
 - Automatically removes dependent packages first
@@ -458,9 +325,10 @@ installer:
   type: exe
   location: /packages/VSCode-1.85.0.exe
 uninstaller:
-  location: /packages/VSCode-uninstaller.exe
-  arguments: [/SILENT]
-# Auto-determined as uninstallable
+  - type: exe
+    command: C:\Program Files\Microsoft VS Code\unins000.exe
+    switches: [SILENT, NORESTART]
+# Auto-determined as uninstallable because uninstaller is defined
 ```
 
 ### Script-only Packages
@@ -486,27 +354,26 @@ OnDemand: true
 
 ## Implementation Notes
 
-- Uninstall scripts are executed with appropriate privileges
-- PowerShell scripts run with `-NoProfile` and `-ExecutionPolicy Bypass`
-- MSI uninstalls use quiet mode (`/qn`) by default
-- Chocolatey uninstalls include proper version and source specification
-- MSIX packages use Windows PowerShell cmdlets for removal
+- Uninstall scripts are executed with the privileges of the `managedsoftwareupdate` process (typically SYSTEM when run via the scheduled task / service)
+- PowerShell scripts run via the script service with `-NoProfile` and `-ExecutionPolicy Bypass`
+- MSI uninstalls use quiet mode (`/qn /norestart`) by default
+- MSIX/APPX uninstall is a two-step PowerShell flow (`Remove-AppxProvisionedPackage` then `Remove-AppxPackage -AllUsers`) — see the MSIX section above
 
 ## Best Practices
 
-1. **Always provide explicit uninstallers** for EXE-based installations
-2. **Use tracking mechanisms** (registry checks or installs array) for custom installations
-3. **Test uninstall processes** thoroughly before deployment
-4. **Consider dependencies** when designing package relationships
-5. **Use appropriate uninstallable settings** for system-critical components
-6. **Provide detailed logging** in custom uninstall scripts
+1. **Provide an explicit `uninstaller:` block** for EXE-based installations
+2. **Use `installs[]` with `product_code` or `identity_name`** to enable self-uninstall for MSI/MSIX without writing a separate uninstaller
+3. **Test uninstall paths** thoroughly before deployment (use `--checkonly` to dry-run detection)
+4. **Mark system-critical packages** as `uninstallable: false` to block accidental removal
 
 ## Limitations
 
 - Batch scripts (`.bat`) are supported only for pre/post install operations, not as primary uninstallers
 - OnDemand items cannot be uninstalled as they're not considered "installed"
-- EXE installers without explicit uninstallers or tracking are not automatically uninstallable
-- PowerShell scripts without tracking mechanisms are not automatically uninstallable
+- EXE installers without an explicit `uninstaller:` block are not automatically uninstallable
+- PowerShell-only installers without an explicit `uninstaller:` block are not automatically uninstallable
+- The `uninstaller:` field is a list but only the first entry is dispatched — multi-step uninstall must currently be handled by a single PowerShell script (or `postuninstall_script`)
+- A typed `uninstalls:` array (Munki-style file/directory/registry/application cleanup) is **not implemented** — see the "Uninstalls Array" section above
 
 ---
 
