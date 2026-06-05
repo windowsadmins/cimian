@@ -58,9 +58,30 @@ jobs:
           Write-Host "os:        $osCaption"
           Write-Host "cimipkg:   $cimipkgVersion"
 
+      - name: Package raw binaries as Cimian-<datestamp>-<arch>.zip
+        shell: pwsh
+        run: |
+          # Ship a plain .zip per architecture alongside the .msi/.nupkg so
+          # downstream automation (e.g. cimian-bootstrap-mgmt's repo-sync
+          # step) can grab cimiimport.exe + makecatalogs.exe without
+          # decompiling an MSI or treating a NuGet package as a zip.
+          $datestamp = '${{ steps.version.outputs.datestamp }}'
+          foreach ($arch in 'x64','arm64') {
+              $binDir = Join-Path 'release' $arch
+              if (-not (Test-Path $binDir)) {
+                  Write-Host "::warning::release/$arch missing -- skipping zip"
+                  continue
+              }
+              $zipPath = "release/Cimian-$datestamp-$arch.zip"
+              if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+              Compress-Archive -Path (Join-Path $binDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+              $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+              Write-Host "  $zipPath ($sizeMB MB)"
+          }
+
       - name: List release artifacts
         shell: pwsh
-        run: Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin' | Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
+        run: Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' | Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
 
       - name: Create GitHub Release
         shell: pwsh
@@ -107,6 +128,6 @@ jobs:
           $autoNotes = (gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body) -join "`n"
           $notes = "$buildInfo`n`n$autoNotes`n`n$signing"
 
-          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin' | ForEach-Object { $_.FullName }
+          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' | ForEach-Object { $_.FullName }
           if ($artifacts.Count -eq 0) { throw 'No artifacts to upload' }
           gh release create $tag @artifacts --title $title --notes $notes
