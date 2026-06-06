@@ -23,6 +23,15 @@ public class TriggerService : ITriggerService, IDisposable
     private readonly SemaphoreSlim _flagFileLock = new(1, 1);
     private readonly HashSet<string> _pendingItems = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _pendingItemOrder = new();
+
+    // A single in-flight Task per targeted-install batch. Concurrent
+    // TriggerInstallItemAsync calls that arrive while the flag file from a
+    // prior click is still pending watcher consumption rewrite the file with
+    // the merged --item list and await the SAME task — otherwise they would
+    // start their own polling loops and could recreate the flag file moments
+    // after CimianWatcher deleted it, kicking off a second MSU run that
+    // races the first.
+    private Task? _currentBatch;
     private bool _isOperationRunning;
     private string? _currentOperationLabel;
 
@@ -43,7 +52,14 @@ public class TriggerService : ITriggerService, IDisposable
     {
         _logger?.LogInformation("Triggering check via CimianWatcher");
         _currentOperationLabel = "Checking for updates...";
-        await TriggerViaFlagFileAsync("--checkonly --show-status -vv");
+        try
+        {
+            await WriteFlagFileAndWaitAsync("--checkonly --show-status -vv").ConfigureAwait(false);
+        }
+        finally
+        {
+            _currentOperationLabel = null;
+        }
     }
 
     /// <inheritdoc />
@@ -51,7 +67,14 @@ public class TriggerService : ITriggerService, IDisposable
     {
         _logger?.LogInformation("Triggering install via CimianWatcher");
         _currentOperationLabel = "Installing pending updates...";
-        await TriggerViaFlagFileAsync("--installonly --show-status -vv");
+        try
+        {
+            await WriteFlagFileAndWaitAsync("--installonly --show-status -vv").ConfigureAwait(false);
+        }
+        finally
+        {
+            _currentOperationLabel = null;
+        }
     }
 
     /// <inheritdoc />
@@ -67,8 +90,7 @@ public class TriggerService : ITriggerService, IDisposable
         // stack trace than something coming from inside the merge loop.
         _ = BootstrapArgsBuilder.QuoteArgument(itemName);
 
-        string mergedArgs;
-        string label;
+        Task batchTask;
         await _flagFileLock.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -76,18 +98,36 @@ public class TriggerService : ITriggerService, IDisposable
             {
                 _pendingItemOrder.Add(itemName);
             }
-            mergedArgs = BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder);
-            label = BuildOperationLabel(_pendingItemOrder);
-            _currentOperationLabel = label;
+            var mergedArgs = BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder);
+            _currentOperationLabel = BuildOperationLabel(_pendingItemOrder);
+
+            if (_currentBatch != null && !_currentBatch.IsCompleted)
+            {
+                // A batch is already polling for consume — just rewrite the
+                // flag file with the merged --item list under the same lock so
+                // CimianWatcher reads the up-to-date set on its next 10s tick.
+                // The existing batch's poll loop is what we await.
+                await WriteFlagFileAsync(mergedArgs).ConfigureAwait(false);
+                _logger?.LogInformation(
+                    "Merged {Item} into in-flight self-serve batch ({Label})",
+                    itemName, _currentOperationLabel);
+                batchTask = _currentBatch;
+            }
+            else
+            {
+                _logger?.LogInformation(
+                    "Triggering targeted install via CimianWatcher: {Label}",
+                    _currentOperationLabel);
+                _currentBatch = RunSelfServeBatchAsync(mergedArgs);
+                batchTask = _currentBatch;
+            }
         }
         finally
         {
             _flagFileLock.Release();
         }
 
-        _logger?.LogInformation(
-            "Triggering targeted install via CimianWatcher: {Label}", label);
-        await TriggerViaFlagFileAsync(mergedArgs).ConfigureAwait(false);
+        await batchTask.ConfigureAwait(false);
     }
 
     /// <summary>
@@ -133,83 +173,111 @@ public class TriggerService : ITriggerService, IDisposable
     }
 
     /// <summary>
-    /// Writes the bootstrap flag file with custom arguments and waits for
-    /// CimianWatcher to consume it (indicating it launched MSU). Concurrent
-    /// callers polling the same file all exit together once it disappears.
+    /// Self-serve batch poll loop. Writes the merged --item args, waits for
+    /// CimianWatcher to consume the flag file, then clears the pending state
+    /// so the next click starts a fresh batch. Runs once per batch; concurrent
+    /// callers within the same batch reuse the returned Task.
     /// </summary>
-    private async Task TriggerViaFlagFileAsync(string arguments)
+    private async Task RunSelfServeBatchAsync(string initialArgs)
     {
         _isOperationRunning = true;
         OperationStatusChanged?.Invoke(this, true);
-
         try
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            var content = $"Bootstrap triggered at: {timestamp}\nSource: ManagedSoftwareCenter\nArgs: {arguments}\n";
-
-            // Ensure the directory exists (it should, but be safe)
-            var dir = Path.GetDirectoryName(BootstrapFlagFile);
-            if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
-
-            await File.WriteAllTextAsync(BootstrapFlagFile, content).ConfigureAwait(false);
-            _logger?.LogInformation("Wrote bootstrap flag file with args: {Args}", arguments);
-
-            // Wait for CimianWatcher to consume the flag file
-            var elapsed = TimeSpan.Zero;
-            while (File.Exists(BootstrapFlagFile) && elapsed < ServiceTimeout)
-            {
-                await Task.Delay(PollInterval).ConfigureAwait(false);
-                elapsed += PollInterval;
-            }
-
-            if (File.Exists(BootstrapFlagFile))
-            {
-                _logger?.LogError("CimianWatcher did not consume flag file within {Timeout}s — is the service running?",
-                    ServiceTimeout.TotalSeconds);
-
-                // Clean up the stale flag file
-                try { File.Delete(BootstrapFlagFile); } catch { }
-
-                await ClearPendingItemsAsync().ConfigureAwait(false);
-                _isOperationRunning = false;
-                _currentOperationLabel = null;
-                OperationStatusChanged?.Invoke(this, false);
-                throw new InvalidOperationException(
-                    "CimianWatcher service did not respond. Ensure the service is running: sc query CimianWatcher");
-            }
-
-            _logger?.LogInformation("CimianWatcher consumed flag file — managedsoftwareupdate is running");
-
-            // The service has picked up the flag file and launched MSU.
-            // Clear the pending set so any subsequent click (after this point)
-            // starts a fresh batch instead of re-issuing items already handed
-            // off to the currently-running MSU. Completion of the install run
-            // itself is still signaled by the InstallInfo.yaml FileSystemWatcher
-            // and the StatusReporter pipe — same as before.
-            await ClearPendingItemsAsync().ConfigureAwait(false);
+            await WriteFlagFileAsync(initialArgs).ConfigureAwait(false);
+            await WaitForFlagFileConsumedAsync().ConfigureAwait(false);
         }
         catch (InvalidOperationException)
         {
-            throw; // re-throw the service-not-running error
+            _isOperationRunning = false;
+            OperationStatusChanged?.Invoke(this, false);
+            await ClearBatchStateAsync().ConfigureAwait(false);
+            throw;
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Failed to trigger via flag file");
-            await ClearPendingItemsAsync().ConfigureAwait(false);
+            _logger?.LogError(ex, "Self-serve batch failed");
             _isOperationRunning = false;
-            _currentOperationLabel = null;
+            OperationStatusChanged?.Invoke(this, false);
+            await ClearBatchStateAsync().ConfigureAwait(false);
+            return;
+        }
+
+        // Consumed cleanly — pending state cleared so the next click starts a
+        // fresh batch. _isOperationRunning stays true; completion of the install
+        // is signaled by the InstallInfo.yaml FileSystemWatcher or the
+        // StatusReporter pipe, which is also responsible for flipping the
+        // overlay back to idle.
+        await ClearBatchStateAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Wraps a one-shot Check/Install flag-file flow that doesn't need batching.
+    /// </summary>
+    private async Task WriteFlagFileAndWaitAsync(string arguments)
+    {
+        _isOperationRunning = true;
+        OperationStatusChanged?.Invoke(this, true);
+        try
+        {
+            await WriteFlagFileAsync(arguments).ConfigureAwait(false);
+            await WaitForFlagFileConsumedAsync().ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            _isOperationRunning = false;
+            OperationStatusChanged?.Invoke(this, false);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Flag-file trigger failed");
+            _isOperationRunning = false;
             OperationStatusChanged?.Invoke(this, false);
         }
     }
 
-    private async Task ClearPendingItemsAsync()
+    private async Task WriteFlagFileAsync(string arguments)
+    {
+        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        var content = $"Bootstrap triggered at: {timestamp}\nSource: ManagedSoftwareCenter\nArgs: {arguments}\n";
+        var dir = Path.GetDirectoryName(BootstrapFlagFile);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(BootstrapFlagFile, content).ConfigureAwait(false);
+        _logger?.LogInformation("Wrote bootstrap flag file with args: {Args}", arguments);
+    }
+
+    private async Task WaitForFlagFileConsumedAsync()
+    {
+        var elapsed = TimeSpan.Zero;
+        while (File.Exists(BootstrapFlagFile) && elapsed < ServiceTimeout)
+        {
+            await Task.Delay(PollInterval).ConfigureAwait(false);
+            elapsed += PollInterval;
+        }
+
+        if (File.Exists(BootstrapFlagFile))
+        {
+            _logger?.LogError("CimianWatcher did not consume flag file within {Timeout}s — is the service running?",
+                ServiceTimeout.TotalSeconds);
+            try { File.Delete(BootstrapFlagFile); } catch { }
+            throw new InvalidOperationException(
+                "CimianWatcher service did not respond. Ensure the service is running: sc query CimianWatcher");
+        }
+
+        _logger?.LogInformation("CimianWatcher consumed flag file — managedsoftwareupdate is running");
+    }
+
+    private async Task ClearBatchStateAsync()
     {
         await _flagFileLock.WaitAsync().ConfigureAwait(false);
         try
         {
             _pendingItems.Clear();
             _pendingItemOrder.Clear();
+            _currentOperationLabel = null;
+            _currentBatch = null;
         }
         finally
         {

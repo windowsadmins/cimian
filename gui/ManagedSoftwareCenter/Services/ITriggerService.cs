@@ -40,7 +40,8 @@ public interface ITriggerService
 
     /// <summary>
     /// Human-readable description of the in-flight operation, e.g.
-    /// "Installing Gimp, Cyberduck...". Null when no operation is active.
+    /// "Installing Gimp, Cyberduck...". Set when a trigger writes the flag
+    /// file and cleared once CimianWatcher consumes it (or the call fails).
     /// Read by the shell to populate the progress overlay so it reflects the
     /// actual work instead of a generic "Checking for updates...".
     /// </summary>
