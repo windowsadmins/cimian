@@ -506,6 +506,69 @@ public class CatalogService
     }
 
     /// <summary>
+    /// Walks both <c>requires</c> (parent → declared deps) and <c>update_for</c>
+    /// (other catalog items targeting parent as their update target) starting from
+    /// the seed names, and returns the transitive closure of dependency names —
+    /// seeds excluded, order preserved, duplicates removed.
+    /// </summary>
+    /// <remarks>
+    /// This is the classification-phase counterpart to the per-install dependency
+    /// walk in <c>ProcessInstallWithDependenciesAsync</c>. It does not look at
+    /// install state — it just expands the dependency graph from the catalog so
+    /// the caller can status-check each dep independently of whether the seed
+    /// items themselves need action. Unknown names (not in <paramref name="catalog"/>)
+    /// are skipped silently. Cycles terminate because each node is visited once.
+    /// </remarks>
+    /// <param name="seedNames">Items whose dependency graph should be expanded.</param>
+    /// <param name="catalog">Loaded catalog keyed by lowercase name.</param>
+    /// <returns>Dependency names not present in the seed set.</returns>
+    public static List<string> BuildDependencyClosure(
+        IEnumerable<string> seedNames,
+        Dictionary<string, CatalogItem> catalog)
+    {
+        var seeds = seedNames?.ToList() ?? new List<string>();
+        var visited = new HashSet<string>(
+            seeds.Select(n => n.ToLowerInvariant()),
+            StringComparer.OrdinalIgnoreCase);
+        var deps = new List<string>();
+        var queue = new Queue<string>(seeds);
+
+        while (queue.Count > 0)
+        {
+            var name = queue.Dequeue();
+
+            // update_for direction: catalog items whose UpdateFor lists this name
+            foreach (var updateName in LookForUpdates(name, catalog))
+            {
+                if (visited.Add(updateName.ToLowerInvariant()))
+                {
+                    deps.Add(updateName);
+                    queue.Enqueue(updateName);
+                }
+            }
+
+            // requires direction: deps declared by this catalog item
+            if (catalog.TryGetValue(name.ToLowerInvariant(), out var item)
+                && item.Requires != null)
+            {
+                foreach (var reqEntry in item.Requires)
+                {
+                    var (reqName, _) = SplitNameAndVersion(reqEntry);
+                    if (string.IsNullOrEmpty(reqName)) continue;
+                    if (!catalog.TryGetValue(reqName.ToLowerInvariant(), out var depItem)) continue;
+                    if (visited.Add(depItem.Name.ToLowerInvariant()))
+                    {
+                        deps.Add(depItem.Name);
+                        queue.Enqueue(depItem.Name);
+                    }
+                }
+            }
+        }
+
+        return deps;
+    }
+
+    /// <summary>
     /// Finds all items in the catalog that require the given item.
     /// This is used during removal to determine what dependent items also need to be removed.
     /// Migrated from Go: catalog.FindItemsRequiring() - catalog.go lines 292-320
