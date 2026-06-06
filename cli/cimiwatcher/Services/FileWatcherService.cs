@@ -22,6 +22,9 @@ public class FileWatcherService : BackgroundService
     private DateTime _lastSeenGUI = DateTime.MinValue;
     private DateTime _lastSeenHeadless = DateTime.MinValue;
     private bool _isPaused;
+    // Tracks whether the last bootstrap-deferred decision was already logged,
+    // keyed by updateType, so we log the transition once instead of every poll.
+    private readonly HashSet<string> _deferredLogged = new(StringComparer.OrdinalIgnoreCase);
 
     public FileWatcherService(ILogger<FileWatcherService> logger)
     {
@@ -151,13 +154,22 @@ public class FileWatcherService : BackgroundService
         // headless channel bypass this gate by design.
         if (withGUI && customArgs == null && SessionProbe.IsInteractiveUserLoggedOn())
         {
-            _logger.LogInformation(
-                "{UpdateType} bootstrap deferred — interactive user signed in; will re-check after logout",
-                updateType);
+            // Throttle: only log the first time we defer in a given session-state run.
+            // Without this we'd repeat the message on every PollInterval while the user
+            // stays signed in and the flag file persists.
+            if (_deferredLogged.Add(updateType))
+            {
+                _logger.LogInformation(
+                    "{UpdateType} bootstrap deferred — interactive user signed in; will re-check after logout",
+                    updateType);
+            }
             // Leave the flag file in place and reset lastSeen so the next poll re-detects it.
             _lastSeenGUI = DateTime.MinValue;
             return;
         }
+
+        // Reached the non-deferred branch — clear the throttle so a future deferral logs again.
+        _deferredLogged.Remove(updateType);
 
         // Delete the flag file immediately after reading it, BEFORE launching MSU.
         // MSC's TriggerService polls for this deletion as the "acknowledged" signal.
