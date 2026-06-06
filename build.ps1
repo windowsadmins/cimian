@@ -847,7 +847,33 @@ function Build-MsiPackage {
     # Mirror the full publish tree so WinUI 3 companion files (PRI / XBF / runtime DLLs)
     # ride along with Managed Software Center.exe. A selective exe-only copy breaks MSC
     # with "This app can't run on your PC" because the launcher stub can't find its runtime.
-    Copy-Item -Path (Join-Path $binariesDir '*') -Destination $payloadDir -Recurse -Force
+    # We DO strip non-runtime noise (.pdb symbols, XML doc files) — they bloat the MSI
+    # without being used at runtime. Roughly 50-70 MB saved per arch.
+    $copyExclude = @('*.pdb', '*.xml')
+    if ($env:CIMIAN_MSI_KEEP_PDB -eq '1') { $copyExclude = @('*.xml') }
+    Copy-Item -Path (Join-Path $binariesDir '*') -Destination $payloadDir -Recurse -Force -Exclude $copyExclude
+
+    # Audit the payload — report what's there, warn at the soft cap, fail at the hard cap.
+    # Cap comparisons use unrounded bytes so a 250.04 MB payload doesn't slip past a
+    # 250 MB soft cap just because the displayed value rounds down to 250.0.
+    $payloadBytes = (Get-ChildItem -Path $payloadDir -Recurse -File | Measure-Object Length -Sum).Sum
+    $payloadMB = [math]::Round($payloadBytes / 1MB, 1)
+    Write-BuildLog "MSI payload size for $Architecture: $payloadMB MB" "INFO"
+    $topTypes = Get-ChildItem -Path $payloadDir -Recurse -File |
+        Group-Object Extension |
+        Select-Object @{N='Ext';E={$_.Name}}, @{N='Count';E={$_.Count}}, @{N='MB';E={[math]::Round((($_.Group | Measure-Object Length -Sum).Sum/1MB),1)}} |
+        Sort-Object MB -Descending | Select-Object -First 8
+    foreach ($t in $topTypes) {
+        Write-BuildLog "  $($t.Ext.PadRight(10)) $($t.Count.ToString().PadLeft(4)) files  $($t.MB) MB" "INFO"
+    }
+    $softCapMB = if ($env:CIMIAN_MSI_PAYLOAD_SOFT_CAP_MB) { [int]$env:CIMIAN_MSI_PAYLOAD_SOFT_CAP_MB } else { 250 }
+    $hardCapMB = if ($env:CIMIAN_MSI_PAYLOAD_HARD_CAP_MB) { [int]$env:CIMIAN_MSI_PAYLOAD_HARD_CAP_MB } else { 0 }
+    if ($payloadBytes -gt ($softCapMB * 1MB)) {
+        Write-BuildLog "MSI payload ($payloadMB MB) exceeds soft cap ($softCapMB MB) for $Architecture" "WARNING"
+    }
+    if ($hardCapMB -gt 0 -and $payloadBytes -gt ($hardCapMB * 1MB)) {
+        throw "MSI payload ($payloadMB MB) exceeds hard cap ($hardCapMB MB) for $Architecture. Set CIMIAN_MSI_PAYLOAD_HARD_CAP_MB=0 to disable."
+    }
 
     $expectedExecutables = @(
         'cimiwatcher.exe', 'managedsoftwareupdate.exe', 'cimitrigger.exe', 'cimistatus.exe',
