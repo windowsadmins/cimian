@@ -533,17 +533,24 @@ public class CatalogService
         var deps = new List<string>();
         var queue = new Queue<string>(seeds);
 
+        // Pre-index update_for once (target name → catalog items that update it)
+        // so the BFS doesn't rescan the whole catalog per node.
+        var updateForIndex = BuildUpdateForIndex(catalog);
+
         while (queue.Count > 0)
         {
             var name = queue.Dequeue();
 
             // update_for direction: catalog items whose UpdateFor lists this name
-            foreach (var updateName in LookForUpdates(name, catalog))
+            if (updateForIndex.TryGetValue(name.ToLowerInvariant(), out var updaters))
             {
-                if (visited.Add(updateName.ToLowerInvariant()))
+                foreach (var updateName in updaters)
                 {
-                    deps.Add(updateName);
-                    queue.Enqueue(updateName);
+                    if (visited.Add(updateName.ToLowerInvariant()))
+                    {
+                        deps.Add(updateName);
+                        queue.Enqueue(updateName);
+                    }
                 }
             }
 
@@ -566,6 +573,32 @@ public class CatalogService
         }
 
         return deps;
+    }
+
+    private static Dictionary<string, List<string>> BuildUpdateForIndex(
+        Dictionary<string, CatalogItem> catalog)
+    {
+        var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in catalog)
+        {
+            var item = kvp.Value;
+            if (item.UpdateFor == null || item.UpdateFor.Count == 0) continue;
+            foreach (var target in item.UpdateFor)
+            {
+                if (string.IsNullOrEmpty(target)) continue;
+                var key = target.ToLowerInvariant();
+                if (!index.TryGetValue(key, out var list))
+                {
+                    list = new List<string>();
+                    index[key] = list;
+                }
+                if (!list.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    list.Add(item.Name);
+                }
+            }
+        }
+        return index;
     }
 
     /// <summary>

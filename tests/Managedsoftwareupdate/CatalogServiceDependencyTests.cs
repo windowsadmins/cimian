@@ -174,4 +174,34 @@ public class CatalogServiceDependencyTests
 
         Assert.Empty(deps);
     }
+
+    [Fact]
+    public void Closure_LargeCatalog_DoesNotRescanPerNode()
+    {
+        // Regression check for the O(closure * catalog) blowup: 2000 unrelated
+        // items + a 5-node requires chain. With the update_for index, total work
+        // is roughly linear in catalog size. Generous budget — we just want to
+        // catch a regression to per-node full scans, not benchmark.
+        var items = new List<CatalogItem>
+        {
+            Item("A", requires: new() { "B" }),
+            Item("B", requires: new() { "C" }),
+            Item("C", requires: new() { "D" }),
+            Item("D", requires: new() { "E" }),
+            Item("E"),
+        };
+        for (int i = 0; i < 2000; i++)
+        {
+            items.Add(Item($"Noise{i}"));
+        }
+        var catalog = Catalog(items.ToArray());
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var deps = CatalogService.BuildDependencyClosure(new[] { "A" }, catalog);
+        sw.Stop();
+
+        Assert.Equal(4, deps.Count);
+        Assert.True(sw.ElapsedMilliseconds < 500,
+            $"Closure walk took {sw.ElapsedMilliseconds}ms on 2k-item catalog — likely regressed to per-node full scan");
+    }
 }
