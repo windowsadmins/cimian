@@ -1,6 +1,7 @@
 using CommandLine;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core;
 using Cimian.Core.Services;
 using System.Diagnostics;
 using System.Reflection;
@@ -151,6 +152,11 @@ public class Program
         if (options.RestartService)
         {
             return RestartCimianWatcherService();
+        }
+
+        if (options.SelfCheck)
+        {
+            return SelfCheck();
         }
 
         // Handle preflight-only: run preflight and exit
@@ -630,6 +636,89 @@ public class Program
     }
 
     /// <summary>
+    /// Watchdog entry point. Verifies the Cimian install hasn't drifted off the
+    /// box (e.g. a partial Cimian uninstall, a registry-cleaner sweep) and drops
+    /// a structured marker that ReportMate's status collector can surface as a
+    /// cimian_missing event. Called by the Watchdog scheduled task (~every 4h)
+    /// registered alongside the hourly task in build/msi/install-tasks.ps1.
+    ///
+    /// Exit codes:
+    ///   0 = healthy
+    ///   2 = drift detected (one or more critical binaries missing); marker written
+    ///   3 = unexpected error during check
+    /// </summary>
+    private static int SelfCheck()
+    {
+        try
+        {
+            // Resolve install + state roots through CimianPaths so the check
+            // honors group-policy relocations of ProgramFiles / ProgramData
+            // instead of falsely reporting drift on hosts where C:\ isn't the
+            // installed drive.
+            var installDir = CimianPaths.CimianInstallDir;
+            var required = new[]
+            {
+                "managedsoftwareupdate.exe",
+                "cimitrigger.exe",
+                "cimiwatcher.exe",
+            };
+            var missing = required
+                .Where(f => !File.Exists(Path.Combine(installDir, f)))
+                .ToList();
+
+            // Status file lives next to the rest of Cimian's state so the
+            // ReportMate runner already scans it. Emitted as compact JSON
+            // (single line) — tail-based collectors can grep without re-parsing
+            // pretty-printed output, and structured collectors deserialize the
+            // same payload regardless.
+            var statusDir = CimianPaths.ManagedInstallsRoot;
+            try { Directory.CreateDirectory(statusDir); } catch { }
+            var statusPath = Path.Combine(statusDir, "cimian_selfcheck.json");
+            var record = new
+            {
+                timestamp = DateTimeOffset.UtcNow.ToString("O"),
+                machine = Environment.MachineName,
+                installDir,
+                requiredBinaries = required,
+                missingBinaries = missing,
+                healthy = missing.Count == 0,
+                cimianVersion = GetVersion(),
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                record, new System.Text.Json.JsonSerializerOptions { WriteIndented = false });
+            try
+            {
+                File.WriteAllText(statusPath, json);
+            }
+            catch (Exception ex)
+            {
+                // If we can't drop the marker the scheduled task would silently
+                // stop updating it and ReportMate would never know — surface as
+                // exit 3 (internal error) so the Task Scheduler "Last Run
+                // Result" column lights up and an operator notices.
+                Console.Error.WriteLine($"[self-check] failed to write {statusPath}: {ex.Message}");
+                return 3;
+            }
+
+            if (missing.Count == 0)
+            {
+                Console.WriteLine($"[self-check] healthy — all {required.Length} required binaries present in {installDir}");
+                return 0;
+            }
+
+            Console.Error.WriteLine($"[self-check] DRIFT — {missing.Count} required binar{(missing.Count == 1 ? "y" : "ies")} missing from {installDir}:");
+            foreach (var m in missing) Console.Error.WriteLine($"  - {m}");
+            Console.Error.WriteLine($"[self-check] marker written: {statusPath}");
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[self-check] unexpected error: {ex.Message}");
+            return 3;
+        }
+    }
+
+    /// <summary>
     /// Handles conflict when --checkonly is used but another instance is running.
     /// Matches Go: handleCheckOnlyConflict()
     /// </summary>
@@ -996,6 +1085,9 @@ public class Options
 
     [Option("restart-service", Required = false, HelpText = "Restart CimianWatcher service and exit")]
     public bool RestartService { get; set; }
+
+    [Option("self-check", Required = false, HelpText = "Verify Cimian installation health and exit (used by the Watchdog scheduled task)")]
+    public bool SelfCheck { get; set; }
 
     // Cache management flags
     [Option("validate-cache", Required = false, HelpText = "Validate cache integrity and remove corrupt files")]
