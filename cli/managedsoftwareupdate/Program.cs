@@ -1,6 +1,7 @@
 using CommandLine;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core;
 using Cimian.Core.Services;
 using System.Diagnostics;
 using System.Reflection;
@@ -650,7 +651,11 @@ public class Program
     {
         try
         {
-            var installDir = @"C:\Program Files\Cimian";
+            // Resolve install + state roots through CimianPaths so the check
+            // honors group-policy relocations of ProgramFiles / ProgramData
+            // instead of falsely reporting drift on hosts where C:\ isn't the
+            // installed drive.
+            var installDir = CimianPaths.CimianInstallDir;
             var required = new[]
             {
                 "managedsoftwareupdate.exe",
@@ -661,10 +666,12 @@ public class Program
                 .Where(f => !File.Exists(Path.Combine(installDir, f)))
                 .ToList();
 
-            // Sibling: status file readable as a single line by tail-based collectors
-            // and as JSON by structured collectors. Lives in ManagedInstalls so the
-            // ReportMate runner already scans it.
-            var statusDir = @"C:\ProgramData\ManagedInstalls";
+            // Status file lives next to the rest of Cimian's state so the
+            // ReportMate runner already scans it. Emitted as compact JSON
+            // (single line) — tail-based collectors can grep without re-parsing
+            // pretty-printed output, and structured collectors deserialize the
+            // same payload regardless.
+            var statusDir = CimianPaths.ManagedInstallsRoot;
             try { Directory.CreateDirectory(statusDir); } catch { }
             var statusPath = Path.Combine(statusDir, "cimian_selfcheck.json");
             var record = new
@@ -678,10 +685,19 @@ public class Program
                 cimianVersion = GetVersion(),
             };
             var json = System.Text.Json.JsonSerializer.Serialize(
-                record, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-            try { File.WriteAllText(statusPath, json); } catch (Exception ex)
+                record, new System.Text.Json.JsonSerializerOptions { WriteIndented = false });
+            try
             {
-                Console.Error.WriteLine($"self-check: failed to write {statusPath}: {ex.Message}");
+                File.WriteAllText(statusPath, json);
+            }
+            catch (Exception ex)
+            {
+                // If we can't drop the marker the scheduled task would silently
+                // stop updating it and ReportMate would never know — surface as
+                // exit 3 (internal error) so the Task Scheduler "Last Run
+                // Result" column lights up and an operator notices.
+                Console.Error.WriteLine($"[self-check] failed to write {statusPath}: {ex.Message}");
+                return 3;
             }
 
             if (missing.Count == 0)
