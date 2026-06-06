@@ -432,9 +432,11 @@ public class UpdateEngine : IDisposable
                 }
             }
 
-            // Resolve dependencies and update_for items (Go parity: process.go dependency resolution)
-            // This adds items like ReportMatePrefs (update_for ReportMate) to the manifest items
-            ResolveDependenciesForCheckOnly(manifestItems, catalogMap, toUpdate);
+            // Resolve dependencies and update_for items (Go parity: process.go dependency resolution).
+            // Walks both `requires` and `update_for` to the transitive closure so that a stale
+            // dep gets surfaced even when its parent is already at the catalog version
+            // (e.g. ManageUsersPrefs current, ManageUsers stale).
+            ResolveDependencies(manifestItems, catalogMap, toUpdate);
 
             // Print hierarchy and tables in checkonly mode (matches Go behavior - always shows this)
             if (_checkOnly)
@@ -1131,90 +1133,114 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
-    /// Resolves dependencies for checkonly mode to show what will be installed.
-    /// This finds update_for items that would be installed when the target package is installed.
-    /// Go parity: This happens during ProcessInstallWithDependencies in process.go
-    /// Example: ReportMatePrefs has update_for: [ReportMate], so when ReportMate is in the install list,
-    /// ReportMatePrefs should also appear in the list with source "dependency".
+    /// Expands the manifest's install/update list along both <c>requires</c> and
+    /// <c>update_for</c> to the transitive closure, status-checks every dep, and
+    /// promotes anything that needs action into the toUpdate list.
     /// </summary>
-    private void ResolveDependenciesForCheckOnly(
-        List<ManifestItem> manifestItems, 
+    /// <remarks>
+    /// Runs in both checkonly and real install paths (called before the checkonly
+    /// exit). Replaces the prior one-shot <c>update_for</c>-only walk, which
+    /// missed two cases:
+    ///   1. A stale <c>requires:</c> dep when the parent is already at the catalog
+    ///      version (e.g. ManageUsersPrefs current, ManageUsers stale) — the prior
+    ///      code only ran requires-resolution from inside the install path, which
+    ///      is unreachable when the parent's CheckStatus returns NeedsAction=False.
+    ///   2. Chained <c>update_for</c> beyond depth 1, because the prior code only
+    ///      iterated the original manifest list, not the deps it added.
+    /// The closure walk lives in <see cref="CatalogService.BuildDependencyClosure"/>;
+    /// this method does the I/O (status check, manifest mutation).
+    /// </remarks>
+    private void ResolveDependencies(
+        List<ManifestItem> manifestItems,
         Dictionary<string, CatalogItem> catalogMap,
         List<CatalogItem> itemsToProcess)
     {
         LogInfo("Resolving dependencies (requires and update_for)...");
-        
-        // Get list of item names already in the manifest
-        var existingNames = manifestItems.Select(m => m.Name.ToLowerInvariant()).ToHashSet();
-        
-        // Get names of items that will be installed/updated
-        var installListNames = manifestItems
+
+        var existingNames = new HashSet<string>(
+            manifestItems.Select(m => m.Name.ToLowerInvariant()),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Map name → set of actions already declared by the manifest, so we can
+        // detect deps that conflict with explicit uninstall/profile/app entries.
+        // A single name may appear in multiple manifest items (e.g. install +
+        // uninstall in different inputs); the explicit non-install action wins.
+        var manifestActions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mi in manifestItems)
+        {
+            var action = mi.Action?.ToLowerInvariant();
+            if (string.IsNullOrEmpty(action)) continue;
+            if (!manifestActions.TryGetValue(mi.Name, out var set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                manifestActions[mi.Name] = set;
+            }
+            set.Add(action);
+        }
+
+        // Seeds: every manifest item whose intent is install/update. Action comes
+        // from manifest intent (managed_installs/managed_updates), not current
+        // install state, so up-to-date items are still walked for stale deps.
+        var seedNames = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "install" || m.Action?.ToLowerInvariant() == "update")
             .Select(m => m.Name)
             .ToList();
-        
-        LogDetail($"    Items to check for update_for: {string.Join(", ", installListNames.Take(10))}...");
-        
-        // Look for update_for items for each item in the install list
-        foreach (var itemName in installListNames)
+
+        LogDetail($"    Resolving deps for {seedNames.Count} manifest item(s)");
+
+        var deps = CatalogService.BuildDependencyClosure(seedNames, catalogMap);
+
+        foreach (var depName in deps)
         {
-            var updateList = CatalogService.LookForUpdates(itemName, catalogMap);
-            
-            if (updateList.Count > 0)
+            var depKey = depName.ToLowerInvariant();
+            if (!catalogMap.TryGetValue(depKey, out var depItem))
             {
-                LogDetail($"    Found update_for items for {itemName}: {string.Join(", ", updateList)}");
+                LogDetail($"    Skipping {depName} - not found in catalog");
+                continue;
             }
-            
-            foreach (var updateItemName in updateList)
+
+            // Skip deps that the manifest has already claimed with a conflicting
+            // action: explicit uninstall must not be reversed by a transitive
+            // install; MDM-managed profile/app items are handled externally.
+            if (manifestActions.TryGetValue(depItem.Name, out var actions)
+                && (actions.Contains("uninstall") || actions.Contains("profile") || actions.Contains("app")))
             {
-                var updateKey = updateItemName.ToLowerInvariant();
-                
-                // Skip if already in manifest
-                if (existingNames.Contains(updateKey))
-                {
-                    LogDetail($"    Skipping {updateItemName} - already in manifest");
-                    continue;
-                }
-                
-                // Get the update item from catalog
-                if (!catalogMap.TryGetValue(updateKey, out var updateItem))
-                {
-                    LogDetail($"    Skipping {updateItemName} - not found in catalog");
-                    continue;
-                }
-                
-                // Check if the update item needs action
-                var status = _statusService.CheckStatus(updateItem, "install", _config.CachePath);
-                
-                LogInfo($"Adding update_for item to install list update: {updateItemName} updateFor: {itemName}");
-                
-                // Add to manifest items with source "dependency"
+                LogInfo($"Skipping dependency {depItem.Name}: manifest action [{string.Join(",", actions)}] takes precedence");
+                continue;
+            }
+
+            var status = _statusService.CheckStatus(depItem, "install", _config.CachePath);
+
+            LogInfo($"Dependency {depItem.Name} v{depItem.Version}: needsAction={status.NeedsAction} ({status.Reason})");
+
+            if (!existingNames.Contains(depKey))
+            {
                 manifestItems.Add(new ManifestItem
                 {
-                    Name = updateItemName,
+                    Name = depItem.Name,
                     Action = "install",
                     SourceManifest = "dependency"
                 });
-                existingNames.Add(updateKey);
-                
-                // If it needs action, add to the toUpdate list
-                if (status.NeedsAction && !itemsToProcess.Any(i => i.Name.Equals(updateItemName, StringComparison.OrdinalIgnoreCase)))
-                {
-                    itemsToProcess.Add(updateItem);
-                }
+                existingNames.Add(depKey);
+            }
+
+            if (status.NeedsAction
+                && !itemsToProcess.Any(i => i.Name.Equals(depItem.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                itemsToProcess.Add(depItem);
             }
         }
-        
+
         var depCount = manifestItems.Count(m => m.SourceManifest == "dependency");
         // Go parity: Count only managed items (exclude profile/app which are MDM-managed)
-        var managedCount = manifestItems.Count(m => 
+        var managedCount = manifestItems.Count(m =>
         {
             var action = m.Action?.ToLowerInvariant();
             return action != "profile" && action != "app";
         });
         if (depCount > 0)
         {
-            LogInfo($"Dependency resolution complete: {depCount} update_for items added");
+            LogInfo($"Dependency resolution complete: {depCount} dependency item(s) tracked");
             LogInfo($"Added dependencies: {string.Join(", ", manifestItems.Where(m => m.SourceManifest == "dependency").Select(m => m.Name))}");
         }
         LogInfo($"Managed items: {managedCount} (excludes {manifestItems.Count - managedCount} MDM profiles/apps)");
