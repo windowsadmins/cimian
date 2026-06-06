@@ -1161,6 +1161,23 @@ public class UpdateEngine : IDisposable
             manifestItems.Select(m => m.Name.ToLowerInvariant()),
             StringComparer.OrdinalIgnoreCase);
 
+        // Map name → set of actions already declared by the manifest, so we can
+        // detect deps that conflict with explicit uninstall/profile/app entries.
+        // A single name may appear in multiple manifest items (e.g. install +
+        // uninstall in different inputs); the explicit non-install action wins.
+        var manifestActions = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mi in manifestItems)
+        {
+            var action = mi.Action?.ToLowerInvariant();
+            if (string.IsNullOrEmpty(action)) continue;
+            if (!manifestActions.TryGetValue(mi.Name, out var set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                manifestActions[mi.Name] = set;
+            }
+            set.Add(action);
+        }
+
         // Seeds: every manifest item whose intent is install/update. Action comes
         // from manifest intent (managed_installs/managed_updates), not current
         // install state, so up-to-date items are still walked for stale deps.
@@ -1179,6 +1196,16 @@ public class UpdateEngine : IDisposable
             if (!catalogMap.TryGetValue(depKey, out var depItem))
             {
                 LogDetail($"    Skipping {depName} - not found in catalog");
+                continue;
+            }
+
+            // Skip deps that the manifest has already claimed with a conflicting
+            // action: explicit uninstall must not be reversed by a transitive
+            // install; MDM-managed profile/app items are handled externally.
+            if (manifestActions.TryGetValue(depItem.Name, out var actions)
+                && (actions.Contains("uninstall") || actions.Contains("profile") || actions.Contains("app")))
+            {
+                LogInfo($"Skipping dependency {depItem.Name}: manifest action [{string.Join(",", actions)}] takes precedence");
                 continue;
             }
 
