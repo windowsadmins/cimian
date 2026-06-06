@@ -853,7 +853,9 @@ function Build-MsiPackage {
     if ($env:CIMIAN_MSI_KEEP_PDB -eq '1') { $copyExclude = @('*.xml') }
     Copy-Item -Path (Join-Path $binariesDir '*') -Destination $payloadDir -Recurse -Force -Exclude $copyExclude
 
-    # Audit the payload — report what's there, fail if it's larger than the soft cap.
+    # Audit the payload — report what's there, warn at the soft cap, fail at the hard cap.
+    # Cap comparisons use unrounded bytes so a 250.04 MB payload doesn't slip past a
+    # 250 MB soft cap just because the displayed value rounds down to 250.0.
     $payloadBytes = (Get-ChildItem -Path $payloadDir -Recurse -File | Measure-Object Length -Sum).Sum
     $payloadMB = [math]::Round($payloadBytes / 1MB, 1)
     Write-BuildLog "MSI payload size for $Architecture: $payloadMB MB" "INFO"
@@ -866,10 +868,10 @@ function Build-MsiPackage {
     }
     $softCapMB = if ($env:CIMIAN_MSI_PAYLOAD_SOFT_CAP_MB) { [int]$env:CIMIAN_MSI_PAYLOAD_SOFT_CAP_MB } else { 250 }
     $hardCapMB = if ($env:CIMIAN_MSI_PAYLOAD_HARD_CAP_MB) { [int]$env:CIMIAN_MSI_PAYLOAD_HARD_CAP_MB } else { 0 }
-    if ($payloadMB -gt $softCapMB) {
+    if ($payloadBytes -gt ($softCapMB * 1MB)) {
         Write-BuildLog "MSI payload ($payloadMB MB) exceeds soft cap ($softCapMB MB) for $Architecture" "WARNING"
     }
-    if ($hardCapMB -gt 0 -and $payloadMB -gt $hardCapMB) {
+    if ($hardCapMB -gt 0 -and $payloadBytes -gt ($hardCapMB * 1MB)) {
         throw "MSI payload ($payloadMB MB) exceeds hard cap ($hardCapMB MB) for $Architecture. Set CIMIAN_MSI_PAYLOAD_HARD_CAP_MB=0 to disable."
     }
 
