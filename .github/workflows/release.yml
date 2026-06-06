@@ -94,10 +94,11 @@ jobs:
           Get-Content $sumsPath | Write-Host
 
       - name: Verify signatures (opt-in)
-        if: env.SIGN_VERIFY == '1'
+        # Gate on vars.SIGN_VERIFY directly: step-scoped env is not visible to
+        # the step's own `if:` expression (GitHub evaluates the condition
+        # before the step's env block is materialized).
+        if: vars.SIGN_VERIFY == '1'
         shell: pwsh
-        env:
-          SIGN_VERIFY: ${{ vars.SIGN_VERIFY }}
         run: |
           # Opt-in gate. Set repo/org variable SIGN_VERIFY=1 to enforce.
           # By default, GH releases ship unsigned (downstream re-signs); this

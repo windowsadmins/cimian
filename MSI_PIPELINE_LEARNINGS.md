@@ -62,8 +62,8 @@ Partial MSI files (e.g. 284 MB out of 302 MB after SCP timeout, or in the wild: 
 
 ### 6. GH Actions release: dual-arch + signing verification
 We saw `2026.06.05.0221` on both `x64` and `arm64` SKUs and the runtime arch detection (`$env:PROCESSOR_ARCHITECTURE`) drove which MSI to install. Pipeline should:
-- Emit both `CimianTools-x64-<ver>.msi` and `CimianTools-arm64-<ver>.msi` as separate release assets (already happening — good).
-- Run `signtool verify /pa /v <msi>` in the workflow and fail the build if either MSI is unsigned. Per our project rule: this system cannot run unsigned binaries.
+- Emit both `Cimian-<ver>-x64.msi` and `Cimian-<ver>-arm64.msi` as separate release assets (already happening — good).
+- Run `signtool verify /pa /v <msi>` in the workflow when the repo/org variable `SIGN_VERIFY=1`. The default release publishes unsigned (downstream re-signs); orgs that pre-sign before the workflow runs flip the gate.
 - Output a release-notes block with the SHA256 of each MSI for audit.
 
 ### 7. WiX: shrink the MSI
