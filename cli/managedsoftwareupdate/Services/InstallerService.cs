@@ -42,8 +42,11 @@ public class InstallerService
     // ourselves (which causes ERROR_INSTALL_ALREADY_RUNNING / 1618). External
     // msiexec sessions still trigger 1618; that case is handled by retry.
     private static readonly SemaphoreSlim _msiexecMutex = new(1, 1);
+    // Three attempts means we sleep at most twice (after attempts 1 and 2), so
+    // the backoff schedule is two entries — 30s then 60s. Adding a third value
+    // here is dead code that misleads anyone reading it as "we wait up to 90s".
     private const int MsiexecMaxRetries = 3;
-    private static readonly int[] MsiexecBackoffSeconds = { 30, 60, 90 };
+    private static readonly int[] MsiexecBackoffSeconds = { 30, 60 };
     private const int MsiInstallLogRetention = 3;
 
     public InstallerService(CimianConfig config)
@@ -803,29 +806,32 @@ public class InstallerService
 
         ConsoleLogger.Info($"[INSTALLER METHOD: msiexec] Installing MSI: {item.Name}");
 
-        // PR3: keep the last MsiInstallLogRetention attempts of msiexec /l*v output
-        // so a failure leaves the prior good log alongside the failing one. Newest
-        // attempt is _install.1.log.
-        RotateMsiInstallLogs(item.Name);
-        var logPath = Path.Combine(_config.CachePath, $"{item.Name}_install.1.log");
-
-        var argsTemplate = new Func<List<string>>(() => new List<string>
-        {
-            "/i",
-            $"\"{localFile}\"",
-            "/qn",  // Quiet, no UI
-            "/norestart",
-            $"/l*v \"{logPath}\""
-        });
-
         // Serialise our own msiexec calls; an external msiexec session is still
-        // detected via exit 1618 and handled by the retry loop below.
+        // detected via exit 1618 and handled by the retry loop below. Log rotation
+        // and the /l*v path live inside the lock too — otherwise two concurrent
+        // InstallMsiAsync callers can rotate each other's logs before either
+        // actually runs msiexec, losing the prior attempt's output entirely.
         await _msiexecMutex.WaitAsync(cancellationToken);
         try
         {
+            // PR3: keep the last MsiInstallLogRetention attempts of msiexec /l*v
+            // output so a failure leaves the prior good log alongside the failing
+            // one. Newest attempt is _install.1.log.
+            RotateMsiInstallLogs(item.Name);
+            var logPath = Path.Combine(_config.CachePath, $"{item.Name}_install.1.log");
+
+            List<string> BuildArgs() => new()
+            {
+                "/i",
+                $"\"{localFile}\"",
+                "/qn",  // Quiet, no UI
+                "/norestart",
+                $"/l*v \"{logPath}\""
+            };
+
             for (int attempt = 1; attempt <= MsiexecMaxRetries; attempt++)
             {
-                var args = argsTemplate();
+                var args = BuildArgs();
                 args.AddRange(item.Installer.GetAllArgs());
 
                 var startInfo = new ProcessStartInfo
@@ -869,7 +875,12 @@ public class InstallerService
                 }
                 return (false, output);
             }
-            return (false, $"msiexec exit=1618 after {MsiexecMaxRetries} retries\nMSI_EXIT=1618");
+            // The retry loop above always either returns or continues — the
+            // exhausted-retries branch lives inside the final iteration's
+            // non-1618 return. Reaching here would require an empty loop range,
+            // which our compile-time constants forbid; treat it as a bug.
+            throw new InvalidOperationException(
+                $"InstallMsiAsync reached unreachable post-loop fallthrough for {item.Name}");
         }
         finally
         {
@@ -902,11 +913,23 @@ public class InstallerService
                     try { File.Move(src, dst, overwrite: true); } catch { }
                 }
             }
-            // Legacy single-file log from before rotation existed; migrate so it isn't lost
+            // Legacy single-file log from before rotation existed; migrate so it
+            // isn't lost. Drop it into the first free slot [2..retention] — a
+            // straight Move to .2.log with overwrite=true would clobber the
+            // entry we just shifted from .1 in the loop above.
             var legacy = $"{basePath}.log";
             if (File.Exists(legacy))
             {
-                try { File.Move(legacy, $"{basePath}.2.log", overwrite: true); } catch { }
+                for (int slot = 2; slot <= MsiInstallLogRetention; slot++)
+                {
+                    var dst = $"{basePath}.{slot}.log";
+                    if (File.Exists(dst)) continue;
+                    try { File.Move(legacy, dst); } catch { }
+                    break;
+                }
+                // If every slot is full the legacy log is older than everything
+                // we are already retaining — let it sit until next rotation
+                // promotes it out of the active window.
             }
         }
         catch (Exception ex)
@@ -937,16 +960,29 @@ public class InstallerService
     /// </summary>
     private static string GetMsiexecHolders()
     {
+        Process[]? procs = null;
         try
         {
-            var pids = Process.GetProcessesByName("msiexec")
-                .Select(p => p.Id.ToString())
-                .ToArray();
-            return pids.Length == 0 ? "(none)" : string.Join(",", pids);
+            procs = Process.GetProcessesByName("msiexec");
+            if (procs.Length == 0) return "(none)";
+            return string.Join(",", procs.Select(p => p.Id.ToString()));
         }
         catch
         {
             return "(unavailable)";
+        }
+        finally
+        {
+            // Process instances returned by GetProcessesByName own OS handles;
+            // dispose them so 1618 retry logging doesn't leak handles on hosts
+            // with chatty Windows Installer activity.
+            if (procs != null)
+            {
+                foreach (var p in procs)
+                {
+                    try { p.Dispose(); } catch { }
+                }
+            }
         }
     }
 
