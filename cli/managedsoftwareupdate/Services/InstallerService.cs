@@ -38,6 +38,14 @@ public class InstallerService
     // Cached sbin-installer path (null = not checked, empty = not available)
     private static string? _sbinInstallerBin;
 
+    // PR3: serialise Cimian-owned msiexec invocations so we don't race against
+    // ourselves (which causes ERROR_INSTALL_ALREADY_RUNNING / 1618). External
+    // msiexec sessions still trigger 1618; that case is handled by retry.
+    private static readonly SemaphoreSlim _msiexecMutex = new(1, 1);
+    private const int MsiexecMaxRetries = 3;
+    private static readonly int[] MsiexecBackoffSeconds = { 30, 60, 90 };
+    private const int MsiInstallLogRetention = 3;
+
     public InstallerService(CimianConfig config)
     {
         _config = config;
@@ -795,29 +803,151 @@ public class InstallerService
 
         ConsoleLogger.Info($"[INSTALLER METHOD: msiexec] Installing MSI: {item.Name}");
 
-        var args = new List<string>
+        // PR3: keep the last MsiInstallLogRetention attempts of msiexec /l*v output
+        // so a failure leaves the prior good log alongside the failing one. Newest
+        // attempt is _install.1.log.
+        RotateMsiInstallLogs(item.Name);
+        var logPath = Path.Combine(_config.CachePath, $"{item.Name}_install.1.log");
+
+        var argsTemplate = new Func<List<string>>(() => new List<string>
         {
             "/i",
             $"\"{localFile}\"",
             "/qn",  // Quiet, no UI
             "/norestart",
-            $"/l*v \"{Path.Combine(_config.CachePath, $"{item.Name}_install.log")}\""
-        };
+            $"/l*v \"{logPath}\""
+        });
 
-        // Add custom args (switches, flags, and args combined)
-        args.AddRange(item.Installer.GetAllArgs());
-
-        var startInfo = new ProcessStartInfo
+        // Serialise our own msiexec calls; an external msiexec session is still
+        // detected via exit 1618 and handled by the retry loop below.
+        await _msiexecMutex.WaitAsync(cancellationToken);
+        try
         {
-            FileName = "msiexec.exe",
-            Arguments = string.Join(" ", args),
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+            for (int attempt = 1; attempt <= MsiexecMaxRetries; attempt++)
+            {
+                var args = argsTemplate();
+                args.AddRange(item.Installer.GetAllArgs());
 
-        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "msiexec.exe",
+                    Arguments = string.Join(" ", args),
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                var (ok, output) = await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
+                if (ok) return (true, output);
+
+                // 1618 = ERROR_INSTALL_ALREADY_RUNNING. Retry with backoff.
+                if (TryExtractMsiExitCode(output, out var exitCode) && exitCode == 1618 && attempt < MsiexecMaxRetries)
+                {
+                    var delay = MsiexecBackoffSeconds[attempt - 1];
+                    var holders = GetMsiexecHolders();
+                    ConsoleLogger.Warn(
+                        $"[{item.Name}] msiexec exit=1618 (install already running). " +
+                        $"attempt {attempt}/{MsiexecMaxRetries}, sleeping {delay}s. Mutex holders: {holders}");
+                    RotateMsiInstallLogs(item.Name);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(delay), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return (false, output);
+                    }
+                    continue;
+                }
+
+                // Surface a single-line MSI_EXIT tag so a downstream StatusService /
+                // ReportMate emitter can grep without re-parsing the verbose output.
+                if (TryExtractMsiExitCode(output, out var finalCode))
+                {
+                    output += $"\nMSI_EXIT={finalCode}";
+                }
+                return (false, output);
+            }
+            return (false, $"msiexec exit=1618 after {MsiexecMaxRetries} retries\nMSI_EXIT=1618");
+        }
+        finally
+        {
+            _msiexecMutex.Release();
+        }
+    }
+
+    /// <summary>
+    /// Rotate {cache}/{item}_install.N.log files keeping the newest MsiInstallLogRetention
+    /// attempts. Highest N is dropped; lower indices shift up. Slot .1 is freed for the
+    /// next msiexec invocation. Safe to call when no logs exist yet.
+    /// </summary>
+    private void RotateMsiInstallLogs(string itemName)
+    {
+        try
+        {
+            var basePath = Path.Combine(_config.CachePath, $"{itemName}_install");
+            // Drop the oldest, then shift each down toward higher N
+            var oldest = $"{basePath}.{MsiInstallLogRetention}.log";
+            if (File.Exists(oldest))
+            {
+                try { File.Delete(oldest); } catch { }
+            }
+            for (int i = MsiInstallLogRetention - 1; i >= 1; i--)
+            {
+                var src = $"{basePath}.{i}.log";
+                var dst = $"{basePath}.{i + 1}.log";
+                if (File.Exists(src))
+                {
+                    try { File.Move(src, dst, overwrite: true); } catch { }
+                }
+            }
+            // Legacy single-file log from before rotation existed; migrate so it isn't lost
+            var legacy = $"{basePath}.log";
+            if (File.Exists(legacy))
+            {
+                try { File.Move(legacy, $"{basePath}.2.log", overwrite: true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"Log rotation for {itemName} failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Parse the "Exit code: N" line that RunProcessWithTimeoutAsync prefixes to the
+    /// failure output. Returns false if not found (e.g. timeout, exception path).
+    /// </summary>
+    private static bool TryExtractMsiExitCode(string output, out int exitCode)
+    {
+        exitCode = 0;
+        if (string.IsNullOrEmpty(output)) return false;
+        // Match the first "Exit code: <int>" — case-insensitive, anywhere in the string.
+        var m = System.Text.RegularExpressions.Regex.Match(
+            output, @"Exit code:\s*(-?\d+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (m.Success && int.TryParse(m.Groups[1].Value, out exitCode)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Best-effort: which other msiexec.exe PIDs are currently running on this box,
+    /// so the 1618 retry log lets us correlate (e.g. Windows Update vs. Cimian itself).
+    /// </summary>
+    private static string GetMsiexecHolders()
+    {
+        try
+        {
+            var pids = Process.GetProcessesByName("msiexec")
+                .Select(p => p.Id.ToString())
+                .ToArray();
+            return pids.Length == 0 ? "(none)" : string.Join(",", pids);
+        }
+        catch
+        {
+            return "(unavailable)";
+        }
     }
 
     /// <summary>
