@@ -120,6 +120,38 @@ try {
         }
     }
 
+    # Watchdog task: runs managedsoftwareupdate --self-check every 4 hours.
+    # Verifies the install hasn't drifted off the box (binaries removed by a
+    # registry-cleaner, partial uninstall, etc.) and drops a marker that the
+    # ReportMate runner surfaces as a cimian_missing event.
+    Write-Host "Creating Cimian Watchdog scheduled task..."
+    try {
+        $watchdogAction = New-ScheduledTaskAction -Execute $managedSoftwareUpdateExe -Argument "--self-check" -WorkingDirectory $InstallPath
+        $watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(10) -RepetitionInterval (New-TimeSpan -Hours 4)
+        $watchdogSettings = New-ScheduledTaskSettingsSet `
+            -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+            -Hidden `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable
+        Register-ScheduledTask `
+            -TaskName "Cimian Watchdog" `
+            -Action $watchdogAction `
+            -Trigger $watchdogTrigger `
+            -Settings $watchdogSettings `
+            -Principal $principal `
+            -Description "Verifies Cimian installation health every 4 hours; writes cimian_selfcheck.json for ReportMate to surface drift." `
+            -Force `
+            -ErrorAction Stop | Out-Null
+        Write-Host "OK Cimian Watchdog scheduled task created"
+        Write-Host "   Task Name: Cimian Watchdog"
+        Write-Host "   Schedule: Every 4 hours starting 10 minutes after installation"
+        Write-Host "   Command: $managedSoftwareUpdateExe --self-check"
+    } catch {
+        # Watchdog is best-effort — never block the install on this.
+        Write-Warning "Cimian Watchdog task registration failed (non-fatal): $($_.Exception.Message)"
+    }
+
 } catch {
     Write-Error "Failed to create Cimian scheduled task: $_"
     exit 1

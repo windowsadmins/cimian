@@ -5,7 +5,8 @@ Write-Host "Removing Cimian scheduled tasks..."
 
 try {
     $taskNames = @(
-        "Cimian Managed Software Update Hourly"
+        "Cimian Managed Software Update Hourly",
+        "Cimian Watchdog"
     )
 
     foreach ($taskName in $taskNames) {
