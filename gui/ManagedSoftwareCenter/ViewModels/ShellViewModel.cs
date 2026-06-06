@@ -491,10 +491,13 @@ public partial class ShellViewModel : ObservableObject
     {
         if (isRunning)
         {
-            // Operation launched — show progress overlay
+            // Operation launched — show progress overlay. Prefer the contextual
+            // label the trigger service composed for this specific run (e.g.
+            // "Installing Gimp...") so users immediately see what they kicked
+            // off; fall back to the generic message for unattributed triggers.
             IsInstalling = true;
             CanRefresh = false;
-            ProgressMessage = "Checking for updates...";
+            ProgressMessage = _triggerService.CurrentOperationLabel ?? "Checking for updates...";
             ProgressDetail = string.Empty;
             ProgressPercent = 0;
             IsProgressIndeterminate = true;
