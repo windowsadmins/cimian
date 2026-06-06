@@ -79,9 +79,44 @@ jobs:
               Write-Host "  $zipPath ($sizeMB MB)"
           }
 
+      - name: Emit SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' | Sort-Object FullName
+          if ($artifacts.Count -eq 0) { throw 'No artifacts to hash' }
+          $lines = foreach ($a in $artifacts) {
+              $h = (Get-FileHash -Algorithm SHA256 -Path $a.FullName).Hash.ToLower()
+              "$h  $($a.Name)"
+          }
+          $sumsPath = 'release/SHA256SUMS.txt'
+          $lines | Out-File -FilePath $sumsPath -Encoding ascii
+          Write-Host "Wrote $sumsPath:"
+          Get-Content $sumsPath | Write-Host
+
+      - name: Verify signatures (opt-in)
+        if: env.SIGN_VERIFY == '1'
+        shell: pwsh
+        env:
+          SIGN_VERIFY: ${{ vars.SIGN_VERIFY }}
+        run: |
+          # Opt-in gate. Set repo/org variable SIGN_VERIFY=1 to enforce.
+          # By default, GH releases ship unsigned (downstream re-signs); this
+          # step is for orgs that pre-sign before the workflow runs.
+          $msis = Get-ChildItem -Path release -Filter 'Cimian-*.msi'
+          if ($msis.Count -eq 0) { throw 'No MSIs to verify' }
+          $failed = @()
+          foreach ($m in $msis) {
+              & signtool.exe verify /pa /v $m.FullName
+              if ($LASTEXITCODE -ne 0) { $failed += $m.Name }
+          }
+          if ($failed.Count -gt 0) {
+              throw "signtool verify failed for: $($failed -join ', ')"
+          }
+          Write-Host "All $($msis.Count) MSI(s) passed signtool verify /pa"
+
       - name: List release artifacts
         shell: pwsh
-        run: Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' | Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
+        run: Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip','SHA256SUMS.txt' | Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
 
       - name: Create GitHub Release
         shell: pwsh
@@ -96,10 +131,22 @@ jobs:
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $title = "Cimian $tag"
 
+          $sumsContent = ''
+          if (Test-Path 'release/SHA256SUMS.txt') {
+              $sumsContent = (Get-Content 'release/SHA256SUMS.txt' -Raw).Trim()
+          }
           $buildInfo = @"
           ## Build info
 
           This release was built with .NET SDK $dotnet on $os, using cimian-pkg $cimipkg, via a GitHub Actions workflow here: $runUrl. It is provided **unsigned** — see signing instructions at the bottom.
+
+          ## SHA256
+
+          ``````
+          $sumsContent
+          ``````
+
+          Verify downloads with ``sha256sum -c SHA256SUMS.txt`` (Linux/macOS) or ``Get-FileHash -Algorithm SHA256`` (PowerShell). Downstream tooling should reject MSIs whose hash does not match this manifest.
           "@
 
           $signing = @"
@@ -128,6 +175,6 @@ jobs:
           $autoNotes = (gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body) -join "`n"
           $notes = "$buildInfo`n`n$autoNotes`n`n$signing"
 
-          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' | ForEach-Object { $_.FullName }
+          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip','SHA256SUMS.txt' | ForEach-Object { $_.FullName }
           if ($artifacts.Count -eq 0) { throw 'No artifacts to upload' }
           gh release create $tag @artifacts --title $title --notes $notes
