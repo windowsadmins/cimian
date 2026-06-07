@@ -858,7 +858,10 @@ function Build-MsiPackage {
     # 250 MB soft cap just because the displayed value rounds down to 250.0.
     $payloadBytes = (Get-ChildItem -Path $payloadDir -Recurse -File | Measure-Object Length -Sum).Sum
     $payloadMB = [math]::Round($payloadBytes / 1MB, 1)
-    Write-BuildLog "MSI payload size for $Architecture: $payloadMB MB" "INFO"
+    # ${Architecture}: — braces are required so PowerShell doesn't try to parse
+    # "Architecture:" as a scope qualifier (Variable / Env: / etc.) and fail at
+    # tokenize time. Without the braces the build fails before it ever runs.
+    Write-BuildLog "MSI payload size for ${Architecture}: $payloadMB MB" "INFO"
     $topTypes = Get-ChildItem -Path $payloadDir -Recurse -File |
         Group-Object Extension |
         Select-Object @{N='Ext';E={$_.Name}}, @{N='Count';E={$_.Count}}, @{N='MB';E={[math]::Round((($_.Group | Measure-Object Length -Sum).Sum/1MB),1)}} |
