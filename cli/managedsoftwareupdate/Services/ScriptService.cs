@@ -1,10 +1,20 @@
 using System.Diagnostics;
 using System.Management.Automation;
 using System.Text;
+using System.Text.RegularExpressions;
 using Cimian.Core;
 using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
+
+/// <summary>
+/// Richer result from script execution. Used by callers that need to distinguish
+/// Warning outcomes (exit code 2 or CIMIAN-WARNING marker) from hard failures.
+/// </summary>
+public record ScriptResult(bool Success, int ExitCode, string Output, string? WarningMessage)
+{
+    public bool IsWarning => ExitCode == 2 || WarningMessage != null;
+}
 
 /// <summary>
 /// Service for executing PowerShell scripts
@@ -12,6 +22,21 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// </summary>
 public class ScriptService
 {
+    // Postinstall scripts may emit a line of the form:
+    //   CIMIAN-WARNING: <categorical-reason-or-message>
+    // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage
+    // and treats the item outcome as Warning (alongside exit code 2).
+    private static readonly Regex CimianWarningMarker = new(
+        @"^\s*CIMIAN-WARNING:\s*(.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static string? ExtractWarningMarker(string output)
+    {
+        if (string.IsNullOrEmpty(output)) return null;
+        var match = CimianWarningMarker.Match(output);
+        return match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
     /// <summary>
     /// Executes a PowerShell script from string content using in-process SDK
     /// Note: This method has limitations with exit codes - use ExecuteScriptWithExitCodeAsync for scripts that rely on exit codes
@@ -109,6 +134,89 @@ public class ScriptService
         catch (Exception ex)
         {
             return (false, $"Script execution failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Executes a PowerShell script from string content and returns a richer ScriptResult that
+    /// preserves the raw exit code and extracts a CIMIAN-WARNING marker if present.
+    ///
+    /// Use this method instead of ExecuteScriptAsync when the caller needs to distinguish
+    /// a Warning outcome (exit code 2 OR a "CIMIAN-WARNING: ..." line in output) from a hard failure.
+    /// Treats both exit 0 and exit 2 as Success=true; the IsWarning property surfaces the Warning case.
+    /// </summary>
+    public async Task<ScriptResult> ExecuteScriptWithDetailsAsync(
+        string scriptContent,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(scriptContent))
+        {
+            return new ScriptResult(Success: true, ExitCode: 0, Output: "No script content to execute", WarningMessage: null);
+        }
+
+        var psExe = FindPowerShellExecutable();
+        if (string.IsNullOrEmpty(psExe))
+        {
+            return new ScriptResult(Success: false, ExitCode: -1, Output: "Neither pwsh.exe nor powershell.exe was found", WarningMessage: null);
+        }
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = psExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = false,
+                CreateNoWindow = true,
+            };
+
+            startInfo.ArgumentList.Add("-NoLogo");
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-Command");
+            startInfo.ArgumentList.Add(scriptContent);
+
+            using var process = new Process { StartInfo = startInfo };
+            var output = new StringBuilder();
+            var errors = new StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (e.Data != null) output.AppendLine(e.Data);
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (e.Data != null) errors.AppendLine(e.Data);
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync(cancellationToken);
+
+            var combinedOutput = output.ToString();
+            if (errors.Length > 0)
+            {
+                combinedOutput += Environment.NewLine + errors.ToString();
+            }
+
+            var exitCode = process.ExitCode;
+            var warningMessage = ExtractWarningMarker(combinedOutput);
+
+            // Exit 0 = clean success. Exit 2 = success-with-warning (Munki convention).
+            // Both are reported as Success=true; IsWarning surfaces the Warning case.
+            var success = exitCode == 0 || exitCode == 2;
+
+            return new ScriptResult(success, exitCode, combinedOutput, warningMessage);
+        }
+        catch (Exception ex)
+        {
+            return new ScriptResult(Success: false, ExitCode: -1, Output: $"Script execution failed: {ex.Message}", WarningMessage: null);
         }
     }
 
