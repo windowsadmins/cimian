@@ -618,9 +618,8 @@ public class InstallerService
         }
 
         // Run postinstall script if present. Uses ExecuteScriptWithDetailsAsync so
-        // scripts can signal a Warning outcome (exit code 2 or "CIMIAN-WARNING: ..."
-        // marker) for soft-failure conditions like "BIOS password did not match" or
-        // "needs physical F12 confirm" — distinct from a hard install failure.
+        // scripts can signal a Warning outcome via a "CIMIAN-WARNING: <message>"
+        // marker line in their output (e.g. "CIMIAN-WARNING: needs-followup").
         string? postinstallWarning = null;
         if (!string.IsNullOrEmpty(item.PostinstallScript))
         {
@@ -628,10 +627,9 @@ public class InstallerService
             _sessionLogger?.Log("INFO", $"Executing postinstall script for {item.Name}");
             var postResult = await _scriptService.ExecuteScriptWithDetailsAsync(item.PostinstallScript, cancellationToken);
 
-            if (postResult.IsWarning)
+            if (postResult.WarningMessage != null)
             {
-                postinstallWarning = postResult.WarningMessage
-                    ?? $"Postinstall completed with warning (exit code {postResult.ExitCode})";
+                postinstallWarning = postResult.WarningMessage;
                 ConsoleLogger.Warn($"Postinstall WARNING for {item.Name}: {postinstallWarning}");
                 _sessionLogger?.Log("WARN", $"Postinstall WARNING for {item.Name}: {postinstallWarning}");
             }

@@ -8,13 +8,10 @@ using Cimian.Core.Services;
 namespace Cimian.CLI.managedsoftwareupdate.Services;
 
 /// <summary>
-/// Richer result from script execution. Used by callers that need to distinguish
-/// Warning outcomes (exit code 2 or CIMIAN-WARNING marker) from hard failures.
+/// Richer result from script execution. Used by callers that need to surface
+/// a Warning outcome via the CIMIAN-WARNING marker convention.
 /// </summary>
-public record ScriptResult(bool Success, int ExitCode, string Output, string? WarningMessage)
-{
-    public bool IsWarning => ExitCode == 2 || WarningMessage != null;
-}
+public record ScriptResult(bool Success, int ExitCode, string Output, string? WarningMessage);
 
 /// <summary>
 /// Service for executing PowerShell scripts
@@ -23,9 +20,9 @@ public record ScriptResult(bool Success, int ExitCode, string Output, string? Wa
 public class ScriptService
 {
     // Postinstall scripts may emit a line of the form:
-    //   CIMIAN-WARNING: <categorical-reason-or-message>
-    // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage
-    // and treats the item outcome as Warning (alongside exit code 2).
+    //   CIMIAN-WARNING: <message>
+    // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage,
+    // which higher layers map to ItemRecord.currentStatus = "Warning" with last_warning set.
     private static readonly Regex CimianWarningMarker = new(
         @"^\s*CIMIAN-WARNING:\s*(.+?)\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
@@ -141,9 +138,8 @@ public class ScriptService
     /// Executes a PowerShell script from string content and returns a richer ScriptResult that
     /// preserves the raw exit code and extracts a CIMIAN-WARNING marker if present.
     ///
-    /// Use this method instead of ExecuteScriptAsync when the caller needs to distinguish
-    /// a Warning outcome (exit code 2 OR a "CIMIAN-WARNING: ..." line in output) from a hard failure.
-    /// Treats both exit 0 and exit 2 as Success=true; the IsWarning property surfaces the Warning case.
+    /// Use this method instead of ExecuteScriptAsync when the caller needs to detect a
+    /// Warning outcome via a "CIMIAN-WARNING: ..." line in the script's output.
     /// </summary>
     public async Task<ScriptResult> ExecuteScriptWithDetailsAsync(
         string scriptContent,
@@ -207,10 +203,7 @@ public class ScriptService
 
             var exitCode = process.ExitCode;
             var warningMessage = ExtractWarningMarker(combinedOutput);
-
-            // Exit 0 = clean success. Exit 2 = success-with-warning (Munki convention).
-            // Both are reported as Success=true; IsWarning surfaces the Warning case.
-            var success = exitCode == 0 || exitCode == 2;
+            var success = exitCode == 0;
 
             return new ScriptResult(success, exitCode, combinedOutput, warningMessage);
         }

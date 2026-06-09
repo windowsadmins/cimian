@@ -697,12 +697,11 @@ public class SessionPackageInfo
 /// truth that <see cref="SessionPackageInfo"/> needs to surface in items.json.
 ///
 /// <para>
-/// <c>WarningMessage</c> is set when a postinstall script signals a soft-failure
-/// outcome via exit code 2 or a "CIMIAN-WARNING: ..." marker line (see
+/// <c>WarningMessage</c> is set when a postinstall script emits a
+/// <c>CIMIAN-WARNING: &lt;message&gt;</c> marker line in its output (see
 /// <see cref="Cimian.CLI.managedsoftwareupdate.Services.ScriptResult"/>). When set,
-/// <c>Success</c> is still <c>true</c> (the install itself completed) but the item
-/// should be surfaced as <c>Warning</c> rather than <c>Installed</c> so operators
-/// can scope follow-up — e.g. "BIOS password did not match" for firmware pkginfos.
+/// the install itself is still considered successful but the item is surfaced as
+/// <c>Warning</c> rather than <c>Installed</c> so operators can scope follow-up.
 /// </para>
 /// </summary>
 public record ItemOutcome(
