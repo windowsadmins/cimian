@@ -1583,8 +1583,8 @@ public class UpdateEngine : IDisposable
             return false;
         }
 
-        var (success, output) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
-        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow));
+        var (success, output, warningMessage) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
+        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow, warningMessage));
 
         if (success)
         {
@@ -2479,14 +2479,23 @@ public class UpdateEngine : IDisposable
                 isPendingUninstall: toUninstallNames.Contains(key),
                 manifestAction:     action);
 
+            // A postinstall Warning outcome (exit code 2 or CIMIAN-WARNING: marker)
+            // overrides the resolver's Installed/Pending status. The install itself
+            // succeeded (Success=true) but operationally needs follow-up — e.g.
+            // "BIOS password did not match" for firmware pkginfos. Hard failures
+            // continue to flow through ErrorMessage on the existing path.
+            var hasWarning = hadOutcome && !string.IsNullOrEmpty(outcome!.WarningMessage);
+            var effectiveStatus = hasWarning ? "Warning" : status;
+
             items.Add(new SessionPackageInfo
             {
                 Name = mi.Name,
                 Version = hadOutcome && !string.IsNullOrEmpty(outcome!.Version) ? outcome.Version : version,
-                Status = status,
+                Status = effectiveStatus,
                 ItemType = itemType,
                 DisplayName = displayName,
                 ErrorMessage = hadOutcome && !outcome!.Success ? outcome.ErrorMessage : null,
+                WarningMessage = hasWarning ? outcome!.WarningMessage : null,
                 ActionPerformed = hadOutcome ? outcome!.Action : null,
                 OutcomeTimestamp = hadOutcome ? outcome!.Timestamp : null
             });

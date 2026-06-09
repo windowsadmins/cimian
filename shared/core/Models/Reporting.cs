@@ -695,6 +695,15 @@ public class SessionPackageInfo
 /// Per-item outcome captured during an install or uninstall pass.
 /// Used to bridge the gap between the pre-install plan and the post-install
 /// truth that <see cref="SessionPackageInfo"/> needs to surface in items.json.
+///
+/// <para>
+/// <c>WarningMessage</c> is set when a postinstall script signals a soft-failure
+/// outcome via exit code 2 or a "CIMIAN-WARNING: ..." marker line (see
+/// <see cref="Cimian.CLI.managedsoftwareupdate.Services.ScriptResult"/>). When set,
+/// <c>Success</c> is still <c>true</c> (the install itself completed) but the item
+/// should be surfaced as <c>Warning</c> rather than <c>Installed</c> so operators
+/// can scope follow-up — e.g. "BIOS password did not match" for firmware pkginfos.
+/// </para>
 /// </summary>
 public record ItemOutcome(
     string Name,
@@ -702,7 +711,8 @@ public record ItemOutcome(
     string Action,         // "install" | "update" | "remove"
     bool Success,
     string? ErrorMessage,
-    DateTime Timestamp);
+    DateTime Timestamp,
+    string? WarningMessage = null);
 
 /// <summary>
 /// Reports a single loop-suppressed package for reports/loop_suppressed.json.
