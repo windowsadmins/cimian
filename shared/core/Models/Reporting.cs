@@ -695,6 +695,13 @@ public class SessionPackageInfo
 /// Per-item outcome captured during an install or uninstall pass.
 /// Used to bridge the gap between the pre-install plan and the post-install
 /// truth that <see cref="SessionPackageInfo"/> needs to surface in items.json.
+///
+/// <para>
+/// <c>WarningMessage</c> is set when a postinstall script emits a
+/// <c>CIMIAN-WARNING: &lt;message&gt;</c> marker line in its output. When set,
+/// the install itself is still considered successful but the item is surfaced as
+/// <c>Warning</c> rather than <c>Installed</c> so operators can scope follow-up.
+/// </para>
 /// </summary>
 public record ItemOutcome(
     string Name,
@@ -702,7 +709,8 @@ public record ItemOutcome(
     string Action,         // "install" | "update" | "remove"
     bool Success,
     string? ErrorMessage,
-    DateTime Timestamp);
+    DateTime Timestamp,
+    string? WarningMessage = null);
 
 /// <summary>
 /// Reports a single loop-suppressed package for reports/loop_suppressed.json.
