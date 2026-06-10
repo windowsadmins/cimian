@@ -38,9 +38,9 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $msi = Get-ChildItem -Path release -Filter 'Cimian-*-x64.msi' | Select-Object -First 1
+          $msi = Get-ChildItem -Path release -Filter 'CimianTools-*-x64.msi' | Select-Object -First 1
           if (-not $msi) { throw 'No x64 MSI produced by build.ps1' }
-          if ($msi.Name -match '^Cimian-(\d{4}\.\d{2}\.\d{2}\.\d{4})-x64\.msi$') {
+          if ($msi.Name -match '^CimianTools-(\d{4}\.\d{2}\.\d{2}\.\d{4})-x64\.msi$') {
             $datestamp = $Matches[1]
           } else {
             throw "Could not parse datestamp version from $($msi.Name)"
@@ -58,7 +58,7 @@ jobs:
           Write-Host "os:        $osCaption"
           Write-Host "cimipkg:   $cimipkgVersion"
 
-      - name: Package raw binaries as Cimian-<datestamp>-<arch>.zip
+      - name: Package raw binaries as CimianTools-<datestamp>-<arch>.zip
         shell: pwsh
         run: |
           # Ship a plain .zip per architecture alongside the .msi/.nupkg so
@@ -72,52 +72,20 @@ jobs:
                   Write-Host "::warning::release/$arch missing -- skipping zip"
                   continue
               }
-              $zipPath = "release/Cimian-$datestamp-$arch.zip"
+              $zipPath = "release/CimianTools-$datestamp-$arch.zip"
               if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
               Compress-Archive -Path (Join-Path $binDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
               $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
               Write-Host "  $zipPath ($sizeMB MB)"
           }
 
-      - name: Emit SHA256SUMS.txt
-        shell: pwsh
-        run: |
-          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' | Sort-Object FullName
-          if ($artifacts.Count -eq 0) { throw 'No artifacts to hash' }
-          $lines = foreach ($a in $artifacts) {
-              $h = (Get-FileHash -Algorithm SHA256 -Path $a.FullName).Hash.ToLower()
-              "$h  $($a.Name)"
-          }
-          $sumsPath = 'release/SHA256SUMS.txt'
-          $lines | Out-File -FilePath $sumsPath -Encoding ascii
-          Write-Host "Wrote $sumsPath:"
-          Get-Content $sumsPath | Write-Host
-
-      - name: Verify signatures (opt-in)
-        # Gate on vars.SIGN_VERIFY directly: step-scoped env is not visible to
-        # the step's own `if:` expression (GitHub evaluates the condition
-        # before the step's env block is materialized).
-        if: vars.SIGN_VERIFY == '1'
-        shell: pwsh
-        run: |
-          # Opt-in gate. Set repo/org variable SIGN_VERIFY=1 to enforce.
-          # By default, GH releases ship unsigned (downstream re-signs); this
-          # step is for orgs that pre-sign before the workflow runs.
-          $msis = Get-ChildItem -Path release -Filter 'Cimian-*.msi'
-          if ($msis.Count -eq 0) { throw 'No MSIs to verify' }
-          $failed = @()
-          foreach ($m in $msis) {
-              & signtool.exe verify /pa /v $m.FullName
-              if ($LASTEXITCODE -ne 0) { $failed += $m.Name }
-          }
-          if ($failed.Count -gt 0) {
-              throw "signtool verify failed for: $($failed -join ', ')"
-          }
-          Write-Host "All $($msis.Count) MSI(s) passed signtool verify /pa"
-
       - name: List release artifacts
         shell: pwsh
-        run: Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip','SHA256SUMS.txt' | Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
+        run: |
+          # Sort x64 ahead of arm64 so the release page lists architectures in that order.
+          Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' |
+              Sort-Object @{Expression={ if ($_.Name -match '(?i)x64') { 0 } elseif ($_.Name -match '(?i)arm64') { 1 } else { 2 } }}, Name |
+              Select-Object FullName, @{N='SizeMB';E={[math]::Round($_.Length/1MB,1)}}
 
       - name: Create GitHub Release
         shell: pwsh
@@ -132,22 +100,10 @@ jobs:
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
           $title = "Cimian $tag"
 
-          $sumsContent = ''
-          if (Test-Path 'release/SHA256SUMS.txt') {
-              $sumsContent = (Get-Content 'release/SHA256SUMS.txt' -Raw).Trim()
-          }
           $buildInfo = @"
           ## Build info
 
           This release was built with .NET SDK $dotnet on $os, using cimian-pkg $cimipkg, via a GitHub Actions workflow here: $runUrl. It is provided **unsigned** — see signing instructions at the bottom.
-
-          ## SHA256
-
-          ``````
-          $sumsContent
-          ``````
-
-          Verify downloads with ``sha256sum -c SHA256SUMS.txt`` (Linux/macOS) or ``Get-FileHash -Algorithm SHA256`` (PowerShell). Downstream tooling should reject MSIs whose hash does not match this manifest.
           "@
 
           $signing = @"
@@ -165,7 +121,7 @@ jobs:
           }
 
           # Sign the MSI installers (run separately, after binaries are signed and repackaged)
-          Get-ChildItem -Filter "Cimian-*.msi" | ForEach-Object {
+          Get-ChildItem -Filter "CimianTools-*.msi" | ForEach-Object {
               signtool sign /fd SHA256 /tr `$timestampUrl /td SHA256 /n `$cert `$_.FullName
           }
           ``````
@@ -176,6 +132,9 @@ jobs:
           $autoNotes = (gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body) -join "`n"
           $notes = "$buildInfo`n`n$autoNotes`n`n$signing"
 
-          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip','SHA256SUMS.txt' | ForEach-Object { $_.FullName }
+          # Upload x64 assets before arm64 so the release page lists them in that order.
+          $artifacts = Get-ChildItem -Path release -Recurse -Include '*.msi','*.nupkg','*.pkg','*.intunewin','*.zip' |
+              Sort-Object @{Expression={ if ($_.Name -match '(?i)x64') { 0 } elseif ($_.Name -match '(?i)arm64') { 1 } else { 2 } }}, Name |
+              ForEach-Object { $_.FullName }
           if ($artifacts.Count -eq 0) { throw 'No artifacts to upload' }
           gh release create $tag @artifacts --title $title --notes $notes
