@@ -698,8 +698,7 @@ public class SessionPackageInfo
 ///
 /// <para>
 /// <c>WarningMessage</c> is set when a postinstall script emits a
-/// <c>CIMIAN-WARNING: &lt;message&gt;</c> marker line in its output (see
-/// <see cref="Cimian.CLI.managedsoftwareupdate.Services.ScriptResult"/>). When set,
+/// <c>CIMIAN-WARNING: &lt;message&gt;</c> marker line in its output. When set,
 /// the install itself is still considered successful but the item is surfaced as
 /// <c>Warning</c> rather than <c>Installed</c> so operators can scope follow-up.
 /// </para>
