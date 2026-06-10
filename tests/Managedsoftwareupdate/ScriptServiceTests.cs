@@ -220,4 +220,119 @@ if ($value -gt 5) {
     }
 
     #endregion
+
+    #region ExecuteScriptWithDetailsAsync - CIMIAN-WARNING marker tests
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_EmptyScript_ReturnsSuccessWithNullWarning()
+    {
+        var result = await _service.ExecuteScriptWithDetailsAsync("");
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Null(result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_NoMarker_ExitZero_HasNullWarning()
+    {
+        var script = "Write-Output 'just a normal message'";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Null(result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_StdoutMarker_CapturesMessage()
+    {
+        var script = "Write-Output 'CIMIAN-WARNING: needs-followup'";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("needs-followup", result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_StderrMarker_CapturesMessage()
+    {
+        // Write-Error routes through stderr; the marker must still be extracted.
+        var script = "Write-Error 'CIMIAN-WARNING: stderr-reason'";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        // Write-Error sets non-zero exit code, so Success=false, but marker is still extracted.
+        Assert.Equal("stderr-reason", result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_MarkerWithLeadingWhitespace_StillExtracted()
+    {
+        var script = "Write-Output '   CIMIAN-WARNING:   spaced-reason   '";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.True(result.Success);
+        // Regex captures the message and trims surrounding whitespace.
+        Assert.Equal("spaced-reason", result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_MarkerInMultilineOutput_StillExtracted()
+    {
+        var script = @"
+Write-Output 'preamble line 1'
+Write-Output 'preamble line 2'
+Write-Output 'CIMIAN-WARNING: buried-in-output'
+Write-Output 'trailing line'
+";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.True(result.Success);
+        Assert.Equal("buried-in-output", result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_FirstMarkerWins_WhenMultiplePresent()
+    {
+        var script = @"
+Write-Output 'CIMIAN-WARNING: first-reason'
+Write-Output 'CIMIAN-WARNING: second-reason'
+";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.True(result.Success);
+        Assert.Equal("first-reason", result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_HardFailure_NoMarker_HasNullWarning()
+    {
+        var script = "exit 1";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.False(result.Success);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Null(result.WarningMessage);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_PreservesExitCode()
+    {
+        var script = "exit 42";
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(script);
+
+        Assert.Equal(42, result.ExitCode);
+        Assert.False(result.Success);
+    }
+
+    #endregion
 }

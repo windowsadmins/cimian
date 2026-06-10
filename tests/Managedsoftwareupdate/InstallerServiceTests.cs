@@ -88,7 +88,7 @@ public class InstallerServiceTests
             Installer = new InstallerInfo { Type = "script" }
         };
 
-        var (success, output) = await _service.InstallAsync(item, null!);
+        var (success, output, _) = await _service.InstallAsync(item, null!);
 
         Assert.True(success);
         Assert.Contains("No install_script defined", output);
@@ -105,7 +105,7 @@ public class InstallerServiceTests
             PreinstallScript = "Write-Output 'Preinstall ran'"
         };
 
-        var (success, _) = await _service.InstallAsync(item, null!);
+        var (success, _, _) = await _service.InstallAsync(item, null!);
 
         Assert.True(success);
     }
@@ -121,7 +121,7 @@ public class InstallerServiceTests
             PreinstallScript = "throw 'Intentional failure'"
         };
 
-        var (success, output) = await _service.InstallAsync(item, null!);
+        var (success, output, _) = await _service.InstallAsync(item, null!);
 
         Assert.False(success);
         Assert.Contains("Preinstall script failed", output);
