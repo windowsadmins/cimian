@@ -38,9 +38,9 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $msi = Get-ChildItem -Path release -Filter 'CimianTools-*-x64.msi' | Select-Object -First 1
+          $msi = Get-ChildItem -Path release -Filter 'Cimian-*-x64.msi' | Select-Object -First 1
           if (-not $msi) { throw 'No x64 MSI produced by build.ps1' }
-          if ($msi.Name -match '^CimianTools-(\d{4}\.\d{2}\.\d{2}\.\d{4})-x64\.msi$') {
+          if ($msi.Name -match '^Cimian-(\d{4}\.\d{2}\.\d{2}\.\d{4})-x64\.msi$') {
             $datestamp = $Matches[1]
           } else {
             throw "Could not parse datestamp version from $($msi.Name)"
@@ -58,7 +58,7 @@ jobs:
           Write-Host "os:        $osCaption"
           Write-Host "cimipkg:   $cimipkgVersion"
 
-      - name: Package raw binaries as CimianTools-<datestamp>-<arch>.zip
+      - name: Package raw binaries as Cimian-<datestamp>-<arch>.zip
         shell: pwsh
         run: |
           # Ship a plain .zip per architecture alongside the .msi/.nupkg so
@@ -72,7 +72,7 @@ jobs:
                   Write-Host "::warning::release/$arch missing -- skipping zip"
                   continue
               }
-              $zipPath = "release/CimianTools-$datestamp-$arch.zip"
+              $zipPath = "release/Cimian-$datestamp-$arch.zip"
               if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
               Compress-Archive -Path (Join-Path $binDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
               $sizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
@@ -121,7 +121,7 @@ jobs:
           }
 
           # Sign the MSI installers (run separately, after binaries are signed and repackaged)
-          Get-ChildItem -Filter "CimianTools-*.msi" | ForEach-Object {
+          Get-ChildItem -Filter "Cimian-*.msi" | ForEach-Object {
               signtool sign /fd SHA256 /tr `$timestampUrl /td SHA256 /n `$cert `$_.FullName
           }
           ``````
