@@ -562,9 +562,16 @@ public class InstallerService
     #endregion
 
     /// <summary>
-    /// Installs a catalog item
+    /// Installs a catalog item.
+    /// <para>
+    /// Returns <c>WarningMessage</c> when the postinstall script signals a Warning
+    /// outcome via exit code 2 or a "CIMIAN-WARNING: ..." marker line. The install
+    /// itself is still reported as <c>Success=true</c>; the caller should surface
+    /// the item as Warning (e.g. set <see cref="Cimian.Core.Models.SessionPackageInfo.Status"/>
+    /// to "Warning") and record the message on <see cref="Cimian.Core.Models.ItemOutcome.WarningMessage"/>.
+    /// </para>
     /// </summary>
-    public async Task<(bool Success, string Output)> InstallAsync(
+    public async Task<(bool Success, string Output, string? WarningMessage)> InstallAsync(
         CatalogItem item,
         string localFile,
         CancellationToken cancellationToken = default)
@@ -583,7 +590,7 @@ public class InstallerService
             {
                 var errorMsg = $"Preinstall script failed: {preResult.Output}";
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", errorMsg);
-                return (false, errorMsg);
+                return (false, errorMsg, null);
             }
         }
 
@@ -618,20 +625,30 @@ public class InstallerService
         if (!result.Success)
         {
             _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", result.Output);
-            return result;
+            return (result.Success, result.Output, null);
         }
 
-        // Run postinstall script if present
+        // Run postinstall script if present. Uses ExecuteScriptWithDetailsAsync so
+        // scripts can signal a Warning outcome via a "CIMIAN-WARNING: <message>"
+        // marker line in their output (e.g. "CIMIAN-WARNING: needs-followup").
+        string? postinstallWarning = null;
         if (!string.IsNullOrEmpty(item.PostinstallScript))
         {
             ConsoleLogger.Info($"Running postinstall script for {item.Name}...");
             _sessionLogger?.Log("INFO", $"Executing postinstall script for {item.Name}");
-            var postResult = await _scriptService.ExecuteScriptAsync(item.PostinstallScript, cancellationToken);
-            if (!postResult.Success)
+            var postResult = await _scriptService.ExecuteScriptWithDetailsAsync(item.PostinstallScript, cancellationToken);
+
+            if (postResult.WarningMessage != null)
+            {
+                postinstallWarning = postResult.WarningMessage;
+                ConsoleLogger.Warn($"Postinstall WARNING for {item.Name}: {postinstallWarning}");
+                _sessionLogger?.Log("WARN", $"Postinstall WARNING for {item.Name}: {postinstallWarning}");
+            }
+            else if (!postResult.Success)
             {
                 ConsoleLogger.Warn($"Postinstall script failed: {postResult.Output}");
                 _sessionLogger?.Log("WARN", $"Postinstall script failed for {item.Name}: {postResult.Output}");
-                // Don't fail the installation for postinstall script failures
+                // Don't fail the installation for postinstall script failures (legacy behavior)
             }
         }
 
@@ -648,14 +665,14 @@ public class InstallerService
                 var verifyError = $"Installation verification failed for {item.Name}: {verifyReason}";
                 ConsoleLogger.Warn(verifyError);
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", verifyError);
-                return (false, verifyError);
+                return (false, verifyError, null);
             }
         }
 
         ConsoleLogger.Success($"Successfully installed {item.Name} v{item.Version}");
         _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed", $"Successfully installed {item.Name}");
 
-        return result;
+        return (result.Success, result.Output, postinstallWarning);
     }
 
     /// <summary>
