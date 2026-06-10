@@ -1,10 +1,17 @@
 using System.Diagnostics;
 using System.Management.Automation;
 using System.Text;
+using System.Text.RegularExpressions;
 using Cimian.Core;
 using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
+
+/// <summary>
+/// Richer result from script execution. Used by callers that need to surface
+/// a Warning outcome via the CIMIAN-WARNING marker convention.
+/// </summary>
+public record ScriptResult(bool Success, int ExitCode, string Output, string? WarningMessage);
 
 /// <summary>
 /// Service for executing PowerShell scripts
@@ -12,6 +19,21 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// </summary>
 public class ScriptService
 {
+    // Postinstall scripts may emit a line of the form:
+    //   CIMIAN-WARNING: <message>
+    // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage,
+    // which higher layers map to ItemRecord.currentStatus = "Warning" with last_warning set.
+    private static readonly Regex CimianWarningMarker = new(
+        @"^\s*CIMIAN-WARNING:\s*(.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static string? ExtractWarningMarker(string output)
+    {
+        if (string.IsNullOrEmpty(output)) return null;
+        var match = CimianWarningMarker.Match(output);
+        return match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
     /// <summary>
     /// Executes a PowerShell script from string content using in-process SDK
     /// Note: This method has limitations with exit codes - use ExecuteScriptWithExitCodeAsync for scripts that rely on exit codes
@@ -109,6 +131,85 @@ public class ScriptService
         catch (Exception ex)
         {
             return (false, $"Script execution failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Executes a PowerShell script from string content and returns a richer ScriptResult that
+    /// preserves the raw exit code and extracts a CIMIAN-WARNING marker if present.
+    ///
+    /// Use this method instead of ExecuteScriptAsync when the caller needs to detect a
+    /// Warning outcome via a "CIMIAN-WARNING: ..." line in the script's output.
+    /// </summary>
+    public async Task<ScriptResult> ExecuteScriptWithDetailsAsync(
+        string scriptContent,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(scriptContent))
+        {
+            return new ScriptResult(Success: true, ExitCode: 0, Output: "No script content to execute", WarningMessage: null);
+        }
+
+        var psExe = FindPowerShellExecutable();
+        if (string.IsNullOrEmpty(psExe))
+        {
+            return new ScriptResult(Success: false, ExitCode: -1, Output: "Neither pwsh.exe nor powershell.exe was found", WarningMessage: null);
+        }
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = psExe,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = false,
+                CreateNoWindow = true,
+            };
+
+            startInfo.ArgumentList.Add("-NoLogo");
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-Command");
+            startInfo.ArgumentList.Add(scriptContent);
+
+            using var process = new Process { StartInfo = startInfo };
+            var output = new StringBuilder();
+            var errors = new StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (e.Data != null) output.AppendLine(e.Data);
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (e.Data != null) errors.AppendLine(e.Data);
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync(cancellationToken);
+
+            var combinedOutput = output.ToString();
+            if (errors.Length > 0)
+            {
+                combinedOutput += Environment.NewLine + errors.ToString();
+            }
+
+            var exitCode = process.ExitCode;
+            var warningMessage = ExtractWarningMarker(combinedOutput);
+            var success = exitCode == 0;
+
+            return new ScriptResult(success, exitCode, combinedOutput, warningMessage);
+        }
+        catch (Exception ex)
+        {
+            return new ScriptResult(Success: false, ExitCode: -1, Output: $"Script execution failed: {ex.Message}", WarningMessage: null);
         }
     }
 
