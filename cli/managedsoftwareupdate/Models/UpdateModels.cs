@@ -399,6 +399,29 @@ public class CatalogItem
     [YamlMember(Alias = "force_install_after_date")]
     public DateTime? ForceInstallAfterDate { get; set; }
 
+    /// <summary>
+    /// Opt-in stale-usage removal: uninstall when none of the tracked
+    /// executables have been used for this many days. Requires
+    /// UnattendedUninstall and an available usage data source.
+    /// Null or &lt;= 0 disables the feature for this package.
+    /// </summary>
+    [YamlMember(Alias = "days_untouched_before_uninstall")]
+    public int? DaysUntouchedBeforeUninstall { get; set; }
+
+    /// <summary>
+    /// Executable paths whose usage gates stale-usage removal. When empty,
+    /// the client falls back to .exe entries in the installs array.
+    /// </summary>
+    [YamlMember(Alias = "usage_tracked_paths")]
+    public List<string>? UsageTrackedPaths { get; set; }
+
+    /// <summary>
+    /// Minimum days of usage history required on this device before
+    /// stale-usage removal may act. Null defers to the global default.
+    /// </summary>
+    [YamlMember(Alias = "minimum_usage_history_days")]
+    public int? MinimumUsageHistoryDays { get; set; }
+
     [YamlMember(Alias = "restart_action")]
     public string? RestartAction { get; set; }
 
