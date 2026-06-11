@@ -1642,8 +1642,18 @@ public class UpdateEngine : IDisposable
                 Cimian.Core.Models.DetectionMethod.None,
                 item.Version);
 
-            // Record successful install for loop guard tracking
-            _loopGuard?.RecordAttempt(item.Name, item.Version, success: true, ComputeCatalogFingerprint(item));
+            // Record successful install for loop guard tracking. When the postinstall
+            // self-reported a Warning via the CIMIAN-WARNING marker, this isn't a real
+            // install attempt for loop-detection purposes — the script ran successfully
+            // but the system is in a known-bad state awaiting external remediation
+            // (e.g. SecureBoot, BIOS password). Counting these would suppress packages
+            // whose only job is to keep flagging the unremediated state.
+            _loopGuard?.RecordAttempt(
+                item.Name,
+                item.Version,
+                success: true,
+                ComputeCatalogFingerprint(item),
+                selfReportedWarning: warningMessage != null);
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
