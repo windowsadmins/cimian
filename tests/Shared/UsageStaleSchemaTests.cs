@@ -1,7 +1,6 @@
 using Cimian.Core.Services;
 using Xunit;
 using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Cimian.Tests.Shared;
 
