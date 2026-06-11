@@ -100,8 +100,21 @@ public sealed class ReportMateUsageDataSource : IUsageDataSource
             return int.MaxValue;
         }
 
-        var days = (int)(DateTime.UtcNow - latest.Value).TotalDays;
-        return Math.Max(0, days);
+        var age = DateTime.UtcNow - latest.Value;
+
+        // A write stamp from the future means clock skew or tampering. Up to
+        // a day of skew reads as "fresh now"; beyond that the telemetry is
+        // not trustworthy, and untrustworthy must mean "too stale to act on",
+        // never "perfectly fresh".
+        if (age < TimeSpan.FromDays(-1))
+        {
+            _logger?.LogWarning(
+                "Usage data write stamp is {Hours:F0}h in the future - treating as invalid",
+                -age.TotalHours);
+            return int.MaxValue;
+        }
+
+        return Math.Max(0, (int)age.TotalDays);
     }
 
     // ─────────────────────────── parsing ───────────────────────────
@@ -154,8 +167,7 @@ public sealed class ReportMateUsageDataSource : IUsageDataSource
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning("Cannot enumerate usage source directory {Directory}: {Message}",
-                _directory, ex.Message);
+            _logger?.LogWarning(ex, "Cannot enumerate usage source directory {Directory}", _directory);
             return snap;
         }
 
@@ -171,8 +183,7 @@ public sealed class ReportMateUsageDataSource : IUsageDataSource
                 // One unreadable user file (torn write, schema drift) must not
                 // poison the others — and absolutely must not become "the app
                 // is unused".
-                _logger?.LogWarning("Skipping unreadable usage file {File}: {Message}",
-                    Path.GetFileName(file), ex.Message);
+                _logger?.LogWarning(ex, "Skipping unreadable usage file {File}", Path.GetFileName(file));
             }
         }
 
