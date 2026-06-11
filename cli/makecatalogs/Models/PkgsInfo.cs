@@ -128,6 +128,30 @@ public class PkgsInfo
     [YamlMember(Alias = "unattended_uninstall")]
     public bool UnattendedUninstall { get; set; }
 
+    /// <summary>
+    /// Opt-in stale-usage removal: uninstall this package when none of its
+    /// tracked executables have been used for this many days. Requires
+    /// unattended_uninstall and usage data (ReportMate usagetracker).
+    /// Null or &lt;= 0 disables the feature for this package.
+    /// </summary>
+    [YamlMember(Alias = "days_untouched_before_uninstall")]
+    public int? DaysUntouchedBeforeUninstall { get; set; }
+
+    /// <summary>
+    /// Executable paths whose usage gates stale-usage removal. When empty,
+    /// the client falls back to .exe entries in the installs array.
+    /// </summary>
+    [YamlMember(Alias = "usage_tracked_paths")]
+    public List<string>? UsageTrackedPaths { get; set; }
+
+    /// <summary>
+    /// Minimum days of usage history that must exist on the device before
+    /// stale-usage removal may act (guards freshly imaged machines).
+    /// Null defers to the client's global default.
+    /// </summary>
+    [YamlMember(Alias = "minimum_usage_history_days")]
+    public int? MinimumUsageHistoryDays { get; set; }
+
     [YamlMember(Alias = "minimum_os_version")]
     public string? MinOSVersion { get; set; }
 
