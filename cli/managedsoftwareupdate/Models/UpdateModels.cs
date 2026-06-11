@@ -93,6 +93,27 @@ public class CimianConfig
     [YamlMember(Alias = "AutoRemove")]
     public bool AutoRemove { get; set; }
 
+    /// <summary>
+    /// Master switch for stale-usage removal (days_untouched_before_uninstall).
+    /// Off by default: packages opt in via pkginfo, fleets opt in here.
+    /// </summary>
+    [YamlMember(Alias = "UsageStaleUninstallEnabled")]
+    public bool UsageStaleUninstallEnabled { get; set; }
+
+    /// <summary>
+    /// Global fallback for minimum_usage_history_days when a package doesn't
+    /// set its own: refuse stale removal on devices with less usage history.
+    /// </summary>
+    [YamlMember(Alias = "UsageStaleUninstallMinimumHistoryDays")]
+    public int UsageStaleUninstallMinimumHistoryDays { get; set; } = 14;
+
+    /// <summary>
+    /// Skip the entire stale-usage pass when the usage source hasn't recorded
+    /// anything within this many days — idle telemetry must not drive removals.
+    /// </summary>
+    [YamlMember(Alias = "UsageStaleUninstallMaxSourceStalenessDays")]
+    public int UsageStaleUninstallMaxSourceStalenessDays { get; set; } = 7;
+
     // SSL client certificate authentication
     [YamlMember(Alias = "UseClientCertificate")]
     public bool UseClientCertificate { get; set; }
