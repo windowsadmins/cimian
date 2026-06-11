@@ -102,6 +102,72 @@ public class LoopGuardTests : IDisposable
 
     #endregion
 
+    #region Self-Reported Warning Carve-Out
+
+    [Fact]
+    public void SelfReportedWarning_DoesNotIncrementAttemptCount()
+    {
+        var guard = CreateGuard();
+
+        guard.RecordAttempt("WarnPkg", "1.0.0", success: true, selfReportedWarning: true);
+        guard.RecordAttempt("WarnPkg", "1.0.0", success: true, selfReportedWarning: true);
+        guard.RecordAttempt("WarnPkg", "1.0.0", success: true, selfReportedWarning: true);
+
+        // Self-reported warnings must not pollute loop counters
+        var state = guard.GetPackageState("WarnPkg");
+        state.Should().BeNull("self-reported warnings should not create per-package loop state");
+    }
+
+    [Fact]
+    public void SelfReportedWarning_DoesNotTripRapidFireSuppression()
+    {
+        var guard = CreateGuard();
+
+        // Same pattern that trips suppression for normal attempts: 3 in 2 hours
+        guard.RecordAttempt("FirmwarePkg", "2026.06.10", success: true, selfReportedWarning: true);
+        guard.RecordAttempt("FirmwarePkg", "2026.06.10", success: true, selfReportedWarning: true);
+        guard.RecordAttempt("FirmwarePkg", "2026.06.10", success: true, selfReportedWarning: true);
+
+        var (suppress, _) = guard.ShouldSuppress("FirmwarePkg", "2026.06.10");
+        suppress.Should().BeFalse("CIMIAN-WARNING markers signal awaiting external remediation, not install loops");
+    }
+
+    [Fact]
+    public void NormalAttempts_StillSuppress_WhenInterleavedWithSelfReportedWarnings()
+    {
+        var guard = CreateGuard();
+
+        // Mix: 2 normal attempts + 1 self-reported warning → only 2 count
+        guard.RecordAttempt("MixedPkg", "1.0.0", success: true);
+        guard.RecordAttempt("MixedPkg", "1.0.0", success: true, selfReportedWarning: true);
+        guard.RecordAttempt("MixedPkg", "1.0.0", success: true);
+
+        var (suppress, _) = guard.ShouldSuppress("MixedPkg", "1.0.0");
+        suppress.Should().BeFalse("two real attempts should not trip the 3-in-2h threshold");
+
+        // Third real attempt should trip suppression
+        guard.RecordAttempt("MixedPkg", "1.0.0", success: true);
+        var (suppress2, reason) = guard.ShouldSuppress("MixedPkg", "1.0.0");
+        suppress2.Should().BeTrue("loop guard must still catch real install loops");
+        reason.Should().Contain("LOOP SUPPRESSED");
+    }
+
+    [Fact]
+    public void SelfReportedWarning_DefaultsToFalse_PreservesExistingBehavior()
+    {
+        var guard = CreateGuard();
+
+        // Call without selfReportedWarning (existing call sites) — must behave as before
+        guard.RecordAttempt("LegacyPkg", "1.0.0", success: true);
+        guard.RecordAttempt("LegacyPkg", "1.0.0", success: true);
+        guard.RecordAttempt("LegacyPkg", "1.0.0", success: true);
+
+        var (suppress, _) = guard.ShouldSuppress("LegacyPkg", "1.0.0");
+        suppress.Should().BeTrue("default selfReportedWarning=false must preserve rapid-fire suppression");
+    }
+
+    #endregion
+
     #region Rapid-Fire Detection
 
     [Fact]
