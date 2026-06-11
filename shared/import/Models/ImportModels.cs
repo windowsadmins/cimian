@@ -48,6 +48,15 @@ public class PkgsInfo
     [YamlMember(Alias = "unattended_uninstall")]
     public bool UnattendedUninstall { get; set; }
 
+    [YamlMember(Alias = "days_untouched_before_uninstall")]
+    public int? DaysUntouchedBeforeUninstall { get; set; }
+
+    [YamlMember(Alias = "usage_tracked_paths")]
+    public List<string>? UsageTrackedPaths { get; set; }
+
+    [YamlMember(Alias = "minimum_usage_history_days")]
+    public int? MinimumUsageHistoryDays { get; set; }
+
     [YamlMember(Alias = "requires")]
     public List<string>? Requires { get; set; }
 
