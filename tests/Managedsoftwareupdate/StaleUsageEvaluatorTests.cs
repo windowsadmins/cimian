@@ -208,9 +208,18 @@ public class StaleUsageEvaluatorTests
         Assert.Equal(StaleUsageScope.SelfServe, StaleUsageEvaluator.ClassifyScope(entry));
     }
 
+    [Fact]
+    public void ClassifyScope_ManagedUpdate_WhenOnlyInManagedUpdates()
+    {
+        // managed_updates says "patch if present" — no presence intent, so a
+        // stale removal doesn't fight policy and nothing reinstalls the item.
+        // This is the provision-then-keep-patched pattern (e.g. Firefox).
+        var entry = new ManifestItem { Name = "StaleApp", Action = "update" };
+        Assert.Equal(StaleUsageScope.ManagedUpdate, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
     [Theory]
     [InlineData("install")]   // managed_installs — admin mandates presence
-    [InlineData("update")]    // managed_updates — presence is user/other-channel managed
     [InlineData("default")]   // default_installs — enforced like an install
     [InlineData("uninstall")] // already being removed
     [InlineData("profile")]

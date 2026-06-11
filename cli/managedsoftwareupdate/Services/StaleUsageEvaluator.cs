@@ -35,7 +35,7 @@ public enum StaleUsageOutcome
 /// </summary>
 public enum StaleUsageScope
 {
-    /// <summary>Admin intent — managed_installs/updates/default_installs/profile/app,
+    /// <summary>Admin intent — managed_installs/default_installs/profile/app,
     /// or an explicit uninstall already in flight. Never stale-removed.</summary>
     Protected,
     /// <summary>Installed via the user's SelfServeManifest (Munki's unused-removal
@@ -46,6 +46,12 @@ public enum StaleUsageScope
     /// (e.g. installed before subscription tracking, or admin demoted it from
     /// managed). Plain uninstall sticks; the item stays offered in MSC.</summary>
     Optional,
+    /// <summary>Only in managed_updates — "patch IF present", which expresses no
+    /// presence intent, so removal doesn't fight policy and nothing reinstalls
+    /// it (updates only apply to installed items). Covers the provision-then-
+    /// keep-patched pattern (e.g. Firefox installed by a provisioning manifest,
+    /// kept current by managed_updates afterwards).</summary>
+    ManagedUpdate,
     /// <summary>Installed by Cimian but in no manifest at all — AutoRemove's
     /// territory, also eligible here for fleets that keep AutoRemove off.</summary>
     Orphan,
@@ -143,6 +149,10 @@ public static class StaleUsageEvaluator
         if (action == "install" && manifestEntry.IsSelfServe)
         {
             return StaleUsageScope.SelfServe;
+        }
+        if (action == "update")
+        {
+            return StaleUsageScope.ManagedUpdate;
         }
 
         return StaleUsageScope.Protected;

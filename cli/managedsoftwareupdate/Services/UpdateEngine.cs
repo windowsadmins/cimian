@@ -429,7 +429,10 @@ public class UpdateEngine : IDisposable
                 // reload _config, and the source's lazy snapshot should reflect
                 // this run's on-disk data, not engine-construction time.
                 var usageSource = new ReportMateUsageDataSource();
-                var staleUsageItems = await IdentifyStaleUsageItemsAsync(manifestItems, catalogMap, toUninstall, usageSource);
+                // Anything already queued this run — including a pending update for a
+                // managed_updates item — defers stale evaluation to the next run.
+                var queuedThisRun = toUninstall.Concat(toInstall).Concat(toUpdate).ToList();
+                var staleUsageItems = await IdentifyStaleUsageItemsAsync(manifestItems, catalogMap, queuedThisRun, usageSource);
                 if (staleUsageItems.Count > 0)
                 {
                     ConsoleLogger.Info($"StaleUsage: {staleUsageItems.Count} package(s) untouched past their threshold");
@@ -1230,12 +1233,19 @@ public class UpdateEngine : IDisposable
                         // Self-serve and optional items must also drop any self-serve
                         // subscription — same effect as the user clicking Remove in
                         // MSC — or the next run's merge would reinstall the item.
-                        // Check-only must not mutate state, so only report there.
-                        if (scope is StaleUsageScope.SelfServe or StaleUsageScope.Optional)
+                        // ManagedUpdate items only get lingering install requests
+                        // cleared (no removal request: the admin's update policy
+                        // would veto-log it every run). Check-only must not mutate
+                        // state, so only report there.
+                        if (scope != StaleUsageScope.Orphan)
                         {
                             if (_checkOnly)
                             {
                                 ConsoleLogger.Info($"    StaleUsage: would clear self-serve subscription for {catalogItem.Name} (check-only)");
+                            }
+                            else if (scope == StaleUsageScope.ManagedUpdate)
+                            {
+                                await new SelfServiceManifestService().RemoveRequestAsync(catalogItem.Name);
                             }
                             else
                             {
