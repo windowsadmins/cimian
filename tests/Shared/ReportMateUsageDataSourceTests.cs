@@ -215,4 +215,37 @@ public sealed class ReportMateUsageDataSourceTests : IDisposable
         Assert.Equal(0, source.GetHistoryDays());
         Assert.Equal(int.MaxValue, source.GetDataFreshnessDays());
     }
+
+    [Fact]
+    public void GetDataFreshnessDays_FutureWriteStamp_IsInvalid_NotFresh()
+    {
+        // LastUpdatedAt 3 days in the future = clock skew or tampering.
+        // Treating it as "fresh" would let untrustworthy telemetry drive
+        // uninstalls; it must read as too-stale-to-act instead.
+        WriteUserFile("skewed", TrackerJson(@"C:\Apps\tool.exe", lastUsedDaysAgo: 12, lastUpdatedDaysAgo: -3));
+        var source = new ReportMateUsageDataSource(_dir);
+
+        Assert.Equal(int.MaxValue, source.GetDataFreshnessDays());
+    }
+
+    [Fact]
+    public void GetDataFreshnessDays_SmallFutureSkew_ReadsAsFresh()
+    {
+        // A few hours of clock skew is normal fleet reality - don't let it
+        // disable the feature device-wide. -0.5 days is within the 1-day
+        // tolerance window.
+        var json = $$"""
+            {
+              "SchemaVersion": 1,
+              "Username": "slight",
+              "StartedAt": "{{DateTime.UtcNow.AddDays(-30):O}}",
+              "LastUpdatedAt": "{{DateTime.UtcNow.AddHours(12):O}}",
+              "ByAppByDate": {}
+            }
+            """;
+        WriteUserFile("slight", json);
+        var source = new ReportMateUsageDataSource(_dir);
+
+        Assert.Equal(0, source.GetDataFreshnessDays());
+    }
 }
