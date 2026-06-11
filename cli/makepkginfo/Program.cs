@@ -101,6 +101,21 @@ class Program
             "--OnDemand",
             "Set 'OnDemand: true' - items that can be run multiple times");
 
+        var daysUntouchedOption = new Option<int?>(
+            "--days_untouched_before_uninstall",
+            "Uninstall when no tracked executable has been used for this many days (requires --unattended_uninstall and usage data)");
+
+        var usageTrackedPathOption = new Option<string[]>(
+            "--usage_tracked_path",
+            "Executable path whose usage gates stale-usage removal (can be specified multiple times; defaults to .exe entries in installs)")
+        {
+            AllowMultipleArgumentsPerToken = true
+        };
+
+        var minUsageHistoryOption = new Option<int?>(
+            "--minimum_usage_history_days",
+            "Minimum days of usage history required on a device before stale-usage removal may act");
+
         var newPkgOption = new Option<bool>(
             "--new",
             "Create a new pkginfo stub");
@@ -141,6 +156,9 @@ class Program
         rootCommand.AddOption(unattendedInstallOption);
         rootCommand.AddOption(unattendedUninstallOption);
         rootCommand.AddOption(onDemandOption);
+        rootCommand.AddOption(daysUntouchedOption);
+        rootCommand.AddOption(usageTrackedPathOption);
+        rootCommand.AddOption(minUsageHistoryOption);
         rootCommand.AddOption(newPkgOption);
         rootCommand.AddOption(additionalFilesOption);
         rootCommand.AddArgument(installerArgument);
@@ -168,6 +186,9 @@ class Program
             var unattendedInstall = context.ParseResult.GetValueForOption(unattendedInstallOption);
             var unattendedUninstall = context.ParseResult.GetValueForOption(unattendedUninstallOption);
             var onDemand = context.ParseResult.GetValueForOption(onDemandOption);
+            var daysUntouched = context.ParseResult.GetValueForOption(daysUntouchedOption);
+            var usageTrackedPaths = context.ParseResult.GetValueForOption(usageTrackedPathOption);
+            var minUsageHistory = context.ParseResult.GetValueForOption(minUsageHistoryOption);
             var newPkg = context.ParseResult.GetValueForOption(newPkgOption);
             var additionalFiles = context.ParseResult.GetValueForOption(additionalFilesOption);
             var installerPath = context.ParseResult.GetValueForArgument(installerArgument);
@@ -234,6 +255,9 @@ class Program
                     UnattendedInstall = unattendedInstall,
                     UnattendedUninstall = unattendedUninstall,
                     OnDemand = onDemand,
+                    DaysUntouchedBeforeUninstall = daysUntouched,
+                    UsageTrackedPaths = usageTrackedPaths?.Length > 0 ? usageTrackedPaths.ToList() : null,
+                    MinimumUsageHistoryDays = minUsageHistory,
                     MinOSVersion = minOSVersion,
                     MaxOSVersion = maxOSVersion,
                     MinCimianVersion = minCimianVersion,

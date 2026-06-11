@@ -183,10 +183,14 @@ public class PkgInfoBuilder
             Description = finalDesc,
             InstallerType = installerType,
             UnattendedInstall = options.UnattendedInstall,
+            UnattendedUninstall = options.UnattendedUninstall,
             OnDemand = options.OnDemand,
             MinOSVersion = options.MinOSVersion,
             MaxOSVersion = options.MaxOSVersion,
             MinCimianVersion = options.MinCimianVersion,
+            DaysUntouchedBeforeUninstall = options.DaysUntouchedBeforeUninstall,
+            UsageTrackedPaths = options.UsageTrackedPaths,
+            MinimumUsageHistoryDays = options.MinimumUsageHistoryDays,
             Installs = installs
         };
 
@@ -400,6 +404,9 @@ public class PkgsInfoOptions
     public bool UnattendedInstall { get; set; }
     public bool UnattendedUninstall { get; set; }
     public bool OnDemand { get; set; }
+    public int? DaysUntouchedBeforeUninstall { get; set; }
+    public List<string>? UsageTrackedPaths { get; set; }
+    public int? MinimumUsageHistoryDays { get; set; }
     public string? MinOSVersion { get; set; }
     public string? MaxOSVersion { get; set; }
     public string? MinCimianVersion { get; set; }
