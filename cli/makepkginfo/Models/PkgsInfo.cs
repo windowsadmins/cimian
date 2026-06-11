@@ -132,6 +132,30 @@ public class PkgsInfo
 
     [YamlMember(Alias = "installer", Order = 25, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public Installer? Installer { get; set; }
+
+    [YamlMember(Alias = "unattended_uninstall", Order = 26, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
+    public bool UnattendedUninstall { get; set; }
+
+    /// <summary>
+    /// Opt-in stale-usage removal: uninstall when none of the tracked
+    /// executables have been used for this many days.
+    /// </summary>
+    [YamlMember(Alias = "days_untouched_before_uninstall", Order = 27, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public int? DaysUntouchedBeforeUninstall { get; set; }
+
+    /// <summary>
+    /// Executable paths whose usage gates stale-usage removal. When empty,
+    /// the client falls back to .exe entries in the installs array.
+    /// </summary>
+    [YamlMember(Alias = "usage_tracked_paths", Order = 28, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
+    public List<string>? UsageTrackedPaths { get; set; }
+
+    /// <summary>
+    /// Minimum days of usage history required on the device before
+    /// stale-usage removal may act.
+    /// </summary>
+    [YamlMember(Alias = "minimum_usage_history_days", Order = 29, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public int? MinimumUsageHistoryDays { get; set; }
 }
 
 /// <summary>
