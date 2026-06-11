@@ -202,10 +202,27 @@ public class LoopGuard
     /// <summary>
     /// Records an install attempt (call after InstallerService.InstallAsync completes).
     /// catalogFingerprint should match what was passed to ShouldSuppress for consistency.
+    /// <para>
+    /// Set <paramref name="selfReportedWarning"/> to true when the postinstall script
+    /// signalled a Warning outcome via the <c>CIMIAN-WARNING:</c> marker convention
+    /// (see <see cref="Cimian.Core.Models.ItemOutcome.WarningMessage"/>). Those runs
+    /// are intentional soft-fails — the script ran successfully but the system is in
+    /// a known-bad state awaiting external remediation (e.g. SecureBoot enabled by
+    /// user, BIOS password set). They are NOT install loops, and counting them would
+    /// suppress packages whose only job is to keep flagging the unremediated state.
+    /// Real install loops (repeated normal installs of the same version with no
+    /// marker) still accumulate and trip suppression as before.
+    /// </para>
     /// </summary>
-    public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null)
+    public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null, bool selfReportedWarning = false)
     {
         if (string.IsNullOrEmpty(packageName))
+            return;
+
+        // Self-reported warnings are not install attempts for loop-detection purposes.
+        // Skip counter updates entirely so the per-version count and rapid-fire window
+        // are not polluted by intentional soft-fails. See remarks above.
+        if (selfReportedWarning)
             return;
 
         var key = packageName.ToLowerInvariant();
