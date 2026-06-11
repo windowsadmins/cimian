@@ -764,19 +764,37 @@ public class ImportService
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            // Never block on a credential prompt — fail the pull instead.
+            psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+            psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
 
             using var process = Process.Start(psi);
             if (process != null)
             {
-                process.WaitForExit();
+                // Drain both pipes concurrently — a redirected stream nobody
+                // reads deadlocks the child once its output fills the pipe
+                // buffer (git fetch progress alone is enough).
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+
+                if (!process.WaitForExit(120_000))
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { }
+                    Console.WriteLine("[WARN] Git pull timed out after 120s — continuing without pull");
+                    return;
+                }
+
                 if (process.ExitCode == 0)
                 {
                     Console.WriteLine("Git pull completed successfully");
                 }
                 else
                 {
-                    Console.WriteLine("[WARN] Git pull may have had issues");
+                    var detail = stderr.GetAwaiter().GetResult().Trim();
+                    if (detail.Length > 200) detail = detail[..200];
+                    Console.WriteLine($"[WARN] Git pull may have had issues{(detail.Length > 0 ? $": {detail}" : "")}");
                 }
+                _ = stdout.GetAwaiter().GetResult();
             }
         }
         catch (Exception ex)
