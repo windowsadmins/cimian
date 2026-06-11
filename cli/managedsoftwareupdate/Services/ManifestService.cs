@@ -572,21 +572,28 @@ public class ManifestService
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
 
-            var existing = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
-            if (existing == null)
+            // Match against every entry for the name, not just the first: the same
+            // item can be optional in one manifest and managed in another, and a
+            // self-serve promotion must not outrank (or masquerade as) admin intent
+            // when the lists are later deduplicated.
+            var matches = items.Where(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matches.Count == 0)
             {
                 items.Add(new ManifestItem
                 {
                     Name = name,
                     Action = "install",
-                    SourceManifest = selfServeSource
+                    SourceManifest = selfServeSource,
+                    IsSelfServe = true
                 });
                 SetItemSource(name, selfServeSource, "managed_installs");
                 ConsoleLogger.Debug($"SelfServe: added install request item: {name}");
             }
-            else if (string.Equals(existing.Action, "optional", StringComparison.OrdinalIgnoreCase))
+            else if (matches.All(i => string.Equals(i.Action, "optional", StringComparison.OrdinalIgnoreCase)))
             {
+                var existing = matches[0];
                 existing.Action = "install";
+                existing.IsSelfServe = true;
                 SetItemSource(name, selfServeSource, "managed_installs");
                 ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {existing.SourceManifest}");
             }

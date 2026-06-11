@@ -185,4 +185,48 @@ public class StaleUsageEvaluatorTests
 
         Assert.Equal(new[] { Exe }, exes);
     }
+
+    // ── manifest scoping (Munki parity) ─────────────────────────────────
+    // Unused-software removal acts on self-serve/optional installs and
+    // orphans, never on anything an admin manifest mandates.
+
+    [Fact]
+    public void ClassifyScope_Orphan_WhenNoManifestEntry()
+        => Assert.Equal(StaleUsageScope.Orphan, StaleUsageEvaluator.ClassifyScope(null));
+
+    [Fact]
+    public void ClassifyScope_Optional_WhenUnsubscribedOptionalInstall()
+    {
+        var entry = new ManifestItem { Name = "StaleApp", Action = "optional" };
+        Assert.Equal(StaleUsageScope.Optional, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Fact]
+    public void ClassifyScope_SelfServe_WhenUserInstalledViaSelfServeManifest()
+    {
+        var entry = new ManifestItem { Name = "StaleApp", Action = "install", IsSelfServe = true };
+        Assert.Equal(StaleUsageScope.SelfServe, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Theory]
+    [InlineData("install")]   // managed_installs — admin mandates presence
+    [InlineData("update")]    // managed_updates — presence is user/other-channel managed
+    [InlineData("default")]   // default_installs — enforced like an install
+    [InlineData("uninstall")] // already being removed
+    [InlineData("profile")]
+    [InlineData("app")]
+    public void ClassifyScope_Protected_ForAdminManagedActions(string action)
+    {
+        var entry = new ManifestItem { Name = "StaleApp", Action = action };
+        Assert.Equal(StaleUsageScope.Protected, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Fact]
+    public void ClassifyScope_Protected_WhenAdminInstall_EvenIfUserAlsoRequestedIt()
+    {
+        // The merge never sets IsSelfServe on an item the server already
+        // manages; this pins the contract from the classifier's side too.
+        var entry = new ManifestItem { Name = "StaleApp", Action = "install", IsSelfServe = false };
+        Assert.Equal(StaleUsageScope.Protected, StaleUsageEvaluator.ClassifyScope(entry));
+    }
 }

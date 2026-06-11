@@ -28,6 +28,29 @@ public enum StaleUsageOutcome
     Stale,
 }
 
+/// <summary>
+/// Where an installed package sits in the manifest tree, which decides whether
+/// stale-usage removal may touch it. Munki parity: unused-software removal acts
+/// on self-serve (optional) installs, never on admin-managed software.
+/// </summary>
+public enum StaleUsageScope
+{
+    /// <summary>Admin intent — managed_installs/updates/default_installs/profile/app,
+    /// or an explicit uninstall already in flight. Never stale-removed.</summary>
+    Protected,
+    /// <summary>Installed via the user's SelfServeManifest (Munki's unused-removal
+    /// target). Removal must also clear the self-serve subscription or the next
+    /// run reinstalls it.</summary>
+    SelfServe,
+    /// <summary>In optional_installs but not currently self-serve subscribed
+    /// (e.g. installed before subscription tracking, or admin demoted it from
+    /// managed). Plain uninstall sticks; the item stays offered in MSC.</summary>
+    Optional,
+    /// <summary>Installed by Cimian but in no manifest at all — AutoRemove's
+    /// territory, also eligible here for fleets that keep AutoRemove off.</summary>
+    Orphan,
+}
+
 /// <param name="Outcome">The decision.</param>
 /// <param name="DaysSinceLastUsed">Days since the newest usage across tracked exes (-1 when no data).</param>
 /// <param name="ThresholdDays">The package's days_untouched_before_uninstall.</param>
@@ -99,6 +122,30 @@ public static class StaleUsageEvaluator
         return daysSince > threshold
             ? new StaleUsageDecision(StaleUsageOutcome.Stale, daysSince, threshold)
             : new StaleUsageDecision(StaleUsageOutcome.RecentlyUsed, daysSince, threshold);
+    }
+
+    /// <summary>
+    /// Classifies an installed package by its (deduplicated, self-serve-merged)
+    /// manifest entry. Null means no manifest references the name at all.
+    /// </summary>
+    public static StaleUsageScope ClassifyScope(ManifestItem? manifestEntry)
+    {
+        if (manifestEntry is null)
+        {
+            return StaleUsageScope.Orphan;
+        }
+
+        var action = manifestEntry.Action?.ToLowerInvariant();
+        if (action == "optional")
+        {
+            return StaleUsageScope.Optional;
+        }
+        if (action == "install" && manifestEntry.IsSelfServe)
+        {
+            return StaleUsageScope.SelfServe;
+        }
+
+        return StaleUsageScope.Protected;
     }
 
     /// <summary>

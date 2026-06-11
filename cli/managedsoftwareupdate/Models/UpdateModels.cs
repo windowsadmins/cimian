@@ -95,10 +95,12 @@ public class CimianConfig
 
     /// <summary>
     /// Master switch for stale-usage removal (days_untouched_before_uninstall).
-    /// Off by default: packages opt in via pkginfo, fleets opt in here.
+    /// On by default — harmless fleet-wide because every package must still
+    /// opt in via pkginfo, and the pass only ever touches self-serve/optional
+    /// installs and orphans, never admin-manifested items.
     /// </summary>
     [YamlMember(Alias = "UsageStaleUninstallEnabled")]
-    public bool UsageStaleUninstallEnabled { get; set; }
+    public bool UsageStaleUninstallEnabled { get; set; } = true;
 
     /// <summary>
     /// Global fallback for minimum_usage_history_days when a package doesn't
@@ -319,6 +321,13 @@ public class ManifestItem
     public string Version { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty; // install, update, uninstall, profile, app, optional
     public string SourceManifest { get; set; } = string.Empty;
+    /// <summary>
+    /// True when this item's action was set by the user-writable
+    /// SelfServeManifest (install request or promoted optional). SourceManifest
+    /// keeps the server manifest that listed the item, so this flag is the only
+    /// way to tell user intent from admin intent after the merge.
+    /// </summary>
+    public bool IsSelfServe { get; set; }
     public string InstallerLocation { get; set; } = string.Empty;
     public List<string> SupportedArch { get; set; } = new();
     public List<string> ManagedInstalls { get; set; } = new();
