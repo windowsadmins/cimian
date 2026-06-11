@@ -568,6 +568,14 @@ public class ManifestService
 
         const string selfServeSource = "SelfServeManifest";
 
+        // Actions that mandate the item's presence/absence. A self-serve request
+        // can never override these. "optional" and "update" are deliberately NOT
+        // here: optional_installs offers the item, and managed_updates only says
+        // "patch if present" — the user remains the authority on presence for
+        // the common optional_installs + managed_updates combo.
+        static bool IsPresenceMandating(ManifestItem i) =>
+            i.Action?.ToLowerInvariant() is "install" or "uninstall" or "default" or "profile" or "app";
+
         foreach (var name in selfServe.ManagedInstalls)
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
@@ -589,15 +597,21 @@ public class ManifestService
                 SetItemSource(name, selfServeSource, "managed_installs");
                 ConsoleLogger.Debug($"SelfServe: added install request item: {name}");
             }
-            else if (matches.All(i => string.Equals(i.Action, "optional", StringComparison.OrdinalIgnoreCase)))
+            else if (!matches.Any(IsPresenceMandating))
             {
-                var existing = matches[0];
-                existing.Action = "install";
-                existing.IsSelfServe = true;
-                SetItemSource(name, selfServeSource, "managed_installs");
-                ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {existing.SourceManifest}");
+                var optional = matches.FirstOrDefault(i =>
+                    string.Equals(i.Action, "optional", StringComparison.OrdinalIgnoreCase));
+                if (optional != null)
+                {
+                    optional.Action = "install";
+                    optional.IsSelfServe = true;
+                    SetItemSource(name, selfServeSource, "managed_installs");
+                    ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {optional.SourceManifest}");
+                }
+                // Only managed_updates entries: MSC never offers such an item,
+                // so an install request here is stale state — leave it alone.
             }
-            // If the item is already managed_installs / update / uninstall by server policy,
+            // If the item is already managed_installs / uninstall by server policy,
             // leave it alone — admin policy wins.
         }
 
@@ -605,8 +619,8 @@ public class ManifestService
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
 
-            var existing = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
-            if (existing == null)
+            var matches = items.Where(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (matches.Count == 0)
             {
                 items.Add(new ManifestItem
                 {
@@ -617,17 +631,26 @@ public class ManifestService
                 SetItemSource(name, selfServeSource, "managed_uninstalls");
                 ConsoleLogger.Debug($"SelfServe: added uninstall request item: {name}");
             }
-            else if (string.Equals(existing.Action, "optional", StringComparison.OrdinalIgnoreCase))
+            else if (!matches.Any(IsPresenceMandating))
             {
-                // Optional item — user is the only authority, so honor the removal request.
-                existing.Action = "uninstall";
-                SetItemSource(name, selfServeSource, "managed_uninstalls");
-                ConsoleLogger.Debug($"SelfServe: flipped optional to uninstall item: {name} originalSource: {existing.SourceManifest}");
+                // Optional item (possibly also under managed_updates) — the user
+                // is the authority on presence, so honor the removal request.
+                // Deduplication ranks uninstall above update, so the flipped
+                // entry wins even when an update entry remains.
+                var optional = matches.FirstOrDefault(i =>
+                    string.Equals(i.Action, "optional", StringComparison.OrdinalIgnoreCase));
+                if (optional != null)
+                {
+                    optional.Action = "uninstall";
+                    SetItemSource(name, selfServeSource, "managed_uninstalls");
+                    ConsoleLogger.Debug($"SelfServe: flipped optional to uninstall item: {name} originalSource: {optional.SourceManifest}");
+                }
             }
-            else if (!string.Equals(existing.Action, "uninstall", StringComparison.OrdinalIgnoreCase))
+            else if (!matches.Any(i => string.Equals(i.Action, "uninstall", StringComparison.OrdinalIgnoreCase)))
             {
-                // install / update from server policy — admin wins, suppress the user request.
-                ConsoleLogger.Info($"SelfServe: ignoring uninstall request for {name}; admin policy requires {existing.Action} (source: {existing.SourceManifest})");
+                var blocking = matches.First(IsPresenceMandating);
+                // install / default / profile / app from server policy — admin wins.
+                ConsoleLogger.Info($"SelfServe: ignoring uninstall request for {name}; admin policy requires {blocking.Action} (source: {blocking.SourceManifest})");
             }
         }
     }
