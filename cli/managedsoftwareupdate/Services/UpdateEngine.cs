@@ -50,8 +50,6 @@ public class UpdateEngine : IDisposable
     private List<ManifestItem> _allManifestItems = new();
     private Dictionary<string, CatalogItem> _catalogMap = new();
 
-    private readonly IUsageDataSource _usageSource;
-
     public UpdateEngine(CimianConfig config)
     {
         _config = config;
@@ -62,12 +60,6 @@ public class UpdateEngine : IDisposable
         _installerService = new InstallerService(config);
         _statusService = new StatusService();
         _scriptService = new ScriptService();
-
-        // Stale-usage removal reads ReportMate usagetracker data; when the
-        // feature is off the NoOp source makes the whole pass a cheap branch.
-        _usageSource = config.UsageStaleUninstallEnabled
-            ? new ReportMateUsageDataSource()
-            : new NoOpUsageDataSource();
 
         // Enable ANSI color support on Windows console
         EnableAnsiColors();
@@ -433,7 +425,11 @@ public class UpdateEngine : IDisposable
             // to these uninstalls the same as any other.
             if (_config.UsageStaleUninstallEnabled)
             {
-                var staleUsageItems = IdentifyStaleUsageItems(manifestItems, catalogMap, toUninstall);
+                // Resolved here rather than in the constructor: preflight can
+                // reload _config, and the source's lazy snapshot should reflect
+                // this run's on-disk data, not engine-construction time.
+                var usageSource = new ReportMateUsageDataSource();
+                var staleUsageItems = IdentifyStaleUsageItems(manifestItems, catalogMap, toUninstall, usageSource);
                 if (staleUsageItems.Count > 0)
                 {
                     ConsoleLogger.Info($"StaleUsage: {staleUsageItems.Count} package(s) untouched past their threshold");
@@ -1170,17 +1166,18 @@ public class UpdateEngine : IDisposable
     private List<CatalogItem> IdentifyStaleUsageItems(
         List<ManifestItem> manifestItems,
         Dictionary<string, CatalogItem> catalogMap,
-        List<CatalogItem> alreadyQueued)
+        List<CatalogItem> alreadyQueued,
+        IUsageDataSource usageSource)
     {
         var stale = new List<CatalogItem>();
 
-        if (!_usageSource.IsAvailable)
+        if (!usageSource.IsAvailable)
         {
-            ConsoleLogger.Info($"StaleUsage: usage source '{_usageSource.SourceName}' unavailable - skipping pass");
+            ConsoleLogger.Info($"StaleUsage: usage source '{usageSource.SourceName}' unavailable - skipping pass");
             return stale;
         }
 
-        var freshness = _usageSource.GetDataFreshnessDays();
+        var freshness = usageSource.GetDataFreshnessDays();
         if (freshness > _config.UsageStaleUninstallMaxSourceStalenessDays)
         {
             ConsoleLogger.Warn(
@@ -1207,16 +1204,18 @@ public class UpdateEngine : IDisposable
                 if (!catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem)) continue;
 
                 var decision = StaleUsageEvaluator.Evaluate(
-                    catalogItem, _usageSource, _config.UsageStaleUninstallMinimumHistoryDays);
+                    catalogItem, usageSource, _config.UsageStaleUninstallMinimumHistoryDays);
 
                 switch (decision.Outcome)
                 {
                     case StaleUsageOutcome.Stale:
                         ConsoleLogger.Info(
                             $"    -> StaleUsage: {catalogItem.Name} untouched {decision.DaysSinceLastUsed:F0} day(s) (threshold {decision.ThresholdDays}) - queuing uninstall");
+                        // "pending" (not a custom status) so NormalizeItemStatus maps it
+                        // for downstream consumers; the reason code marks it a removal.
                         _sessionLogger?.LogStatusCheck(
-                            catalogItem.Name, catalogItem.Version, "removal_pending",
-                            $"untouched {decision.DaysSinceLastUsed:F0} day(s), threshold {decision.ThresholdDays}, source {_usageSource.SourceName}",
+                            catalogItem.Name, catalogItem.Version, "pending",
+                            $"untouched {decision.DaysSinceLastUsed:F0} day(s), threshold {decision.ThresholdDays}, source {usageSource.SourceName}",
                             StatusReasonCode.StaleUsageUninstall,
                             DetectionMethod.ReportMateUsage,
                             needsAction: true);
@@ -1236,7 +1235,7 @@ public class UpdateEngine : IDisposable
                         ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} - insufficient usage history on device - skipping");
                         _sessionLogger?.LogStatusCheck(
                             catalogItem.Name, catalogItem.Version, "installed",
-                            $"stale-usage check skipped: device history {_usageSource.GetHistoryDays()} day(s) below minimum",
+                            $"stale-usage check skipped: device history {usageSource.GetHistoryDays()} day(s) below minimum",
                             StatusReasonCode.StaleUsageSkippedInsufficientHistory,
                             DetectionMethod.ReportMateUsage);
                         break;
