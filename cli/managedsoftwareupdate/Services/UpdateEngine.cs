@@ -417,6 +417,26 @@ public class UpdateEngine : IDisposable
                 }
             }
 
+            // Stale-usage removal: queue uninstall for opted-in packages whose
+            // tracked executables nobody on the device has used within
+            // days_untouched_before_uninstall. Peer of AutoRemove, not a
+            // dependency walker — and placed before the downstream filters so
+            // install_window / blocking_applications / unattended gating apply
+            // to these uninstalls the same as any other.
+            if (_config.UsageStaleUninstallEnabled)
+            {
+                // Resolved here rather than in the constructor: preflight can
+                // reload _config, and the source's lazy snapshot should reflect
+                // this run's on-disk data, not engine-construction time.
+                var usageSource = new ReportMateUsageDataSource();
+                var staleUsageItems = IdentifyStaleUsageItems(manifestItems, catalogMap, toUninstall, usageSource);
+                if (staleUsageItems.Count > 0)
+                {
+                    ConsoleLogger.Info($"StaleUsage: {staleUsageItems.Count} package(s) untouched past their threshold");
+                    toUninstall.AddRange(staleUsageItems);
+                }
+            }
+
             // Apply --item filter if specified (Go parity: pkg/filter)
             if (itemFilterService.HasFilter)
             {
@@ -1130,6 +1150,117 @@ public class UpdateEngine : IDisposable
         }
 
         return autoRemove;
+    }
+
+    /// <summary>
+    /// Identifies Cimian-installed packages eligible for stale-usage removal:
+    /// opted in via days_untouched_before_uninstall, unattended-uninstallable,
+    /// and untouched by every user on the device past the threshold per the
+    /// usage data source. Mirrors <see cref="IdentifyAutoRemoveItems"/>: only
+    /// packages in the ManagedInstalls registry are candidates, and anything
+    /// still named by a manifest is skipped — uninstalling a manifested item
+    /// would just reinstall next run (admin intent wins). Self-serve items are
+    /// deliberately untouched in this pass; removing those requires clearing
+    /// the self-serve manifest entry too (follow-up).
+    /// </summary>
+    private List<CatalogItem> IdentifyStaleUsageItems(
+        List<ManifestItem> manifestItems,
+        Dictionary<string, CatalogItem> catalogMap,
+        List<CatalogItem> alreadyQueued,
+        IUsageDataSource usageSource)
+    {
+        var stale = new List<CatalogItem>();
+
+        if (!usageSource.IsAvailable)
+        {
+            ConsoleLogger.Info($"StaleUsage: usage source '{usageSource.SourceName}' unavailable - skipping pass");
+            return stale;
+        }
+
+        var freshness = usageSource.GetDataFreshnessDays();
+        if (freshness > _config.UsageStaleUninstallMaxSourceStalenessDays)
+        {
+            ConsoleLogger.Warn(
+                $"StaleUsage: usage data is {freshness} day(s) old (max {_config.UsageStaleUninstallMaxSourceStalenessDays}) - skipping pass");
+            return stale;
+        }
+
+        var manifestedNames = new HashSet<string>(
+            manifestItems.Select(m => m.Name).Where(n => !string.IsNullOrEmpty(n)),
+            StringComparer.OrdinalIgnoreCase);
+        var queuedNames = new HashSet<string>(
+            alreadyQueued.Select(i => i.Name),
+            StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var managedKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\ManagedInstalls");
+            if (managedKey == null) return stale;
+
+            foreach (var name in managedKey.GetSubKeyNames())
+            {
+                if (manifestedNames.Contains(name) || queuedNames.Contains(name)) continue;
+                if (!catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem)) continue;
+
+                var decision = StaleUsageEvaluator.Evaluate(
+                    catalogItem, usageSource, _config.UsageStaleUninstallMinimumHistoryDays);
+
+                switch (decision.Outcome)
+                {
+                    case StaleUsageOutcome.Stale:
+                        ConsoleLogger.Info(
+                            $"    -> StaleUsage: {catalogItem.Name} untouched {decision.DaysSinceLastUsed:F0} day(s) (threshold {decision.ThresholdDays}) - queuing uninstall");
+                        // "pending" (not a custom status) so NormalizeItemStatus maps it
+                        // for downstream consumers; the reason code marks it a removal.
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, "pending",
+                            $"untouched {decision.DaysSinceLastUsed:F0} day(s), threshold {decision.ThresholdDays}, source {usageSource.SourceName}",
+                            StatusReasonCode.StaleUsageUninstall,
+                            DetectionMethod.ReportMateUsage,
+                            needsAction: true);
+                        stale.Add(catalogItem);
+                        break;
+
+                    case StaleUsageOutcome.NoUsageData:
+                        ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} has no usage data - skipping (fail-safe)");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, "installed",
+                            "stale-usage check skipped: no usage data for any tracked executable",
+                            StatusReasonCode.StaleUsageSkippedNoData,
+                            DetectionMethod.ReportMateUsage);
+                        break;
+
+                    case StaleUsageOutcome.InsufficientHistory:
+                        ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} - insufficient usage history on device - skipping");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, "installed",
+                            $"stale-usage check skipped: device history {usageSource.GetHistoryDays()} day(s) below minimum",
+                            StatusReasonCode.StaleUsageSkippedInsufficientHistory,
+                            DetectionMethod.ReportMateUsage);
+                        break;
+
+                    case StaleUsageOutcome.RecentlyUsed:
+                        ConsoleLogger.Detail(
+                            $"    StaleUsage: {catalogItem.Name} used {decision.DaysSinceLastUsed:F0} day(s) ago (threshold {decision.ThresholdDays}) - keeping");
+                        break;
+
+                    case StaleUsageOutcome.NotUnattended:
+                    case StaleUsageOutcome.NotUninstallable:
+                    case StaleUsageOutcome.NoTrackedExecutables:
+                        ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} skipped ({decision.Outcome})");
+                        break;
+
+                    // NotOptedIn is the overwhelmingly common case - stay silent.
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"StaleUsage: failed to enumerate ManagedInstalls registry: {ex.Message}");
+        }
+
+        return stale;
     }
 
     /// <summary>
