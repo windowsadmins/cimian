@@ -59,7 +59,12 @@ public partial class App : Application
         services.AddSingleton<IBrandingService, BrandingService>();
 
         // ViewModels
-        services.AddTransient<ShellViewModel>();
+        // ShellViewModel is app-wide shell state (progress overlay, badges,
+        // navigation requests). It MUST be a singleton: pages resolve it on
+        // construction, and a transient instance would be created after the
+        // operation-started event already fired — the new page would see
+        // IsInstalling=false and show stale content while a run is in flight.
+        services.AddSingleton<ShellViewModel>();
         services.AddTransient<SoftwareViewModel>();
         services.AddTransient<CategoriesViewModel>();
         services.AddTransient<MyItemsViewModel>();
