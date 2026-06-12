@@ -587,6 +587,7 @@ public class ManifestService
             else if (string.Equals(existing.Action, "optional", StringComparison.OrdinalIgnoreCase))
             {
                 existing.Action = "install";
+                existing.PromotedFromOptional = true;
                 SetItemSource(name, selfServeSource, "managed_installs");
                 ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {existing.SourceManifest}");
             }
@@ -614,6 +615,7 @@ public class ManifestService
             {
                 // Optional item — user is the only authority, so honor the removal request.
                 existing.Action = "uninstall";
+                existing.PromotedFromOptional = true;
                 SetItemSource(name, selfServeSource, "managed_uninstalls");
                 ConsoleLogger.Debug($"SelfServe: flipped optional to uninstall item: {name} originalSource: {existing.SourceManifest}");
             }

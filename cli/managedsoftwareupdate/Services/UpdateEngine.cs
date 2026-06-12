@@ -2623,7 +2623,16 @@ public class UpdateEngine : IDisposable
                         if (action == "update")
                             info.ManagedUpdates.Add(mi.Name);
 
-                        if (toUpdateNames.Contains(key) || toInstallNames.Contains(key))
+                        // Re-check status at write time. The toInstall/toUpdate lists were
+                        // computed before the install phase ran, so an item installed this
+                        // session is no longer pending and must not be written as such.
+                        var installCheck = cat != null
+                            ? _statusService.CheckStatus(cat, action, _config.CachePath)
+                            : null;
+                        var installScheduled = toUpdateNames.Contains(key) || toInstallNames.Contains(key);
+                        var installPending = installScheduled && (installCheck?.NeedsAction ?? true);
+
+                        if (installPending)
                         {
                             // Needs install or update this session — full record on managed_installs.
                             var isUpdate = toUpdateNames.Contains(key);
@@ -2631,23 +2640,33 @@ public class UpdateEngine : IDisposable
                             item.Status = isUpdate ? "update-available" : "will-be-installed";
                             item.WillBeInstalled = true;
                             item.NeedsUpdate = isUpdate;
-
-                            if (cat != null)
-                            {
-                                var status = _statusService.CheckStatus(cat, action, _config.CachePath);
-                                item.InstalledVersion = status.InstalledVersion;
-                                item.Installed = !string.IsNullOrEmpty(status.InstalledVersion);
-                            }
-
+                            item.InstalledVersion = installCheck?.InstalledVersion;
+                            item.Installed = !string.IsNullOrEmpty(installCheck?.InstalledVersion);
                             info.ManagedInstalls.Add(item);
                         }
-                        // Else: already installed and up-to-date. No record is written;
-                        // the name on processed_installs is the only trace, matching Munki.
+                        // Else: already installed and up-to-date. No pending record is written;
+                        // the name on processed_installs is the only trace.
+
+                        // A user-requested optional item stays on the optional list for its
+                        // whole lifecycle; its status tracks the pending action.
+                        if (mi.PromotedFromOptional)
+                        {
+                            info.OptionalInstalls.Add(BuildOptionalInstallRecord(
+                                mi.Name, cat, installPending ? "will-be-installed" : null));
+                        }
                         break;
 
                     case "uninstall":
                         info.ProcessedUninstalls.Add(mi.Name);
-                        if (toUninstallNames.Contains(key))
+
+                        // Same write-time freshness as installs: an item removed this
+                        // session is no longer a pending removal.
+                        var removalCheck = cat != null
+                            ? _statusService.CheckStatus(cat, "uninstall", _config.CachePath)
+                            : null;
+                        var removalPending = toUninstallNames.Contains(key) && (removalCheck?.NeedsAction ?? true);
+
+                        if (removalPending)
                         {
                             var item = BuildInstallInfoItem(mi.Name, cat);
                             item.Status = "will-be-removed";
@@ -2655,39 +2674,25 @@ public class UpdateEngine : IDisposable
                             item.Installed = true;
                             info.Removals.Add(item);
                         }
+
+                        // A user-removed optional item stays offered on the optional list.
+                        if (mi.PromotedFromOptional)
+                        {
+                            info.OptionalInstalls.Add(BuildOptionalInstallRecord(
+                                mi.Name, cat, removalPending ? "will-be-removed" : null));
+                        }
                         break;
 
                     case "optional":
                         // Optional installs always appear — with installed/needs_update booleans
-                        var optItem = BuildInstallInfoItem(mi.Name, cat);
-                        if (cat != null)
-                        {
-                            var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
-                            optItem.Installed = !status.NeedsAction;
-                            optItem.InstalledVersion = status.InstalledVersion;
-                            optItem.NeedsUpdate = status.IsUpdate;
-                            optItem.Status = status.NeedsAction
-                                ? (status.IsUpdate ? "update-available" : "not-installed")
-                                : "installed";
-
-                            // Check if installer is precached (already downloaded to local cache)
-                            if (!string.IsNullOrEmpty(cat.Installer?.Location))
-                            {
-                                var cachePath = _downloadService.GetCachePath(cat);
-                                optItem.Precached = File.Exists(cachePath);
-                            }
-                        }
-                        else
-                        {
-                            optItem.Status = "not-installed";
-                        }
-                        info.OptionalInstalls.Add(optItem);
+                        info.OptionalInstalls.Add(BuildOptionalInstallRecord(mi.Name, cat, null));
                         break;
 
                     case "default":
                         // Default installs: treated like managed_installs but only when not already installed.
                         // If already installed, they silently disappear (not re-enforced).
-                        if (toInstallNames.Contains(key))
+                        if (toInstallNames.Contains(key) &&
+                            (cat == null || _statusService.CheckStatus(cat, "install", _config.CachePath).NeedsAction))
                         {
                             var defItem = BuildInstallInfoItem(mi.Name, cat);
                             defItem.Status = "will-be-installed";
@@ -2736,6 +2741,42 @@ public class UpdateEngine : IDisposable
             ForceInstallAfterDate = cat?.ForceInstallAfterDate,
         };
         return item;
+    }
+
+    /// <summary>
+    /// Builds the optional_installs record for an item, with live install status.
+    /// <paramref name="pendingStatus"/> ("will-be-installed" / "will-be-removed")
+    /// overrides the natural status while a user-requested action is pending, so
+    /// the software list reflects the in-flight state instead of a stale snapshot.
+    /// </summary>
+    private InstallInfoItem BuildOptionalInstallRecord(string name, CatalogItem? cat, string? pendingStatus)
+    {
+        var optItem = BuildInstallInfoItem(name, cat);
+        if (cat != null)
+        {
+            var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
+            optItem.Installed = !status.NeedsAction;
+            optItem.InstalledVersion = status.InstalledVersion;
+            optItem.NeedsUpdate = status.IsUpdate;
+            optItem.Status = pendingStatus ?? (status.NeedsAction
+                ? (status.IsUpdate ? "update-available" : "not-installed")
+                : "installed");
+
+            // Check if installer is precached (already downloaded to local cache)
+            if (!string.IsNullOrEmpty(cat.Installer?.Location))
+            {
+                var cachePath = _downloadService.GetCachePath(cat);
+                optItem.Precached = File.Exists(cachePath);
+            }
+        }
+        else
+        {
+            optItem.Status = pendingStatus ?? "not-installed";
+        }
+
+        optItem.WillBeInstalled = pendingStatus == "will-be-installed";
+        optItem.WillBeRemoved = pendingStatus == "will-be-removed";
+        return optItem;
     }
 
     internal static bool IsEligibleForAgentVersion(CatalogItem item, out string reason, out string reasonCode)

@@ -298,6 +298,14 @@ public class ManifestItem
     public string Version { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty; // install, update, uninstall, profile, app, optional
     public string SourceManifest { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True when this item came from a manifest's optional_installs and the user's
+    /// self-serve request changed its Action (install or uninstall). Optional items
+    /// stay visible in the software list for their whole lifecycle — this flag lets
+    /// InstallInfo keep the optional record alongside the pending action record.
+    /// </summary>
+    public bool PromotedFromOptional { get; set; }
     public string InstallerLocation { get; set; } = string.Empty;
     public List<string> SupportedArch { get; set; } = new();
     public List<string> ManagedInstalls { get; set; } = new();
