@@ -563,7 +563,7 @@ public class StatusService
                             msiInstalled = true;
                             msiInstalledVersion = fallbackVersion;
                             ConsoleLogger.Info($"Found app via display_name fallback item: {item.Name} displayName: {displayNameToSearch} installedVersion: {fallbackVersion}");
-                            
+
                             // Check version match
                             if (!string.IsNullOrEmpty(catalogVersion))
                             {
@@ -574,6 +574,27 @@ public class StatusService
                             {
                                 msiVersionMatch = true;
                             }
+                        }
+                    }
+
+                    // Wrapper MSIs (empty File table; payload installed by an embedded
+                    // setup.exe, e.g. Mozilla Firefox) may drop their Windows Installer
+                    // registration after in-app self-update -- the updater maintains a
+                    // plain ARP entry instead, so the declared codes miss forever and
+                    // every run reinstalls. When the pkginfo entry carries an explicit
+                    // display_name, treat an ARP DisplayName hit as installed. Opt-in
+                    // per entry: codes stay authoritative for normal MSIs, preserving
+                    // the no-fuzzy-matching guard above.
+                    if (!msiInstalled && !string.IsNullOrEmpty(installItem.DisplayName))
+                    {
+                        var arpVersion = FindVersionByDisplayName(installItem.DisplayName);
+                        if (!string.IsNullOrEmpty(arpVersion))
+                        {
+                            msiInstalled = true;
+                            msiInstalledVersion = arpVersion;
+                            msiVersionMatch = string.IsNullOrEmpty(catalogVersion)
+                                || CatalogService.CompareVersions(catalogVersion, arpVersion) <= 0;
+                            ConsoleLogger.Info($"Found app via installs[].display_name fallback item: {item.Name} displayName: {installItem.DisplayName} installedVersion: {arpVersion}");
                         }
                     }
 

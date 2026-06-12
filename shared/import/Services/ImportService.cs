@@ -566,6 +566,11 @@ public class ImportService
             // Third-party MSIs leave KeyPath empty here — those packages get up
             // to 3 companion type=file entries appended further down via
             // metadata.Installs (see PopulateMsiBom).
+            // DisplayName is the wrapper-MSI escape hatch: PopulateMsiBom sets
+            // ArpDisplayName only when the File table carries no payload, and
+            // the runtime falls back to an ARP DisplayName lookup when the
+            // declared codes miss (Firefox-style products that drop their
+            // Windows Installer registration after self-update).
             finalInstalls =
             [
                 new InstallItem
@@ -573,6 +578,7 @@ public class ImportService
                     Type = "msi",
                     ProductCode = productCode,
                     UpgradeCode = upgradeCode,
+                    DisplayName = string.IsNullOrWhiteSpace(metadata.ArpDisplayName) ? null : metadata.ArpDisplayName,
                     KeyPath = string.IsNullOrWhiteSpace(metadata.KeyPath) ? null : metadata.KeyPath
                 }
             ];

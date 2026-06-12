@@ -162,6 +162,17 @@ public class InstallItem
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
 
+    /// <summary>
+    /// ARP (Add/Remove Programs) DisplayName fallback for wrapper MSIs (empty
+    /// File table; payload installed by an embedded setup.exe, e.g. Mozilla
+    /// Firefox). Such products may not keep their Windows Installer
+    /// registration, so managedsoftwareupdate falls back to an Uninstall-hive
+    /// DisplayName match when the declared codes miss. Only emitted when the
+    /// MSI is wrapper-shaped — codes stay authoritative for normal MSIs.
+    /// </summary>
+    [YamlMember(Alias = "display_name")]
+    public string? DisplayName { get; set; }
+
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
@@ -224,6 +235,14 @@ public class InstallerMetadata
     /// tables. Empty when unresolvable.
     /// </summary>
     public string KeyPath { get; set; } = "";
+
+    /// <summary>
+    /// ARP DisplayName hint for wrapper MSIs (empty File table). Populated by
+    /// PopulateMsiBom from the MSI ProductName with the version and trailing
+    /// tokens stripped; carried onto the type=msi installs entry as
+    /// display_name. Empty for normal MSIs.
+    /// </summary>
+    public string ArpDisplayName { get; set; } = "";
 }
 
 /// <summary>

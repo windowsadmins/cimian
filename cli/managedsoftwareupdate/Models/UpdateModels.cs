@@ -522,6 +522,19 @@ public class InstallCheckItem
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
 
+    /// <summary>
+    /// ARP (Add/Remove Programs) DisplayName fallback for wrapper MSIs (empty
+    /// File table; payload installed by an embedded setup.exe, e.g. Mozilla
+    /// Firefox). Such products may not keep their Windows Installer
+    /// registration, so when the declared ProductCode/UpgradeCode lookups miss,
+    /// status checks and post-install verification fall back to a substring
+    /// match against Uninstall-hive DisplayNames. Opt-in per entry — emitted by
+    /// cimiimport only for wrapper-shaped MSIs, so codes stay authoritative for
+    /// normal MSIs (no fuzzy matching of unrelated products).
+    /// </summary>
+    [YamlMember(Alias = "display_name")]
+    public string? DisplayName { get; set; }
+
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name)</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
