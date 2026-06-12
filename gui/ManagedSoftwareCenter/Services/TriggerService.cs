@@ -181,7 +181,7 @@ public class TriggerService : ITriggerService, IDisposable
     private async Task RunSelfServeBatchAsync(string initialArgs)
     {
         _isOperationRunning = true;
-        OperationStatusChanged?.Invoke(this, true);
+        RaiseOperationStatusChanged(true);
         try
         {
             await WriteFlagFileAsync(initialArgs).ConfigureAwait(false);
@@ -190,7 +190,7 @@ public class TriggerService : ITriggerService, IDisposable
         catch (InvalidOperationException)
         {
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
             await ClearBatchStateAsync().ConfigureAwait(false);
             throw;
         }
@@ -198,7 +198,7 @@ public class TriggerService : ITriggerService, IDisposable
         {
             _logger?.LogError(ex, "Self-serve batch failed");
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
             await ClearBatchStateAsync().ConfigureAwait(false);
             return;
         }
@@ -217,7 +217,7 @@ public class TriggerService : ITriggerService, IDisposable
     private async Task WriteFlagFileAndWaitAsync(string arguments)
     {
         _isOperationRunning = true;
-        OperationStatusChanged?.Invoke(this, true);
+        RaiseOperationStatusChanged(true);
         try
         {
             await WriteFlagFileAsync(arguments).ConfigureAwait(false);
@@ -226,16 +226,24 @@ public class TriggerService : ITriggerService, IDisposable
         catch (InvalidOperationException)
         {
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
             throw;
         }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Flag-file trigger failed");
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
         }
     }
+
+    /// <summary>
+    /// Raises OperationStatusChanged on the UI thread. The poll loops run on
+    /// threadpool continuations (ConfigureAwait(false)) and subscribers set
+    /// XAML-bound observable properties.
+    /// </summary>
+    private void RaiseOperationStatusChanged(bool isRunning)
+        => UiDispatcher.Post(() => OperationStatusChanged?.Invoke(this, isRunning));
 
     private async Task WriteFlagFileAsync(string arguments)
     {

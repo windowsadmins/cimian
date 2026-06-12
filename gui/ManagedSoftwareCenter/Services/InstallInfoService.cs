@@ -286,7 +286,9 @@ public class InstallInfoService : IInstallInfoService, IDisposable
             var info = await LoadAsync();
 
             _logger?.LogDebug("InstallInfo.yaml changed, notifying subscribers");
-            InstallInfoChanged?.Invoke(this, info);
+            // FileSystemWatcher delivers on a threadpool thread; subscribers set
+            // XAML-bound observable properties, so raise on the UI thread.
+            UiDispatcher.Post(() => InstallInfoChanged?.Invoke(this, info));
         }
         catch (TaskCanceledException)
         {

@@ -94,7 +94,9 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                         _isConnected = true;
                         Log("CLIENT CONNECTED!");
                         _logger?.LogInformation("managedsoftwareupdate connected");
-                        ConnectionChanged?.Invoke(this, true);
+                        // Listen loop runs on the threadpool; subscribers touch
+                        // XAML-bound state, so raise on the UI thread.
+                        UiDispatcher.Post(() => ConnectionChanged?.Invoke(this, true));
 
                         // Read messages from this client
                         await ReadMessagesAsync(cancellationToken);
@@ -120,7 +122,7 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                         if (wasConnected)
                         {
                             Log("Client disconnected");
-                            ConnectionChanged?.Invoke(this, false);
+                            UiDispatcher.Post(() => ConnectionChanged?.Invoke(this, false));
                         }
                     }
                 }
@@ -178,7 +180,7 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                             progressMessage.Type, progressMessage.Message, progressMessage.Detail, progressMessage.Percent);
                         System.Diagnostics.Debug.WriteLine($"[ProgressServer] Parsed: Type={progressMessage.Type}, Message={progressMessage.Message}");
                         
-                        ProgressReceived?.Invoke(this, progressMessage);
+                        UiDispatcher.Post(() => ProgressReceived?.Invoke(this, progressMessage));
                     }
 
                     // Check for quit message

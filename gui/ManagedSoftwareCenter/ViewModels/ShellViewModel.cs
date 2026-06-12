@@ -172,9 +172,9 @@ public partial class ShellViewModel : ObservableObject
         
         // Now set installing - this will trigger UI updates
         IsInstalling = true;
-        
+
         // Navigate to Updates page to show progress
-        NavigateToPage = "updates";
+        RequestNavigate("updates");
         
         try
         {
@@ -487,6 +487,18 @@ public partial class ShellViewModel : ObservableObject
         // fire OnInstallInfoChanged which resets state.
     }
 
+    /// <summary>
+    /// Requests navigation even when NavigateToPage already holds the target.
+    /// MainWindow reacts to PropertyChanged, and the generated setter suppresses
+    /// it for equal values — so a second navigation to the same page would be
+    /// silently dropped without the null reset.
+    /// </summary>
+    private void RequestNavigate(string page)
+    {
+        NavigateToPage = null;
+        NavigateToPage = page;
+    }
+
     private void OnOperationStatusChanged(object? sender, bool isRunning)
     {
         if (isRunning)
@@ -502,6 +514,10 @@ public partial class ShellViewModel : ObservableObject
             ProgressPercent = 0;
             IsProgressIndeterminate = true;
             CanStopInstall = false;
+
+            // Bring the Updates page forward so the user sees the pending item
+            // and its progress regardless of which page they clicked Install on.
+            RequestNavigate("updates");
         }
         else
         {

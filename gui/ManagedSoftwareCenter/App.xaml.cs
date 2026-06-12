@@ -35,7 +35,11 @@ public partial class App : Application
     public App()
     {
         this.InitializeComponent();
-        
+
+        // The App is constructed on the UI thread (Application.Start callback);
+        // capture its DispatcherQueue so background services can marshal events.
+        UiDispatcher.Initialize(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+
         this.UnhandledException += App_UnhandledException;
 
         // Configure dependency injection
