@@ -10,13 +10,13 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 
 public enum StaleUsageOutcome
 {
-    /// <summary>days_untouched_before_uninstall absent or &lt;= 0.</summary>
+    /// <summary>unused_software_removal_info absent or removal_days &lt;= 0.</summary>
     NotOptedIn,
     /// <summary>Package has not approved silent removal (unattended_uninstall false).</summary>
     NotUnattended,
     /// <summary>No uninstall method defined — nothing the engine could run.</summary>
     NotUninstallable,
-    /// <summary>No usage_tracked_paths and no .exe in the installs array.</summary>
+    /// <summary>No unused_software_removal_info paths and no .exe in the installs array.</summary>
     NoTrackedExecutables,
     /// <summary>Device has less usage history than the package (or global) minimum.</summary>
     InsufficientHistory,
@@ -59,7 +59,7 @@ public enum StaleUsageScope
 
 /// <param name="Outcome">The decision.</param>
 /// <param name="DaysSinceLastUsed">Days since the newest usage across tracked exes (-1 when no data).</param>
-/// <param name="ThresholdDays">The package's days_untouched_before_uninstall.</param>
+/// <param name="ThresholdDays">The package's unused_software_removal_info removal_days.</param>
 public sealed record StaleUsageDecision(
     StaleUsageOutcome Outcome,
     double DaysSinceLastUsed = -1,
@@ -78,7 +78,7 @@ public static class StaleUsageEvaluator
         IUsageDataSource usage,
         int globalMinimumHistoryDays)
     {
-        var threshold = item.DaysUntouchedBeforeUninstall ?? 0;
+        var threshold = item.UnusedSoftwareRemovalInfo?.RemovalDays ?? 0;
         if (threshold <= 0)
         {
             return new StaleUsageDecision(StaleUsageOutcome.NotOptedIn);
@@ -100,7 +100,7 @@ public static class StaleUsageEvaluator
             return new StaleUsageDecision(StaleUsageOutcome.NoTrackedExecutables, ThresholdDays: threshold);
         }
 
-        var minHistory = item.MinimumUsageHistoryDays ?? globalMinimumHistoryDays;
+        var minHistory = item.UnusedSoftwareRemovalInfo?.MinimumHistoryDays ?? globalMinimumHistoryDays;
         if (usage.GetHistoryDays() < minHistory)
         {
             return new StaleUsageDecision(StaleUsageOutcome.InsufficientHistory, ThresholdDays: threshold);
@@ -159,15 +159,15 @@ public static class StaleUsageEvaluator
     }
 
     /// <summary>
-    /// usage_tracked_paths when present; otherwise every .exe mentioned in the
-    /// installs array (path or key_path — key_path is the MSI's primary
-    /// executable, which is exactly what a user launches).
+    /// unused_software_removal_info.paths when present; otherwise every .exe
+    /// mentioned in the installs array (path or key_path — key_path is the
+    /// MSI's primary executable, which is exactly what a user launches).
     /// </summary>
     internal static List<string> ResolveTrackedExecutables(CatalogItem item)
     {
-        if (item.UsageTrackedPaths is { Count: > 0 })
+        if (item.UnusedSoftwareRemovalInfo?.Paths is { Count: > 0 } paths)
         {
-            return item.UsageTrackedPaths
+            return paths
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToList();
         }

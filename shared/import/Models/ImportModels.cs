@@ -48,14 +48,8 @@ public class PkgsInfo
     [YamlMember(Alias = "unattended_uninstall")]
     public bool UnattendedUninstall { get; set; }
 
-    [YamlMember(Alias = "days_untouched_before_uninstall")]
-    public int? DaysUntouchedBeforeUninstall { get; set; }
-
-    [YamlMember(Alias = "usage_tracked_paths")]
-    public List<string>? UsageTrackedPaths { get; set; }
-
-    [YamlMember(Alias = "minimum_usage_history_days")]
-    public int? MinimumUsageHistoryDays { get; set; }
+    [YamlMember(Alias = "unused_software_removal_info")]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
 
     [YamlMember(Alias = "requires")]
     public List<string>? Requires { get; set; }
@@ -267,4 +261,20 @@ public class AllCatalog
 {
     [YamlMember(Alias = "items")]
     public List<PkgsInfo> Items { get; set; } = [];
+}
+
+/// <summary>
+/// Munki-parity unused-software removal opt-in (paths is the Windows analog
+/// of Munki's bundle_ids; minimum_history_days is a Cimian extension).
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    [YamlMember(Alias = "removal_days")]
+    public int? RemovalDays { get; set; }
+
+    [YamlMember(Alias = "paths")]
+    public List<string>? Paths { get; set; }
+
+    [YamlMember(Alias = "minimum_history_days")]
+    public int? MinimumHistoryDays { get; set; }
 }

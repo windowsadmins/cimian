@@ -419,7 +419,7 @@ public class UpdateEngine : IDisposable
 
             // Stale-usage removal: queue uninstall for opted-in packages whose
             // tracked executables nobody on the device has used within
-            // days_untouched_before_uninstall. Peer of AutoRemove, not a
+            // unused_software_removal_info. Peer of AutoRemove, not a
             // dependency walker — and placed before the downstream filters so
             // install_window / blocking_applications / unattended gating apply
             // to these uninstalls the same as any other.
@@ -1157,7 +1157,7 @@ public class UpdateEngine : IDisposable
 
     /// <summary>
     /// Identifies Cimian-installed packages eligible for stale-usage removal:
-    /// opted in via days_untouched_before_uninstall, unattended-uninstallable,
+    /// opted in via unused_software_removal_info, unattended-uninstallable,
     /// and untouched by every user on the device past the threshold per the
     /// usage data source. Candidates come from the ManagedInstalls registry,
     /// scoped per <see cref="StaleUsageEvaluator.ClassifyScope"/> (Munki parity):

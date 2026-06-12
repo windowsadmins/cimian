@@ -27,7 +27,7 @@ public class UpdateModelsTests
         Assert.False(config.CheckOnly);
 
         // Stale-usage removal is on by default: safe fleet-wide because every
-        // package must still opt in via days_untouched_before_uninstall and
+        // package must still opt in via unused_software_removal_info and
         // admin-manifested items are always protected.
         Assert.True(config.UsageStaleUninstallEnabled);
         Assert.Equal(14, config.UsageStaleUninstallMinimumHistoryDays);

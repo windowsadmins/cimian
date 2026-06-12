@@ -37,8 +37,11 @@ public class StaleUsageEvaluatorTests
         Version = "1.0",
         UnattendedUninstall = unattended,
         Uninstallable = true,
-        DaysUntouchedBeforeUninstall = threshold,
-        UsageTrackedPaths = new List<string> { Exe },
+        UnusedSoftwareRemovalInfo = new UnusedSoftwareRemovalInfo
+        {
+            RemovalDays = threshold,
+            Paths = new List<string> { Exe },
+        },
         Installs = new List<InstallCheckItem>
         {
             new() { Type = "msi", ProductCode = "{11111111-2222-3333-4444-555555555555}" },
@@ -84,7 +87,7 @@ public class StaleUsageEvaluatorTests
     public void NoTrackedExecutables_WhenNoPathsAndNoExeInstalls()
     {
         var item = Item();
-        item.UsageTrackedPaths = null; // fall back to installs — which has only the MSI row
+        item.UnusedSoftwareRemovalInfo!.Paths = null; // fall back to installs — which has only the MSI row
         var decision = StaleUsageEvaluator.Evaluate(item, SourceWithUsage(365), 14);
         Assert.Equal(StaleUsageOutcome.NoTrackedExecutables, decision.Outcome);
     }
@@ -104,7 +107,7 @@ public class StaleUsageEvaluatorTests
         var source = SourceWithUsage(100);
         source.HistoryDays = 20; // passes the global 14, fails the package's 45
         var item = Item();
-        item.MinimumUsageHistoryDays = 45;
+        item.UnusedSoftwareRemovalInfo!.MinimumHistoryDays = 45;
         var decision = StaleUsageEvaluator.Evaluate(item, source, 14);
         Assert.Equal(StaleUsageOutcome.InsufficientHistory, decision.Outcome);
     }
@@ -146,7 +149,7 @@ public class StaleUsageEvaluatorTests
         source.Data[helper] = DateTime.UtcNow.AddDays(-5);
 
         var item = Item(threshold: 30);
-        item.UsageTrackedPaths = new List<string> { Exe, helper };
+        item.UnusedSoftwareRemovalInfo!.Paths = new List<string> { Exe, helper };
 
         var decision = StaleUsageEvaluator.Evaluate(item, source, 14);
         Assert.Equal(StaleUsageOutcome.RecentlyUsed, decision.Outcome);
@@ -158,7 +161,7 @@ public class StaleUsageEvaluatorTests
     public void ResolveTrackedExecutables_FallsBackToInstallsExes()
     {
         var item = Item();
-        item.UsageTrackedPaths = null;
+        item.UnusedSoftwareRemovalInfo!.Paths = null;
         item.Installs.Add(new InstallCheckItem { Type = "file", Path = Exe });
         item.Installs.Add(new InstallCheckItem
         {

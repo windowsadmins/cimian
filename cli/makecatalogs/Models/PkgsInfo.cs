@@ -129,28 +129,12 @@ public class PkgsInfo
     public bool UnattendedUninstall { get; set; }
 
     /// <summary>
-    /// Opt-in stale-usage removal: uninstall this package when none of its
-    /// tracked executables have been used for this many days. Requires
-    /// unattended_uninstall and usage data (ReportMate usagetracker).
-    /// Null or &lt;= 0 disables the feature for this package.
+    /// Opt-in unused-software removal (Munki parity: unused_software_removal_info).
+    /// Requires unattended_uninstall and usage data (ReportMate usagetracker).
+    /// Null disables the feature for this package.
     /// </summary>
-    [YamlMember(Alias = "days_untouched_before_uninstall")]
-    public int? DaysUntouchedBeforeUninstall { get; set; }
-
-    /// <summary>
-    /// Executable paths whose usage gates stale-usage removal. When empty,
-    /// the client falls back to .exe entries in the installs array.
-    /// </summary>
-    [YamlMember(Alias = "usage_tracked_paths")]
-    public List<string>? UsageTrackedPaths { get; set; }
-
-    /// <summary>
-    /// Minimum days of usage history that must exist on the device before
-    /// stale-usage removal may act (guards freshly imaged machines).
-    /// Null defers to the client's global default.
-    /// </summary>
-    [YamlMember(Alias = "minimum_usage_history_days")]
-    public int? MinimumUsageHistoryDays { get; set; }
+    [YamlMember(Alias = "unused_software_removal_info")]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
 
     [YamlMember(Alias = "minimum_os_version")]
     public string? MinOSVersion { get; set; }
@@ -199,6 +183,22 @@ public class PkgsInfo
     /// </summary>
     [YamlIgnore]
     public string FilePath { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Munki-parity unused-software removal opt-in (paths is the Windows analog
+/// of Munki's bundle_ids; minimum_history_days is a Cimian extension).
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    [YamlMember(Alias = "removal_days")]
+    public int? RemovalDays { get; set; }
+
+    [YamlMember(Alias = "paths")]
+    public List<string>? Paths { get; set; }
+
+    [YamlMember(Alias = "minimum_history_days")]
+    public int? MinimumHistoryDays { get; set; }
 }
 
 /// <summary>

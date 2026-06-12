@@ -5,13 +5,13 @@ using YamlDotNet.Serialization;
 namespace Cimian.Tests.Shared;
 
 /// <summary>
-/// Schema tests for the stale-usage removal fields
-/// (days_untouched_before_uninstall, usage_tracked_paths,
-/// minimum_usage_history_days). The same YAML keys must round-trip through
-/// every model that carries them: cimiimport's PkgsInfo, makecatalogs'
-/// PkgsInfo, and the engine's CatalogItem. A field landing in one model but
-/// not another silently strips it during the import → catalog → client
-/// pipeline, so each model gets its own deserialization pin.
+/// Schema tests for unused_software_removal_info (Munki-parity dict:
+/// removal_days + paths, plus Cimian's minimum_history_days extension).
+/// The same YAML structure must round-trip through every model that carries
+/// it: cimiimport's PkgsInfo, makecatalogs' PkgsInfo, and the engine's
+/// CatalogItem. A field landing in one model but not another silently strips
+/// it during the import → catalog → client pipeline, so each model gets its
+/// own deserialization pin.
 /// </summary>
 public class UsageStaleSchemaTests
 {
@@ -19,11 +19,12 @@ public class UsageStaleSchemaTests
         name: StaleApp
         version: '1.0'
         unattended_uninstall: true
-        days_untouched_before_uninstall: 30
-        usage_tracked_paths:
-        - C:\Program Files\StaleApp\staleapp.exe
-        - C:\Program Files\StaleApp\helper.exe
-        minimum_usage_history_days: 14
+        unused_software_removal_info:
+          removal_days: 30
+          paths:
+          - C:\Program Files\StaleApp\staleapp.exe
+          - C:\Program Files\StaleApp\helper.exe
+          minimum_history_days: 14
         """;
 
     private static IDeserializer PlainDeserializer() => new DeserializerBuilder()
@@ -31,42 +32,41 @@ public class UsageStaleSchemaTests
         .Build();
 
     [Fact]
-    public void CimiimportPkgsInfo_Deserializes_UsageStaleFields()
+    public void CimiimportPkgsInfo_Deserializes_UnusedRemovalInfo()
     {
         var pkg = PlainDeserializer().Deserialize<Cimian.CLI.Cimiimport.Models.PkgsInfo>(PkginfoYaml);
 
-        Assert.Equal(30, pkg.DaysUntouchedBeforeUninstall);
-        Assert.Equal(2, pkg.UsageTrackedPaths?.Count);
-        Assert.Equal(14, pkg.MinimumUsageHistoryDays);
+        Assert.Equal(30, pkg.UnusedSoftwareRemovalInfo?.RemovalDays);
+        Assert.Equal(2, pkg.UnusedSoftwareRemovalInfo?.Paths?.Count);
+        Assert.Equal(14, pkg.UnusedSoftwareRemovalInfo?.MinimumHistoryDays);
     }
 
     [Fact]
-    public void MakecatalogsPkgsInfo_Deserializes_UsageStaleFields()
+    public void MakecatalogsPkgsInfo_Deserializes_UnusedRemovalInfo()
     {
         var pkg = PlainDeserializer().Deserialize<Cimian.CLI.Makecatalogs.Models.PkgsInfo>(PkginfoYaml);
 
-        Assert.Equal(30, pkg.DaysUntouchedBeforeUninstall);
-        Assert.Equal(2, pkg.UsageTrackedPaths?.Count);
-        Assert.Equal(14, pkg.MinimumUsageHistoryDays);
+        Assert.Equal(30, pkg.UnusedSoftwareRemovalInfo?.RemovalDays);
+        Assert.Equal(2, pkg.UnusedSoftwareRemovalInfo?.Paths?.Count);
+        Assert.Equal(14, pkg.UnusedSoftwareRemovalInfo?.MinimumHistoryDays);
     }
 
     [Fact]
-    public void EngineCatalogItem_Deserializes_UsageStaleFields()
+    public void EngineCatalogItem_Deserializes_UnusedRemovalInfo()
     {
         var item = PlainDeserializer().Deserialize<Cimian.CLI.managedsoftwareupdate.Models.CatalogItem>(PkginfoYaml);
 
         Assert.True(item.UnattendedUninstall);
-        Assert.Equal(30, item.DaysUntouchedBeforeUninstall);
-        Assert.Equal(2, item.UsageTrackedPaths?.Count);
-        Assert.Equal(14, item.MinimumUsageHistoryDays);
+        Assert.Equal(30, item.UnusedSoftwareRemovalInfo?.RemovalDays);
+        Assert.Equal(2, item.UnusedSoftwareRemovalInfo?.Paths?.Count);
+        Assert.Equal(14, item.UnusedSoftwareRemovalInfo?.MinimumHistoryDays);
     }
 
     [Fact]
     public void EngineCatalogItem_FieldsDefaultNull_WhenAbsent()
     {
-        // Absence must read as "feature disabled", never zero — the engine
-        // treats null/<=0 as opt-out, so a default of 0 is equivalent, but
-        // null is the canonical not-configured signal for reporting.
+        // Absence must read as "feature disabled" — null is the canonical
+        // not-configured signal for the engine and for reporting.
         const string minimal = """
             name: PlainApp
             version: '1.0'
@@ -74,21 +74,19 @@ public class UsageStaleSchemaTests
 
         var item = PlainDeserializer().Deserialize<Cimian.CLI.managedsoftwareupdate.Models.CatalogItem>(minimal);
 
-        Assert.Null(item.DaysUntouchedBeforeUninstall);
-        Assert.Null(item.UsageTrackedPaths);
-        Assert.Null(item.MinimumUsageHistoryDays);
+        Assert.Null(item.UnusedSoftwareRemovalInfo);
     }
 
     [Fact]
-    public void MakecatalogsPkgsInfo_RoundTrips_UsageStaleFields()
+    public void MakecatalogsPkgsInfo_RoundTrips_UnusedRemovalInfo()
     {
         var pkg = PlainDeserializer().Deserialize<Cimian.CLI.Makecatalogs.Models.PkgsInfo>(PkginfoYaml);
         var yaml = new SerializerBuilder().Build().Serialize(pkg);
         var again = PlainDeserializer().Deserialize<Cimian.CLI.Makecatalogs.Models.PkgsInfo>(yaml);
 
-        Assert.Equal(30, again.DaysUntouchedBeforeUninstall);
-        Assert.Equal(pkg.UsageTrackedPaths, again.UsageTrackedPaths);
-        Assert.Equal(14, again.MinimumUsageHistoryDays);
+        Assert.Equal(30, again.UnusedSoftwareRemovalInfo?.RemovalDays);
+        Assert.Equal(pkg.UnusedSoftwareRemovalInfo?.Paths, again.UnusedSoftwareRemovalInfo?.Paths);
+        Assert.Equal(14, again.UnusedSoftwareRemovalInfo?.MinimumHistoryDays);
     }
 }
 
