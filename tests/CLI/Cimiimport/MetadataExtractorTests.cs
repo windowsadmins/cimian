@@ -434,7 +434,7 @@ public class MetadataExtractorTests
             }
             
             var metadata = _extractor.ExtractMetadata(pkgPath, _config);
-            
+
             // The filename contains "arm64", so that should take priority over the x64 in build-info.yaml
             Assert.Equal("arm64", metadata.Architecture);
             Assert.Contains("arm64", metadata.SupportedArch);
@@ -446,6 +446,29 @@ public class MetadataExtractorTests
                 Directory.Delete(tempDir, true);
             }
         }
+    }
+
+    // ─── DeriveArpDisplayName: wrapper-MSI ARP hint derivation ──────────────
+
+    [Theory]
+    [InlineData("Mozilla Firefox 151.0.4 x64 en-US", "Mozilla Firefox")]
+    [InlineData("Mozilla Firefox ESR 140.3.1 x64 en-US", "Mozilla Firefox ESR")]
+    [InlineData("Some Tool v2.1.0 Setup", "Some Tool")]
+    [InlineData("PlainName", "PlainName")]
+    [InlineData("App 2024", "App 2024")] // bare year is not version-shaped (needs a dot)
+    [InlineData("", "")]
+    [InlineData("   ", "")]
+    public void DeriveArpDisplayName_StripsVersionAndTrailingTokens(string productName, string expected)
+    {
+        Assert.Equal(expected, MetadataExtractor.DeriveArpDisplayName(productName));
+    }
+
+    [Fact]
+    public void DeriveArpDisplayName_LeadingVersionToken_FallsBackToFullName()
+    {
+        // Degenerate ProductName starting with a version token: truncating would
+        // yield an empty hint, so the full name passes through instead.
+        Assert.Equal("7.1.2 Oddball", MetadataExtractor.DeriveArpDisplayName("7.1.2 Oddball"));
     }
 
     [Fact]

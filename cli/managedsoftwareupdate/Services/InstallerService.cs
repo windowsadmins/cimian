@@ -1712,6 +1712,22 @@ exit 0
                         }
                     }
 
+                    // Wrapper MSIs (empty File table; payload installed by an embedded
+                    // setup.exe, e.g. Mozilla Firefox) can complete successfully without
+                    // leaving Windows Installer registration -- the product maintains a
+                    // plain ARP entry instead. When the pkginfo entry opts in via
+                    // display_name, accept an Uninstall-hive DisplayName hit as proof of
+                    // installation so the run doesn't loop on "MSI not registered".
+                    if (!msiFound && !string.IsNullOrEmpty(install.DisplayName))
+                    {
+                        var arpVersion = FindArpVersionByDisplayName(install.DisplayName);
+                        if (!string.IsNullOrEmpty(arpVersion))
+                        {
+                            ConsoleLogger.Debug($"MSI verification via ARP display_name successful for {item.Name}: {arpVersion}");
+                            msiFound = true;
+                        }
+                    }
+
                     if (!msiFound)
                     {
                         var reason = $"MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})";
@@ -1767,6 +1783,52 @@ exit 0
             catch { /* continue to next view */ }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Looks up a DisplayVersion by ARP DisplayName in the Uninstall registry
+    /// (64-bit and 32-bit views). Exact match first, then substring in either
+    /// direction — wrapper MSIs register names like "Mozilla Firefox (x64
+    /// en-US)" while the pkginfo hint carries the stable prefix. Mirrors
+    /// StatusService.FindVersionByDisplayName so detection and post-install
+    /// verification agree on what counts as installed.
+    /// </summary>
+    private static string? FindArpVersionByDisplayName(string displayName)
+    {
+        if (string.IsNullOrEmpty(displayName))
+            return null;
+
+        string? substringHit = null;
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            try
+            {
+                using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var uninstallKey = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
+                if (uninstallKey == null) continue;
+
+                foreach (var subkeyName in uninstallKey.GetSubKeyNames())
+                {
+                    using var subKey = uninstallKey.OpenSubKey(subkeyName);
+                    var regDisplayName = subKey?.GetValue("DisplayName")?.ToString();
+                    var regVersion = subKey?.GetValue("DisplayVersion")?.ToString();
+                    if (string.IsNullOrEmpty(regDisplayName) || string.IsNullOrEmpty(regVersion))
+                        continue;
+
+                    if (string.Equals(regDisplayName, displayName, StringComparison.OrdinalIgnoreCase))
+                        return regVersion;
+
+                    if (substringHit == null
+                        && (regDisplayName.Contains(displayName, StringComparison.OrdinalIgnoreCase)
+                            || displayName.Contains(regDisplayName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        substringHit = regVersion;
+                    }
+                }
+            }
+            catch { /* continue to next view */ }
+        }
+        return substringHit;
     }
 
     /// <summary>

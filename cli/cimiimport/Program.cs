@@ -86,6 +86,10 @@ public class Program
             "--nointeractive",
             "Run with no prompts (use defaults or fail)");
 
+        var emitInstallsOption = new Option<bool>(
+            "--emit-installs",
+            "Print the auto-generated 'installs' array for the installer as YAML to stdout and exit (no repo import)");
+
         var extractIconOption = new Option<bool>(
             "--extract-icon",
             "Enable icon extraction from installer (EXPERIMENTAL)");
@@ -114,6 +118,7 @@ public class Program
         rootCommand.AddOption(configOption);
         rootCommand.AddOption(configAutoOption);
         rootCommand.AddOption(noInteractiveOption);
+        rootCommand.AddOption(emitInstallsOption);
         rootCommand.AddOption(extractIconOption);
         rootCommand.AddOption(iconOutputOption);
         rootCommand.AddOption(skipIconOption);
@@ -137,6 +142,7 @@ public class Program
             var configRequested = context.ParseResult.GetValueForOption(configOption);
             var configAuto = context.ParseResult.GetValueForOption(configAutoOption);
             var noInteractive = context.ParseResult.GetValueForOption(noInteractiveOption);
+            var emitInstalls = context.ParseResult.GetValueForOption(emitInstallsOption);
             var extractIcon = context.ParseResult.GetValueForOption(extractIconOption);
             var iconOutput = context.ParseResult.GetValueForOption(iconOutputOption);
             var skipIcon = context.ParseResult.GetValueForOption(skipIconOption);
@@ -206,6 +212,15 @@ public class Program
                 InstallCheck = installCheckScript,
                 UninstallCheck = uninstallCheckScript
             };
+
+            // Handle --emit-installs: print the auto-generated installs array
+            // and exit without touching the repo (no git pull, no makecatalogs).
+            if (emitInstalls)
+            {
+                var emitService = new ImportService();
+                context.ExitCode = emitService.EmitInstalls(packagePath, config, installsArray.ToList()) ? 0 : 1;
+                return;
+            }
 
             // Check for git repo and pull
             var importService = new ImportService();
