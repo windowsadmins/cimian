@@ -91,9 +91,14 @@ public partial class MyItemsViewModel : ObservableObject
                     Version = catalogItem?.Version,
                     Category = catalogItem?.Category,
                     Icon = catalogItem?.Icon,
-                    Status = catalogItem?.WillBeInstalled == true 
-                        ? ItemStatus.WillBeInstalled 
-                        : ItemStatus.InstallRequested,
+                    // The install request persists after the install completes
+                    // (standing subscription) — show the real state, not a
+                    // perpetual pending badge.
+                    Status = catalogItem?.Installed == true && catalogItem.NeedsUpdate != true
+                        ? ItemStatus.Installed
+                        : (catalogItem?.WillBeInstalled == true
+                            ? ItemStatus.WillBeInstalled
+                            : ItemStatus.InstallRequested),
                     IsInstallRequest = true,
                     CanCancel = catalogItem?.Status != ItemStatus.Installing,
                     CatalogItem = catalogItem
@@ -112,25 +117,31 @@ public partial class MyItemsViewModel : ObservableObject
                     Version = catalogItem?.InstalledVersion ?? catalogItem?.Version,
                     Category = catalogItem?.Category,
                     Icon = catalogItem?.Icon,
-                    Status = catalogItem?.WillBeRemoved == true 
-                        ? ItemStatus.WillBeRemoved 
-                        : ItemStatus.RemovalRequested,
+                    // Removal is only pending while the item is still installed.
+                    Status = catalogItem?.Installed != true
+                        ? ItemStatus.NotInstalled
+                        : (catalogItem.WillBeRemoved
+                            ? ItemStatus.WillBeRemoved
+                            : ItemStatus.RemovalRequested),
                     IsRemovalRequest = true,
                     CanCancel = catalogItem?.Status != ItemStatus.Installing,
                     CatalogItem = catalogItem
                 });
             }
 
-            Items = new ObservableCollection<MyItem>(myItems.OrderBy(x => x.DisplayName));
-            IsEmpty = Items.Count == 0;
+            var ordered = myItems.OrderBy(x => x.DisplayName).ToList();
 
-            // Load icons
-            foreach (var item in Items)
+            // Load icons BEFORE assigning the bound collection — IconImage has no
+            // change notification, so a later assignment would not update rows.
+            foreach (var item in ordered)
             {
                 item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
             }
-            HasPendingActions = Items.Any(x => 
-                x.Status == ItemStatus.InstallRequested || 
+
+            Items = new ObservableCollection<MyItem>(ordered);
+            IsEmpty = Items.Count == 0;
+            HasPendingActions = Items.Any(x =>
+                x.Status == ItemStatus.InstallRequested ||
                 x.Status == ItemStatus.RemovalRequested);
         }
         finally

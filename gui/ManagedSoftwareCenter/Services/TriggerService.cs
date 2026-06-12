@@ -262,6 +262,17 @@ public class TriggerService : ITriggerService, IDisposable
         while (File.Exists(BootstrapFlagFile) && elapsed < ServiceTimeout)
         {
             await Task.Delay(PollInterval).ConfigureAwait(false);
+
+            if (IsUpdateProcessRunning())
+            {
+                // CimianWatcher defers flag consumption while a run is in
+                // flight (a second launch would just lose the instance lock).
+                // The flag file is our queued request, not a dead service —
+                // don't count this wait against the timeout.
+                elapsed = TimeSpan.Zero;
+                continue;
+            }
+
             elapsed += PollInterval;
         }
 
@@ -275,6 +286,21 @@ public class TriggerService : ITriggerService, IDisposable
         }
 
         _logger?.LogInformation("CimianWatcher consumed flag file — managedsoftwareupdate is running");
+    }
+
+    private static bool IsUpdateProcessRunning()
+    {
+        try
+        {
+            var procs = System.Diagnostics.Process.GetProcessesByName("managedsoftwareupdate");
+            var running = procs.Length > 0;
+            foreach (var p in procs) p.Dispose();
+            return running;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task ClearBatchStateAsync()

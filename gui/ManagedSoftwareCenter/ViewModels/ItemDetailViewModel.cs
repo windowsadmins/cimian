@@ -150,9 +150,14 @@ public partial class ItemDetailViewModel : ObservableObject
     {
         if (Item == null) return;
 
-        // Check self-service manifest for pending requests
-        var isInstallRequested = await _selfServiceService.IsInstallRequestedAsync(Item.Name);
-        var isRemovalRequested = await _selfServiceService.IsRemovalRequestedAsync(Item.Name);
+        // Check self-service manifest for pending requests. Install requests
+        // persist after the install completes (standing subscription), so they
+        // only count as pending while the item still needs action; removal
+        // requests only while the item is still installed.
+        var isInstallRequested = await _selfServiceService.IsInstallRequestedAsync(Item.Name)
+            && !(Item.Installed && !Item.NeedsUpdate);
+        var isRemovalRequested = await _selfServiceService.IsRemovalRequestedAsync(Item.Name)
+            && Item.Installed;
 
         // Determine status and available actions
         if (isInstallRequested)

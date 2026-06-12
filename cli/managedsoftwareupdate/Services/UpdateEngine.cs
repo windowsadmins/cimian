@@ -2630,12 +2630,17 @@ public class UpdateEngine : IDisposable
                             ? _statusService.CheckStatus(cat, action, _config.CachePath)
                             : null;
                         var installScheduled = toUpdateNames.Contains(key) || toInstallNames.Contains(key);
-                        var installPending = installScheduled && (installCheck?.NeedsAction ?? true);
+                        var needsAction = installCheck?.NeedsAction ?? installScheduled;
+
+                        // Targeted runs (--item) schedule only the filtered subset, but a
+                        // queued self-serve item outside the filter is still pending — keep
+                        // its record so the Updates list survives partial writes.
+                        var installPending = needsAction && (installScheduled || mi.PromotedFromOptional);
 
                         if (installPending)
                         {
                             // Needs install or update this session — full record on managed_installs.
-                            var isUpdate = toUpdateNames.Contains(key);
+                            var isUpdate = toUpdateNames.Contains(key) || (installCheck?.IsUpdate ?? false);
                             var item = BuildInstallInfoItem(mi.Name, cat);
                             item.Status = isUpdate ? "update-available" : "will-be-installed";
                             item.WillBeInstalled = true;
@@ -2664,7 +2669,9 @@ public class UpdateEngine : IDisposable
                         var removalCheck = cat != null
                             ? _statusService.CheckStatus(cat, "uninstall", _config.CachePath)
                             : null;
-                        var removalPending = toUninstallNames.Contains(key) && (removalCheck?.NeedsAction ?? true);
+                        var removalScheduled = toUninstallNames.Contains(key);
+                        var removalPending = (removalCheck?.NeedsAction ?? removalScheduled)
+                            && (removalScheduled || mi.PromotedFromOptional);
 
                         if (removalPending)
                         {

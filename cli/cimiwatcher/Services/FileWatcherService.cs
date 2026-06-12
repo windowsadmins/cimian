@@ -24,6 +24,13 @@ public class FileWatcherService : BackgroundService
     private DateTime _lastSeenHeadless = DateTime.MinValue;
     private bool _isPaused;
 
+    // 1 while a triggered managedsoftwareupdate process is running. New flag
+    // files are NOT consumed during that window — managedsoftwareupdate holds
+    // an instance lock, so a second launch would just exit with code 1. The
+    // flag stays on disk (MSC keeps merging additional --item requests into
+    // it) and is consumed on the first poll after the current run exits.
+    private int _updateRunning;
+
     public FileWatcherService(ILogger<FileWatcherService> logger)
     {
         _logger = logger;
@@ -92,11 +99,22 @@ public class FileWatcherService : BackgroundService
             // Check if this is a new file or if it was modified since last seen
             if (lastSeen == DateTime.MinValue || modTime > lastSeen)
             {
+                // Serialize runs: claim the slot before consuming. If a run is
+                // active, leave the flag file untouched (and lastSeen unchanged)
+                // so this poll re-fires once the current run completes.
+                if (Interlocked.CompareExchange(ref _updateRunning, 1, 0) != 0)
+                {
+                    _logger.LogDebug(
+                        "{UpdateType} flag file detected but an update is already running - deferring consumption",
+                        updateType);
+                    return;
+                }
+
                 _logger.LogInformation("{UpdateType} flag file detected - triggering update", updateType);
                 lastSeen = modTime;
-                
+
                 // Trigger update in background
-                _ = Task.Run(() => TriggerBootstrapUpdateAsync(flagFile, updateType, withGUI, cancellationToken), 
+                _ = Task.Run(() => TriggerBootstrapUpdateAsync(flagFile, updateType, withGUI, cancellationToken),
                     cancellationToken);
             }
         }
@@ -106,7 +124,22 @@ public class FileWatcherService : BackgroundService
         }
     }
 
-    private async Task TriggerBootstrapUpdateAsync(string flagFile, string updateType, bool withGUI, 
+    private async Task TriggerBootstrapUpdateAsync(string flagFile, string updateType, bool withGUI,
+        CancellationToken cancellationToken)
+    {
+        // The caller claimed _updateRunning; release it on every exit path so
+        // the next poll can consume a queued flag file.
+        try
+        {
+            await RunBootstrapUpdateAsync(flagFile, updateType, withGUI, cancellationToken);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _updateRunning, 0);
+        }
+    }
+
+    private async Task RunBootstrapUpdateAsync(string flagFile, string updateType, bool withGUI,
         CancellationToken cancellationToken)
     {
         lock (_lock)
