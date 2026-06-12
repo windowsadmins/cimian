@@ -129,7 +129,7 @@ public class PkgsInfo
     public bool UnattendedUninstall { get; set; }
 
     /// <summary>
-    /// Opt-in unused-software removal (Munki parity: unused_software_removal_info).
+    /// Opt-in unused-software removal (unused_software_removal_info).
     /// Requires unattended_uninstall and usage data (ReportMate usagetracker).
     /// Null disables the feature for this package.
     /// </summary>
@@ -186,8 +186,8 @@ public class PkgsInfo
 }
 
 /// <summary>
-/// Munki-parity unused-software removal opt-in (paths is the Windows analog
-/// of Munki's bundle_ids; minimum_history_days is a Cimian extension).
+/// Unused-software removal opt-in (paths gate removal by recorded usage;
+/// minimum_history_days is a Cimian extension).
 /// </summary>
 public class UnusedSoftwareRemovalInfo
 {

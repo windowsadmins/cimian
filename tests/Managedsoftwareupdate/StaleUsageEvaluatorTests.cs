@@ -189,7 +189,7 @@ public class StaleUsageEvaluatorTests
         Assert.Equal(new[] { Exe }, exes);
     }
 
-    // ── manifest scoping (Munki parity) ─────────────────────────────────
+    // ── manifest scoping ────────────────────────────────────────────────
     // Unused-software removal acts on self-serve/optional installs and
     // orphans, never on anything an admin manifest mandates.
 

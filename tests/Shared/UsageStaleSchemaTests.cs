@@ -5,8 +5,8 @@ using YamlDotNet.Serialization;
 namespace Cimian.Tests.Shared;
 
 /// <summary>
-/// Schema tests for unused_software_removal_info (Munki-parity dict:
-/// removal_days + paths, plus Cimian's minimum_history_days extension).
+/// Schema tests for unused_software_removal_info (removal_days + paths,
+/// plus Cimian's minimum_history_days extension).
 /// The same YAML structure must round-trip through every model that carries
 /// it: cimiimport's PkgsInfo, makecatalogs' PkgsInfo, and the engine's
 /// CatalogItem. A field landing in one model but not another silently strips

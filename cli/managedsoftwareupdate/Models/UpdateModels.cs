@@ -430,7 +430,7 @@ public class CatalogItem
     public DateTime? ForceInstallAfterDate { get; set; }
 
     /// <summary>
-    /// Opt-in unused-software removal (Munki parity: unused_software_removal_info).
+    /// Opt-in unused-software removal (unused_software_removal_info).
     /// Requires UnattendedUninstall and an available usage data source.
     /// Null disables the feature for this package.
     /// </summary>
@@ -472,9 +472,8 @@ public class CatalogItem
 }
 
 /// <summary>
-/// Munki-parity unused-software removal opt-in. Munki's dict carries
-/// bundle_ids + removal_days; on Windows the analog of bundle_ids is
-/// absolute executable paths.
+/// Unused-software removal opt-in. The dict carries removal_days plus the
+/// absolute executable paths whose recorded usage gates removal.
 /// </summary>
 public class UnusedSoftwareRemovalInfo
 {
@@ -486,9 +485,8 @@ public class UnusedSoftwareRemovalInfo
     public int? RemovalDays { get; set; }
 
     /// <summary>
-    /// Executable paths whose usage gates removal (Windows analog of Munki's
-    /// bundle_ids). When empty, the client falls back to .exe entries in the
-    /// installs array.
+    /// Executable paths whose usage gates removal. When empty, the client
+    /// falls back to .exe entries in the installs array.
     /// </summary>
     [YamlMember(Alias = "paths")]
     public List<string>? Paths { get; set; }

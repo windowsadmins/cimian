@@ -264,8 +264,8 @@ public class AllCatalog
 }
 
 /// <summary>
-/// Munki-parity unused-software removal opt-in (paths is the Windows analog
-/// of Munki's bundle_ids; minimum_history_days is a Cimian extension).
+/// Unused-software removal opt-in (paths gate removal by recorded usage;
+/// minimum_history_days is a Cimian extension).
 /// </summary>
 public class UnusedSoftwareRemovalInfo
 {

@@ -137,15 +137,15 @@ public class PkgsInfo
     public bool UnattendedUninstall { get; set; }
 
     /// <summary>
-    /// Opt-in unused-software removal (Munki parity: unused_software_removal_info).
+    /// Opt-in unused-software removal (unused_software_removal_info).
     /// </summary>
     [YamlMember(Alias = "unused_software_removal_info", Order = 27, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
 }
 
 /// <summary>
-/// Munki-parity unused-software removal opt-in (paths is the Windows analog
-/// of Munki's bundle_ids; minimum_history_days is a Cimian extension).
+/// Unused-software removal opt-in (paths gate removal by recorded usage;
+/// minimum_history_days is a Cimian extension).
 /// </summary>
 public class UnusedSoftwareRemovalInfo
 {

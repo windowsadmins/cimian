@@ -30,17 +30,17 @@ public enum StaleUsageOutcome
 
 /// <summary>
 /// Where an installed package sits in the manifest tree, which decides whether
-/// stale-usage removal may touch it. Munki parity: unused-software removal acts
-/// on self-serve (optional) installs, never on admin-managed software.
+/// stale-usage removal may touch it. Unused-software removal acts on
+/// self-serve (optional) installs, never on admin-managed software.
 /// </summary>
 public enum StaleUsageScope
 {
     /// <summary>Admin intent — managed_installs/default_installs/profile/app,
     /// or an explicit uninstall already in flight. Never stale-removed.</summary>
     Protected,
-    /// <summary>Installed via the user's SelfServeManifest (Munki's unused-removal
-    /// target). Removal must also clear the self-serve subscription or the next
-    /// run reinstalls it.</summary>
+    /// <summary>Installed via the user's SelfServeManifest — the primary
+    /// removal target. Removal must also clear the self-serve subscription or
+    /// the next run reinstalls it.</summary>
     SelfServe,
     /// <summary>In optional_installs but not currently self-serve subscribed
     /// (e.g. installed before subscription tracking, or admin demoted it from

@@ -1160,7 +1160,7 @@ public class UpdateEngine : IDisposable
     /// opted in via unused_software_removal_info, unattended-uninstallable,
     /// and untouched by every user on the device past the threshold per the
     /// usage data source. Candidates come from the ManagedInstalls registry,
-    /// scoped per <see cref="StaleUsageEvaluator.ClassifyScope"/> (Munki parity):
+    /// scoped per <see cref="StaleUsageEvaluator.ClassifyScope"/>:
     /// admin-manifested items are never touched; self-serve installs get their
     /// subscription cleared (so the removal sticks and the item stays offered
     /// in MSC), and unsubscribed optional items and orphans uninstall directly.
