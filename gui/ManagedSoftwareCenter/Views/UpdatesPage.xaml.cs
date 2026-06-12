@@ -260,9 +260,35 @@ public partial class UpdatesPage : Page
         _shellViewModel?.StopInstallCommand.Execute(null);
     }
 
+    // The log opens as a flyout anchored to the button (set via Button.Flyout,
+    // shown automatically on click). The flyout's pop-out button promotes it to
+    // the standalone LogWindow for users who want a persistent view.
+    private bool _logPopOutWired;
+
     private void ViewLog_Click(object sender, RoutedEventArgs e)
     {
-        LogWindow.GetOrActivate();
+        // Flyout opens itself; nothing to do here.
+    }
+
+    private void LogFlyout_Opening(object? sender, object e)
+    {
+        if (!_logPopOutWired)
+        {
+            _logPopOutWired = true;
+            FlyoutLogViewer.ShowPopOutButton = true;
+            FlyoutLogViewer.PopOutRequested += (_, _) =>
+            {
+                LogFlyout.Hide();
+                LogWindow.GetOrActivate();
+            };
+        }
+
+        FlyoutLogViewer.Start();
+    }
+
+    private void LogFlyout_Closed(object? sender, object e)
+    {
+        FlyoutLogViewer.Stop();
     }
 
     private void OnSessionCompleted(object? sender, EventArgs e)
