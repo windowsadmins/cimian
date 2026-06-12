@@ -109,20 +109,30 @@ public partial class UpdatesViewModel : ObservableObject
                             x.Status == ItemStatus.UpdateAvailable ||
                             x.Status == ItemStatus.UpdateWillBeInstalled)
                 .ToList();
+            var installsList = managedInstalls.Except(updatesList).ToList();
+
+            // Load pending removals
+            var removals = await _installInfoService.GetRemovalsAsync();
+            var pendingRemovals = removals.Where(x => x.WillBeRemoved || x.Installed).ToList();
+
+            // Load icons BEFORE assigning the bound collections — IconImage is a
+            // plain property without change notification, so a later assignment
+            // would not update an already-rendered row.
+            foreach (var item in updatesList.Concat(installsList).Concat(pendingRemovals))
+            {
+                item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+            }
+
             Updates = new ObservableCollection<InstallableItem>(
                 updatesList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
                        .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
                        .ThenBy(x => x.GetDisplayName()));
 
-            var installsList = managedInstalls.Except(updatesList).ToList();
             PendingInstalls = new ObservableCollection<InstallableItem>(
                 installsList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
                        .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
                        .ThenBy(x => x.GetDisplayName()));
 
-            // Load pending removals
-            var removals = await _installInfoService.GetRemovalsAsync();
-            var pendingRemovals = removals.Where(x => x.WillBeRemoved || x.Installed).ToList();
             PendingRemovals = new ObservableCollection<InstallableItem>(pendingRemovals.OrderBy(x => x.GetDisplayName()));
 
             // Load problem items
@@ -148,12 +158,6 @@ public partial class UpdatesViewModel : ObservableObject
                 PendingInstalls.Any(x => 
                     x.RestartAction?.Equals("restart", StringComparison.OrdinalIgnoreCase) == true ||
                     x.RestartAction?.Equals("RequireRestart", StringComparison.OrdinalIgnoreCase) == true);
-
-            // Load icons for all items
-            foreach (var item in Updates.Concat(PendingInstalls).Concat(PendingRemovals))
-            {
-                item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
-            }
 
             // Track days pending for updates and pending installs
             var allPending = Updates.Concat(PendingInstalls).ToList();
