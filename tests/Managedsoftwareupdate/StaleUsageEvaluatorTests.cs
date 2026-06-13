@@ -37,8 +37,11 @@ public class StaleUsageEvaluatorTests
         Version = "1.0",
         UnattendedUninstall = unattended,
         Uninstallable = true,
-        DaysUntouchedBeforeUninstall = threshold,
-        UsageTrackedPaths = new List<string> { Exe },
+        UnusedSoftwareRemovalInfo = new UnusedSoftwareRemovalInfo
+        {
+            RemovalDays = threshold,
+            Paths = new List<string> { Exe },
+        },
         Installs = new List<InstallCheckItem>
         {
             new() { Type = "msi", ProductCode = "{11111111-2222-3333-4444-555555555555}" },
@@ -84,7 +87,7 @@ public class StaleUsageEvaluatorTests
     public void NoTrackedExecutables_WhenNoPathsAndNoExeInstalls()
     {
         var item = Item();
-        item.UsageTrackedPaths = null; // fall back to installs — which has only the MSI row
+        item.UnusedSoftwareRemovalInfo!.Paths = null; // fall back to installs — which has only the MSI row
         var decision = StaleUsageEvaluator.Evaluate(item, SourceWithUsage(365), 14);
         Assert.Equal(StaleUsageOutcome.NoTrackedExecutables, decision.Outcome);
     }
@@ -104,7 +107,7 @@ public class StaleUsageEvaluatorTests
         var source = SourceWithUsage(100);
         source.HistoryDays = 20; // passes the global 14, fails the package's 45
         var item = Item();
-        item.MinimumUsageHistoryDays = 45;
+        item.UnusedSoftwareRemovalInfo!.MinimumHistoryDays = 45;
         var decision = StaleUsageEvaluator.Evaluate(item, source, 14);
         Assert.Equal(StaleUsageOutcome.InsufficientHistory, decision.Outcome);
     }
@@ -146,7 +149,7 @@ public class StaleUsageEvaluatorTests
         source.Data[helper] = DateTime.UtcNow.AddDays(-5);
 
         var item = Item(threshold: 30);
-        item.UsageTrackedPaths = new List<string> { Exe, helper };
+        item.UnusedSoftwareRemovalInfo!.Paths = new List<string> { Exe, helper };
 
         var decision = StaleUsageEvaluator.Evaluate(item, source, 14);
         Assert.Equal(StaleUsageOutcome.RecentlyUsed, decision.Outcome);
@@ -158,7 +161,7 @@ public class StaleUsageEvaluatorTests
     public void ResolveTrackedExecutables_FallsBackToInstallsExes()
     {
         var item = Item();
-        item.UsageTrackedPaths = null;
+        item.UnusedSoftwareRemovalInfo!.Paths = null;
         item.Installs.Add(new InstallCheckItem { Type = "file", Path = Exe });
         item.Installs.Add(new InstallCheckItem
         {
@@ -184,5 +187,58 @@ public class StaleUsageEvaluatorTests
         var exes = StaleUsageEvaluator.ResolveTrackedExecutables(item);
 
         Assert.Equal(new[] { Exe }, exes);
+    }
+
+    // ── manifest scoping ────────────────────────────────────────────────
+    // Unused-software removal acts on self-serve/optional installs and
+    // orphans, never on anything an admin manifest mandates.
+
+    [Fact]
+    public void ClassifyScope_Orphan_WhenNoManifestEntry()
+        => Assert.Equal(StaleUsageScope.Orphan, StaleUsageEvaluator.ClassifyScope(null));
+
+    [Fact]
+    public void ClassifyScope_Optional_WhenUnsubscribedOptionalInstall()
+    {
+        var entry = new ManifestItem { Name = "StaleApp", Action = "optional" };
+        Assert.Equal(StaleUsageScope.Optional, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Fact]
+    public void ClassifyScope_SelfServe_WhenUserInstalledViaSelfServeManifest()
+    {
+        var entry = new ManifestItem { Name = "StaleApp", Action = "install", IsSelfServe = true };
+        Assert.Equal(StaleUsageScope.SelfServe, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Fact]
+    public void ClassifyScope_ManagedUpdate_WhenOnlyInManagedUpdates()
+    {
+        // managed_updates says "patch if present" — no presence intent, so a
+        // stale removal doesn't fight policy and nothing reinstalls the item.
+        // This is the provision-then-keep-patched pattern (e.g. Firefox).
+        var entry = new ManifestItem { Name = "StaleApp", Action = "update" };
+        Assert.Equal(StaleUsageScope.ManagedUpdate, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Theory]
+    [InlineData("install")]   // managed_installs — admin mandates presence
+    [InlineData("default")]   // default_installs — enforced like an install
+    [InlineData("uninstall")] // already being removed
+    [InlineData("profile")]
+    [InlineData("app")]
+    public void ClassifyScope_Protected_ForAdminManagedActions(string action)
+    {
+        var entry = new ManifestItem { Name = "StaleApp", Action = action };
+        Assert.Equal(StaleUsageScope.Protected, StaleUsageEvaluator.ClassifyScope(entry));
+    }
+
+    [Fact]
+    public void ClassifyScope_Protected_WhenAdminInstall_EvenIfUserAlsoRequestedIt()
+    {
+        // The merge never sets IsSelfServe on an item the server already
+        // manages; this pins the contract from the classifier's side too.
+        var entry = new ManifestItem { Name = "StaleApp", Action = "install", IsSelfServe = false };
+        Assert.Equal(StaleUsageScope.Protected, StaleUsageEvaluator.ClassifyScope(entry));
     }
 }
