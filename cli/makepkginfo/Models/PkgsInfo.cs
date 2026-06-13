@@ -137,25 +137,26 @@ public class PkgsInfo
     public bool UnattendedUninstall { get; set; }
 
     /// <summary>
-    /// Opt-in stale-usage removal: uninstall when none of the tracked
-    /// executables have been used for this many days.
+    /// Opt-in unused-software removal (unused_software_removal_info).
     /// </summary>
-    [YamlMember(Alias = "days_untouched_before_uninstall", Order = 27, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
-    public int? DaysUntouchedBeforeUninstall { get; set; }
+    [YamlMember(Alias = "unused_software_removal_info", Order = 27, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
+}
 
-    /// <summary>
-    /// Executable paths whose usage gates stale-usage removal. When empty,
-    /// the client falls back to .exe entries in the installs array.
-    /// </summary>
-    [YamlMember(Alias = "usage_tracked_paths", Order = 28, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
-    public List<string>? UsageTrackedPaths { get; set; }
+/// <summary>
+/// Unused-software removal opt-in (paths gate removal by recorded usage;
+/// minimum_history_days is a Cimian extension).
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    [YamlMember(Alias = "removal_days", DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public int? RemovalDays { get; set; }
 
-    /// <summary>
-    /// Minimum days of usage history required on the device before
-    /// stale-usage removal may act.
-    /// </summary>
-    [YamlMember(Alias = "minimum_usage_history_days", Order = 29, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
-    public int? MinimumUsageHistoryDays { get; set; }
+    [YamlMember(Alias = "paths", DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
+    public List<string>? Paths { get; set; }
+
+    [YamlMember(Alias = "minimum_history_days", DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public int? MinimumHistoryDays { get; set; }
 }
 
 /// <summary>
