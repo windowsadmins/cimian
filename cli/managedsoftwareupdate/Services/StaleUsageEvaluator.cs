@@ -10,13 +10,13 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 
 public enum StaleUsageOutcome
 {
-    /// <summary>days_untouched_before_uninstall absent or &lt;= 0.</summary>
+    /// <summary>unused_software_removal_info absent or removal_days &lt;= 0.</summary>
     NotOptedIn,
     /// <summary>Package has not approved silent removal (unattended_uninstall false).</summary>
     NotUnattended,
     /// <summary>No uninstall method defined — nothing the engine could run.</summary>
     NotUninstallable,
-    /// <summary>No usage_tracked_paths and no .exe in the installs array.</summary>
+    /// <summary>No unused_software_removal_info paths and no .exe in the installs array.</summary>
     NoTrackedExecutables,
     /// <summary>Device has less usage history than the package (or global) minimum.</summary>
     InsufficientHistory,
@@ -28,9 +28,38 @@ public enum StaleUsageOutcome
     Stale,
 }
 
+/// <summary>
+/// Where an installed package sits in the manifest tree, which decides whether
+/// stale-usage removal may touch it. Unused-software removal acts on
+/// self-serve (optional) installs, never on admin-managed software.
+/// </summary>
+public enum StaleUsageScope
+{
+    /// <summary>Admin intent — managed_installs/default_installs/profile/app,
+    /// or an explicit uninstall already in flight. Never stale-removed.</summary>
+    Protected,
+    /// <summary>Installed via the user's SelfServeManifest — the primary
+    /// removal target. Removal must also clear the self-serve subscription or
+    /// the next run reinstalls it.</summary>
+    SelfServe,
+    /// <summary>In optional_installs but not currently self-serve subscribed
+    /// (e.g. installed before subscription tracking, or admin demoted it from
+    /// managed). Plain uninstall sticks; the item stays offered in MSC.</summary>
+    Optional,
+    /// <summary>Only in managed_updates — "patch IF present", which expresses no
+    /// presence intent, so removal doesn't fight policy and nothing reinstalls
+    /// it (updates only apply to installed items). Covers the provision-then-
+    /// keep-patched pattern (e.g. Firefox installed by a provisioning manifest,
+    /// kept current by managed_updates afterwards).</summary>
+    ManagedUpdate,
+    /// <summary>Installed by Cimian but in no manifest at all — AutoRemove's
+    /// territory, also eligible here for fleets that keep AutoRemove off.</summary>
+    Orphan,
+}
+
 /// <param name="Outcome">The decision.</param>
 /// <param name="DaysSinceLastUsed">Days since the newest usage across tracked exes (-1 when no data).</param>
-/// <param name="ThresholdDays">The package's days_untouched_before_uninstall.</param>
+/// <param name="ThresholdDays">The package's unused_software_removal_info removal_days.</param>
 public sealed record StaleUsageDecision(
     StaleUsageOutcome Outcome,
     double DaysSinceLastUsed = -1,
@@ -49,7 +78,7 @@ public static class StaleUsageEvaluator
         IUsageDataSource usage,
         int globalMinimumHistoryDays)
     {
-        var threshold = item.DaysUntouchedBeforeUninstall ?? 0;
+        var threshold = item.UnusedSoftwareRemovalInfo?.RemovalDays ?? 0;
         if (threshold <= 0)
         {
             return new StaleUsageDecision(StaleUsageOutcome.NotOptedIn);
@@ -71,7 +100,7 @@ public static class StaleUsageEvaluator
             return new StaleUsageDecision(StaleUsageOutcome.NoTrackedExecutables, ThresholdDays: threshold);
         }
 
-        var minHistory = item.MinimumUsageHistoryDays ?? globalMinimumHistoryDays;
+        var minHistory = item.UnusedSoftwareRemovalInfo?.MinimumHistoryDays ?? globalMinimumHistoryDays;
         if (usage.GetHistoryDays() < minHistory)
         {
             return new StaleUsageDecision(StaleUsageOutcome.InsufficientHistory, ThresholdDays: threshold);
@@ -102,15 +131,43 @@ public static class StaleUsageEvaluator
     }
 
     /// <summary>
-    /// usage_tracked_paths when present; otherwise every .exe mentioned in the
-    /// installs array (path or key_path — key_path is the MSI's primary
-    /// executable, which is exactly what a user launches).
+    /// Classifies an installed package by its (deduplicated, self-serve-merged)
+    /// manifest entry. Null means no manifest references the name at all.
+    /// </summary>
+    public static StaleUsageScope ClassifyScope(ManifestItem? manifestEntry)
+    {
+        if (manifestEntry is null)
+        {
+            return StaleUsageScope.Orphan;
+        }
+
+        var action = manifestEntry.Action?.ToLowerInvariant();
+        if (action == "optional")
+        {
+            return StaleUsageScope.Optional;
+        }
+        if (action == "install" && manifestEntry.IsSelfServe)
+        {
+            return StaleUsageScope.SelfServe;
+        }
+        if (action == "update")
+        {
+            return StaleUsageScope.ManagedUpdate;
+        }
+
+        return StaleUsageScope.Protected;
+    }
+
+    /// <summary>
+    /// unused_software_removal_info.paths when present; otherwise every .exe
+    /// mentioned in the installs array (path or key_path — key_path is the
+    /// MSI's primary executable, which is exactly what a user launches).
     /// </summary>
     internal static List<string> ResolveTrackedExecutables(CatalogItem item)
     {
-        if (item.UsageTrackedPaths is { Count: > 0 })
+        if (item.UnusedSoftwareRemovalInfo?.Paths is { Count: > 0 } paths)
         {
-            return item.UsageTrackedPaths
+            return paths
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .ToList();
         }
