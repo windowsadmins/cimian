@@ -1787,11 +1787,13 @@ exit 0
 
     /// <summary>
     /// Looks up a DisplayVersion by ARP DisplayName in the Uninstall registry
-    /// (64-bit and 32-bit views). Exact match first, then substring in either
-    /// direction — wrapper MSIs register names like "Mozilla Firefox (x64
-    /// en-US)" while the pkginfo hint carries the stable prefix. Mirrors
-    /// StatusService.FindVersionByDisplayName so detection and post-install
-    /// verification agree on what counts as installed.
+    /// (64-bit and 32-bit views). Exact match first, then one-way substring:
+    /// only registry names that CONTAIN the hint count — wrapper MSIs register
+    /// names like "Mozilla Firefox (x64 en-US)" while the pkginfo hint carries
+    /// the stable prefix. The reverse direction (hint contains registry name)
+    /// is unsafe: a long hint would collapse onto an unrelated short product
+    /// name. Mirrors StatusService.FindVersionByDisplayName so detection and
+    /// post-install verification agree on what counts as installed.
     /// </summary>
     private static string? FindArpVersionByDisplayName(string displayName)
     {
@@ -1819,8 +1821,7 @@ exit 0
                         return regVersion;
 
                     if (substringHit == null
-                        && (regDisplayName.Contains(displayName, StringComparison.OrdinalIgnoreCase)
-                            || displayName.Contains(regDisplayName, StringComparison.OrdinalIgnoreCase)))
+                        && regDisplayName.Contains(displayName, StringComparison.OrdinalIgnoreCase))
                     {
                         substringHit = regVersion;
                     }

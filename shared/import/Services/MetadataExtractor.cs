@@ -230,14 +230,24 @@ public partial class MetadataExtractor
 
             if (versionedExes.Count == 0)
             {
-                // Wrapper MSI (e.g. Mozilla Firefox): the File table carries no
-                // payload — the real installer is an embedded binary run by a
-                // custom action, so there is nothing to emit type=file checks
-                // from, and the product may not keep its Windows Installer
+                // Wrapper MSI (e.g. Mozilla Firefox): the File table is EMPTY —
+                // the real installer is an embedded binary run by a custom
+                // action, so there is nothing to emit type=file checks from,
+                // and the product may not keep its Windows Installer
                 // registration (the in-app updater maintains a plain ARP entry
                 // instead). Emit an ARP DisplayName hint so the runtime can fall
                 // back to an Uninstall-hive lookup when the codes miss.
-                metadata.ArpDisplayName = DeriveArpDisplayName(metadata.Title);
+                //
+                // Gate strictly on the File table being empty: an MSI that DOES
+                // lay down payload (just nothing versioned, or no .exe at all)
+                // is not a wrapper — it keeps its registration, the codes are
+                // sufficient, and a fuzzy ARP fallback would only mask a
+                // genuinely missing install. Those get no file checks and no
+                // display_name.
+                if (!MsiBomReader.HasInstalledFiles(db))
+                {
+                    metadata.ArpDisplayName = DeriveArpDisplayName(metadata.Title);
+                }
                 return;
             }
 
