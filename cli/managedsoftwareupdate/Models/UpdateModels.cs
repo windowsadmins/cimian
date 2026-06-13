@@ -94,14 +94,16 @@ public class CimianConfig
     public bool AutoRemove { get; set; }
 
     /// <summary>
-    /// Master switch for stale-usage removal (days_untouched_before_uninstall).
-    /// Off by default: packages opt in via pkginfo, fleets opt in here.
+    /// Master switch for unused-software removal (unused_software_removal_info).
+    /// On by default — harmless fleet-wide because every package must still
+    /// opt in via pkginfo, and the pass only ever touches self-serve/optional
+    /// installs and orphans, never admin-manifested items.
     /// </summary>
     [YamlMember(Alias = "UsageStaleUninstallEnabled")]
-    public bool UsageStaleUninstallEnabled { get; set; }
+    public bool UsageStaleUninstallEnabled { get; set; } = true;
 
     /// <summary>
-    /// Global fallback for minimum_usage_history_days when a package doesn't
+    /// Global fallback for unused_software_removal_info.minimum_history_days when a package doesn't
     /// set its own: refuse stale removal on devices with less usage history.
     /// </summary>
     [YamlMember(Alias = "UsageStaleUninstallMinimumHistoryDays")]
@@ -319,6 +321,13 @@ public class ManifestItem
     public string Version { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty; // install, update, uninstall, profile, app, optional
     public string SourceManifest { get; set; } = string.Empty;
+    /// <summary>
+    /// True when this item's action was set by the user-writable
+    /// SelfServeManifest (install request or promoted optional). SourceManifest
+    /// keeps the server manifest that listed the item, so this flag is the only
+    /// way to tell user intent from admin intent after the merge.
+    /// </summary>
+    public bool IsSelfServe { get; set; }
     public string InstallerLocation { get; set; } = string.Empty;
     public List<string> SupportedArch { get; set; } = new();
     public List<string> ManagedInstalls { get; set; } = new();
@@ -421,27 +430,12 @@ public class CatalogItem
     public DateTime? ForceInstallAfterDate { get; set; }
 
     /// <summary>
-    /// Opt-in stale-usage removal: uninstall when none of the tracked
-    /// executables have been used for this many days. Requires
-    /// UnattendedUninstall and an available usage data source.
-    /// Null or &lt;= 0 disables the feature for this package.
+    /// Opt-in unused-software removal (unused_software_removal_info).
+    /// Requires UnattendedUninstall and an available usage data source.
+    /// Null disables the feature for this package.
     /// </summary>
-    [YamlMember(Alias = "days_untouched_before_uninstall")]
-    public int? DaysUntouchedBeforeUninstall { get; set; }
-
-    /// <summary>
-    /// Executable paths whose usage gates stale-usage removal. When empty,
-    /// the client falls back to .exe entries in the installs array.
-    /// </summary>
-    [YamlMember(Alias = "usage_tracked_paths")]
-    public List<string>? UsageTrackedPaths { get; set; }
-
-    /// <summary>
-    /// Minimum days of usage history required on this device before
-    /// stale-usage removal may act. Null defers to the global default.
-    /// </summary>
-    [YamlMember(Alias = "minimum_usage_history_days")]
-    public int? MinimumUsageHistoryDays { get; set; }
+    [YamlMember(Alias = "unused_software_removal_info")]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
 
     [YamlMember(Alias = "restart_action")]
     public string? RestartAction { get; set; }
@@ -475,6 +469,34 @@ public class CatalogItem
         || Installs.Any(i =>
             (i.EffectiveType() == "msix" || i.EffectiveType() == "appx")
             && !string.IsNullOrWhiteSpace(i.IdentityName)));
+}
+
+/// <summary>
+/// Unused-software removal opt-in. The dict carries removal_days plus the
+/// absolute executable paths whose recorded usage gates removal.
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    /// <summary>
+    /// Uninstall when none of the tracked executables have been used for
+    /// this many days. &lt;= 0 disables the feature for this package.
+    /// </summary>
+    [YamlMember(Alias = "removal_days")]
+    public int? RemovalDays { get; set; }
+
+    /// <summary>
+    /// Executable paths whose usage gates removal. When empty, the client
+    /// falls back to .exe entries in the installs array.
+    /// </summary>
+    [YamlMember(Alias = "paths")]
+    public List<string>? Paths { get; set; }
+
+    /// <summary>
+    /// Cimian extension: minimum days of usage history required on the device
+    /// before removal may act. Null defers to the global default.
+    /// </summary>
+    [YamlMember(Alias = "minimum_history_days")]
+    public int? MinimumHistoryDays { get; set; }
 }
 
 /// <summary>

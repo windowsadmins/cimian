@@ -102,19 +102,19 @@ class Program
             "Set 'OnDemand: true' - items that can be run multiple times");
 
         var daysUntouchedOption = new Option<int?>(
-            "--days_untouched_before_uninstall",
-            "Uninstall when no tracked executable has been used for this many days (requires --unattended_uninstall and usage data)");
+            "--unused_removal_days",
+            "Emit unused_software_removal_info.removal_days: uninstall when no tracked executable has been used for this many days (requires --unattended_uninstall and usage data)");
 
         var usageTrackedPathOption = new Option<string[]>(
-            "--usage_tracked_path",
-            "Executable path whose usage gates stale-usage removal (can be specified multiple times; defaults to .exe entries in installs)")
+            "--unused_path",
+            "Emit unused_software_removal_info.paths entry: executable whose usage gates removal (can be specified multiple times; defaults to .exe entries in installs)")
         {
             AllowMultipleArgumentsPerToken = true
         };
 
         var minUsageHistoryOption = new Option<int?>(
-            "--minimum_usage_history_days",
-            "Minimum days of usage history required on a device before stale-usage removal may act");
+            "--unused_minimum_history_days",
+            "Emit unused_software_removal_info.minimum_history_days: minimum days of usage history required on a device before removal may act");
 
         var newPkgOption = new Option<bool>(
             "--new",
@@ -255,9 +255,9 @@ class Program
                     UnattendedInstall = unattendedInstall,
                     UnattendedUninstall = unattendedUninstall,
                     OnDemand = onDemand,
-                    DaysUntouchedBeforeUninstall = daysUntouched,
-                    UsageTrackedPaths = usageTrackedPaths?.Length > 0 ? usageTrackedPaths.ToList() : null,
-                    MinimumUsageHistoryDays = minUsageHistory,
+                    UnusedRemovalDays = daysUntouched,
+                    UnusedPaths = usageTrackedPaths?.Length > 0 ? usageTrackedPaths.ToList() : null,
+                    UnusedMinimumHistoryDays = minUsageHistory,
                     MinOSVersion = minOSVersion,
                     MaxOSVersion = maxOSVersion,
                     MinCimianVersion = minCimianVersion,

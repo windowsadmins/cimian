@@ -1,5 +1,5 @@
 // IUsageDataSource.cs - Abstraction over per-device application usage data
-// Backs the stale-usage removal feature (days_untouched_before_uninstall):
+// Backs the unused-software removal feature (unused_software_removal_info):
 // the engine asks "when was this executable last used on this device?" and
 // refuses to act when the source cannot answer confidently.
 

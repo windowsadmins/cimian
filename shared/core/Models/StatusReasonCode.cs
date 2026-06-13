@@ -135,13 +135,13 @@ public static class StatusReasonCode
     /// <summary>Auto run deferred this item because a user is active — either it is not unattended-eligible, or its restart_action would interrupt the session</summary>
     public const string DeferredUserActive = "deferred_user_active";
 
-    /// <summary>Package queued for removal: no tracked executable used within days_untouched_before_uninstall</summary>
+    /// <summary>Package queued for removal: no tracked executable used within unused_software_removal_info.removal_days</summary>
     public const string StaleUsageUninstall = "stale_usage_uninstall";
 
     /// <summary>Stale-usage check skipped: no usage data exists for any tracked executable</summary>
     public const string StaleUsageSkippedNoData = "stale_usage_skipped_no_data";
 
-    /// <summary>Stale-usage check skipped: device has fewer days of usage history than minimum_usage_history_days</summary>
+    /// <summary>Stale-usage check skipped: device has fewer days of usage history than the required minimum_history_days</summary>
     public const string StaleUsageSkippedInsufficientHistory = "stale_usage_skipped_insufficient_history";
 
     #endregion
