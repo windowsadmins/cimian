@@ -188,9 +188,7 @@ public class PkgInfoBuilder
             MinOSVersion = options.MinOSVersion,
             MaxOSVersion = options.MaxOSVersion,
             MinCimianVersion = options.MinCimianVersion,
-            DaysUntouchedBeforeUninstall = options.DaysUntouchedBeforeUninstall,
-            UsageTrackedPaths = options.UsageTrackedPaths,
-            MinimumUsageHistoryDays = options.MinimumUsageHistoryDays,
+            UnusedSoftwareRemovalInfo = BuildUnusedRemovalInfo(options),
             Installs = installs
         };
 
@@ -387,6 +385,27 @@ public class PkgInfoBuilder
             return null;
         }
     }
+
+    /// <summary>
+    /// Assembles unused_software_removal_info from the flat CLI options;
+    /// null (key omitted) when none of them were supplied.
+    /// </summary>
+    private static UnusedSoftwareRemovalInfo? BuildUnusedRemovalInfo(PkgsInfoOptions options)
+    {
+        if (options.UnusedRemovalDays is null
+            && (options.UnusedPaths is null || options.UnusedPaths.Count == 0)
+            && options.UnusedMinimumHistoryDays is null)
+        {
+            return null;
+        }
+
+        return new UnusedSoftwareRemovalInfo
+        {
+            RemovalDays = options.UnusedRemovalDays,
+            Paths = options.UnusedPaths,
+            MinimumHistoryDays = options.UnusedMinimumHistoryDays,
+        };
+    }
 }
 
 /// <summary>
@@ -404,9 +423,9 @@ public class PkgsInfoOptions
     public bool UnattendedInstall { get; set; }
     public bool UnattendedUninstall { get; set; }
     public bool OnDemand { get; set; }
-    public int? DaysUntouchedBeforeUninstall { get; set; }
-    public List<string>? UsageTrackedPaths { get; set; }
-    public int? MinimumUsageHistoryDays { get; set; }
+    public int? UnusedRemovalDays { get; set; }
+    public List<string>? UnusedPaths { get; set; }
+    public int? UnusedMinimumHistoryDays { get; set; }
     public string? MinOSVersion { get; set; }
     public string? MaxOSVersion { get; set; }
     public string? MinCimianVersion { get; set; }
