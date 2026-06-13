@@ -71,6 +71,27 @@ public static class MsiBomReader
     }
 
     /// <summary>
+    /// True when the MSI's File table has at least one row. Wrapper MSIs
+    /// (payload embedded in the Binary table, installed by a custom action)
+    /// have an empty File table. Fails soft to true on read errors so an
+    /// unreadable MSI is never misclassified as a wrapper.
+    /// </summary>
+    public static bool HasInstalledFiles(Database db)
+    {
+        try
+        {
+            using var view = db.OpenView("SELECT `File` FROM `File`");
+            view.Execute();
+            using var record = view.Fetch();
+            return record != null;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Enumerates files installed by the MSI whose extension matches one of
     /// <paramref name="extensions"/> (default: <c>.exe</c>). Returns absolute
     /// target paths sorted by FileSize descending — callers can take the top
