@@ -240,6 +240,14 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                 progress.Detail = goMessage.Data;
                 break;
 
+            case "itemStatus":
+                // Per-item lifecycle stage: pending, downloading, downloaded,
+                // installing, installed, removing, removed, failed.
+                progress.Type = ProgressMessageType.ItemStatus;
+                progress.ItemName = goMessage.Item;
+                progress.Detail = goMessage.Data;
+                break;
+
             case "quit":
                 progress.Type = ProgressMessageType.Complete;
                 progress.Message = "Complete";
@@ -278,11 +286,31 @@ public class ProgressServer : IProgressPipeClient, IDisposable
     }
 
     /// <inheritdoc />
-    public Task SendCommandAsync(CommandMessage command)
+    public async Task SendCommandAsync(CommandMessage command)
     {
-        // Commands not supported in TCP mode - Go reporter doesn't listen for responses
-        _logger?.LogDebug("SendCommand not supported in TCP server mode");
-        return Task.CompletedTask;
+        // The status connection is duplex: managedsoftwareupdate's reporter
+        // runs a command read loop. Stop is the only supported command.
+        var stream = _stream;
+        if (stream == null || _client?.Connected != true)
+        {
+            _logger?.LogWarning("Cannot send {Type} command - no client connected", command.Type);
+            return;
+        }
+
+        try
+        {
+            var json = command.Type == CommandType.Stop
+                ? "{\"type\":\"stop\"}"
+                : "{\"type\":\"requestStatus\"}";
+            var bytes = Encoding.UTF8.GetBytes(json + "\n");
+            await stream.WriteAsync(bytes);
+            await stream.FlushAsync();
+            _logger?.LogInformation("Sent {Type} command to managedsoftwareupdate", command.Type);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to send {Type} command", command.Type);
+        }
     }
 
     private async Task CleanupClientAsync()
@@ -332,6 +360,9 @@ internal class GoStatusMessage
 
     [JsonPropertyName("data")]
     public string? Data { get; set; }
+
+    [JsonPropertyName("item")]
+    public string? Item { get; set; }
 
     [JsonPropertyName("percent")]
     public int Percent { get; set; }

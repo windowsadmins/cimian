@@ -37,6 +37,10 @@ public class UpdateEngine : IDisposable
     private SessionLogger? _sessionLogger;
     private LoopGuard? _loopGuard;
 
+    // Cancelled when the GUI sends a stop command over the status connection.
+    // Checked between items so a user cancel aborts gracefully, never mid-install.
+    private readonly CancellationTokenSource _userStop = new();
+
     private int _verbosity;
     private bool _isBootstrap;
     private bool _checkOnly;
@@ -240,6 +244,8 @@ public class UpdateEngine : IDisposable
         if (_showStatus)
         {
             _statusReporter = new StatusReporter(verbosity);
+            // GUI Cancel button: stop gracefully before the next item.
+            _statusReporter.StopRequested += () => _userStop.Cancel();
             _statusReporter.TryConnect();
         }
 
@@ -1298,6 +1304,13 @@ public class UpdateEngine : IDisposable
         ReportStatus("Downloading...");
         ReportDetail($"Downloading {items.Count} items...");
         LogInfo($"Downloading {items.Count} items...");
+
+        // Seed every row in the GUI before work starts.
+        foreach (var item in items)
+        {
+            ReportItemStatus(item.Name, "pending");
+        }
+
         var downloadCount = 0;
         var downloadProgress = new Progress<(string ItemName, double Percent)>(p =>
         {
@@ -1310,10 +1323,21 @@ public class UpdateEngine : IDisposable
             {
                 // Starting a new item download
                 downloadCount++;
+                ReportItemStatus(p.ItemName, "downloading");
                 ReportDetail($"Downloading {label} ({downloadCount}/{items.Count})");
             }
         });
         var downloadedPaths = await _downloadService.DownloadItemsAsync(items, downloadProgress, cancellationToken);
+
+        // Anything with a resolved local path is on disk (downloaded now or
+        // already cached) — flip those rows to downloaded.
+        foreach (var item in items)
+        {
+            if (downloadedPaths.ContainsKey(item.Name))
+            {
+                ReportItemStatus(item.Name, "downloaded");
+            }
+        }
 
         // Track installed and scheduled items for dependency checking
         // Start with items that are already confirmed installed (from status checks)
@@ -1331,10 +1355,18 @@ public class UpdateEngine : IDisposable
         {
             if (cancellationToken.IsCancellationRequested) break;
 
+            if (_userStop.IsCancellationRequested)
+            {
+                LogInfo("Stop requested from GUI - aborting before next item");
+                ReportStatus("Cancelled");
+                break;
+            }
+
             itemIndex++;
             var progressPercent = (itemIndex * 100) / totalItems;
             var installLabel = !string.IsNullOrEmpty(item.Version)
                 ? $"{item.Name} {item.Version}" : item.Name;
+            ReportItemStatus(item.Name, "installing");
             ReportDetail($"Installing {installLabel} ({itemIndex}/{totalItems})");
             ReportPercent(progressPercent);
 
@@ -1342,6 +1374,7 @@ public class UpdateEngine : IDisposable
             if (installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
             {
                 LogDetail($"Skipping {item.Name}: already installed as dependency");
+                ReportItemStatus(item.Name, "installed");
                 successCount++;
                 continue;
             }
@@ -1353,6 +1386,8 @@ public class UpdateEngine : IDisposable
                 downloadedPaths,
                 outcomes,
                 cancellationToken);
+
+            ReportItemStatus(item.Name, success ? "installed" : "failed");
 
             if (success)
             {
@@ -1765,8 +1800,10 @@ public class UpdateEngine : IDisposable
         }
 
         LogInfo($"Removing: {item.Name}");
+        ReportItemStatus(item.Name, "removing");
         var (success, output) = await _installerService.UninstallAsync(item, cancellationToken);
         outcomes.Add(new ItemOutcome(item.Name, item.Version, "remove", success, success ? null : output, DateTime.UtcNow));
+        ReportItemStatus(item.Name, success ? "removed" : "failed");
 
         if (success)
         {
@@ -1817,6 +1854,13 @@ public class UpdateEngine : IDisposable
         foreach (var item in items)
         {
             if (cancellationToken.IsCancellationRequested) break;
+
+            if (_userStop.IsCancellationRequested)
+            {
+                LogInfo("Stop requested from GUI - aborting before next removal");
+                ReportStatus("Cancelled");
+                break;
+            }
 
             // Skip if already removed (may have been removed as a dependent)
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -2404,6 +2448,16 @@ public class UpdateEngine : IDisposable
     private void ReportPercent(int percent)
     {
         _statusReporter?.Percent(percent);
+    }
+
+    /// <summary>
+    /// Reports a per-item lifecycle stage to the GUI (pending, downloading,
+    /// downloaded, installing, installed, removing, removed, failed) so the
+    /// Updates list can render live status on each row.
+    /// </summary>
+    private void ReportItemStatus(string itemName, string stage)
+    {
+        _statusReporter?.ItemStatus(itemName, stage);
     }
 
     /// <summary>

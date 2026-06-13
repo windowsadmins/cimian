@@ -37,16 +37,14 @@ public partial class UpdatesPage : Page
         
         Loaded += async (s, e) =>
         {
-            // Check progress state on load - must be done after UI is ready
+            // Check progress state on load - must be done after UI is ready.
+            // The banner and the item list coexist, so always load the list.
             if (_shellViewModel?.IsInstalling == true)
             {
                 ShowProgressOverlay();
                 UpdateProgressUI();
             }
-            else
-            {
-                await LoadDataAsync();
-            }
+            await LoadDataAsync();
         };
         
         Unloaded += (s, e) =>
@@ -60,22 +58,25 @@ public partial class UpdatesPage : Page
         };
     }
 
+    // The progress banner sits at the top of the content; the item list stays
+    // visible underneath with per-row live stages, and View Log remains usable.
     private void ShowProgressOverlay()
     {
         ProgressOverlay.Visibility = Visibility.Visible;
         ProgressSpinner.IsActive = true;
-        MainContent.Visibility = Visibility.Collapsed;
+        MainContent.Visibility = Visibility.Visible;
         EmptyState.Visibility = Visibility.Collapsed;
         LoadingIndicator.Visibility = Visibility.Collapsed;
         LoadingIndicator.IsActive = false;
-        InstallNowButton.Visibility = Visibility.Collapsed;
+        InstallNowButton.IsEnabled = false;
+        StopButton.IsEnabled = true;
     }
 
     private void HideProgressOverlay()
     {
         ProgressOverlay.Visibility = Visibility.Collapsed;
         ProgressSpinner.IsActive = false;
-        InstallNowButton.Visibility = Visibility.Visible;
+        InstallNowButton.IsEnabled = ViewModel.HasPendingWork;
     }
 
     private void UpdateProgressUI()
@@ -96,8 +97,6 @@ public partial class UpdatesPage : Page
             ProgressBar.Value = _shellViewModel.ProgressPercent;
             ProgressPercentText.Text = $"{_shellViewModel.ProgressPercent}%";
         }
-        
-        StopButton.Visibility = _shellViewModel.CanStopInstall ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ShellViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -135,7 +134,11 @@ public partial class UpdatesPage : Page
         {
             LoadingIndicator.IsActive = true;
             LoadingIndicator.Visibility = Visibility.Visible;
-            MainContent.Visibility = Visibility.Collapsed;
+            // Keep content (and the progress banner) on screen during a run.
+            if (_shellViewModel?.IsInstalling != true)
+            {
+                MainContent.Visibility = Visibility.Collapsed;
+            }
             EmptyState.Visibility = Visibility.Collapsed;
             StatusText.Text = "Checking for updates...";
 
@@ -171,8 +174,11 @@ public partial class UpdatesPage : Page
         // Update restart warning
         RestartWarning.Visibility = ViewModel.RequiresRestart ? Visibility.Visible : Visibility.Collapsed;
 
-        // Show empty state or main content
-        bool hasAnyContent = ViewModel.HasPendingWork || ViewModel.HasProblems;
+        // Show empty state or main content. While a run is in flight the
+        // content (with the progress banner) always stays up, even if the
+        // pending list hasn't been populated yet.
+        bool hasAnyContent = ViewModel.HasPendingWork || ViewModel.HasProblems
+            || _shellViewModel?.IsInstalling == true;
         MainContent.Visibility = hasAnyContent ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = hasAnyContent ? Visibility.Collapsed : Visibility.Visible;
 

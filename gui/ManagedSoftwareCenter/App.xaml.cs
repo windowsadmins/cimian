@@ -68,7 +68,10 @@ public partial class App : Application
         services.AddTransient<SoftwareViewModel>();
         services.AddTransient<CategoriesViewModel>();
         services.AddTransient<MyItemsViewModel>();
-        services.AddTransient<UpdatesViewModel>();
+        // UpdatesViewModel holds live per-item stage state streamed from the
+        // progress pipe — singleton so navigation doesn't drop mid-run state
+        // (and so it doesn't leak a pipe subscription per page visit).
+        services.AddSingleton<UpdatesViewModel>();
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<ItemDetailViewModel>();
         services.AddTransient<ProgressViewModel>();

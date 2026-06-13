@@ -70,7 +70,7 @@ public class InstallInfo
 /// <summary>
 /// Represents a software item that can be installed/updated/removed
 /// </summary>
-public class InstallableItem
+public class InstallableItem : System.ComponentModel.INotifyPropertyChanged
 {
     /// <summary>
     /// Internal name/identifier
@@ -289,6 +289,28 @@ public class InstallableItem
     /// </summary>
     [YamlIgnore]
     public BitmapImage? IconImage { get; set; }
+
+    /// <summary>
+    /// Live lifecycle stage streamed from managedsoftwareupdate during a run:
+    /// pending, downloading, downloaded, installing, installed, removing,
+    /// removed, failed. Null when no run is reporting on this item. The only
+    /// property with change notification — rows must update in place as the
+    /// engine progresses through stages.
+    /// </summary>
+    [YamlIgnore]
+    public string? LiveStage
+    {
+        get => _liveStage;
+        set
+        {
+            if (_liveStage == value) return;
+            _liveStage = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LiveStage)));
+        }
+    }
+    private string? _liveStage;
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
     /// Days pending text for UI binding (not serialized)

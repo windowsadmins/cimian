@@ -205,9 +205,14 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private async Task StopInstallAsync()
     {
-        if (!CanStopInstall) return;
-
+        // Cancel covers both phases: delete a queued (not yet consumed) flag
+        // file, and tell a running managedsoftwareupdate to stop gracefully
+        // before its next item.
+        await _triggerService.TriggerStopAsync();
         await _progressClient.SendCommandAsync(new CommandMessage { Type = CommandType.Stop });
+
+        ProgressMessage = "Cancelling...";
+        ProgressDetail = "Finishing the current item, then stopping.";
     }
 
     private async Task RefreshDataAsync()

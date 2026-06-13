@@ -20,6 +20,7 @@ public partial class UpdatesViewModel : ObservableObject
     private readonly IIconService _iconService;
     private readonly IUpdateTrackingService _updateTrackingService;
     private readonly IAlertService _alertService;
+    private readonly IProgressPipeClient _progressClient;
 
     [ObservableProperty]
     public partial ObservableCollection<InstallableItem> Updates { get; set; } = [];
@@ -73,15 +74,60 @@ public partial class UpdatesViewModel : ObservableObject
         ITriggerService triggerService,
         IIconService iconService,
         IUpdateTrackingService updateTrackingService,
-        IAlertService alertService)
+        IAlertService alertService,
+        IProgressPipeClient progressClient)
     {
         _installInfoService = installInfoService;
         _triggerService = triggerService;
         _iconService = iconService;
         _updateTrackingService = updateTrackingService;
         _alertService = alertService;
+        _progressClient = progressClient;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
+        _progressClient.ProgressReceived += OnProgressReceived;
+    }
+
+    /// <summary>
+    /// Routes per-item lifecycle stages from the running managedsoftwareupdate
+    /// onto the matching row. Items the engine reports that aren't in the
+    /// current list yet (e.g. a fresh self-serve click whose InstallInfo
+    /// hasn't been rewritten) get a synthetic row so the user sees progress
+    /// immediately. Raised on the UI thread by the progress server.
+    /// </summary>
+    private async void OnProgressReceived(object? sender, ProgressMessage message)
+    {
+        if (message.Type != ProgressMessageType.ItemStatus) return;
+        if (string.IsNullOrEmpty(message.ItemName)) return;
+
+        var stage = message.Detail;
+        var existing = PendingInstalls.Concat(Updates).Concat(PendingRemovals)
+            .FirstOrDefault(x => string.Equals(x.Name, message.ItemName, StringComparison.OrdinalIgnoreCase));
+
+        if (existing != null)
+        {
+            existing.LiveStage = stage;
+            return;
+        }
+
+        // Unknown item: synthesize a row. Removal stages go to the removals
+        // section, everything else to pending installs.
+        var item = new InstallableItem { Name = message.ItemName, LiveStage = stage };
+        item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+
+        if (stage is "removing" or "removed")
+        {
+            PendingRemovals.Add(item);
+            HasPendingRemovals = true;
+        }
+        else
+        {
+            PendingInstalls.Add(item);
+            HasPendingInstalls = true;
+        }
+        IsEmpty = false;
+        TotalUpdateCount = Updates.Count + PendingInstalls.Count + PendingRemovals.Count;
+        OnPropertyChanged(nameof(HasPendingWork));
     }
 
     /// <summary>

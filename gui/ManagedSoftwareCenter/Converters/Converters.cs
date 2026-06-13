@@ -2,6 +2,7 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Data;
+using Microsoft.UI.Xaml.Media;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Converters;
 
@@ -139,6 +140,81 @@ public class StringFormatConverter : IValueConverter
     {
         throw new NotImplementedException();
     }
+}
+
+/// <summary>
+/// Renders a live item lifecycle stage (pending / downloading / downloaded /
+/// installing / installed / removing / removed / failed) as one facet chosen
+/// by ConverterParameter:
+///   text    — display label
+///   brush   — SolidColorBrush for label and glyph
+///   glyph   — Segoe Fluent icon for terminal/idle stages
+///   spinner — Visibility of the in-progress ring (downloading/installing/removing)
+///   icon    — Visibility of the static glyph (everything else)
+///   panel   — Visibility of the whole stage panel (collapsed when no stage)
+/// </summary>
+public class ItemStageConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+    {
+        var stage = (value as string)?.ToLowerInvariant();
+        var facet = parameter as string ?? "text";
+        var active = stage is "downloading" or "installing" or "removing";
+
+        return facet switch
+        {
+            "panel" => string.IsNullOrEmpty(stage) ? Visibility.Collapsed : Visibility.Visible,
+            "spinner" => active ? Visibility.Visible : Visibility.Collapsed,
+            "icon" => !active && !string.IsNullOrEmpty(stage) ? Visibility.Visible : Visibility.Collapsed,
+            "text" => stage switch
+            {
+                "pending" => "Pending",
+                "downloading" => "Downloading...",
+                "downloaded" => "Downloaded",
+                "installing" => "Installing...",
+                "installed" => "Installed",
+                "removing" => "Removing...",
+                "removed" => "Removed",
+                "failed" => "Failed",
+                _ => string.Empty
+            },
+            "glyph" => stage switch
+            {
+                "pending" => "",                // Recent (clock)
+                "downloaded" => "",             // Download
+                "installed" or "removed" => "", // CheckMark
+                "failed" => "",                 // Cancel (X)
+                _ => string.Empty
+            },
+            "brush" => new SolidColorBrush(stage switch
+            {
+                "installed" or "removed" => Windows.UI.Color.FromArgb(255, 16, 124, 16),   // green
+                "failed" => Windows.UI.Color.FromArgb(255, 209, 52, 56),                   // red
+                "downloading" or "installing" or "removing" => Windows.UI.Color.FromArgb(255, 0, 120, 212), // accent blue
+                "downloaded" => Windows.UI.Color.FromArgb(255, 16, 124, 16),               // green
+                _ => Windows.UI.Color.FromArgb(255, 110, 110, 110)                         // gray (pending)
+            }),
+            _ => string.Empty
+        };
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+    {
+        throw new NotImplementedException();
+    }
+}
+
+/// <summary>
+/// Inverse of ItemStageConverter's "panel" facet: visible only when the item
+/// has NO live stage (idle), used for the static "Will be installed" labels.
+/// </summary>
+public class NoStageToVisibilityConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+        => string.IsNullOrEmpty(value as string) ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => throw new NotImplementedException();
 }
 
 /// <summary>

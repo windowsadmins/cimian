@@ -28,6 +28,15 @@ public class StatusReporter : IDisposable
     private bool _disposed;
     private bool _connected;
     private readonly int _verbosity;
+    private Task? _commandReadTask;
+    private CancellationTokenSource? _commandReadCts;
+
+    /// <summary>
+    /// Raised when the GUI sends a stop command over the status connection.
+    /// The engine links this to its cancellation token so the user's Cancel
+    /// button gracefully aborts between items.
+    /// </summary>
+    public event Action? StopRequested;
 
     /// <summary>
     /// Creates a new StatusReporter that will connect to the GUI on first message
@@ -74,6 +83,10 @@ public class StatusReporter : IDisposable
                     _stream = _client.GetStream();
                     _writer = new StreamWriter(_stream, Encoding.UTF8) { AutoFlush = true };
                     _connected = true;
+
+                    // The TCP stream is duplex: listen for commands (stop) from
+                    // the GUI without blocking the write path.
+                    StartCommandReader();
 
                     if (_verbosity >= 2)
                     {
@@ -146,6 +159,57 @@ public class StatusReporter : IDisposable
             Data = text,
             Error = true
         });
+    }
+
+    /// <summary>
+    /// Report a per-item lifecycle stage so the GUI can render live status on
+    /// each row: pending, downloading, downloaded, installing, installed,
+    /// removing, removed, failed.
+    /// </summary>
+    public void ItemStatus(string itemName, string stage)
+    {
+        SendMessage(new StatusMessage
+        {
+            Type = "itemStatus",
+            Item = itemName,
+            Data = stage
+        });
+    }
+
+    private void StartCommandReader()
+    {
+        if (_commandReadTask is { IsCompleted: false }) return;
+
+        _commandReadCts = new CancellationTokenSource();
+        var token = _commandReadCts.Token;
+        var stream = _stream;
+        if (stream == null) return;
+
+        _commandReadTask = Task.Run(async () =>
+        {
+            try
+            {
+                using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
+                while (!token.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(token).ConfigureAwait(false);
+                    if (line == null) break; // GUI disconnected
+
+                    if (line.Contains("\"stop\"", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_verbosity >= 1)
+                        {
+                            ConsoleLogger.Info("Stop requested from GUI");
+                        }
+                        StopRequested?.Invoke();
+                    }
+                }
+            }
+            catch
+            {
+                // Reader dies with the connection; writes detect that separately.
+            }
+        }, token);
     }
 
     /// <summary>
@@ -228,6 +292,9 @@ public class StatusReporter : IDisposable
             try { Quit(); } catch { }
         }
 
+        _commandReadCts?.Cancel();
+        _commandReadCts?.Dispose();
+
         lock (_lock)
         {
             CleanupConnection();
@@ -248,6 +315,10 @@ internal class StatusMessage
     [JsonPropertyName("data")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Data { get; set; }
+
+    [JsonPropertyName("item")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Item { get; set; }
 
     [JsonPropertyName("percent")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
