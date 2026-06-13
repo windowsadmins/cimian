@@ -187,23 +187,24 @@ public class PkgInfoBuilderTests
                 Catalogs = new List<string> { "Testing" },
                 UnattendedInstall = true,
                 UnattendedUninstall = true,
-                DaysUntouchedBeforeUninstall = 30,
-                UsageTrackedPaths = new List<string> { @"C:\Program Files\StaleApp\staleapp.exe" },
-                MinimumUsageHistoryDays = 14,
+                UnusedRemovalDays = 30,
+                UnusedPaths = new List<string> { @"C:\Program Files\StaleApp\staleapp.exe" },
+                UnusedMinimumHistoryDays = 14,
             };
 
             var pkgsinfo = _builder.BuildFromInstaller(tempFile, options);
 
             Assert.True(pkgsinfo.UnattendedUninstall);
-            Assert.Equal(30, pkgsinfo.DaysUntouchedBeforeUninstall);
-            Assert.Equal(options.UsageTrackedPaths, pkgsinfo.UsageTrackedPaths);
-            Assert.Equal(14, pkgsinfo.MinimumUsageHistoryDays);
+            Assert.Equal(30, pkgsinfo.UnusedSoftwareRemovalInfo?.RemovalDays);
+            Assert.Equal(options.UnusedPaths, pkgsinfo.UnusedSoftwareRemovalInfo?.Paths);
+            Assert.Equal(14, pkgsinfo.UnusedSoftwareRemovalInfo?.MinimumHistoryDays);
 
             var yaml = _builder.SerializePkgsInfo(pkgsinfo);
             Assert.Contains("unattended_uninstall: true", yaml);
-            Assert.Contains("days_untouched_before_uninstall: 30", yaml);
-            Assert.Contains("usage_tracked_paths:", yaml);
-            Assert.Contains("minimum_usage_history_days: 14", yaml);
+            Assert.Contains("unused_software_removal_info:", yaml);
+            Assert.Contains("removal_days: 30", yaml);
+            Assert.Contains("paths:", yaml);
+            Assert.Contains("minimum_history_days: 14", yaml);
         }
         finally
         {
