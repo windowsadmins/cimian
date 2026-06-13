@@ -1198,6 +1198,12 @@ public class UpdateEngine : IDisposable
             alreadyQueued.Select(i => i.Name),
             StringComparer.OrdinalIgnoreCase);
 
+        // One service for the whole pass: its YAML serializers and file lock are
+        // instance-scoped, so reusing a single instance both avoids rebuilding
+        // that state per item and keeps every subscription mutation behind one
+        // semaphore. Only constructed when the pass actually has work to do.
+        SelfServiceManifestService? selfServiceManifest = null;
+
         try
         {
             using var managedKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
@@ -1245,11 +1251,13 @@ public class UpdateEngine : IDisposable
                             }
                             else if (scope == StaleUsageScope.ManagedUpdate)
                             {
-                                await new SelfServiceManifestService().RemoveRequestAsync(catalogItem.Name);
+                                selfServiceManifest ??= new SelfServiceManifestService();
+                                await selfServiceManifest.RemoveRequestAsync(catalogItem.Name);
                             }
                             else
                             {
-                                await new SelfServiceManifestService().AddRemovalRequestAsync(catalogItem.Name);
+                                selfServiceManifest ??= new SelfServiceManifestService();
+                                await selfServiceManifest.AddRemovalRequestAsync(catalogItem.Name);
                                 ConsoleLogger.Info($"    StaleUsage: cleared self-serve subscription for {catalogItem.Name} (still available in MSC)");
                             }
                         }
