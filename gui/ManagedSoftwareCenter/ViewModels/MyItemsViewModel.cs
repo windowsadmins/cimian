@@ -25,6 +25,33 @@ public class MyItem
     public bool CanCancel { get; set; }
     public InstallableItem? CatalogItem { get; set; }
     public BitmapImage? IconImage { get; set; }
+
+    /// <summary>True once a standing install request is actually installed.</summary>
+    public bool IsInstalled => Status == ItemStatus.Installed;
+
+    /// <summary>
+    /// Show "Remove" (immediate uninstall) instead of "Cancel" once an installed,
+    /// uninstallable item is on the list — there's no pending request to cancel,
+    /// the meaningful action is to uninstall it. Pending requests still cancel.
+    /// </summary>
+    public bool ShowRemove => IsInstallRequest && IsInstalled
+        && CatalogItem?.Uninstallable == true;
+
+    /// <summary>Cancel is the action whenever Remove isn't (pending requests).</summary>
+    public bool ShowCancel => !ShowRemove;
+
+    /// <summary>Friendly status label for the badge (raw enum is not user-facing).</summary>
+    public string StatusText => Status switch
+    {
+        ItemStatus.Installed => "Installed",
+        ItemStatus.NotInstalled => "Not installed",
+        ItemStatus.InstallRequested => "Install pending",
+        ItemStatus.WillBeInstalled => "Will be installed",
+        ItemStatus.RemovalRequested => "Removal pending",
+        ItemStatus.WillBeRemoved => "Will be removed",
+        ItemStatus.Installing => "Installing...",
+        _ => Status
+    };
 }
 
 /// <summary>
@@ -157,6 +184,26 @@ public partial class MyItemsViewModel : ObservableObject
         await _selfServiceService.RemoveRequestAsync(item.Name);
 
         // Refresh list
+        await LoadAsync();
+    }
+
+    /// <summary>
+    /// Uninstall an installed item directly from My Items: flip it to a removal
+    /// request (drops it from managed_installs, adds to managed_uninstalls) and
+    /// kick off a targeted run — same proven path as the Software page Remove.
+    /// </summary>
+    [RelayCommand]
+    private async Task RemoveItemAsync(MyItem item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.Name)) return;
+
+        if (item.CatalogItem != null)
+        {
+            item.CatalogItem.LiveStage = "pending";
+        }
+
+        await _selfServiceService.AddRemovalRequestAsync(item.Name);
+        await _triggerService.TriggerInstallItemAsync(item.Name, asRemoval: true);
         await LoadAsync();
     }
 

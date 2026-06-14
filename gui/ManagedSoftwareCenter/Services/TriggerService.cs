@@ -23,6 +23,11 @@ public class TriggerService : ITriggerService, IDisposable
     private readonly SemaphoreSlim _flagFileLock = new(1, 1);
     private readonly HashSet<string> _pendingItems = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _pendingItemOrder = new();
+    // Subset of _pendingItems the caller flagged as removals, so the progress
+    // label reads "Removing X..." instead of "Installing X...". The engine still
+    // decides install vs uninstall from the self-serve manifest — this only
+    // affects the human-facing banner verb.
+    private readonly HashSet<string> _pendingRemovals = new(StringComparer.OrdinalIgnoreCase);
 
     // A single in-flight Task per targeted-install batch. Concurrent
     // TriggerInstallItemAsync calls that arrive while the flag file from a
@@ -78,28 +83,50 @@ public class TriggerService : ITriggerService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task TriggerInstallItemAsync(string itemName)
+    public Task TriggerInstallItemAsync(string itemName, bool asRemoval = false)
     {
         if (string.IsNullOrWhiteSpace(itemName))
         {
             throw new ArgumentException("itemName must be provided", nameof(itemName));
         }
 
-        // Validate the name up front — BuildSelfServeInstallArgs would throw on
+        return TriggerInstallItemsAsync(new[] { itemName }, asRemoval ? new[] { itemName } : null);
+    }
+
+    /// <inheritdoc />
+    public async Task TriggerInstallItemsAsync(IEnumerable<string> itemNames, IEnumerable<string>? removalNames = null)
+    {
+        if (itemNames == null) throw new ArgumentNullException(nameof(itemNames));
+
+        var names = itemNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+        if (names.Count == 0)
+        {
+            throw new ArgumentException("At least one item name is required", nameof(itemNames));
+        }
+
+        // Validate names up front — BuildSelfServeInstallArgs would throw on
         // control characters too, but catching it here gives a clearer caller
         // stack trace than something coming from inside the merge loop.
-        _ = BootstrapArgsBuilder.QuoteArgument(itemName);
+        foreach (var n in names) _ = BootstrapArgsBuilder.QuoteArgument(n);
 
         Task batchTask;
         await _flagFileLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_pendingItems.Add(itemName))
+            foreach (var n in names)
             {
-                _pendingItemOrder.Add(itemName);
+                if (_pendingItems.Add(n))
+                {
+                    _pendingItemOrder.Add(n);
+                }
+            }
+            if (removalNames != null)
+            {
+                foreach (var r in removalNames.Where(n => !string.IsNullOrWhiteSpace(n)))
+                    _pendingRemovals.Add(r);
             }
             var mergedArgs = BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder);
-            _currentOperationLabel = BuildOperationLabel(_pendingItemOrder);
+            _currentOperationLabel = BuildOperationLabel(_pendingItemOrder, _pendingRemovals);
 
             if (_currentBatch != null && !_currentBatch.IsCompleted)
             {
@@ -109,8 +136,8 @@ public class TriggerService : ITriggerService, IDisposable
                 // The existing batch's poll loop is what we await.
                 await WriteFlagFileAsync(mergedArgs).ConfigureAwait(false);
                 _logger?.LogInformation(
-                    "Merged {Item} into in-flight self-serve batch ({Label})",
-                    itemName, _currentOperationLabel);
+                    "Merged [{Items}] into in-flight self-serve batch ({Label})",
+                    string.Join(", ", names), _currentOperationLabel);
                 batchTask = _currentBatch;
             }
             else
@@ -132,15 +159,23 @@ public class TriggerService : ITriggerService, IDisposable
 
     /// <summary>
     /// Composes the human-readable progress label rendered in the shell overlay
-    /// while a self-serve run is in flight. Long batches (4+ items) are
-    /// summarized as a count so the message stays single-line.
+    /// while a self-serve run is in flight. The verb follows the batch: all
+    /// removals read "Removing...", all installs "Installing...", and a mix is
+    /// summarized as "Processing N items...". Long single-verb batches (4+ items)
+    /// collapse to a count so the message stays single-line.
     /// </summary>
-    internal static string BuildOperationLabel(IReadOnlyList<string> items)
+    internal static string BuildOperationLabel(IReadOnlyList<string> items, IReadOnlySet<string> removals)
     {
-        if (items.Count == 0) return "Installing requested items...";
-        if (items.Count == 1) return $"Installing {items[0]}...";
-        if (items.Count <= 3) return $"Installing {string.Join(", ", items)}...";
-        return $"Installing {items.Count} items ({items[0]}, {items[1]}, +{items.Count - 2} more)...";
+        if (items.Count == 0) return "Working...";
+
+        var removalCount = items.Count(removals.Contains);
+        if (removalCount > 0 && removalCount < items.Count)
+            return $"Processing {items.Count} items...";
+
+        var verb = removalCount == items.Count ? "Removing" : "Installing";
+        if (items.Count == 1) return $"{verb} {items[0]}...";
+        if (items.Count <= 3) return $"{verb} {string.Join(", ", items)}...";
+        return $"{verb} {items.Count} items ({items[0]}, {items[1]}, +{items.Count - 2} more)...";
     }
 
     /// <summary>
@@ -310,6 +345,7 @@ public class TriggerService : ITriggerService, IDisposable
         {
             _pendingItems.Clear();
             _pendingItemOrder.Clear();
+            _pendingRemovals.Clear();
             _currentOperationLabel = null;
             _currentBatch = null;
         }

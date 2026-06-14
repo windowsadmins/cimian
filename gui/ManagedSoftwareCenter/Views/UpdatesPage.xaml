@@ -12,6 +12,7 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
         <converters:ItemStageConverter x:Key="ItemStageConverter" />
         <converters:NoStageToVisibilityConverter x:Key="NoStageToVisibilityConverter" />
+        <converters:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
     </Page.Resources>
 
     <Grid>
@@ -219,6 +220,16 @@
                                                            Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
                                                            VerticalAlignment="Center"/>
                                             </StackPanel>
+                                            <!-- Failure reason (e.g. "Exit code 1603") while a run reports it -->
+                                            <TextBlock Text="{Binding LiveStageDetail}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="300"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding LiveStageDetail, Converter={StaticResource NullToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -286,20 +297,33 @@
                                                        Margin="0,2,0,0"/>
                                         </StackPanel>
 
-                                        <!-- Live stage while a run reports -->
-                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
-                                                    VerticalAlignment="Center"
-                                                    Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=panel}">
-                                            <ProgressRing Width="16" Height="16" IsActive="True"
-                                                          Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=spinner}"/>
-                                            <FontIcon Glyph="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=glyph}"
-                                                      FontSize="14"
-                                                      Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
-                                                      Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=icon}"/>
-                                            <TextBlock Text="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=text}"
-                                                       FontSize="12"
-                                                       Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
-                                                       VerticalAlignment="Center"/>
+                                        <!-- Live stage while a run reports; the failure
+                                             reason stays visible independently so a
+                                             persisted problem shows even when idle. -->
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right"
+                                                        Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=panel}">
+                                                <ProgressRing Width="16" Height="16" IsActive="True"
+                                                              Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=spinner}"/>
+                                                <FontIcon Glyph="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=glyph}"
+                                                          FontSize="14"
+                                                          Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                          Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=icon}"/>
+                                                <TextBlock Text="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=text}"
+                                                           FontSize="12"
+                                                           Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <!-- Failure reason (e.g. "Exit code 1603") from a run or a persisted problem -->
+                                            <TextBlock Text="{Binding LiveStageDetail}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="300"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding LiveStageDetail, Converter={StaticResource NullToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -368,6 +392,16 @@
                                                            Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
                                                            VerticalAlignment="Center"/>
                                             </StackPanel>
+                                            <!-- Failure reason while a run reports it -->
+                                            <TextBlock Text="{Binding LiveStageDetail}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="300"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding LiveStageDetail, Converter={StaticResource NullToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>

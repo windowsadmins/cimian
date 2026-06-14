@@ -310,6 +310,25 @@ public class InstallableItem : System.ComponentModel.INotifyPropertyChanged
     }
     private string? _liveStage;
 
+    /// <summary>
+    /// Detail accompanying the live stage — for the "failed" stage this is the
+    /// failure reason (e.g. "Exit code 1603") streamed from managedsoftwareupdate,
+    /// so the row can show users the exact code while a run is in flight. Null/empty
+    /// when there's nothing extra to show. Notifies so the row updates in place.
+    /// </summary>
+    [YamlIgnore]
+    public string? LiveStageDetail
+    {
+        get => _liveStageDetail;
+        set
+        {
+            if (_liveStageDetail == value) return;
+            _liveStageDetail = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LiveStageDetail)));
+        }
+    }
+    private string? _liveStageDetail;
+
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>

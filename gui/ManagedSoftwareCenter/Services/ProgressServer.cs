@@ -242,10 +242,12 @@ public class ProgressServer : IProgressPipeClient, IDisposable
 
             case "itemStatus":
                 // Per-item lifecycle stage: pending, downloading, downloaded,
-                // installing, installed, removing, removed, failed.
+                // installing, installed, removing, removed, failed. For "failed",
+                // Message carries the reason (e.g. "Exit code 1603").
                 progress.Type = ProgressMessageType.ItemStatus;
                 progress.ItemName = goMessage.Item;
                 progress.Detail = goMessage.Data;
+                progress.Message = goMessage.Message ?? string.Empty;
                 break;
 
             case "quit":
@@ -360,6 +362,9 @@ internal class GoStatusMessage
 
     [JsonPropertyName("data")]
     public string? Data { get; set; }
+
+    [JsonPropertyName("message")]
+    public string? Message { get; set; }
 
     [JsonPropertyName("item")]
     public string? Item { get; set; }

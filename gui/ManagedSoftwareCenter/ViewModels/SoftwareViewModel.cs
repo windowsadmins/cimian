@@ -251,7 +251,7 @@ public partial class SoftwareViewModel : ObservableObject
         item.Status = ItemStatus.RemovalRequested;
 
         // Targeted, preflight-skipping trigger — fast feedback for the just-clicked item.
-        await _triggerService.TriggerInstallItemAsync(item.Name);
+        await _triggerService.TriggerInstallItemAsync(item.Name, asRemoval: true);
 
         ApplyFilters();
     }

@@ -28,12 +28,24 @@
                      HorizontalAlignment="Left"/>
 
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                <CheckBox x:Name="ShowDebugToggle"
+                          Content="Debug"
+                          IsChecked="False"
+                          MinWidth="0"
+                          VerticalAlignment="Center"
+                          ToolTipService.ToolTip="Show DEBUG-level messages"
+                          Click="ShowDebugToggle_Click"/>
                 <ToggleButton x:Name="AutoScrollToggle"
                               IsChecked="True"
                               ToolTipService.ToolTip="Auto-scroll to bottom"
                               Click="AutoScrollToggle_Click">
                     <FontIcon Glyph="&#xE74B;" FontSize="14"/>
                 </ToggleButton>
+                <Button x:Name="CopyButton"
+                        Click="Copy_Click"
+                        ToolTipService.ToolTip="Copy log to clipboard">
+                    <FontIcon Glyph="&#xE8C8;" FontSize="14"/>
+                </Button>
                 <Button Click="Refresh_Click"
                         ToolTipService.ToolTip="Reload log">
                     <FontIcon Glyph="&#xE72C;" FontSize="14"/>

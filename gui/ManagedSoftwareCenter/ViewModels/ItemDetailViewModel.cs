@@ -264,7 +264,7 @@ public partial class ItemDetailViewModel : ObservableObject
         }
 
         await _selfServiceService.AddRemovalRequestAsync(Item.Name);
-        await _triggerService.TriggerInstallItemAsync(Item.Name);
+        await _triggerService.TriggerInstallItemAsync(Item.Name, asRemoval: true);
         await UpdateStatusAsync();
     }
 

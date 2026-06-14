@@ -5,6 +5,7 @@
 using System.IO;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Controls;
 
@@ -19,6 +20,7 @@ public partial class LogViewerControl : UserControl
     private string _fullLogText = string.Empty;
     private string _filterText = string.Empty;
     private bool _autoScroll = true;
+    private bool _showDebug;
     private long _lastFileSize;
 
     /// <summary>Raised when the user clicks the pop-out button (flyout mode only).</summary>
@@ -190,15 +192,22 @@ public partial class LogViewerControl : UserControl
 
     private void UpdateDisplay()
     {
-        if (string.IsNullOrEmpty(_filterText))
+        // DEBUG lines are hidden by default to keep the view readable; the search
+        // filter applies on top. When nothing is being filtered out, show the raw
+        // text untouched (cheapest path).
+        if (_showDebug && string.IsNullOrEmpty(_filterText))
         {
             LogTextBlock.Text = _fullLogText;
         }
         else
         {
-            var lines = _fullLogText.Split('\n');
-            var filtered = lines.Where(l => l.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
-            LogTextBlock.Text = string.Join('\n', filtered);
+            var lines = _fullLogText.Split('\n')
+                .Where(l => _showDebug || !IsDebugLine(l));
+            if (!string.IsNullOrEmpty(_filterText))
+            {
+                lines = lines.Where(l => l.Contains(_filterText, StringComparison.OrdinalIgnoreCase));
+            }
+            LogTextBlock.Text = string.Join('\n', lines);
         }
 
         if (_autoScroll)
@@ -296,9 +305,64 @@ public partial class LogViewerControl : UserControl
         }
     }
 
+    private void ShowDebugToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _showDebug = ShowDebugToggle.IsChecked == true;
+        UpdateDisplay();
+    }
+
+    /// <summary>
+    /// True for a DEBUG-level session log line. Lines are formatted
+    /// "[timestamp] LEVEL message"; the level sits right after "] ". Continuation
+    /// lines (no timestamp) are not treated as debug so multi-line messages from
+    /// higher levels stay visible.
+    /// </summary>
+    private static bool IsDebugLine(string line)
+    {
+        var idx = line.IndexOf("] ", StringComparison.Ordinal);
+        return idx >= 0
+            && line.AsSpan(idx + 2).TrimStart().StartsWith("DEBUG", StringComparison.Ordinal);
+    }
+
     private void Refresh_Click(object sender, RoutedEventArgs e)
     {
         FindAndLoadLatestLog();
+    }
+
+    /// <summary>
+    /// Copies the currently shown log (respecting the active filter) to the
+    /// clipboard so users can paste it into a ticket/report. Restores the status
+    /// text after a moment of "Copied" feedback.
+    /// </summary>
+    private void Copy_Click(object sender, RoutedEventArgs e)
+    {
+        var text = LogTextBlock.Text;
+        if (string.IsNullOrEmpty(text)) return;
+
+        try
+        {
+            var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            package.SetText(text);
+            Clipboard.SetContent(package);
+
+            var lineCount = text.Split('\n').Length;
+            var previous = StatusText.Text;
+            StatusText.Text = $"Copied {lineCount} lines to clipboard";
+
+            var timer = DispatcherQueue.CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(2);
+            timer.IsRepeating = false;
+            timer.Tick += (s, _) =>
+            {
+                StatusText.Text = previous;
+                timer.Stop();
+            };
+            timer.Start();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Copy failed: {ex.Message}";
+        }
     }
 
     private void Clear_Click(object sender, RoutedEventArgs e)
