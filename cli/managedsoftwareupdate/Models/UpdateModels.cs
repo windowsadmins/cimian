@@ -422,6 +422,13 @@ public class CatalogItem
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0
         || Check.Registry.Name != null
+        // exe-based app installers (NSIS, Inno, etc.) register their own
+        // uninstaller in the Windows uninstall registry, so the engine can remove
+        // them via that UninstallString without an explicit uninstaller block.
+        // This is the removal *mechanism* — orthogonal to unattended_uninstall,
+        // which only governs whether removal may run silently in the background.
+        // An admin opts a package out of removal entirely with `uninstallable: false`.
+        || string.Equals(Installer?.Type, "exe", StringComparison.OrdinalIgnoreCase)
         // Self-uninstallable MSI (canonical): installs[] entry of type=msi with a
         // ProductCode. EffectiveType() handles both explicit type=msi and typeless
         // entries that carry product_code/upgrade_code so a hand-written pkginfo

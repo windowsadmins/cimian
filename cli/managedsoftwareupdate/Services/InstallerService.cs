@@ -757,6 +757,18 @@ public class InstallerService
                     };
                     result = await UninstallMsixAsync(item, synthetic, cancellationToken);
                 }
+                // Last resort for exe/NSIS/Inno apps that carry no explicit
+                // uninstaller block, product_code, or msix identity: drive the app's
+                // own uninstaller via the standard Windows uninstall registry entry.
+                // This is what makes an installed optional app (e.g. an NSIS-packaged
+                // player) removable without per-package uninstall metadata. Note this
+                // is gated on the installer *type*, not unattended_uninstall — a
+                // user-initiated Remove must work even for packages that opt out of
+                // silent background removal.
+                else if (string.Equals(item.Installer?.Type, "exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    result = await UninstallViaRegistryAsync(item, cancellationToken);
+                }
             }
         }
 
@@ -1366,7 +1378,22 @@ try {{
             CreateNoWindow = true
         };
 
-        return await RunProcessWithTimeoutAsync(startInfo, "uninstall", cancellationToken);
+        var result = await RunProcessWithTimeoutAsync(startInfo, "uninstall", cancellationToken);
+
+        // An uninstall whose product is already gone is a success, not a failure.
+        // msiexec returns 1605 (ERROR_UNKNOWN_PRODUCT) or 1614 (ERROR_PRODUCT_UNINSTALLED)
+        // when the ProductCode isn't installed — exactly the end state we want. Without
+        // this, a removal of an already-absent product (e.g. a Cimian-managed item the
+        // user uninstalled by hand) fails forever and stays stuck in Pending Removals.
+        if (!result.Success
+            && TryExtractMsiExitCode(result.Output, out var code)
+            && (code == 1605 || code == 1614))
+        {
+            ConsoleLogger.Info($"MSI product already absent (msiexec exit {code}) — treating uninstall as success");
+            return (true, $"Product already not installed (msiexec exit {code})");
+        }
+
+        return result;
     }
 
     private async Task<(bool Success, string Output)> UninstallExeAsync(
@@ -1401,6 +1428,192 @@ try {{
         }
 
         return await _scriptService.ExecuteScriptAsync(uninstaller.Command, cancellationToken);
+    }
+
+    /// <summary>
+    /// Removes an app that has no explicit uninstaller metadata by driving the
+    /// uninstaller the app itself registered in the Windows uninstall registry.
+    /// Prefers QuietUninstallString (already silent); otherwise runs UninstallString
+    /// and appends silent switches inferred from the uninstaller engine (NSIS "/S",
+    /// Inno "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART") or the pkginfo's uninstaller
+    /// switches when present. Reached for exe-type installers (see UninstallAsync) --
+    /// keyed on the install mechanism, not unattended_uninstall: a user-initiated
+    /// Remove must work even for packages that opt out of silent background removal.
+    /// </summary>
+    private async Task<(bool Success, string Output)> UninstallViaRegistryAsync(
+        CatalogItem item,
+        CancellationToken cancellationToken)
+    {
+        var resolved = ResolveRegistryUninstall(item);
+        if (resolved == null)
+        {
+            return (false,
+                $"No uninstall information found in the Windows registry for {item.Name}. " +
+                "Add an uninstaller block or uninstall_script to the package.");
+        }
+
+        var (command, isQuiet) = resolved.Value;
+        var (exe, embeddedArgs) = SplitCommandLine(command);
+        if (string.IsNullOrWhiteSpace(exe))
+        {
+            return (false, $"Unparseable uninstall command for {item.Name}: {command}");
+        }
+
+        // msiexec entries can slip through here when the product wasn't matched by
+        // product_code earlier; normalise to a silent removal.
+        if (Path.GetFileNameWithoutExtension(exe).Equals("msiexec", StringComparison.OrdinalIgnoreCase))
+        {
+            embeddedArgs = embeddedArgs.Replace("/I", "/X", StringComparison.OrdinalIgnoreCase);
+            if (!embeddedArgs.Contains("/qn", StringComparison.OrdinalIgnoreCase)) embeddedArgs += " /qn";
+            if (!embeddedArgs.Contains("/norestart", StringComparison.OrdinalIgnoreCase)) embeddedArgs += " /norestart";
+            isQuiet = true;
+        }
+
+        var args = new List<string>();
+        if (!string.IsNullOrWhiteSpace(embeddedArgs)) args.Add(embeddedArgs.Trim());
+
+        if (!isQuiet)
+        {
+            if (item.Uninstaller.Count > 0 && item.Uninstaller[0].Switches.Count > 0)
+            {
+                args.Add(string.Join(" ", item.Uninstaller[0].GetAllArgs()));
+            }
+            else
+            {
+                args.Add(InferRegistrySilentSwitch(exe));
+            }
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = string.Join(" ", args).Trim(),
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        ConsoleLogger.Info($"Removing {item.Name} via registry uninstaller: {exe} {startInfo.Arguments}".TrimEnd());
+        _sessionLogger?.Log("INFO", $"Uninstalling {item.Name} via registry UninstallString");
+        return await RunProcessWithTimeoutAsync(startInfo, "uninstall", cancellationToken);
+    }
+
+    /// <summary>
+    /// Picks the silent switch for an app's own registry uninstaller from its
+    /// executable name. Inno Setup uninstallers are named unins###.exe (the
+    /// literal "unins" followed by digits) and take /VERYSILENT; everything else
+    /// is treated as NSIS and takes /S — the common case for app installers.
+    ///
+    /// The digit check matters: "uninstall.exe" (the typical NSIS name) also
+    /// starts with "unins", so a prefix-only test misclassifies NSIS as Inno and
+    /// hands it /VERYSILENT, which NSIS silently ignores — the app is never
+    /// removed when the uninstaller runs as SYSTEM with no UI to fall back to.
+    /// </summary>
+    internal static string InferRegistrySilentSwitch(string uninstallerExePath)
+    {
+        var name = Path.GetFileNameWithoutExtension(uninstallerExePath ?? string.Empty).ToLowerInvariant();
+        var isInno = name.StartsWith("unins") && name.Length > 5 && char.IsDigit(name[5]);
+        return isInno ? "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" : "/S";
+    }
+
+    /// <summary>
+    /// Finds the app's Windows uninstall entry by display name (exact, then a
+    /// registry-name-contains match — never the reverse, which would let a short
+    /// name adopt an unrelated app) and returns its uninstall command. Searches
+    /// both 64- and 32-bit views. Returns (command, isQuiet) or null if not found.
+    /// </summary>
+    private (string Command, bool IsQuiet)? ResolveRegistryUninstall(CatalogItem item)
+    {
+        var target = !string.IsNullOrEmpty(item.DisplayName) ? item.DisplayName : item.Name;
+        if (string.IsNullOrEmpty(target)) return null;
+
+        var bases = new[]
+        {
+            RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64),
+            RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32)
+        };
+        const string uninstallPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+
+        // Two passes: exact display-name match first, then contains.
+        foreach (var exact in new[] { true, false })
+        {
+            foreach (var baseKey in bases)
+            {
+                try
+                {
+                    using var root = baseKey.OpenSubKey(uninstallPath);
+                    if (root == null) continue;
+
+                    foreach (var subName in root.GetSubKeyNames())
+                    {
+                        using var sub = root.OpenSubKey(subName);
+                        var name = sub?.GetValue("DisplayName")?.ToString();
+                        if (string.IsNullOrEmpty(name)) continue;
+
+                        var match = exact
+                            ? string.Equals(name, target, StringComparison.OrdinalIgnoreCase)
+                            : name.Contains(target, StringComparison.OrdinalIgnoreCase);
+                        if (!match) continue;
+
+                        var quiet = sub!.GetValue("QuietUninstallString")?.ToString();
+                        if (!string.IsNullOrWhiteSpace(quiet))
+                        {
+                            ConsoleLogger.Debug($"Resolved QuietUninstallString for {item.Name} via '{name}'");
+                            return (quiet!, true);
+                        }
+
+                        var uninstallString = sub.GetValue("UninstallString")?.ToString();
+                        if (!string.IsNullOrWhiteSpace(uninstallString))
+                        {
+                            ConsoleLogger.Debug($"Resolved UninstallString for {item.Name} via '{name}'");
+                            return (uninstallString!, false);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ConsoleLogger.Debug($"Registry uninstall search error for {item.Name}: {ex.Message}");
+                }
+            }
+        }
+
+        ConsoleLogger.Debug($"No registry uninstall entry found for {item.Name} (searched display name '{target}')");
+        return null;
+    }
+
+    /// <summary>
+    /// Splits a registry uninstall command into its executable path and the
+    /// remaining argument string. Handles a quoted exe ("C:\..\unins000.exe" /X)
+    /// and the bare form (C:\..\uninstall.exe).
+    /// </summary>
+    private static (string Exe, string Args) SplitCommandLine(string command)
+    {
+        command = command.Trim();
+        if (command.StartsWith("\""))
+        {
+            var end = command.IndexOf('"', 1);
+            if (end > 0)
+            {
+                var exe = command.Substring(1, end - 1);
+                var rest = command.Length > end + 1 ? command.Substring(end + 1).Trim() : string.Empty;
+                return (exe, rest);
+            }
+            return (command.Trim('"'), string.Empty);
+        }
+
+        // Unquoted: an .exe path may contain spaces, so split at the first token
+        // boundary that follows the ".exe" extension rather than the first space.
+        var idx = command.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0)
+        {
+            var cut = idx + 4;
+            var exe = command.Substring(0, cut);
+            var rest = command.Length > cut ? command.Substring(cut).Trim() : string.Empty;
+            return (exe, rest);
+        }
+
+        return (command, string.Empty);
     }
 
     /// <summary>

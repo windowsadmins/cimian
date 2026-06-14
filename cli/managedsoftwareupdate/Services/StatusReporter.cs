@@ -164,15 +164,18 @@ public class StatusReporter : IDisposable
     /// <summary>
     /// Report a per-item lifecycle stage so the GUI can render live status on
     /// each row: pending, downloading, downloaded, installing, installed,
-    /// removing, removed, failed.
+    /// removing, removed, failed. For the "failed" stage, <paramref name="detail"/>
+    /// carries the failure reason (e.g. "Exit code 1603") so the GUI can surface
+    /// the exact code to the user.
     /// </summary>
-    public void ItemStatus(string itemName, string stage)
+    public void ItemStatus(string itemName, string stage, string? detail = null)
     {
         SendMessage(new StatusMessage
         {
             Type = "itemStatus",
             Item = itemName,
-            Data = stage
+            Data = stage,
+            Message = detail
         });
     }
 
@@ -315,6 +318,10 @@ internal class StatusMessage
     [JsonPropertyName("data")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Data { get; set; }
+
+    [JsonPropertyName("message")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Message { get; set; }
 
     [JsonPropertyName("item")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

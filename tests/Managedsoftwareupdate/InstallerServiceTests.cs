@@ -306,4 +306,23 @@ public class InstallerServiceTests
     }
 
     #endregion
+
+    #region Registry Uninstall Silent-Switch Inference
+
+    [Theory]
+    // NSIS uninstallers -> /S. "uninstall.exe" also starts with "unins" but is NOT
+    // Inno; the regression this guards is it being handed /VERYSILENT and no-op'ing.
+    [InlineData(@"C:\Program Files\VideoLAN\VLC\uninstall.exe", "/S")]
+    [InlineData(@"C:\Program Files\App\uninst.exe", "/S")]
+    [InlineData(@"C:\Program Files\App\Uninstall.exe", "/S")]
+    [InlineData(@"C:\Program Files\App\unins.exe", "/S")]
+    // Inno Setup uninstallers are unins###.exe (unins + digits) -> /VERYSILENT.
+    [InlineData(@"C:\Program Files\App\unins000.exe", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART")]
+    [InlineData(@"C:\Program Files\App\unins001.exe", "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART")]
+    public void InferRegistrySilentSwitch_PicksEngineCorrectFlags(string exePath, string expected)
+    {
+        Assert.Equal(expected, InstallerService.InferRegistrySilentSwitch(exePath));
+    }
+
+    #endregion
 }
