@@ -49,6 +49,10 @@ public partial class UpdatesPage : Page
         
         Unloaded += (s, e) =>
         {
+            // The user has seen any finished rows (green check) — let the next
+            // load drop them so returning to the page is clean.
+            ViewModel.DismissCompletedRows();
+
             // Unsubscribe from shell events
             if (_shellViewModel != null)
             {
@@ -76,7 +80,7 @@ public partial class UpdatesPage : Page
     {
         ProgressOverlay.Visibility = Visibility.Collapsed;
         ProgressSpinner.IsActive = false;
-        InstallNowButton.IsEnabled = ViewModel.HasPendingWork;
+        InstallNowButton.IsEnabled = ViewModel.TotalUpdateCount > 0;
     }
 
     private void UpdateProgressUI()
@@ -198,8 +202,9 @@ public partial class UpdatesPage : Page
 
 
 
-        // Update Install button state
-        InstallNowButton.IsEnabled = ViewModel.HasPendingWork;
+        // Update Install button state — only outstanding work, not lingering
+        // finished rows.
+        InstallNowButton.IsEnabled = ViewModel.TotalUpdateCount > 0;
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -233,7 +238,7 @@ public partial class UpdatesPage : Page
         {
             // Re-enable after command completes
             if (sender is Button btn2)
-                btn2.IsEnabled = ViewModel.HasPendingWork;
+                btn2.IsEnabled = ViewModel.TotalUpdateCount > 0;
         }
     }
 
