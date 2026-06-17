@@ -67,6 +67,20 @@
                                 </Flyout>
                             </Button.Flyout>
                         </Button>
+                        <!-- Always available when idle so the user can re-scan at
+                             any time ("sitting"); sits left of Install Now as the
+                             secondary action. Matches the reference MSC. -->
+                        <Button x:Name="HeaderCheckAgainButton"
+                                Visibility="Collapsed"
+                                Click="CheckNow_Click"
+                                MinWidth="140"
+                                Height="44">
+                            <StackPanel Orientation="Horizontal">
+                                <FontIcon Glyph="&#xE72C;" FontSize="16"/>
+                                <TextBlock Text="Check Again" Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- Primary action; shown only when there is pending work. -->
                         <Button x:Name="InstallNowButton"
                                 Style="{StaticResource AccentButtonStyle}"
                                 Click="InstallNow_Click"
@@ -75,6 +89,19 @@
                             <StackPanel Orientation="Horizontal">
                                 <FontIcon Glyph="&#xE896;" FontSize="16"/>
                                 <TextBlock Text="Install Now" Margin="8,0,0,0" FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- Replaces Install Now during a targeted per-item run,
+                             where progress lives in the rows and the banner (with
+                             its Cancel) is hidden. -->
+                        <Button x:Name="HeaderStopButton"
+                                Visibility="Collapsed"
+                                Click="StopButton_Click"
+                                MinWidth="140"
+                                Height="44">
+                            <StackPanel Orientation="Horizontal">
+                                <FontIcon Glyph="&#xE71A;" FontSize="16"/>
+                                <TextBlock Text="Stop" Margin="8,0,0,0" FontWeight="SemiBold"/>
                             </StackPanel>
                         </Button>
                     </StackPanel>
@@ -220,6 +247,12 @@
                                                            Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
                                                            VerticalAlignment="Center"/>
                                             </StackPanel>
+                                            <!-- Slim in-row progress for a targeted per-item run -->
+                                            <ProgressBar IsIndeterminate="True"
+                                                         Height="2" Width="160"
+                                                         Margin="0,4,0,0"
+                                                         HorizontalAlignment="Right"
+                                                         Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=bar}"/>
                                             <!-- Failure reason (e.g. "Exit code 1603") while a run reports it -->
                                             <TextBlock Text="{Binding LiveStageDetail}"
                                                        FontSize="11"
@@ -314,6 +347,12 @@
                                                            Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
                                                            VerticalAlignment="Center"/>
                                             </StackPanel>
+                                            <!-- Slim in-row progress for a targeted per-item run -->
+                                            <ProgressBar IsIndeterminate="True"
+                                                         Height="2" Width="160"
+                                                         Margin="0,4,0,0"
+                                                         HorizontalAlignment="Right"
+                                                         Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=bar}"/>
                                             <!-- Failure reason (e.g. "Exit code 1603") from a run or a persisted problem -->
                                             <TextBlock Text="{Binding LiveStageDetail}"
                                                        FontSize="11"
@@ -392,6 +431,12 @@
                                                            Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
                                                            VerticalAlignment="Center"/>
                                             </StackPanel>
+                                            <!-- Slim in-row progress for a targeted per-item run -->
+                                            <ProgressBar IsIndeterminate="True"
+                                                         Height="2" Width="160"
+                                                         Margin="0,4,0,0"
+                                                         HorizontalAlignment="Right"
+                                                         Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=bar}"/>
                                             <!-- Failure reason while a run reports it -->
                                             <TextBlock Text="{Binding LiveStageDetail}"
                                                        FontSize="11"

@@ -147,12 +147,29 @@ public partial class UpdatesViewModel : ObservableObject
         {
             existing.LiveStageDetail = detail;
             existing.LiveStage = stage;
+            // The engine emits a generic "pending" for every item — including
+            // removals — before the real verb. A removal first seen that way can
+            // land under Pending Installs; once a removal stage arrives, move it
+            // to the removals section so it doesn't show "Removed" under installs.
+            if (stage is "removing" or "removed" && PendingInstalls.Contains(existing))
+            {
+                PendingInstalls.Remove(existing);
+                if (!PendingRemovals.Contains(existing)) PendingRemovals.Add(existing);
+                HasPendingInstalls = PendingInstalls.Count > 0;
+                HasPendingRemovals = true;
+            }
             return;
         }
 
-        // Unknown item: synthesize a row. Removal stages go to the removals
-        // section, everything else to pending installs.
-        var item = new InstallableItem { Name = message.ItemName, LiveStage = stage, LiveStageDetail = detail };
+        // Unknown item: synthesize a row. Resolve the real catalog record first so
+        // it reads properly (display name, version, icon) instead of a bare
+        // placeholder with no name; fall back to just the engine's item name for
+        // anything not in InstallInfo. Removal stages go to the removals section,
+        // everything else to pending installs.
+        var item = await _installInfoService.GetItemByNameAsync(message.ItemName)
+                   ?? new InstallableItem { Name = message.ItemName };
+        item.LiveStage = stage;
+        item.LiveStageDetail = detail;
         item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
 
         if (stage is "removing" or "removed")
@@ -191,6 +208,21 @@ public partial class UpdatesViewModel : ObservableObject
                     .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
             _dropCompletedOnNextLoad = false;
 
+            // A targeted --item run rewrites InstallInfo with only the scheduled
+            // subset, which would drop the OTHER pending rows from the Updates list
+            // mid-run. So the list stays a stable reflection of the whole run,
+            // capture the currently-pending (non-finished) rows while an operation
+            // is in flight; they are re-injected below unless the fresh InstallInfo
+            // shows them already satisfied. Gated on IsOperationRunning so a cold
+            // load (or a broad re-check) still reconciles fully.
+            var carryOverPending = _triggerService.IsOperationRunning
+                ? PendingInstalls.Concat(Updates).Where(x => !IsDone(x))
+                        .Select(x => (item: x, removal: false))
+                    .Concat(PendingRemovals.Where(x => !IsDone(x)).Select(x => (item: x, removal: true)))
+                    .GroupBy(t => t.item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, (InstallableItem item, bool removal)>(StringComparer.OrdinalIgnoreCase);
+
             // Updates tab is derived from managed_installs (records for items needing
             // install or update this session). Split by the needs_update flag set by
             // managedsoftwareupdate during the catalog comparison:
@@ -201,7 +233,32 @@ public partial class UpdatesViewModel : ObservableObject
             // re-evaluate needs_update). The previous version-string comparison
             // was case- and format-sensitive — use NeedsUpdate as the source of
             // truth.
-            var managedInstalls = await _installInfoService.GetManagedInstallsAsync();
+            // Load the self-serve manifest and optional catalog up front. An
+            // optional item only appears in managed_installs/removals because the
+            // user self-serve requested it (the engine promotes it from optional).
+            // If they have since cancelled that request via My Items "Cancel", drop
+            // it from the Updates list on this live reload instead of waiting for
+            // the next engine run to rewrite InstallInfo. Admin-required items are
+            // never in optional_installs, so they are never filtered this way.
+            var selfServe = await _selfServiceService.GetAllRequestsAsync();
+            var selfServeInstalls = new HashSet<string>(
+                selfServe.ManagedInstalls.Where(n => !string.IsNullOrWhiteSpace(n)),
+                StringComparer.OrdinalIgnoreCase);
+            var selfServeUninstalls = new HashSet<string>(
+                selfServe.ManagedUninstalls.Where(n => !string.IsNullOrWhiteSpace(n)),
+                StringComparer.OrdinalIgnoreCase);
+            var optionalNames = new HashSet<string>(
+                (await _installInfoService.GetOptionalInstallsAsync()).Select(x => x.Name),
+                StringComparer.OrdinalIgnoreCase);
+
+            bool IsCancelledSelfServeInstall(InstallableItem x) =>
+                optionalNames.Contains(x.Name) && !selfServeInstalls.Contains(x.Name);
+            bool IsCancelledSelfServeRemoval(InstallableItem x) =>
+                optionalNames.Contains(x.Name) && !selfServeUninstalls.Contains(x.Name);
+
+            var managedInstalls = (await _installInfoService.GetManagedInstallsAsync())
+                .Where(x => !IsCancelledSelfServeInstall(x))
+                .ToList();
 
             var updatesList = managedInstalls
                 .Where(x => x.NeedsUpdate ||
@@ -210,16 +267,17 @@ public partial class UpdatesViewModel : ObservableObject
                 .ToList();
             var installsList = managedInstalls.Except(updatesList).ToList();
 
-            // Load pending removals
+            // Load pending removals (also dropping just-cancelled self-serve ones).
             var removals = await _installInfoService.GetRemovalsAsync();
-            var pendingRemovals = removals.Where(x => x.WillBeRemoved || x.Installed).ToList();
+            var pendingRemovals = removals
+                .Where(x => (x.WillBeRemoved || x.Installed) && !IsCancelledSelfServeRemoval(x))
+                .ToList();
 
             // Surface self-serve install requests the engine hasn't written into
             // managed_installs yet — a fresh click, or a run that hasn't finished
             // (InstallInfo is only rewritten at the end). Without this an item the
             // user just asked to install ("install-requested") is invisible on the
             // Updates tab until the next full InstallInfo rewrite.
-            var selfServe = await _selfServiceService.GetAllRequestsAsync();
             var known = new HashSet<string>(
                 updatesList.Concat(installsList).Concat(pendingRemovals).Select(x => x.Name),
                 StringComparer.OrdinalIgnoreCase);
@@ -235,6 +293,25 @@ public partial class UpdatesViewModel : ObservableObject
                 known.Add(name);
             }
 
+            // Symmetric to the install surfacing above: a removal the user just
+            // requested (My Items / Software "Remove") lives in the self-serve
+            // manifest's uninstalls, but the engine doesn't write it into
+            // InstallInfo `removals` until the run finishes (minutes later).
+            // Surface it now so it appears under Pending Removals immediately
+            // ("Will be removed") with its real name, version, and icon — installs
+            // and removals stay equally fluid. Skip anything already gone.
+            foreach (var name in selfServe.ManagedUninstalls)
+            {
+                if (string.IsNullOrWhiteSpace(name) || known.Contains(name)) continue;
+                var requested = await _installInfoService.GetItemByNameAsync(name);
+                if (requested == null) continue;
+                if (!requested.Installed) continue; // nothing to remove
+                requested.Status = ItemStatus.RemovalRequested;
+                requested.WillBeRemoved = true;
+                pendingRemovals.Add(requested);
+                known.Add(name);
+            }
+
             // Re-inject items that finished earlier this session so the result
             // stays visible (green check) even though they are no longer pending.
             // They keep their terminal LiveStage, so the row renders the check
@@ -245,6 +322,26 @@ public partial class UpdatesViewModel : ObservableObject
                 if (done.LiveStage == "removed") pendingRemovals.Add(done);
                 else installsList.Add(done);
                 known.Add(done.Name);
+            }
+
+            // Re-inject pending rows a targeted-run subset write dropped, so the
+            // whole run's pending set stays visible. Skip any the fresh InstallInfo
+            // now reports as satisfied (installed, not needing update or removal) so
+            // a completed item can't be resurrected; an item with no fresh record
+            // (e.g. an admin-required install outside the targeted subset) is kept
+            // and reconciles on the next broad check.
+            foreach (var (item, removal) in carryOverPending.Values)
+            {
+                if (known.Contains(item.Name)) continue;
+                // Never resurrect a self-serve request the user just cancelled.
+                if (removal ? IsCancelledSelfServeRemoval(item) : IsCancelledSelfServeInstall(item))
+                    continue;
+                var fresh = await _installInfoService.GetItemByNameAsync(item.Name);
+                if (fresh != null && fresh.Installed && !fresh.NeedsUpdate && !fresh.WillBeRemoved)
+                    continue; // already satisfied — let it drop
+                if (removal) pendingRemovals.Add(item);
+                else installsList.Add(item);
+                known.Add(item.Name);
             }
 
             // Load icons BEFORE assigning the bound collections — IconImage is a

@@ -39,11 +39,7 @@ public partial class UpdatesPage : Page
         {
             // Check progress state on load - must be done after UI is ready.
             // The banner and the item list coexist, so always load the list.
-            if (_shellViewModel?.IsInstalling == true)
-            {
-                ShowProgressOverlay();
-                UpdateProgressUI();
-            }
+            ApplyRunState();
             await LoadDataAsync();
         };
         
@@ -62,6 +58,52 @@ public partial class UpdatesPage : Page
         };
     }
 
+    // Decides how an in-flight run is presented:
+    //  - broad run (check / install-all / external)  -> global banner, with the
+    //    item list below showing per-row live stages;
+    //  - targeted per-item run                        -> NO banner; progress lives
+    //    inside each item's row, and the header shows "Stop" so Cancel is still
+    //    reachable without the banner;
+    //  - idle                                          -> "Check Again" always
+    //    available (re-scan any time), with "Install Now" added beside it only
+    //    when there is pending work. Matches the reference MSC behavior.
+    private void ApplyRunState()
+    {
+        bool running = _shellViewModel?.IsInstalling == true;
+        bool broad = _shellViewModel?.ShowGlobalBanner == true;
+
+        if (running && broad)
+        {
+            // Broad run: the banner conveys progress and carries its own Cancel.
+            ShowProgressOverlay();
+            UpdateProgressUI();
+            InstallNowButton.Visibility = Visibility.Collapsed;
+            HeaderCheckAgainButton.Visibility = Visibility.Collapsed;
+            HeaderStopButton.Visibility = Visibility.Collapsed;
+        }
+        else if (running && !broad)
+        {
+            // Item-scoped: hide the banner, keep the list (rows carry the
+            // progress), and present Stop in place of Install Now.
+            HideBanner();
+            MainContent.Visibility = Visibility.Visible;
+            InstallNowButton.Visibility = Visibility.Collapsed;
+            HeaderCheckAgainButton.Visibility = Visibility.Collapsed;
+            HeaderStopButton.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            // Idle: Check Again is always offered; Install Now appears beside it
+            // only when there is outstanding work.
+            HideBanner();
+            HeaderStopButton.Visibility = Visibility.Collapsed;
+            HeaderCheckAgainButton.Visibility = Visibility.Visible;
+            bool hasWork = ViewModel.TotalUpdateCount > 0;
+            InstallNowButton.Visibility = hasWork ? Visibility.Visible : Visibility.Collapsed;
+            InstallNowButton.IsEnabled = hasWork;
+        }
+    }
+
     // The progress banner sits at the top of the content; the item list stays
     // visible underneath with per-row live stages, and View Log remains usable.
     private void ShowProgressOverlay()
@@ -76,11 +118,18 @@ public partial class UpdatesPage : Page
         StopButton.IsEnabled = true;
     }
 
-    private void HideProgressOverlay()
+    // Collapses the global banner without touching the header buttons — the
+    // caller (ApplyRunState) owns Install Now / Stop visibility.
+    private void HideBanner()
     {
         ProgressOverlay.Visibility = Visibility.Collapsed;
         ProgressSpinner.IsActive = false;
-        InstallNowButton.IsEnabled = ViewModel.TotalUpdateCount > 0;
+    }
+
+    private void HideProgressOverlay()
+    {
+        HideBanner();
+        ApplyRunState();
     }
 
     private void UpdateProgressUI()
@@ -110,16 +159,17 @@ public partial class UpdatesPage : Page
             switch (e.PropertyName)
             {
                 case nameof(ShellViewModel.IsInstalling):
-                    if (_shellViewModel?.IsInstalling == true)
+                    ApplyRunState();
+                    if (_shellViewModel?.IsInstalling != true)
                     {
-                        ShowProgressOverlay();
-                    }
-                    else
-                    {
-                        HideProgressOverlay();
                         // Reload data after operation completes
                         _ = LoadDataAsync();
                     }
+                    break;
+                case nameof(ShellViewModel.ShowGlobalBanner):
+                    // Scope can flip after IsInstalling is already set (e.g. an
+                    // external session connects mid-flight) — re-apply.
+                    ApplyRunState();
                     break;
                 case nameof(ShellViewModel.ProgressMessage):
                 case nameof(ShellViewModel.ProgressDetail):
@@ -202,9 +252,10 @@ public partial class UpdatesPage : Page
 
 
 
-        // Update Install button state — only outstanding work, not lingering
-        // finished rows.
-        InstallNowButton.IsEnabled = ViewModel.TotalUpdateCount > 0;
+        // Header buttons (Install Now vs Stop, enablement) follow the run state —
+        // ApplyRunState keeps Install Now disabled/hidden during a run and enabled
+        // only for outstanding work when idle.
+        ApplyRunState();
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -236,9 +287,9 @@ public partial class UpdatesPage : Page
         }
         finally
         {
-            // Re-enable after command completes
-            if (sender is Button btn2)
-                btn2.IsEnabled = ViewModel.TotalUpdateCount > 0;
+            // Re-apply run state — if the run launched, Install Now is now hidden
+            // behind Stop; if it didn't, it re-enables only for outstanding work.
+            ApplyRunState();
         }
     }
 

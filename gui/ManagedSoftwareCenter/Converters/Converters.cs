@@ -152,6 +152,7 @@ public class StringFormatConverter : IValueConverter
 ///   spinner — Visibility of the in-progress ring (downloading/installing/removing)
 ///   icon    — Visibility of the static glyph (everything else)
 ///   panel   — Visibility of the whole stage panel (collapsed when no stage)
+///   bar     — Visibility of the slim in-row progress bar (active stages only)
 /// </summary>
 public class ItemStageConverter : IValueConverter
 {
@@ -165,6 +166,10 @@ public class ItemStageConverter : IValueConverter
         {
             "panel" => string.IsNullOrEmpty(stage) ? Visibility.Collapsed : Visibility.Visible,
             "spinner" => active ? Visibility.Visible : Visibility.Collapsed,
+            // Slim per-row progress bar: shown while the item is actively worked
+            // (download/install/remove) so a targeted --item run renders progress
+            // in the row itself instead of the global banner.
+            "bar" => active ? Visibility.Visible : Visibility.Collapsed,
             "icon" => !active && !string.IsNullOrEmpty(stage) ? Visibility.Visible : Visibility.Collapsed,
             "text" => stage switch
             {

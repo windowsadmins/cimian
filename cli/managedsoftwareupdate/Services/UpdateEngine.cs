@@ -218,6 +218,7 @@ public class UpdateEngine : IDisposable
         bool skipPreflight = false,
         bool skipPostflight = false,
         bool showStatus = false,
+        int statusPort = StatusReporter.DefaultPort,
         IEnumerable<string>? itemFilter = null,
         CancellationToken cancellationToken = default)
     {
@@ -243,7 +244,7 @@ public class UpdateEngine : IDisposable
         // Initialize status reporter if --show-status is set
         if (_showStatus)
         {
-            _statusReporter = new StatusReporter(verbosity);
+            _statusReporter = new StatusReporter(verbosity, statusPort);
             // GUI Cancel button: stop gracefully before the next item.
             _statusReporter.StopRequested += () => _userStop.Cancel();
             _statusReporter.TryConnect();
@@ -430,11 +431,31 @@ public class UpdateEngine : IDisposable
                 toInstall = itemFilterService.FilterCatalogItems(toInstall);
                 toUpdate = itemFilterService.FilterCatalogItems(toUpdate);
                 toUninstall = itemFilterService.FilterCatalogItems(toUninstall);
-                
+
                 // Log if everything was filtered out
                 if (toInstall.Count == 0 && toUpdate.Count == 0 && toUninstall.Count == 0)
                 {
                     ConsoleLogger.Warn("No pending actions match the --item filter");
+                }
+
+                // A self-serve click drives --item: the user explicitly asked for
+                // these item(s). Any that produced no action are already in the
+                // desired state, but with no signal the GUI navigates to Updates and
+                // sits empty ("nothing happened"). Emit a terminal stage per
+                // already-satisfied request so its row shows a confirming check
+                // (Installed/Removed) instead of silence. Intent comes from the
+                // manifest Action the self-serve merge set (install vs uninstall).
+                // No-op without --show-status (no reporter).
+                var actionedNames = new HashSet<string>(
+                    toInstall.Concat(toUpdate).Concat(toUninstall).Select(c => c.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var requested in itemFilterService.Items)
+                {
+                    if (actionedNames.Contains(requested)) continue;
+                    var mi = manifestItems.FirstOrDefault(m =>
+                        string.Equals(m.Name, requested, StringComparison.OrdinalIgnoreCase));
+                    var alreadyRemoved = string.Equals(mi?.Action, "uninstall", StringComparison.OrdinalIgnoreCase);
+                    ReportItemStatus(requested, alreadyRemoved ? "removed" : "installed");
                 }
             }
 

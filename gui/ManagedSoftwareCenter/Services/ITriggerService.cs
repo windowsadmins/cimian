@@ -52,6 +52,16 @@ public interface ITriggerService
     bool IsOperationRunning { get; }
 
     /// <summary>
+    /// True when the in-flight (or most recently launched) operation is targeted
+    /// at a specific set of items via <c>--item</c> (a self-serve click or the
+    /// Updates "Install Now" over the known pending set). False for broad runs —
+    /// a check, an <c>--installonly</c> pass, or an externally launched session.
+    /// The shell uses this to render progress inside each item's row for targeted
+    /// runs and the global banner for broad ones.
+    /// </summary>
+    bool IsItemScopedOperation { get; }
+
+    /// <summary>
     /// Human-readable description of the in-flight operation, e.g.
     /// "Installing Gimp, Cyberduck...". Set when a trigger writes the flag
     /// file and cleared once CimianWatcher consumes it (or the call fails).

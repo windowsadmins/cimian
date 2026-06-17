@@ -1,5 +1,5 @@
 // ProgressServer.cs - TCP server for receiving progress from managedsoftwareupdate
-// Listens on TCP port 19847 (matching Go's PipeReporter)
+// Listens on TCP port 19848 (the login-window CimianStatus uses 19847)
 
 using System.IO;
 using System.Net;
@@ -18,7 +18,12 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 /// </summary>
 public class ProgressServer : IProgressPipeClient, IDisposable
 {
-    private const int Port = 19847;
+    // MSC listens on its OWN port, distinct from the login-window CimianStatus
+    // listener (19847). Both can be alive at once — e.g. a locked machine shows
+    // the login window (19847) while the user session's MSC is also running — so
+    // sharing a port made them collide (whoever bound first won; the other
+    // retried forever). MSC tells the engine to report here via --status-port.
+    public const int Port = 19848;
 
     private readonly ILogger<ProgressServer>? _logger;
     private TcpListener? _listener;

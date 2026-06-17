@@ -16,7 +16,7 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// </summary>
 public class StatusReporter : IDisposable
 {
-    private const int DefaultPort = 19847;
+    public const int DefaultPort = 19847;
     private const string DefaultHost = "127.0.0.1";
     private const int ConnectionTimeoutMs = 2000;
     private const int MaxRetries = 10;
@@ -28,6 +28,7 @@ public class StatusReporter : IDisposable
     private bool _disposed;
     private bool _connected;
     private readonly int _verbosity;
+    private readonly int _port;
     private Task? _commandReadTask;
     private CancellationTokenSource? _commandReadCts;
 
@@ -42,9 +43,17 @@ public class StatusReporter : IDisposable
     /// Creates a new StatusReporter that will connect to the GUI on first message
     /// </summary>
     /// <param name="verbosity">Verbosity level for console output</param>
-    public StatusReporter(int verbosity = 0)
+    /// <param name="port">
+    /// TCP port of the GUI status listener. Defaults to 19847 (the login-window
+    /// CimianStatus listener). Managed Software Center runs its own listener on a
+    /// separate port and passes it via --status-port so the two never collide —
+    /// e.g. when a locked machine has the login window up while a user session's
+    /// MSC is also running.
+    /// </param>
+    public StatusReporter(int verbosity = 0, int port = DefaultPort)
     {
         _verbosity = verbosity;
+        _port = port;
     }
 
     /// <summary>
@@ -71,7 +80,7 @@ public class StatusReporter : IDisposable
                     _client = new TcpClient();
                     
                     // Try to connect with timeout
-                    var connectTask = _client.ConnectAsync(DefaultHost, DefaultPort);
+                    var connectTask = _client.ConnectAsync(DefaultHost, _port);
                     if (!connectTask.Wait(ConnectionTimeoutMs))
                     {
                         _client.Dispose();
@@ -90,7 +99,7 @@ public class StatusReporter : IDisposable
 
                     if (_verbosity >= 2)
                     {
-                        ConsoleLogger.Debug($"Connected to GUI status server on port {DefaultPort}");
+                        ConsoleLogger.Debug($"Connected to GUI status server on port {_port}");
                     }
 
                     return true;

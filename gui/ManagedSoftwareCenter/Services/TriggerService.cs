@@ -16,6 +16,10 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 public class TriggerService : ITriggerService, IDisposable
 {
     private const string BootstrapFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
+    // Tell the engine to report progress to MSC's own listener (ProgressServer.Port)
+    // instead of the default 19847 used by the login-window CimianStatus, so the
+    // two never collide. Appended to every --show-status run MSC triggers.
+    private static readonly string StatusPortArg = $"--status-port {ProgressServer.Port}";
     private static readonly TimeSpan ServiceTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
 
@@ -38,9 +42,12 @@ public class TriggerService : ITriggerService, IDisposable
     // races the first.
     private Task? _currentBatch;
     private bool _isOperationRunning;
+    private bool _isItemScopedOperation;
     private string? _currentOperationLabel;
 
     public bool IsOperationRunning => _isOperationRunning;
+
+    public bool IsItemScopedOperation => _isItemScopedOperation;
 
     public string? CurrentOperationLabel => _currentOperationLabel;
 
@@ -56,10 +63,11 @@ public class TriggerService : ITriggerService, IDisposable
     public async Task TriggerCheckAsync()
     {
         _logger?.LogInformation("Triggering check via CimianWatcher");
+        _isItemScopedOperation = false;
         _currentOperationLabel = "Checking for updates...";
         try
         {
-            await WriteFlagFileAndWaitAsync("--checkonly --show-status -vv").ConfigureAwait(false);
+            await WriteFlagFileAndWaitAsync($"--checkonly --show-status -vv {StatusPortArg}").ConfigureAwait(false);
         }
         finally
         {
@@ -71,10 +79,11 @@ public class TriggerService : ITriggerService, IDisposable
     public async Task TriggerInstallAsync()
     {
         _logger?.LogInformation("Triggering install via CimianWatcher");
+        _isItemScopedOperation = false;
         _currentOperationLabel = "Installing pending updates...";
         try
         {
-            await WriteFlagFileAndWaitAsync("--installonly --show-status -vv").ConfigureAwait(false);
+            await WriteFlagFileAndWaitAsync($"--installonly --show-status -vv {StatusPortArg}").ConfigureAwait(false);
         }
         finally
         {
@@ -125,7 +134,8 @@ public class TriggerService : ITriggerService, IDisposable
                 foreach (var r in removalNames.Where(n => !string.IsNullOrWhiteSpace(n)))
                     _pendingRemovals.Add(r);
             }
-            var mergedArgs = BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder);
+            var mergedArgs = $"{BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder)} {StatusPortArg}";
+            _isItemScopedOperation = true;
             _currentOperationLabel = BuildOperationLabel(_pendingItemOrder, _pendingRemovals);
 
             if (_currentBatch != null && !_currentBatch.IsCompleted)
@@ -239,11 +249,55 @@ public class TriggerService : ITriggerService, IDisposable
         }
 
         // Consumed cleanly — pending state cleared so the next click starts a
-        // fresh batch. _isOperationRunning stays true; completion of the install
-        // is signaled by the InstallInfo.yaml FileSystemWatcher or the
-        // StatusReporter pipe, which is also responsible for flipping the
-        // overlay back to idle.
+        // fresh batch. Completion of the install is normally signaled by the
+        // InstallInfo.yaml FileSystemWatcher or the StatusReporter quit, which
+        // flips the overlay back to idle.
         await ClearBatchStateAsync().ConfigureAwait(false);
+
+        // Safety net: a run that ends WITHOUT rewriting InstallInfo or sending
+        // quit (e.g. an immediate parse/lock failure) would otherwise leave the
+        // GUI stuck showing "Stop" forever. Wait for the launched process to
+        // actually exit, then clear the running state ourselves.
+        await SignalOperationDoneOnProcessExitAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Waits for the managedsoftwareupdate process the watcher just launched to
+    /// exit, then clears <see cref="_isOperationRunning"/> and notifies — UNLESS a
+    /// follow-up batch has been queued in the meantime (a fresh flag or a new
+    /// in-flight batch), in which case that batch owns the running state. This is
+    /// the backstop for runs that never signal completion any other way; normal
+    /// runs pass through harmlessly after InstallInfoChanged already reset the UI.
+    /// </summary>
+    private async Task SignalOperationDoneOnProcessExitAsync()
+    {
+        // Give the freshly-consumed flag a moment to spawn the process.
+        var startWait = TimeSpan.Zero;
+        while (!IsUpdateProcessRunning() && startWait < TimeSpan.FromSeconds(5))
+        {
+            await Task.Delay(PollInterval).ConfigureAwait(false);
+            startWait += PollInterval;
+        }
+        // Then wait for it to finish. No fixed cap — a real install can take
+        // minutes; the process either exits or the user closes the app.
+        while (IsUpdateProcessRunning())
+        {
+            await Task.Delay(PollInterval).ConfigureAwait(false);
+        }
+
+        await _flagFileLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // A queued follow-up (new batch or pending flag) now owns the state.
+            if (_currentBatch != null || File.Exists(BootstrapFlagFile)) return;
+            if (!_isOperationRunning) return;
+            _isOperationRunning = false;
+        }
+        finally
+        {
+            _flagFileLock.Release();
+        }
+        RaiseOperationStatusChanged(false);
     }
 
     /// <summary>
