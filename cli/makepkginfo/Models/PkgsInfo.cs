@@ -132,6 +132,31 @@ public class PkgsInfo
 
     [YamlMember(Alias = "installer", Order = 25, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public Installer? Installer { get; set; }
+
+    [YamlMember(Alias = "unattended_uninstall", Order = 26, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
+    public bool UnattendedUninstall { get; set; }
+
+    /// <summary>
+    /// Opt-in unused-software removal (unused_software_removal_info).
+    /// </summary>
+    [YamlMember(Alias = "unused_software_removal_info", Order = 27, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
+}
+
+/// <summary>
+/// Unused-software removal opt-in (paths gate removal by recorded usage;
+/// minimum_history_days is a Cimian extension).
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    [YamlMember(Alias = "removal_days", DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public int? RemovalDays { get; set; }
+
+    [YamlMember(Alias = "paths", DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
+    public List<string>? Paths { get; set; }
+
+    [YamlMember(Alias = "minimum_history_days", DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public int? MinimumHistoryDays { get; set; }
 }
 
 /// <summary>

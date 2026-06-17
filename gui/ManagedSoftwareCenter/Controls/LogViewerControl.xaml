@@ -21,13 +21,11 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <TextBox x:Name="SearchBox"
-                     PlaceholderText="Filter log..."
-                     TextChanged="SearchBox_TextChanged"
-                     MaxWidth="300"
-                     HorizontalAlignment="Left"/>
-
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+                <TextBox x:Name="SearchBox"
+                         PlaceholderText="Filter log..."
+                         TextChanged="SearchBox_TextChanged"
+                         MaxWidth="300"/>
                 <CheckBox x:Name="ShowDebugToggle"
                           Content="Debug"
                           IsChecked="False"
@@ -35,6 +33,9 @@
                           VerticalAlignment="Center"
                           ToolTipService.ToolTip="Show DEBUG-level messages"
                           Click="ShowDebugToggle_Click"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
                 <ToggleButton x:Name="AutoScrollToggle"
                               IsChecked="True"
                               ToolTipService.ToolTip="Auto-scroll to bottom"

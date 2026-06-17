@@ -226,8 +226,32 @@ public partial class MetadataExtractor
             // to not emit a check we can't make pass than to ship an install
             // loop. Files with version metadata get the full file-version check;
             // unversioned binaries fall back to ARP-only verification.
-            foreach (var f in exes.Where(f => !string.IsNullOrWhiteSpace(f.Version))
-                                  .Take(ThirdPartyFileCheckCap))
+            var versionedExes = exes.Where(f => !string.IsNullOrWhiteSpace(f.Version)).ToList();
+
+            if (versionedExes.Count == 0)
+            {
+                // Wrapper MSI (e.g. Mozilla Firefox): the File table is EMPTY —
+                // the real installer is an embedded binary run by a custom
+                // action, so there is nothing to emit type=file checks from,
+                // and the product may not keep its Windows Installer
+                // registration (the in-app updater maintains a plain ARP entry
+                // instead). Emit an ARP DisplayName hint so the runtime can fall
+                // back to an Uninstall-hive lookup when the codes miss.
+                //
+                // Gate strictly on the File table being empty: an MSI that DOES
+                // lay down payload (just nothing versioned, or no .exe at all)
+                // is not a wrapper — it keeps its registration, the codes are
+                // sufficient, and a fuzzy ARP fallback would only mask a
+                // genuinely missing install. Those get no file checks and no
+                // display_name.
+                if (!MsiBomReader.HasInstalledFiles(db))
+                {
+                    metadata.ArpDisplayName = DeriveArpDisplayName(metadata.Title);
+                }
+                return;
+            }
+
+            foreach (var f in versionedExes.Take(ThirdPartyFileCheckCap))
             {
                 metadata.Installs.Add(new InstallItem
                 {
@@ -241,6 +265,30 @@ public partial class MetadataExtractor
         {
             // BOM read failure is non-fatal; ProductCode/UpgradeCode-only verification stands.
         }
+    }
+
+    /// <summary>
+    /// Derives an ARP DisplayName hint from an MSI ProductName by truncating at
+    /// the first version-shaped token. ProductNames of wrapper MSIs embed the
+    /// version and locale ("Mozilla Firefox 151.0.4 x64 en-US"), while the ARP
+    /// entry the product actually maintains carries a stable prefix
+    /// ("Mozilla Firefox (x64 en-US)") — the runtime's DisplayName lookup
+    /// matches on substring, so the prefix is the reliable part.
+    /// </summary>
+    public static string DeriveArpDisplayName(string productName)
+    {
+        if (string.IsNullOrWhiteSpace(productName))
+            return "";
+
+        var kept = new List<string>();
+        foreach (var token in productName.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(token, @"^v?\d+(\.\d+)+$"))
+                break;
+            kept.Add(token);
+        }
+
+        return kept.Count > 0 ? string.Join(' ', kept) : productName.Trim();
     }
 
     /// <summary>

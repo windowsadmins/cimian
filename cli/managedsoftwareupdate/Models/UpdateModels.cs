@@ -93,6 +93,29 @@ public class CimianConfig
     [YamlMember(Alias = "AutoRemove")]
     public bool AutoRemove { get; set; }
 
+    /// <summary>
+    /// Master switch for unused-software removal (unused_software_removal_info).
+    /// On by default — harmless fleet-wide because every package must still
+    /// opt in via pkginfo, and the pass only ever touches self-serve/optional
+    /// installs and orphans, never admin-manifested items.
+    /// </summary>
+    [YamlMember(Alias = "UsageStaleUninstallEnabled")]
+    public bool UsageStaleUninstallEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Global fallback for unused_software_removal_info.minimum_history_days when a package doesn't
+    /// set its own: refuse stale removal on devices with less usage history.
+    /// </summary>
+    [YamlMember(Alias = "UsageStaleUninstallMinimumHistoryDays")]
+    public int UsageStaleUninstallMinimumHistoryDays { get; set; } = 14;
+
+    /// <summary>
+    /// Skip the entire stale-usage pass when the usage source hasn't recorded
+    /// anything within this many days — idle telemetry must not drive removals.
+    /// </summary>
+    [YamlMember(Alias = "UsageStaleUninstallMaxSourceStalenessDays")]
+    public int UsageStaleUninstallMaxSourceStalenessDays { get; set; } = 7;
+
     // SSL client certificate authentication
     [YamlMember(Alias = "UseClientCertificate")]
     public bool UseClientCertificate { get; set; }
@@ -306,6 +329,14 @@ public class ManifestItem
     /// InstallInfo keep the optional record alongside the pending action record.
     /// </summary>
     public bool PromotedFromOptional { get; set; }
+
+    /// <summary>
+    /// True when this item's action was set by the user-writable
+    /// SelfServeManifest (install request or promoted optional). SourceManifest
+    /// keeps the server manifest that listed the item, so this flag is the only
+    /// way to tell user intent from admin intent after the merge.
+    /// </summary>
+    public bool IsSelfServe { get; set; }
     public string InstallerLocation { get; set; } = string.Empty;
     public List<string> SupportedArch { get; set; } = new();
     public List<string> ManagedInstalls { get; set; } = new();
@@ -407,6 +438,14 @@ public class CatalogItem
     [YamlMember(Alias = "force_install_after_date")]
     public DateTime? ForceInstallAfterDate { get; set; }
 
+    /// <summary>
+    /// Opt-in unused-software removal (unused_software_removal_info).
+    /// Requires UnattendedUninstall and an available usage data source.
+    /// Null disables the feature for this package.
+    /// </summary>
+    [YamlMember(Alias = "unused_software_removal_info")]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
+
     [YamlMember(Alias = "restart_action")]
     public string? RestartAction { get; set; }
 
@@ -446,6 +485,34 @@ public class CatalogItem
         || Installs.Any(i =>
             (i.EffectiveType() == "msix" || i.EffectiveType() == "appx")
             && !string.IsNullOrWhiteSpace(i.IdentityName)));
+}
+
+/// <summary>
+/// Unused-software removal opt-in. The dict carries removal_days plus the
+/// absolute executable paths whose recorded usage gates removal.
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    /// <summary>
+    /// Uninstall when none of the tracked executables have been used for
+    /// this many days. &lt;= 0 disables the feature for this package.
+    /// </summary>
+    [YamlMember(Alias = "removal_days")]
+    public int? RemovalDays { get; set; }
+
+    /// <summary>
+    /// Executable paths whose usage gates removal. When empty, the client
+    /// falls back to .exe entries in the installs array.
+    /// </summary>
+    [YamlMember(Alias = "paths")]
+    public List<string>? Paths { get; set; }
+
+    /// <summary>
+    /// Cimian extension: minimum days of usage history required on the device
+    /// before removal may act. Null defers to the global default.
+    /// </summary>
+    [YamlMember(Alias = "minimum_history_days")]
+    public int? MinimumHistoryDays { get; set; }
 }
 
 /// <summary>
@@ -536,6 +603,19 @@ public class InstallCheckItem
 
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
+
+    /// <summary>
+    /// ARP (Add/Remove Programs) DisplayName fallback for wrapper MSIs (empty
+    /// File table; payload installed by an embedded setup.exe, e.g. Mozilla
+    /// Firefox). Such products may not keep their Windows Installer
+    /// registration, so when the declared ProductCode/UpgradeCode lookups miss,
+    /// status checks and post-install verification fall back to a substring
+    /// match against Uninstall-hive DisplayNames. Opt-in per entry — emitted by
+    /// cimiimport only for wrapper-shaped MSIs, so codes stay authoritative for
+    /// normal MSIs (no fuzzy matching of unrelated products).
+    /// </summary>
+    [YamlMember(Alias = "display_name")]
+    public string? DisplayName { get; set; }
 
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name)</summary>
     [YamlMember(Alias = "identity_name")]

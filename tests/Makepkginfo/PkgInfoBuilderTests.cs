@@ -168,6 +168,51 @@ public class PkgInfoBuilderTests
     }
 
     [Fact]
+    public void BuildFromInstaller_EmitsUnattendedUninstall_AndUsageStaleFields()
+    {
+        // Pins the PkgsInfoOptions -> PkgsInfo wiring in BuildFromInstaller.
+        // --unattended_uninstall was historically parsed but silently dropped
+        // (the model had no property and BuildFromInstaller never assigned
+        // it), so this test guards the whole option set end to end: build
+        // from a real file, then assert the YAML keys actually appear.
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, "installer payload");
+
+            var options = new PkgsInfoOptions
+            {
+                Name = "StaleApp",
+                Version = "1.0",
+                Catalogs = new List<string> { "Testing" },
+                UnattendedInstall = true,
+                UnattendedUninstall = true,
+                UnusedRemovalDays = 30,
+                UnusedPaths = new List<string> { @"C:\Program Files\StaleApp\staleapp.exe" },
+                UnusedMinimumHistoryDays = 14,
+            };
+
+            var pkgsinfo = _builder.BuildFromInstaller(tempFile, options);
+
+            Assert.True(pkgsinfo.UnattendedUninstall);
+            Assert.Equal(30, pkgsinfo.UnusedSoftwareRemovalInfo?.RemovalDays);
+            Assert.Equal(options.UnusedPaths, pkgsinfo.UnusedSoftwareRemovalInfo?.Paths);
+            Assert.Equal(14, pkgsinfo.UnusedSoftwareRemovalInfo?.MinimumHistoryDays);
+
+            var yaml = _builder.SerializePkgsInfo(pkgsinfo);
+            Assert.Contains("unattended_uninstall: true", yaml);
+            Assert.Contains("unused_software_removal_info:", yaml);
+            Assert.Contains("removal_days: 30", yaml);
+            Assert.Contains("paths:", yaml);
+            Assert.Contains("minimum_history_days: 14", yaml);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void SerializePkgsInfo_ReturnsValidYaml()
     {
         var pkgsinfo = new PkgsInfo

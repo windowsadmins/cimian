@@ -163,80 +163,7 @@ public class ImportService
         var repoSubPath = await prompter.AskRepoSubdirAsync(defaultRepoSub, cancellationToken).ConfigureAwait(false);
 
         // Step 10: Build installs array
-        List<InstallItem> finalInstalls;
-        if (installsPaths.Count > 0)
-        {
-            finalInstalls = BuildInstallsArray(installsPaths, prompter);
-        }
-        else if (metadata.InstallerType == "exe")
-        {
-            var fallbackExe = $@"C:\Program Files\{pkgsInfo.Name}\{pkgsInfo.Name}.exe";
-            prompter.ReportInfo($"Using fallback .exe => {fallbackExe}");
-            finalInstalls =
-            [
-                new InstallItem
-                {
-                    Type = "file",
-                    Path = fallbackExe,
-                    Version = pkgsInfo.Version
-                }
-            ];
-        }
-        else if (metadata.InstallerType == "msix" && !string.IsNullOrEmpty(metadata.IdentityName))
-        {
-            // MSIX packages are detected via Get-AppxProvisionedPackage filtered by Identity.Name
-            prompter.ReportInfo($"Using MSIX identity => {metadata.IdentityName}");
-            finalInstalls =
-            [
-                new InstallItem
-                {
-                    Type = "msix",
-                    IdentityName = metadata.IdentityName,
-                    Version = pkgsInfo.Version
-                }
-            ];
-        }
-        else if (metadata.InstallerType == "msi"
-            && (!string.IsNullOrEmpty(metadata.ProductCode) || !string.IsNullOrEmpty(metadata.UpgradeCode)))
-        {
-            // MSI packages are verified by querying Windows Installer for the ProductCode
-            // (per-version) or UpgradeCode (stable). Without an installs[] entry of type=msi
-            // the runtime verifier emits "No installs array for X — cannot verify".
-            var productCode = string.IsNullOrEmpty(metadata.ProductCode) ? null : metadata.ProductCode.Trim();
-            var upgradeCode = string.IsNullOrEmpty(metadata.UpgradeCode) ? null : metadata.UpgradeCode.Trim();
-            var codeSummary = !string.IsNullOrEmpty(productCode)
-                ? (!string.IsNullOrEmpty(upgradeCode) ? $"ProductCode={productCode}, UpgradeCode={upgradeCode}" : $"ProductCode={productCode}")
-                : $"UpgradeCode={upgradeCode}";
-            prompter.ReportInfo($"Using MSI {codeSummary}");
-            // Version is intentionally omitted — StatusService falls back to the
-            // top-level pkginfo version when the installs entry has none, and the
-            // MSI's per-version identity is already the ProductCode.
-            //
-            // KeyPath is populated by ExtractMsiMetadata for cimipkg-built MSIs
-            // (either an explicit build-info override or the BOM heuristic pick).
-            // Third-party MSIs leave KeyPath empty here — those packages get up
-            // to 3 companion type=file entries appended further down via
-            // metadata.Installs (see PopulateMsiBom).
-            finalInstalls =
-            [
-                new InstallItem
-                {
-                    Type = "msi",
-                    ProductCode = productCode,
-                    UpgradeCode = upgradeCode,
-                    KeyPath = string.IsNullOrWhiteSpace(metadata.KeyPath) ? null : metadata.KeyPath
-                }
-            ];
-        }
-        else
-        {
-            finalInstalls = [];
-        }
-
-        if (metadata.Installs.Count > 0)
-        {
-            finalInstalls.AddRange(metadata.Installs);
-        }
+        var finalInstalls = BuildFinalInstallsArray(metadata, pkgsInfo.Name, pkgsInfo.Version, installsPaths, prompter);
         pkgsInfo.Installs = finalInstalls.Count > 0 ? finalInstalls : null;
 
         // Auto-generate an MSIX uninstaller entry when the importer didn't receive
@@ -571,6 +498,134 @@ public class ImportService
     }
 
     /// <summary>
+    /// Assembles the final auto-generated installs array for an installer:
+    /// explicit -i paths win; otherwise an installer-type-specific identity
+    /// entry (exe fallback path, MSIX identity, MSI ProductCode/UpgradeCode),
+    /// with any BOM-derived companion file checks from
+    /// <see cref="InstallerMetadata.Installs"/> (see
+    /// <see cref="MetadataExtractor"/> PopulateMsiBom) appended on top.
+    /// </summary>
+    public List<InstallItem> BuildFinalInstallsArray(
+        InstallerMetadata metadata,
+        string packageName,
+        string packageVersion,
+        List<string> installsPaths,
+        IImportPrompter prompter)
+    {
+        List<InstallItem> finalInstalls;
+        if (installsPaths.Count > 0)
+        {
+            finalInstalls = BuildInstallsArray(installsPaths, prompter);
+        }
+        else if (metadata.InstallerType == "exe")
+        {
+            var fallbackExe = $@"C:\Program Files\{packageName}\{packageName}.exe";
+            prompter.ReportInfo($"Using fallback .exe => {fallbackExe}");
+            finalInstalls =
+            [
+                new InstallItem
+                {
+                    Type = "file",
+                    Path = fallbackExe,
+                    Version = packageVersion
+                }
+            ];
+        }
+        else if (metadata.InstallerType == "msix" && !string.IsNullOrEmpty(metadata.IdentityName))
+        {
+            // MSIX packages are detected via Get-AppxProvisionedPackage filtered by Identity.Name
+            prompter.ReportInfo($"Using MSIX identity => {metadata.IdentityName}");
+            finalInstalls =
+            [
+                new InstallItem
+                {
+                    Type = "msix",
+                    IdentityName = metadata.IdentityName,
+                    Version = packageVersion
+                }
+            ];
+        }
+        else if (metadata.InstallerType == "msi"
+            && (!string.IsNullOrEmpty(metadata.ProductCode) || !string.IsNullOrEmpty(metadata.UpgradeCode)))
+        {
+            // MSI packages are verified by querying Windows Installer for the ProductCode
+            // (per-version) or UpgradeCode (stable). Without an installs[] entry of type=msi
+            // the runtime verifier emits "No installs array for X — cannot verify".
+            var productCode = string.IsNullOrEmpty(metadata.ProductCode) ? null : metadata.ProductCode.Trim();
+            var upgradeCode = string.IsNullOrEmpty(metadata.UpgradeCode) ? null : metadata.UpgradeCode.Trim();
+            var codeSummary = !string.IsNullOrEmpty(productCode)
+                ? (!string.IsNullOrEmpty(upgradeCode) ? $"ProductCode={productCode}, UpgradeCode={upgradeCode}" : $"ProductCode={productCode}")
+                : $"UpgradeCode={upgradeCode}";
+            prompter.ReportInfo($"Using MSI {codeSummary}");
+            // Version is intentionally omitted — StatusService falls back to the
+            // top-level pkginfo version when the installs entry has none, and the
+            // MSI's per-version identity is already the ProductCode.
+            //
+            // KeyPath is populated by ExtractMsiMetadata for cimipkg-built MSIs
+            // (either an explicit build-info override or the BOM heuristic pick).
+            // Third-party MSIs leave KeyPath empty here — those packages get up
+            // to 3 companion type=file entries appended further down via
+            // metadata.Installs (see PopulateMsiBom).
+            // DisplayName is the wrapper-MSI escape hatch: PopulateMsiBom sets
+            // ArpDisplayName only when the File table carries no payload, and
+            // the runtime falls back to an ARP DisplayName lookup when the
+            // declared codes miss (Firefox-style products that drop their
+            // Windows Installer registration after self-update).
+            finalInstalls =
+            [
+                new InstallItem
+                {
+                    Type = "msi",
+                    ProductCode = productCode,
+                    UpgradeCode = upgradeCode,
+                    DisplayName = string.IsNullOrWhiteSpace(metadata.ArpDisplayName) ? null : metadata.ArpDisplayName,
+                    KeyPath = string.IsNullOrWhiteSpace(metadata.KeyPath) ? null : metadata.KeyPath
+                }
+            ];
+        }
+        else
+        {
+            finalInstalls = [];
+        }
+
+        if (metadata.Installs.Count > 0)
+        {
+            finalInstalls.AddRange(metadata.Installs);
+        }
+        return finalInstalls;
+    }
+
+    /// <summary>
+    /// Implements <c>--emit-installs</c>: extracts installer metadata (including
+    /// the MSI bill-of-materials walk) and writes the auto-generated installs
+    /// array as YAML to stdout without importing anything. Status messages go to
+    /// stderr so stdout stays machine-parseable — autopkg's CimianInfoCreator
+    /// consumes this instead of reimplementing the generation logic.
+    /// </summary>
+    public bool EmitInstalls(string packagePath, ImportConfiguration config, List<string> installsPaths)
+    {
+        var prompter = new NoInteractivePrompter(Console.Error);
+        if (!File.Exists(packagePath))
+        {
+            prompter.ReportError($"Package '{packagePath}' does not exist");
+            return false;
+        }
+
+        var metadata = _metadataExtractor.ExtractMetadata(packagePath, config);
+        if (string.IsNullOrEmpty(metadata.ID))
+        {
+            metadata.ID = Path.GetFileNameWithoutExtension(packagePath);
+        }
+
+        var sanitizedName = MetadataExtractor.SanitizeName(metadata.ID);
+        var installs = BuildFinalInstallsArray(metadata, sanitizedName, metadata.Version, installsPaths, prompter);
+
+        var doc = new Dictionary<string, List<InstallItem>> { ["installs"] = installs };
+        Console.Write(YamlUtils.Serializer.Serialize(doc));
+        return true;
+    }
+
+    /// <summary>
     /// Builds installs array from file paths.
     /// </summary>
     private List<InstallItem> BuildInstallsArray(List<string> paths, IImportPrompter prompter)
@@ -764,19 +819,37 @@ public class ImportService
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            // Never block on a credential prompt — fail the pull instead.
+            psi.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+            psi.EnvironmentVariables["GCM_INTERACTIVE"] = "never";
 
             using var process = Process.Start(psi);
             if (process != null)
             {
-                process.WaitForExit();
+                // Drain both pipes concurrently — a redirected stream nobody
+                // reads deadlocks the child once its output fills the pipe
+                // buffer (git fetch progress alone is enough).
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+
+                if (!process.WaitForExit(120_000))
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { }
+                    Console.WriteLine("[WARN] Git pull timed out after 120s — continuing without pull");
+                    return;
+                }
+
                 if (process.ExitCode == 0)
                 {
                     Console.WriteLine("Git pull completed successfully");
                 }
                 else
                 {
-                    Console.WriteLine("[WARN] Git pull may have had issues");
+                    var detail = stderr.GetAwaiter().GetResult().Trim();
+                    if (detail.Length > 200) detail = detail[..200];
+                    Console.WriteLine($"[WARN] Git pull may have had issues{(detail.Length > 0 ? $": {detail}" : "")}");
                 }
+                _ = stdout.GetAwaiter().GetResult();
             }
         }
         catch (Exception ex)

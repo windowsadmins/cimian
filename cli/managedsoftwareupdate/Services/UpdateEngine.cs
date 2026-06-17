@@ -424,6 +424,29 @@ public class UpdateEngine : IDisposable
                 }
             }
 
+            // Stale-usage removal: queue uninstall for opted-in packages whose
+            // tracked executables nobody on the device has used within
+            // unused_software_removal_info. Peer of AutoRemove, not a
+            // dependency walker — and placed before the downstream filters so
+            // install_window / blocking_applications / unattended gating apply
+            // to these uninstalls the same as any other.
+            if (_config.UsageStaleUninstallEnabled)
+            {
+                // Resolved here rather than in the constructor: preflight can
+                // reload _config, and the source's lazy snapshot should reflect
+                // this run's on-disk data, not engine-construction time.
+                var usageSource = new ReportMateUsageDataSource();
+                // Anything already queued this run — including a pending update for a
+                // managed_updates item — defers stale evaluation to the next run.
+                var queuedThisRun = toUninstall.Concat(toInstall).Concat(toUpdate).ToList();
+                var staleUsageItems = await IdentifyStaleUsageItemsAsync(manifestItems, catalogMap, queuedThisRun, usageSource);
+                if (staleUsageItems.Count > 0)
+                {
+                    ConsoleLogger.Info($"StaleUsage: {staleUsageItems.Count} package(s) untouched past their threshold");
+                    toUninstall.AddRange(staleUsageItems);
+                }
+            }
+
             // Apply --item filter if specified (Go parity: pkg/filter)
             if (itemFilterService.HasFilter)
             {
@@ -1189,6 +1212,156 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
+    /// Identifies Cimian-installed packages eligible for stale-usage removal:
+    /// opted in via unused_software_removal_info, unattended-uninstallable,
+    /// and untouched by every user on the device past the threshold per the
+    /// usage data source. Candidates come from the ManagedInstalls registry,
+    /// scoped per <see cref="StaleUsageEvaluator.ClassifyScope"/>:
+    /// admin-manifested items are never touched; self-serve installs get their
+    /// subscription cleared (so the removal sticks and the item stays offered
+    /// in MSC), and unsubscribed optional items and orphans uninstall directly.
+    /// </summary>
+    private async Task<List<CatalogItem>> IdentifyStaleUsageItemsAsync(
+        List<ManifestItem> manifestItems,
+        Dictionary<string, CatalogItem> catalogMap,
+        List<CatalogItem> alreadyQueued,
+        IUsageDataSource usageSource)
+    {
+        var stale = new List<CatalogItem>();
+
+        if (!usageSource.IsAvailable)
+        {
+            ConsoleLogger.Info($"StaleUsage: usage source '{usageSource.SourceName}' unavailable - skipping pass");
+            return stale;
+        }
+
+        var freshness = usageSource.GetDataFreshnessDays();
+        if (freshness > _config.UsageStaleUninstallMaxSourceStalenessDays)
+        {
+            ConsoleLogger.Warn(
+                $"StaleUsage: usage data is {freshness} day(s) old (max {_config.UsageStaleUninstallMaxSourceStalenessDays}) - skipping pass");
+            return stale;
+        }
+
+        // manifestItems is already deduplicated, so one entry per name carries
+        // the winning action (and the IsSelfServe flag from the merge).
+        var manifestByName = new Dictionary<string, ManifestItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var mi in manifestItems)
+        {
+            if (!string.IsNullOrEmpty(mi.Name)) manifestByName.TryAdd(mi.Name, mi);
+        }
+        var queuedNames = new HashSet<string>(
+            alreadyQueued.Select(i => i.Name),
+            StringComparer.OrdinalIgnoreCase);
+
+        // One service for the whole pass: its YAML serializers and file lock are
+        // instance-scoped, so reusing a single instance both avoids rebuilding
+        // that state per item and keeps every subscription mutation behind one
+        // semaphore. Only constructed when the pass actually has work to do.
+        SelfServiceManifestService? selfServiceManifest = null;
+
+        try
+        {
+            using var managedKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\ManagedInstalls");
+            if (managedKey == null) return stale;
+
+            foreach (var name in managedKey.GetSubKeyNames())
+            {
+                if (queuedNames.Contains(name)) continue;
+
+                var scope = StaleUsageEvaluator.ClassifyScope(manifestByName.GetValueOrDefault(name));
+                if (scope == StaleUsageScope.Protected) continue;
+
+                if (!catalogMap.TryGetValue(name.ToLowerInvariant(), out var catalogItem)) continue;
+
+                var decision = StaleUsageEvaluator.Evaluate(
+                    catalogItem, usageSource, _config.UsageStaleUninstallMinimumHistoryDays);
+
+                switch (decision.Outcome)
+                {
+                    case StaleUsageOutcome.Stale:
+                        ConsoleLogger.Info(
+                            $"    -> StaleUsage: {catalogItem.Name} ({scope}) untouched {decision.DaysSinceLastUsed:F0} day(s) (threshold {decision.ThresholdDays}) - queuing uninstall");
+                        // "pending" (not a custom status) so NormalizeItemStatus maps it
+                        // for downstream consumers; the reason code marks it a removal.
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, "pending",
+                            $"untouched {decision.DaysSinceLastUsed:F0} day(s), threshold {decision.ThresholdDays}, source {usageSource.SourceName}, scope {scope}",
+                            StatusReasonCode.StaleUsageUninstall,
+                            DetectionMethod.ReportMateUsage,
+                            needsAction: true);
+
+                        // Self-serve and optional items must also drop any self-serve
+                        // subscription — same effect as the user clicking Remove in
+                        // MSC — or the next run's merge would reinstall the item.
+                        // ManagedUpdate items only get lingering install requests
+                        // cleared (no removal request: the admin's update policy
+                        // would veto-log it every run). Check-only must not mutate
+                        // state, so only report there.
+                        if (scope != StaleUsageScope.Orphan)
+                        {
+                            if (_checkOnly)
+                            {
+                                ConsoleLogger.Info($"    StaleUsage: would clear self-serve subscription for {catalogItem.Name} (check-only)");
+                            }
+                            else if (scope == StaleUsageScope.ManagedUpdate)
+                            {
+                                selfServiceManifest ??= new SelfServiceManifestService();
+                                await selfServiceManifest.RemoveRequestAsync(catalogItem.Name);
+                            }
+                            else
+                            {
+                                selfServiceManifest ??= new SelfServiceManifestService();
+                                await selfServiceManifest.AddRemovalRequestAsync(catalogItem.Name);
+                                ConsoleLogger.Info($"    StaleUsage: cleared self-serve subscription for {catalogItem.Name} (still available in MSC)");
+                            }
+                        }
+                        stale.Add(catalogItem);
+                        break;
+
+                    case StaleUsageOutcome.NoUsageData:
+                        ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} has no usage data - skipping (fail-safe)");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, "installed",
+                            "stale-usage check skipped: no usage data for any tracked executable",
+                            StatusReasonCode.StaleUsageSkippedNoData,
+                            DetectionMethod.ReportMateUsage);
+                        break;
+
+                    case StaleUsageOutcome.InsufficientHistory:
+                        ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} - insufficient usage history on device - skipping");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, "installed",
+                            $"stale-usage check skipped: device history {usageSource.GetHistoryDays()} day(s) below minimum",
+                            StatusReasonCode.StaleUsageSkippedInsufficientHistory,
+                            DetectionMethod.ReportMateUsage);
+                        break;
+
+                    case StaleUsageOutcome.RecentlyUsed:
+                        ConsoleLogger.Detail(
+                            $"    StaleUsage: {catalogItem.Name} used {decision.DaysSinceLastUsed:F0} day(s) ago (threshold {decision.ThresholdDays}) - keeping");
+                        break;
+
+                    case StaleUsageOutcome.NotUnattended:
+                    case StaleUsageOutcome.NotUninstallable:
+                    case StaleUsageOutcome.NoTrackedExecutables:
+                        ConsoleLogger.Detail($"    StaleUsage: {catalogItem.Name} skipped ({decision.Outcome})");
+                        break;
+
+                    // NotOptedIn is the overwhelmingly common case - stay silent.
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"StaleUsage: failed to enumerate ManagedInstalls registry: {ex.Message}");
+        }
+
+        return stale;
+    }
+
+    /// <summary>
     /// Expands the manifest's install/update list along both <c>requires</c> and
     /// <c>update_for</c> to the transitive closure, status-checks every dep, and
     /// promotes anything that needs action into the toUpdate list.
@@ -1736,8 +1909,18 @@ public class UpdateEngine : IDisposable
                 Cimian.Core.Models.DetectionMethod.None,
                 item.Version);
 
-            // Record successful install for loop guard tracking
-            _loopGuard?.RecordAttempt(item.Name, item.Version, success: true, ComputeCatalogFingerprint(item));
+            // Record successful install for loop guard tracking. When the postinstall
+            // self-reported a Warning via the CIMIAN-WARNING marker, this isn't a real
+            // install attempt for loop-detection purposes — the script ran successfully
+            // but the system is in a known-bad state awaiting external remediation
+            // (e.g. SecureBoot, BIOS password). Counting these would suppress packages
+            // whose only job is to keep flagging the unremediated state.
+            _loopGuard?.RecordAttempt(
+                item.Name,
+                item.Version,
+                success: true,
+                ComputeCatalogFingerprint(item),
+                selfReportedWarning: warningMessage != null);
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))

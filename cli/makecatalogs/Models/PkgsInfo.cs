@@ -128,6 +128,14 @@ public class PkgsInfo
     [YamlMember(Alias = "unattended_uninstall")]
     public bool UnattendedUninstall { get; set; }
 
+    /// <summary>
+    /// Opt-in unused-software removal (unused_software_removal_info).
+    /// Requires unattended_uninstall and usage data (ReportMate usagetracker).
+    /// Null disables the feature for this package.
+    /// </summary>
+    [YamlMember(Alias = "unused_software_removal_info")]
+    public UnusedSoftwareRemovalInfo? UnusedSoftwareRemovalInfo { get; set; }
+
     [YamlMember(Alias = "minimum_os_version")]
     public string? MinOSVersion { get; set; }
 
@@ -175,6 +183,22 @@ public class PkgsInfo
     /// </summary>
     [YamlIgnore]
     public string FilePath { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Unused-software removal opt-in (paths gate removal by recorded usage;
+/// minimum_history_days is a Cimian extension).
+/// </summary>
+public class UnusedSoftwareRemovalInfo
+{
+    [YamlMember(Alias = "removal_days")]
+    public int? RemovalDays { get; set; }
+
+    [YamlMember(Alias = "paths")]
+    public List<string>? Paths { get; set; }
+
+    [YamlMember(Alias = "minimum_history_days")]
+    public int? MinimumHistoryDays { get; set; }
 }
 
 /// <summary>

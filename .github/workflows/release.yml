@@ -130,6 +130,8 @@ jobs:
           "@
 
           $autoNotes = (gh api -X POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag --jq .body) -join "`n"
+          $autoNotes = ($autoNotes -join "`n") -replace ' by @[\w-]+ in ', ' in '
+          $autoNotes = ($autoNotes -split "`n" | Where-Object { $_ -notmatch '^#+ New Contributors' -and $_ -notmatch 'made their first contribution' }) -join "`n"
           $notes = "$buildInfo`n`n$autoNotes`n`n$signing"
 
           # Upload x64 assets before arm64 so the release page lists them in that order.
