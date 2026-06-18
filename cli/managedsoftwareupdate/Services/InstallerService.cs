@@ -1528,11 +1528,11 @@ try {{
         var target = !string.IsNullOrEmpty(item.DisplayName) ? item.DisplayName : item.Name;
         if (string.IsNullOrEmpty(target)) return null;
 
-        var bases = new[]
-        {
-            RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64),
-            RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32)
-        };
+        // `using` so the base-key handles are released on every exit path; left
+        // open these leak unmanaged registry handles across repeated removals.
+        using var base64 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var base32 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32);
+        var bases = new[] { base64, base32 };
         const string uninstallPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
 
         // Two passes: exact display-name match first, then contains.

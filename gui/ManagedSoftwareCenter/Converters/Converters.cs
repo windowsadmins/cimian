@@ -156,6 +156,13 @@ public class StringFormatConverter : IValueConverter
 /// </summary>
 public class ItemStageConverter : IValueConverter
 {
+    // Cached once: the "brush" facet is hit on every layout/scroll pass, so
+    // allocating a fresh SolidColorBrush per Convert call was needless GC churn.
+    private static readonly SolidColorBrush GreenBrush = new(Windows.UI.Color.FromArgb(255, 16, 124, 16));
+    private static readonly SolidColorBrush RedBrush = new(Windows.UI.Color.FromArgb(255, 209, 52, 56));
+    private static readonly SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 0, 120, 212));
+    private static readonly SolidColorBrush GrayBrush = new(Windows.UI.Color.FromArgb(255, 110, 110, 110));
+
     public object Convert(object value, Type targetType, object parameter, string language)
     {
         var stage = (value as string)?.ToLowerInvariant();
@@ -191,14 +198,14 @@ public class ItemStageConverter : IValueConverter
                 "failed" => "",                 // Cancel (X)
                 _ => string.Empty
             },
-            "brush" => new SolidColorBrush(stage switch
+            "brush" => stage switch
             {
-                "installed" or "removed" => Windows.UI.Color.FromArgb(255, 16, 124, 16),   // green
-                "failed" => Windows.UI.Color.FromArgb(255, 209, 52, 56),                   // red
-                "downloading" or "installing" or "removing" => Windows.UI.Color.FromArgb(255, 0, 120, 212), // accent blue
-                "downloaded" => Windows.UI.Color.FromArgb(255, 16, 124, 16),               // green
-                _ => Windows.UI.Color.FromArgb(255, 110, 110, 110)                         // gray (pending)
-            }),
+                "installed" or "removed" => GreenBrush,
+                "failed" => RedBrush,
+                "downloading" or "installing" or "removing" => AccentBrush,
+                "downloaded" => GreenBrush,
+                _ => GrayBrush                                                             // pending
+            },
             _ => string.Empty
         };
     }

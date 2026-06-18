@@ -288,7 +288,9 @@ function Invoke-MscInstallNow {
     if (-not $targets) { Write-Host "Nothing pending." -ForegroundColor DarkGray; return }
     Write-Host "`n[Install Now] $($targets -join ', ')" -ForegroundColor Cyan
 
-    $a = @(); foreach ($t in $targets) { $a += '--item'; $a += $t }
+    # Single --item flag followed by all values. The engine's --item is a sequence
+    # option; repeating the flag ('--item A --item B') exits 1 ("defined multiple times").
+    $a = @('--item') + $targets
     $a += '--no-preflight','-vv'
     if (-not $Apply) { $a += '--checkonly' }
 

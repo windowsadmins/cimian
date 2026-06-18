@@ -129,6 +129,22 @@ public partial class UpdatesViewModel : ObservableObject
     /// </summary>
     private async void OnProgressReceived(object? sender, ProgressMessage message)
     {
+        // async void fed by external input over the progress channel: an unhandled
+        // exception after an await would crash the process. Catch, log, and ignore
+        // so a malformed/unexpected message can never take the app down.
+        try
+        {
+            await HandleProgressReceivedAsync(message);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[UpdatesViewModel] OnProgressReceived failed for '{message?.ItemName}': {ex}");
+        }
+    }
+
+    private async Task HandleProgressReceivedAsync(ProgressMessage message)
+    {
         if (message.Type != ProgressMessageType.ItemStatus) return;
         if (string.IsNullOrEmpty(message.ItemName)) return;
 
