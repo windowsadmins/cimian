@@ -60,14 +60,18 @@ public class LoopGuard
 
     private LoopGuardState _state;
     private readonly bool _isBootstrap;
+    private readonly bool _disabled;
 
     /// <summary>
-    /// Creates a new LoopGuard. If isBootstrap is true, suppression is disabled
-    /// to avoid blocking first-run provisioning.
+    /// Creates a new LoopGuard.
+    /// If isBootstrap is true, suppression is disabled to avoid blocking first-run provisioning.
+    /// If disabled is true, suppression is turned off entirely — the admin-facing global
+    /// kill-switch, driven by the LoopGuardEnabled config setting.
     /// </summary>
-    public LoopGuard(bool isBootstrap = false)
+    public LoopGuard(bool isBootstrap = false, bool disabled = false)
     {
         _isBootstrap = isBootstrap;
+        _disabled = disabled;
         _state = LoadState();
         BuildHistoryFromEvents();
     }
@@ -75,9 +79,10 @@ public class LoopGuard
     /// <summary>
     /// For unit testing — constructor that takes custom paths.
     /// </summary>
-    internal LoopGuard(string statePath, string logsDir, bool isBootstrap = false, string? cacheDir = null)
+    internal LoopGuard(string statePath, string logsDir, bool isBootstrap = false, string? cacheDir = null, bool disabled = false)
     {
         _isBootstrap = isBootstrap;
+        _disabled = disabled;
         StatePath_Override = statePath;
         LogsDir_Override = logsDir;
         CacheDir_Override = cacheDir;
@@ -125,6 +130,10 @@ public class LoopGuard
     {
         // Never suppress during bootstrap — first-run provisioning must complete
         if (_isBootstrap)
+            return (false, "");
+
+        // Globally disabled by config (LoopGuardEnabled: false) — admin opted out entirely
+        if (_disabled)
             return (false, "");
 
         if (string.IsNullOrEmpty(packageName))
