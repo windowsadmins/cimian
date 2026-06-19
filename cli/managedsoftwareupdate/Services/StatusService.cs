@@ -107,6 +107,22 @@ public class StatusService
                 // Otherwise fall through to normal checks
             }
 
+            // Priority 0: OnDemand items are never considered installed. They always
+            // (re)install and are never recorded in the receipts store. This check
+            // deliberately precedes installcheck_script: an OnDemand item always needs
+            // action, so its installcheck_script is not consulted here.
+            if (item.OnDemand)
+            {
+                ConsoleLogger.Info($"OnDemand item - always treated as not installed item: {item.Name}");
+                result.Status = "pending";
+                result.NeedsAction = true;
+                result.IsUpdate = false;
+                result.Reason = "OnDemand item — always (re)installed, never tracked as installed";
+                result.ReasonCode = StatusReasonCode.OnDemand;
+                result.DetectionMethod = DetectionMethod.None;
+                return result;
+            }
+
             // Priority 1: Check installcheck_script if defined (Go parity - runs before anything else)
             if (!string.IsNullOrEmpty(item.InstallcheckScript))
             {
