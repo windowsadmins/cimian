@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using YamlDotNet.Serialization;
@@ -55,23 +56,13 @@ public class ManifestService
     public async Task<List<ManifestItem>> GetManifestItemsAsync()
     {
         var items = new List<ManifestItem>();
-        var processedManifests = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var manifestResults = new Dictionary<string, ManifestFetchResult>(StringComparer.OrdinalIgnoreCase);
         var pendingConditionals = new List<(List<ConditionalItem> Items, string SourceManifest)>();
 
-        // Start with the client identifier manifest
-        // If UseClientCertificateCNAsClientIdentifier is set, use the certificate CN
-        var clientIdentifier = CimianHttpClientFactory.GetClientCertificateCN(_config);
-        if (string.IsNullOrEmpty(clientIdentifier))
-        {
-            clientIdentifier = _config.ClientIdentifier;
-        }
-        if (string.IsNullOrEmpty(clientIdentifier))
-        {
-            clientIdentifier = Environment.MachineName;
-        }
-
-        // PASS 1: Process all manifests, collecting catalogs and deferring conditional items
-        await ProcessManifestAsync(clientIdentifier, items, processedManifests, pendingConditionals);
+        // PASS 1: Resolve and process the primary manifest, walking a 404 fallback
+        // chain (configured identifier -> hostname -> serial -> Orphaned ->
+        // site_default), collecting catalogs and deferring conditional items.
+        await ResolvePrimaryManifestAsync(items, manifestResults, pendingConditionals);
 
         // Log collected catalogs before processing conditionals
         ConsoleLogger.Info($"    Collected catalogs for conditional evaluation: [{string.Join(", ", _config.Catalogs)}]");
@@ -99,10 +90,12 @@ public class ManifestService
     public async Task<List<ManifestItem>> LoadSpecificManifestAsync(string manifestName)
     {
         var items = new List<ManifestItem>();
-        var processedManifests = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var manifestResults = new Dictionary<string, ManifestFetchResult>(StringComparer.OrdinalIgnoreCase);
         var pendingConditionals = new List<(List<ConditionalItem> Items, string SourceManifest)>();
 
-        await ProcessManifestAsync(manifestName, items, processedManifests, pendingConditionals);
+        // Explicitly-requested manifest: a 404 should stay visible (quiet404: false),
+        // unchanged from the pre-fallback-chain behavior.
+        await ProcessManifestAsync(manifestName, items, manifestResults, pendingConditionals, quiet404: false);
         
         // Process deferred conditional items
         foreach (var (conditionalItems, sourceManifest) in pendingConditionals)
@@ -130,19 +123,139 @@ public class ManifestService
         return ConvertToManifestItems(manifest, Path.GetFileNameWithoutExtension(manifestPath));
     }
 
-    private async Task ProcessManifestAsync(
-        string manifestName,
+    /// <summary>
+    /// Outcome of a single manifest fetch, used to drive the primary-manifest
+    /// fallback chain. Only NotFound (HTTP 404) advances to the next candidate;
+    /// Error (auth/5xx/network) aborts so a transient failure is never masked by
+    /// silently degrading to a catch-all manifest.
+    /// </summary>
+    private enum ManifestFetchResult { Ok, NotFound, Error }
+
+    /// <summary>
+    /// Resolves the primary manifest by walking an ordered candidate chain and
+    /// processing the first one the server returns:
+    ///   configured identifier (cert CN &gt; ClientIdentifier &gt; hostname)
+    ///   -&gt; serial number -&gt; Orphaned -&gt; site_default
+    /// Only an HTTP 404 advances to the next candidate. A non-404 failure
+    /// (auth, 5xx, network) aborts resolution immediately rather than degrading
+    /// to a catch-all, so genuine server problems stay visible.
+    /// </summary>
+    private async Task ResolvePrimaryManifestAsync(
         List<ManifestItem> items,
-        HashSet<string> processedManifests,
+        Dictionary<string, ManifestFetchResult> manifestResults,
         List<(List<ConditionalItem> Items, string SourceManifest)> pendingConditionals)
     {
-        // Avoid infinite loops from circular includes
-        if (processedManifests.Contains(manifestName))
+        // Candidate kind drives log severity: a 404 on an explicitly configured
+        // identifier is noteworthy (warn); a 404 on an opportunistic probe or a
+        // catch-all is routine (detail).
+        const string Configured = "configured";
+        const string Probe = "probe";
+        const string CatchAll = "catch-all";
+
+        // Candidate names are resolved lazily so an expensive lookup (the serial
+        // number, which queries WMI) only runs once the chain actually reaches it.
+        // When the configured identifier resolves on the first try, or the chain
+        // aborts on a non-404, the WMI query is never issued.
+        var candidates = new List<(Func<string?> Resolve, string Kind)>
         {
-            ConsoleLogger.Debug($"Skipping already-processed manifest: {manifestName}");
-            return;
+            // Configured identity: certificate CN takes precedence over the explicit
+            // ClientIdentifier, preserving the prior single-identifier selection.
+            (() => CimianHttpClientFactory.GetClientCertificateCN(_config), Configured),
+            (() => _config.ClientIdentifier, Configured),
+            // Opportunistic probes.
+            (() => Environment.MachineName, Probe),
+            (GetSerialNumber, Probe),
+            // Catch-all manifests of last resort.
+            (() => "Orphaned", CatchAll),
+            (() => "site_default", CatchAll),
+        };
+
+        var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var triedNames = new List<string>();
+        var resolvedAny = false;
+
+        foreach (var (resolve, kind) in candidates)
+        {
+            var name = resolve()?.Trim();
+            // Skip blanks and de-duplicate candidates that resolve to the same name.
+            if (string.IsNullOrWhiteSpace(name) || !tried.Add(name))
+                continue;
+            triedNames.Add(name);
+
+            var result = await ProcessManifestAsync(name, items, manifestResults, pendingConditionals, quiet404: true);
+
+            if (result == ManifestFetchResult.Ok)
+            {
+                if (resolvedAny)
+                {
+                    ConsoleLogger.Warn($"    Primary manifest resolved via fallback '{name}' ({kind}); " +
+                        "device is running on a fallback/catch-all configuration.");
+                }
+                return;
+            }
+
+            if (result == ManifestFetchResult.Error)
+            {
+                // Non-404 failure already logged in ProcessManifestAsync. Abort the
+                // chain so a transient server error is not mistaken for "no manifest".
+                ConsoleLogger.Error($"    Aborting primary manifest resolution at '{name}' due to a non-404 error; not falling through to catch-all.");
+                return;
+            }
+
+            // NotFound: advance to the next candidate.
+            resolvedAny = true;
+            if (kind == Configured)
+                ConsoleLogger.Warn($"    Configured manifest '{name}' returned 404; trying next fallback candidate.");
+            else
+                ConsoleLogger.Detail($"    Manifest '{name}' ({kind}) returned 404; trying next fallback candidate.");
         }
-        processedManifests.Add(manifestName);
+
+        ConsoleLogger.Warn($"    No primary manifest could be resolved from candidates: [{string.Join(", ", triedNames)}]. Device will have no managed items this run.");
+    }
+
+    /// <summary>
+    /// Reads the hardware serial number from the system BIOS for use as a
+    /// manifest fallback identifier. Returns null if it cannot be determined.
+    /// </summary>
+    private static string? GetSerialNumber()
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher("SELECT SerialNumber FROM Win32_BIOS");
+            foreach (var obj in searcher.Get())
+            {
+                var serial = obj["SerialNumber"]?.ToString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(serial))
+                    return serial;
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"Serial number lookup for manifest fallback failed: {ex.Message}");
+        }
+        return null;
+    }
+
+    private async Task<ManifestFetchResult> ProcessManifestAsync(
+        string manifestName,
+        List<ManifestItem> items,
+        Dictionary<string, ManifestFetchResult> manifestResults,
+        List<(List<ConditionalItem> Items, string SourceManifest)> pendingConditionals,
+        bool quiet404 = false)
+    {
+        // If we've already handled this manifest this run, return its actual prior
+        // outcome rather than a blanket Ok — a manifest that previously 404'd or
+        // errored must not be reported as successfully processed when referenced
+        // again (e.g. as an include of a later catch-all). A tentative Ok is seeded
+        // before the fetch below so circular includes still terminate.
+        if (manifestResults.TryGetValue(manifestName, out var priorResult))
+        {
+            ConsoleLogger.Debug($"Skipping already-processed manifest: {manifestName} (prior result: {priorResult})");
+            return priorResult;
+        }
+        // Seed a tentative Ok so a circular include resolves to Ok and recursion stops;
+        // overwritten with the real result at each return path below.
+        manifestResults[manifestName] = ManifestFetchResult.Ok;
         ConsoleLogger.Debug($"Processing manifest originalName: {manifestName} processedName: {manifestName}.yaml");
 
         // Try to download the manifest
@@ -203,8 +316,10 @@ public class ManifestService
                             ConsoleLogger.Debug($"Processing included manifest: {includeName}");
                             
                             // Include paths are relative or absolute manifest references
-                            // They should be passed as-is to ProcessManifestAsync
-                            await ProcessManifestAsync(includeName, items, processedManifests, pendingConditionals);
+                            // They should be passed as-is to ProcessManifestAsync. A 404 on
+                            // an include stays visible (quiet404: false) — only the primary
+                            // fallback chain probes quietly.
+                            await ProcessManifestAsync(includeName, items, manifestResults, pendingConditionals);
                         }
                     }
 
@@ -232,15 +347,35 @@ public class ManifestService
                         pendingConditionals.Add((manifest.ConditionalItems, manifestName));
                     }
                 }
+
+                manifestResults[manifestName] = ManifestFetchResult.Ok;
+                return ManifestFetchResult.Ok;
             }
-            else
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                ConsoleLogger.Warn($"Failed to download manifest {manifestName}: {response.StatusCode}");
+                // 404 is the only status that advances the primary-manifest fallback chain.
+                // Quiet (Debug) for primary-candidate probes; visible (Warn) for includes
+                // and explicit LoadSpecificManifestAsync, matching pre-fallback behavior.
+                if (quiet404)
+                    ConsoleLogger.Debug($"Manifest not found (404): {manifestName}");
+                else
+                    ConsoleLogger.Warn($"Manifest not found (404): {manifestName}");
+                manifestResults[manifestName] = ManifestFetchResult.NotFound;
+                return ManifestFetchResult.NotFound;
             }
+
+            // Non-404 (auth, 5xx, etc.): surface rather than treating it as missing.
+            ConsoleLogger.Warn($"Failed to download manifest {manifestName}: {response.StatusCode}");
+            manifestResults[manifestName] = ManifestFetchResult.Error;
+            return ManifestFetchResult.Error;
         }
         catch (Exception ex)
         {
+            // Network/transport failure: surface, do not mask by falling back.
             ConsoleLogger.Warn($"Error processing manifest {manifestName}: {ex.Message}");
+            manifestResults[manifestName] = ManifestFetchResult.Error;
+            return ManifestFetchResult.Error;
         }
     }
 
