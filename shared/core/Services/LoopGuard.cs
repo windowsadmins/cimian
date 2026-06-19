@@ -60,14 +60,18 @@ public class LoopGuard
 
     private LoopGuardState _state;
     private readonly bool _isBootstrap;
+    private readonly bool _disabled;
 
     /// <summary>
-    /// Creates a new LoopGuard. If isBootstrap is true, suppression is disabled
-    /// to avoid blocking first-run provisioning.
+    /// Creates a new LoopGuard.
+    /// If isBootstrap is true, suppression is disabled to avoid blocking first-run provisioning.
+    /// If disabled is true, suppression is turned off entirely — the admin-facing global
+    /// kill-switch, driven by the LoopGuardEnabled config setting.
     /// </summary>
-    public LoopGuard(bool isBootstrap = false)
+    public LoopGuard(bool isBootstrap = false, bool disabled = false)
     {
         _isBootstrap = isBootstrap;
+        _disabled = disabled;
         _state = LoadState();
         BuildHistoryFromEvents();
     }
@@ -75,9 +79,10 @@ public class LoopGuard
     /// <summary>
     /// For unit testing — constructor that takes custom paths.
     /// </summary>
-    internal LoopGuard(string statePath, string logsDir, bool isBootstrap = false, string? cacheDir = null)
+    internal LoopGuard(string statePath, string logsDir, bool isBootstrap = false, string? cacheDir = null, bool disabled = false)
     {
         _isBootstrap = isBootstrap;
+        _disabled = disabled;
         StatePath_Override = statePath;
         LogsDir_Override = logsDir;
         CacheDir_Override = cacheDir;
@@ -125,6 +130,10 @@ public class LoopGuard
     {
         // Never suppress during bootstrap — first-run provisioning must complete
         if (_isBootstrap)
+            return (false, "");
+
+        // Globally disabled by config (LoopGuardEnabled: false) — admin opted out entirely
+        if (_disabled)
             return (false, "");
 
         if (string.IsNullOrEmpty(packageName))
@@ -217,6 +226,16 @@ public class LoopGuard
     public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null, bool selfReportedWarning = false)
     {
         if (string.IsNullOrEmpty(packageName))
+            return;
+
+        // Globally disabled by config (LoopGuardEnabled: false): don't accumulate any
+        // suppression state. ShouldSuppress already short-circuits, but we also skip
+        // recording so the kill-switch is honest — re-enabling LoopGuard later behaves
+        // as if no loop history exists rather than instantly suppressing packages based
+        // on attempts logged during the disabled window. Passive loop reporting is
+        // unaffected: install_loop_detected in items.json is derived from the structured
+        // event history (DataExporter), not from this guard's internal state.
+        if (_disabled)
             return;
 
         // Self-reported warnings are not install attempts for loop-detection purposes.
