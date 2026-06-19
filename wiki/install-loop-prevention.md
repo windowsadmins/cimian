@@ -73,7 +73,7 @@ Admins who want loop suppression off fleet-wide can set it in `config.yaml`:
 LoopGuardEnabled: false
 ```
 
-Default is `true`. When set to `false`, LoopGuard never suppresses any package and ignores any persisted backoff state — every run behaves as if no loop history exists. The setting is read on each run by `UpdateEngine`, which logs `LoopGuard disabled by config (LoopGuardEnabled: false)` at startup so it's visible in the session log. Passive loop detection (the `install_loop_detected` flag in `items.json` for dashboards) is **not** affected — reporting still flags loops even when active suppression is off.
+Default is `true`. When set to `false`, LoopGuard never suppresses any package and ignores any persisted backoff state — every run behaves as if no loop history exists, and no new backoff state is formed while disabled (so re-enabling later won't instantly suppress packages based on attempts logged during the disabled window). The setting is read on each run by `UpdateEngine`, which logs a `LoopGuard disabled by config` notice near the start of the run; the message is written to the session log (`run.log`) and is shown on the console at `-v` or higher. Passive loop detection (the `install_loop_detected` flag in `items.json` for dashboards) is **not** affected — reporting still flags loops even when active suppression is off.
 
 Confirm the effective value with:
 

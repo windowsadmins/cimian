@@ -228,6 +228,16 @@ public class LoopGuard
         if (string.IsNullOrEmpty(packageName))
             return;
 
+        // Globally disabled by config (LoopGuardEnabled: false): don't accumulate any
+        // suppression state. ShouldSuppress already short-circuits, but we also skip
+        // recording so the kill-switch is honest — re-enabling LoopGuard later behaves
+        // as if no loop history exists rather than instantly suppressing packages based
+        // on attempts logged during the disabled window. Passive loop reporting is
+        // unaffected: install_loop_detected in items.json is derived from the structured
+        // event history (DataExporter), not from this guard's internal state.
+        if (_disabled)
+            return;
+
         // Self-reported warnings are not install attempts for loop-detection purposes.
         // Skip counter updates entirely so the per-version count and rapid-fire window
         // are not polluted by intentional soft-fails. See remarks above.
