@@ -121,6 +121,100 @@ public static class VersionService
     }
 
     /// <summary>
+    /// Build number at which the Windows kernel began shipping as Windows 11.
+    /// Windows 11 kept the 10.0 major.minor of Windows 10 and is distinguished
+    /// only by build number, so Environment.OSVersion reports it as "10.0.22000+".
+    /// </summary>
+    private const long Windows11MinimumBuild = 22000;
+
+    /// <summary>
+    /// Compares a running Windows OS version against a minimum/maximum requirement
+    /// with awareness that Windows 11 reports a "10.0.&lt;build&gt;" kernel version.
+    /// Package authors write the marketing version ("11" / "11.0") in
+    /// minimum_os_version / maximum_os_version, so a literal numeric compare against
+    /// the running "10.0.26200" would wrongly reject Windows 11.
+    ///
+    /// When the requirement is a bare marketing major ("10" or "11"), the comparison
+    /// is by Windows generation only, so any Windows 11 build satisfies an "11" floor
+    /// or ceiling (and any Windows 10 build satisfies a "10" one). When the requirement
+    /// pins a build (e.g. "10.0.22631"), versions are compared numerically.
+    ///
+    /// Returns: -1 if current is older than required, 0 if equivalent, 1 if newer.
+    /// </summary>
+    public static int CompareOsVersion(string? current, string? requirement)
+    {
+        if (string.IsNullOrWhiteSpace(current) && string.IsNullOrWhiteSpace(requirement))
+            return 0;
+        if (string.IsNullOrWhiteSpace(current))
+            return -1;
+        if (string.IsNullOrWhiteSpace(requirement))
+            return 1;
+
+        // Bare marketing major ("10" / "11"): compare by Windows generation only.
+        if (TryGetMarketingMajor(Normalize(requirement), out var requiredGen))
+        {
+            return WindowsGenerationOf(current).CompareTo(requiredGen);
+        }
+
+        // Build-pinned requirement: compare numerically, but first fold any
+        // marketing "11.x.<build>" form (the example cimiimport prints for
+        // --maximum_os_version, e.g. "11.0.22000") into the "10.0.<build>"
+        // kernel version Windows actually reports — otherwise a build-pinned
+        // Win 11 value would compare as newer than the running "10.0.<build>".
+        return CompareVersions(ToKernelWindowsVersion(current), ToKernelWindowsVersion(requirement));
+    }
+
+    /// <summary>
+    /// Folds a marketing Windows 11 version ("11.x.&lt;build&gt;") into the kernel
+    /// version Windows reports ("10.0.&lt;build&gt;"). Windows 11 kept the 10.0
+    /// major.minor and differs only by build, so the build tail is preserved.
+    /// Versions that don't lead with a "11" major pass through unchanged.
+    /// </summary>
+    private static string ToKernelWindowsVersion(string version)
+    {
+        var parts = version.Trim().Split('.');
+        if (parts.Length >= 2 && parts[0] == "11")
+        {
+            // Keep everything after major.minor (the build[.revision] tail).
+            var tail = parts.Skip(2).ToArray();
+            return tail.Length > 0 ? $"10.0.{string.Join('.', tail)}" : "10.0";
+        }
+        return version;
+    }
+
+    /// <summary>
+    /// True when a normalized version is a bare Windows marketing major ("10" or "11"),
+    /// i.e. has no build segment that would pin it to a specific release.
+    /// </summary>
+    private static bool TryGetMarketingMajor(string normalized, out int major)
+    {
+        major = 0;
+        var parts = normalized.Split('.');
+        if (parts.Length == 1 && int.TryParse(parts[0], out var m) && (m == 10 || m == 11))
+        {
+            major = m;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Maps a running Windows version (e.g. "10.0.26200.0") to its marketing
+    /// generation: build >= 22000 is Windows 11, otherwise Windows 10.
+    /// </summary>
+    private static int WindowsGenerationOf(string version)
+    {
+        var parts = Normalize(version).Split('.');
+        // Build number lives in the third segment of major.minor.build[.revision].
+        if (parts.Length >= 3 && long.TryParse(parts[2], out var build))
+        {
+            return build >= Windows11MinimumBuild ? 11 : 10;
+        }
+        // No build present: fall back to the literal major.
+        return long.TryParse(parts[0], out var major) ? (int)major : 0;
+    }
+
+    /// <summary>
     /// Normalizes a version string by trimming trailing ".0" segments.
     /// Migrated from Go: pkg/version/version.go Normalize()
     /// </summary>
