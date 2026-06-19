@@ -32,9 +32,9 @@ public class LoopGuardTests : IDisposable
         catch { /* cleanup best-effort */ }
     }
 
-    private LoopGuard CreateGuard(bool isBootstrap = false)
+    private LoopGuard CreateGuard(bool isBootstrap = false, bool disabled = false)
     {
-        return new LoopGuard(_statePath, _logsDir, isBootstrap, _cacheDir);
+        return new LoopGuard(_statePath, _logsDir, isBootstrap, _cacheDir, disabled);
     }
 
     #region Basic Behavior
@@ -98,6 +98,58 @@ public class LoopGuardTests : IDisposable
         // Even with 3 attempts, bootstrap mode should never suppress
         var (suppress, _) = guard.ShouldSuppress("LoopPkg", "1.0.0");
         suppress.Should().BeFalse();
+    }
+
+    #endregion
+
+    #region Globally Disabled (LoopGuardEnabled: false)
+
+    [Fact]
+    public void Disabled_NeverSuppresses()
+    {
+        var guard = CreateGuard(disabled: true);
+
+        // Simulate a package that would normally trip rapid-fire suppression
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+
+        // With LoopGuard globally disabled, suppression is off entirely
+        var (suppress, reason) = guard.ShouldSuppress("LoopPkg", "1.0.0");
+        suppress.Should().BeFalse();
+        reason.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Disabled_IgnoresExistingSuppressionState()
+    {
+        // First, a guard that actually suppresses the package and persists state.
+        var enforcing = CreateGuard();
+        enforcing.RecordAttempt("StuckPkg", "1.0.0", true);
+        enforcing.RecordAttempt("StuckPkg", "1.0.0", true);
+        enforcing.RecordAttempt("StuckPkg", "1.0.0", true);
+        enforcing.ShouldSuppress("StuckPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        // A disabled guard loading the same state must not act on it.
+        var disabled = CreateGuard(disabled: true);
+        disabled.ShouldSuppress("StuckPkg", "1.0.0").Suppress.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Disabled_DoesNotAccumulateSuppressionState()
+    {
+        // Record enough attempts to normally trip rapid-fire suppression, but while
+        // globally disabled — no suppression state should be persisted.
+        var disabled = CreateGuard(disabled: true);
+        disabled.RecordAttempt("LaterPkg", "1.0.0", true);
+        disabled.RecordAttempt("LaterPkg", "1.0.0", true);
+        disabled.RecordAttempt("LaterPkg", "1.0.0", true);
+
+        // Re-enable LoopGuard (fresh guard loading the same state file). Because
+        // nothing was recorded while disabled, it behaves as if no loop history
+        // exists and does not instantly suppress the package.
+        var reEnabled = CreateGuard();
+        reEnabled.ShouldSuppress("LaterPkg", "1.0.0").Suppress.Should().BeFalse();
     }
 
     #endregion
