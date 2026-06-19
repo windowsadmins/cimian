@@ -264,7 +264,15 @@ public class ImportService
         pkgsInfo.Metadata ??= new Dictionary<string, object?>();
         if (IsBlankMetadata(pkgsInfo.Metadata, "created_by"))
         {
-            pkgsInfo.Metadata["created_by"] = LocalUserName();
+            // Only stamp when we actually resolved a name. In an unusual host
+            // (service / CI with no USERPROFILE and an empty Environment.UserName)
+            // leave created_by absent rather than persist a blank string, so the
+            // prod-checks "missing metadata" backfill can still fill it later.
+            var localUser = LocalUserName();
+            if (!string.IsNullOrWhiteSpace(localUser))
+            {
+                pkgsInfo.Metadata["created_by"] = localUser;
+            }
         }
         if (IsBlankMetadata(pkgsInfo.Metadata, "creation_date"))
         {
