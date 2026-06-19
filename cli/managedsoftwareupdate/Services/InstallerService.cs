@@ -523,6 +523,12 @@ public class InstallerService
     {
         try
         {
+            if (item.OnDemand)
+            {
+                RemoveManagedInstallReceipt(item);
+                return;
+            }
+
             using var key = Registry.LocalMachine.CreateSubKey($@"SOFTWARE\ManagedInstalls\{item.Name}");
             if (key == null) return;
 
@@ -1874,6 +1880,12 @@ exit 0
     {
         try
         {
+            if (item.OnDemand)
+            {
+                RemoveManagedInstallReceipt(item);
+                return;
+            }
+
             using var key = Registry.LocalMachine.CreateSubKey(
                 $@"SOFTWARE\ManagedInstalls\{item.Name}");
 
@@ -1916,6 +1928,30 @@ exit 0
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"Failed to unregister installation: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Removes any ManagedInstalls receipt for an OnDemand item. OnDemand items are
+    /// never tracked as installed, so after a (re)install we drop the receipt instead
+    /// of writing one. This also self-heals stale receipts written by older clients
+    /// that ignored the OnDemand field and recorded the item as installed.
+    /// </summary>
+    private void RemoveManagedInstallReceipt(CatalogItem item)
+    {
+        try
+        {
+            Registry.LocalMachine.DeleteSubKey(
+                $@"SOFTWARE\ManagedInstalls\{item.Name}", false);
+            ConsoleLogger.Debug($"OnDemand item '{item.Name}' - not recording ManagedInstalls receipt");
+        }
+        catch (Exception ex)
+        {
+            // DeleteSubKey(..., throwOnMissingSubKey: false) does not throw when the key
+            // is absent (the common case) — it returns via the success path above. So any
+            // exception here is a real failure to remove an existing stale receipt
+            // (e.g. access denied), which must be surfaced rather than silently swallowed.
+            ConsoleLogger.Warn($"OnDemand item '{item.Name}' - failed to remove stale ManagedInstalls receipt: {ex.Message}");
         }
     }
 
