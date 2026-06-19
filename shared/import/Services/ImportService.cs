@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Cimian.CLI.Cimiimport.Models;
 using Cimian.Core;
 using Cimian.Core.Services;
@@ -253,6 +254,32 @@ public class ImportService
             pkgsInfo.Metadata = YamlUtils.ExtractMetadataBlock(existing);
         }
 
+        // Stamp authorship at the source for fresh imports: created_by is the
+        // local user (USERPROFILE leaf), creation_date the local wall-clock time
+        // with timezone offset -- deliberately NOT UTC -- so the record reflects
+        // who imported and when on this machine. Only fills blanks, so existing
+        // autopkg / cimian-promoter stamps and re-imports are never clobbered;
+        // the prod-checks git backfill stays as the fallback for anything that
+        // still arrives without _metadata (e.g. fully-CI builds).
+        pkgsInfo.Metadata ??= new Dictionary<string, object?>();
+        if (IsBlankMetadata(pkgsInfo.Metadata, "created_by"))
+        {
+            // Only stamp when we actually resolved a name. In an unusual host
+            // (service / CI with no USERPROFILE and an empty Environment.UserName)
+            // leave created_by absent rather than persist a blank string, so the
+            // prod-checks "missing metadata" backfill can still fill it later.
+            var localUser = LocalUserName();
+            if (!string.IsNullOrWhiteSpace(localUser))
+            {
+                pkgsInfo.Metadata["created_by"] = localUser;
+            }
+        }
+        if (IsBlankMetadata(pkgsInfo.Metadata, "creation_date"))
+        {
+            pkgsInfo.Metadata["creation_date"] =
+                DateTimeOffset.Now.ToString("yyyy-MM-ddTHH:mm:sszzz", CultureInfo.InvariantCulture);
+        }
+
         var yaml = YamlUtils.SerializePkgInfo(pkgsInfo);
         await File.WriteAllTextAsync(pkginfoPath, yaml, cancellationToken).ConfigureAwait(false);
 
@@ -271,6 +298,24 @@ public class ImportService
         prompter.ReportInfo("Installer imported successfully!");
         return true;
     }
+
+    // Local Windows user driving the import, taken from %USERPROFILE% (its leaf
+    // is the account/profile name), lowercased to match the created_by form used
+    // by autopkg and the prod-checks backfill. Falls back to Environment.UserName
+    // when USERPROFILE is unset (services / non-Windows hosts).
+    private static string LocalUserName()
+    {
+        var profile = Environment.GetEnvironmentVariable("USERPROFILE");
+        var name = !string.IsNullOrWhiteSpace(profile)
+            ? Path.GetFileName(profile.TrimEnd('\\', '/'))
+            : Environment.UserName;
+        return (name ?? string.Empty).Trim().ToLowerInvariant();
+    }
+
+    // A metadata key counts as blank when absent, null, or whitespace, so a file
+    // carrying an empty `created_by:`/`creation_date:` still gets stamped.
+    private static bool IsBlankMetadata(IDictionary<string, object?> metadata, string key)
+        => !metadata.TryGetValue(key, out var v) || string.IsNullOrWhiteSpace(v?.ToString());
 
     /// <summary>
     /// Finds the latest version of a matching item in All.yaml catalog.
