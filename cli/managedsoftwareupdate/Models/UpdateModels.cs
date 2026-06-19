@@ -94,6 +94,16 @@ public class CimianConfig
     public bool AutoRemove { get; set; }
 
     /// <summary>
+    /// Master switch for install-loop prevention (LoopGuard). On by default.
+    /// Set to false in config.yaml to disable loop suppression fleet-wide — admins
+    /// who want packages installed every run regardless of loop heuristics can turn
+    /// it off entirely. When disabled, packages are never suppressed and no backoff
+    /// state is consulted; passive loop detection for reporting is unaffected.
+    /// </summary>
+    [YamlMember(Alias = "LoopGuardEnabled")]
+    public bool LoopGuardEnabled { get; set; } = true;
+
+    /// <summary>
     /// Master switch for unused-software removal (unused_software_removal_info).
     /// On by default — harmless fleet-wide because every package must still
     /// opt in via pkginfo, and the pass only ever touches self-serve/optional

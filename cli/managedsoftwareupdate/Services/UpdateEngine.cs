@@ -227,8 +227,12 @@ public class UpdateEngine : IDisposable
         _verbosity = verbosity;
         _showStatus = showStatus;
 
-        // Initialize loop guard for install loop prevention
-        _loopGuard = new LoopGuard(_isBootstrap);
+        // Initialize loop guard for install loop prevention. Admins can disable it
+        // fleet-wide via LoopGuardEnabled: false in config.yaml. The startup notice
+        // is emitted further down, once ConsoleLogger.Verbosity is set and the
+        // SessionLogger is attached, so it actually reaches the console and run.log.
+        var loopGuardDisabled = !_config.LoopGuardEnabled;
+        _loopGuard = new LoopGuard(_isBootstrap, disabled: loopGuardDisabled);
 
         // Track session duration for run.log summary
         var sessionStopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -275,6 +279,11 @@ public class UpdateEngine : IDisposable
         
         _sessionLogger.Log("INFO", $"Session started: {sessionId}");
         _sessionLogger.Log("INFO", $"Run type: {runType}");
+
+        // Now that verbosity is set and the SessionLogger is attached, surface the
+        // LoopGuard kill-switch so it reaches both the console and run.log.
+        if (loopGuardDisabled)
+            ConsoleLogger.Info("LoopGuard disabled by config (LoopGuardEnabled: false) — install-loop suppression is off");
 
         try
         {

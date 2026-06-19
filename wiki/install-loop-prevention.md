@@ -65,6 +65,24 @@ This means you don't need to SSH into machines to run `--clear-loop` after fixin
 
 During **bootstrap mode** (first-run provisioning via CimianWatcher), LoopGuard is completely disabled. Many packages are legitimately installed back-to-back during initial machine setup.
 
+#### Global Disable (admin opt-out)
+
+Admins who want loop suppression off fleet-wide can set it in `config.yaml`:
+
+```yaml
+LoopGuardEnabled: false
+```
+
+Default is `true`. When set to `false`, LoopGuard never suppresses any package and ignores any persisted backoff state — every run behaves as if no loop history exists, and no new backoff state is formed while disabled (so re-enabling later won't instantly suppress packages based on attempts logged during the disabled window). The setting is read on each run by `UpdateEngine`, which logs a `LoopGuard disabled by config` notice near the start of the run; the message is written to the session log (`run.log`) and is shown on the console at `-v` or higher. Passive loop detection (the `install_loop_detected` flag in `items.json` for dashboards) is **not** affected — reporting still flags loops even when active suppression is off.
+
+Confirm the effective value with:
+
+```pwsh
+managedsoftwareupdate --show-config
+```
+
+Note: this is the global kill-switch. To bypass suppression for a single package on a single run without disabling LoopGuard everywhere, use `--item <name>` instead; to clear a specific suppression, use `--clear-loop <name>`.
+
 ## How It Works Internally
 
 ### State Persistence
