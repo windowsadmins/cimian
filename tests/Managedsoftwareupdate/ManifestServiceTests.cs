@@ -1,3 +1,7 @@
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
@@ -226,5 +230,83 @@ public class ManifestServiceTests
 
         Assert.Single(result);
         Assert.Equal("Real", result[0].Name);
+    }
+
+    // --- Primary-manifest 404 fallback chain -------------------------------
+    // configured identifier -> hostname -> serial -> Orphaned -> site_default.
+    // Only a 404 advances the chain; a non-404 aborts without degrading to a
+    // catch-all so a transient server error stays visible.
+
+    [Fact]
+    public async Task GetManifestItems_PrimaryManifest404_FallsBackToOrphaned()
+    {
+        var config = new CimianConfig
+        {
+            SoftwareRepoURL = "https://repo.example.test",
+            ClientIdentifier = "configured-pc",
+            ManifestsPath = Directory.CreateTempSubdirectory().FullName,
+        };
+
+        const string orphanedYaml = "catalogs:\n  - Production\nmanaged_installs:\n  - FallbackApp\n";
+        var handler = new StubHandler(url =>
+            url.EndsWith("/manifests/Orphaned.yaml", StringComparison.OrdinalIgnoreCase)
+                ? (HttpStatusCode.OK, orphanedYaml)
+                : (HttpStatusCode.NotFound, string.Empty));
+
+        var service = new ManifestService(config, new HttpClient(handler));
+
+        var items = await service.GetManifestItemsAsync();
+
+        var fallback = Assert.Single(items, i => i.Name == "FallbackApp");
+        Assert.Equal("install", fallback.Action);
+        Assert.Equal("Orphaned", fallback.SourceManifest);
+        Assert.Contains("Production", config.Catalogs);
+    }
+
+    [Fact]
+    public async Task GetManifestItems_PrimaryManifestNon404_AbortsWithoutCatchAll()
+    {
+        var config = new CimianConfig
+        {
+            SoftwareRepoURL = "https://repo.example.test",
+            ClientIdentifier = "configured-pc",
+            ManifestsPath = Directory.CreateTempSubdirectory().FullName,
+        };
+
+        // The configured identifier returns 500; everything else would 404.
+        var handler = new StubHandler(url =>
+            url.EndsWith("/manifests/configured-pc.yaml", StringComparison.OrdinalIgnoreCase)
+                ? (HttpStatusCode.InternalServerError, string.Empty)
+                : (HttpStatusCode.NotFound, string.Empty));
+
+        var service = new ManifestService(config, new HttpClient(handler));
+
+        await service.GetManifestItemsAsync();
+
+        // A non-404 must abort the chain: the catch-all manifests are never requested.
+        Assert.DoesNotContain(handler.RequestedUrls,
+            u => u.Contains("/manifests/Orphaned.yaml", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(handler.RequestedUrls,
+            u => u.Contains("/manifests/site_default.yaml", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Minimal HttpMessageHandler that answers each request from a URL-driven
+    /// responder and records every requested URL for assertions.
+    /// </summary>
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        private readonly Func<string, (HttpStatusCode Status, string Body)> _responder;
+        public List<string> RequestedUrls { get; } = new();
+
+        public StubHandler(Func<string, (HttpStatusCode, string)> responder) => _responder = responder;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri!.ToString();
+            RequestedUrls.Add(url);
+            var (status, body) = _responder(url);
+            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body) });
+        }
     }
 }
