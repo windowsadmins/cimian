@@ -446,6 +446,13 @@ public class CatalogItem
     [YamlMember(Alias = "precache")]
     public bool Precache { get; set; }
 
+    // OnDemand items are never considered installed and never get a ManagedInstalls
+    // receipt: they re-evaluate and (re)install on every run. Used by transient nopkg
+    // actions (provisioning/enrollment) that must keep running until their own script
+    // flips some external state and the item drops out of the active manifest.
+    [YamlMember(Alias = "OnDemand")]
+    public bool OnDemand { get; set; }
+
     [YamlMember(Alias = "installs")]
     public List<InstallCheckItem> Installs { get; set; } = new();
 

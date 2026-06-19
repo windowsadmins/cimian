@@ -108,6 +108,9 @@ public static class StatusReasonCode
     /// <summary>installcheck_script indicates install needed (exit code 0)</summary>
     public const string InstallcheckNeeded = "installcheck_needed";
 
+    /// <summary>OnDemand item — never tracked as installed; always (re)installed each run</summary>
+    public const string OnDemand = "on_demand";
+
     /// <summary>Architecture not supported on this system</summary>
     public const string ArchitectureMismatch = "architecture_mismatch";
 
