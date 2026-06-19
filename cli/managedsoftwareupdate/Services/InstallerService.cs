@@ -1947,7 +1947,11 @@ exit 0
         }
         catch (Exception ex)
         {
-            ConsoleLogger.Debug($"OnDemand item '{item.Name}' - no receipt to remove: {ex.Message}");
+            // DeleteSubKey(..., throwOnMissingSubKey: false) does not throw when the key
+            // is absent (the common case) — it returns via the success path above. So any
+            // exception here is a real failure to remove an existing stale receipt
+            // (e.g. access denied), which must be surfaced rather than silently swallowed.
+            ConsoleLogger.Warn($"OnDemand item '{item.Name}' - failed to remove stale ManagedInstalls receipt: {ex.Message}");
         }
     }
 
