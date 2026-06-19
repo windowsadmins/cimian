@@ -455,4 +455,51 @@ public class StatusServiceTests
     }
 
     #endregion
+
+    #region OnDemand Tests
+
+    [Fact]
+    public void CheckStatus_OnDemand_NoChecks_AlwaysNeedsAction()
+    {
+        // An item with no checks normally reports "installed" (see
+        // CheckStatus_NewItem_WithNoChecks_AssumesInstalled). OnDemand must override
+        // that: OnDemand items are never considered installed and always (re)install.
+        var item = new CatalogItem
+        {
+            Name = "OnDemandNoChecks",
+            Version = "1.0.0",
+            OnDemand = true
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("pending", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.False(result.IsUpdate);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.OnDemand, result.ReasonCode);
+    }
+
+    [Fact]
+    public void CheckStatus_OnDemand_PrecedesInstallcheckScript()
+    {
+        // OnDemand short-circuits before installcheck_script: even an installcheck that
+        // says "not needed" (exit 1 => installed) must not stop an OnDemand item from
+        // re-running. This is the behavior the provisioning/enrollment nopkg items rely
+        // on so they keep running every cycle until they drop out of the manifest.
+        var item = new CatalogItem
+        {
+            Name = "OnDemandWithInstallcheck",
+            Version = "1.0.0",
+            OnDemand = true,
+            InstallcheckScript = "exit 1" // "not needed" — would normally mark installed
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("pending", result.Status);
+        Assert.True(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.OnDemand, result.ReasonCode);
+    }
+
+    #endregion
 }

@@ -976,13 +976,17 @@ public class UpdateEngine : IDisposable
                         // --item targets specific packages by name; bypass LoopGuard for those
                         // (run-scoped only — persistent suppression state is left intact so
                         // future runs without --item still honor it).
-                        var bypassLoopGuard = itemFilterService != null
-                            && itemFilterService.HasFilter
-                            && itemFilterService.Items.Contains(catalogItem.Name);
+                        // OnDemand items also bypass: by design they (re)install every run, so
+                        // the loop guard would otherwise suppress legitimate repeat installs.
+                        var bypassLoopGuard = catalogItem.OnDemand
+                            || (itemFilterService != null
+                                && itemFilterService.HasFilter
+                                && itemFilterService.Items.Contains(catalogItem.Name));
 
                         if (bypassLoopGuard)
                         {
-                            var msg = $"--item: bypassing LoopGuard for '{catalogItem.Name}'";
+                            var bypassReason = catalogItem.OnDemand ? "OnDemand" : "--item";
+                            var msg = $"{bypassReason}: bypassing LoopGuard for '{catalogItem.Name}'";
                             ConsoleLogger.Info(msg);
                             _sessionLogger?.Log("INFO", msg);
                         }

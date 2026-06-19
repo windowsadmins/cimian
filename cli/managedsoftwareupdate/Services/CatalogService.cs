@@ -14,17 +14,12 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 public class CatalogService
 {
     private readonly HttpClient _httpClient;
-    private readonly IDeserializer _deserializer;
     private readonly CimianConfig _config;
 
     public CatalogService(CimianConfig config, HttpClient? httpClient = null)
     {
         _config = config;
         _httpClient = httpClient ?? CimianHttpClientFactory.CreateHttpClient(config);
-        _deserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
     }
 
     /// <summary>
@@ -195,7 +190,10 @@ public class CatalogService
     {
         try
         {
-            var wrapper = _deserializer.Deserialize<CatalogWrapper>(yaml);
+            // Route through the canonical Cimian deserializer (no naming convention):
+            // it preserves explicit YamlMember aliases like `OnDemand`, which the old
+            // UnderscoredNamingConvention silently rewrote to `on_demand` and dropped.
+            var wrapper = YamlUtils.Deserializer.Deserialize<CatalogWrapper>(yaml);
             return wrapper?.Items ?? new List<CatalogItem>();
         }
         catch
@@ -203,7 +201,7 @@ public class CatalogService
             // Try parsing as a list directly
             try
             {
-                return _deserializer.Deserialize<List<CatalogItem>>(yaml) ?? new List<CatalogItem>();
+                return YamlUtils.Deserializer.Deserialize<List<CatalogItem>>(yaml) ?? new List<CatalogItem>();
             }
             catch
             {
