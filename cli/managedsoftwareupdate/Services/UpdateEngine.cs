@@ -141,7 +141,7 @@ public class UpdateEngine : IDisposable
         var current = Cimian.Core.Version.VersionService.GetCurrentOsVersion();
 
         if (!string.IsNullOrWhiteSpace(min) &&
-            Cimian.Core.Version.VersionService.CompareVersions(current, min) < 0)
+            Cimian.Core.Version.VersionService.CompareOsVersion(current, min) < 0)
         {
             reason = $"requires OS {min} or newer, running {current}";
             reasonCode = StatusReasonCode.OsVersionTooOld;
@@ -149,7 +149,7 @@ public class UpdateEngine : IDisposable
         }
 
         if (!string.IsNullOrWhiteSpace(max) &&
-            Cimian.Core.Version.VersionService.CompareVersions(current, max) > 0)
+            Cimian.Core.Version.VersionService.CompareOsVersion(current, max) > 0)
         {
             reason = $"requires OS {max} or older, running {current}";
             reasonCode = StatusReasonCode.OsVersionTooNew;
