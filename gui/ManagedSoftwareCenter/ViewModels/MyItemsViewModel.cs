@@ -25,6 +25,33 @@ public class MyItem
     public bool CanCancel { get; set; }
     public InstallableItem? CatalogItem { get; set; }
     public BitmapImage? IconImage { get; set; }
+
+    /// <summary>True once a standing install request is actually installed.</summary>
+    public bool IsInstalled => Status == ItemStatus.Installed;
+
+    /// <summary>
+    /// Show "Remove" (immediate uninstall) instead of "Cancel" once an installed,
+    /// uninstallable item is on the list — there's no pending request to cancel,
+    /// the meaningful action is to uninstall it. Pending requests still cancel.
+    /// </summary>
+    public bool ShowRemove => IsInstallRequest && IsInstalled
+        && CatalogItem?.Uninstallable == true;
+
+    /// <summary>Cancel is the action whenever Remove isn't (pending requests).</summary>
+    public bool ShowCancel => !ShowRemove;
+
+    /// <summary>Friendly status label for the badge (raw enum is not user-facing).</summary>
+    public string StatusText => Status switch
+    {
+        ItemStatus.Installed => "Installed",
+        ItemStatus.NotInstalled => "Not installed",
+        ItemStatus.InstallRequested => "Install pending",
+        ItemStatus.WillBeInstalled => "Will be installed",
+        ItemStatus.RemovalRequested => "Removal pending",
+        ItemStatus.WillBeRemoved => "Will be removed",
+        ItemStatus.Installing => "Installing...",
+        _ => Status
+    };
 }
 
 /// <summary>
@@ -91,9 +118,14 @@ public partial class MyItemsViewModel : ObservableObject
                     Version = catalogItem?.Version,
                     Category = catalogItem?.Category,
                     Icon = catalogItem?.Icon,
-                    Status = catalogItem?.WillBeInstalled == true 
-                        ? ItemStatus.WillBeInstalled 
-                        : ItemStatus.InstallRequested,
+                    // The install request persists after the install completes
+                    // (standing subscription) — show the real state, not a
+                    // perpetual pending badge.
+                    Status = catalogItem?.Installed == true && catalogItem.NeedsUpdate != true
+                        ? ItemStatus.Installed
+                        : (catalogItem?.WillBeInstalled == true
+                            ? ItemStatus.WillBeInstalled
+                            : ItemStatus.InstallRequested),
                     IsInstallRequest = true,
                     CanCancel = catalogItem?.Status != ItemStatus.Installing,
                     CatalogItem = catalogItem
@@ -112,25 +144,31 @@ public partial class MyItemsViewModel : ObservableObject
                     Version = catalogItem?.InstalledVersion ?? catalogItem?.Version,
                     Category = catalogItem?.Category,
                     Icon = catalogItem?.Icon,
-                    Status = catalogItem?.WillBeRemoved == true 
-                        ? ItemStatus.WillBeRemoved 
-                        : ItemStatus.RemovalRequested,
+                    // Removal is only pending while the item is still installed.
+                    Status = catalogItem?.Installed != true
+                        ? ItemStatus.NotInstalled
+                        : (catalogItem.WillBeRemoved
+                            ? ItemStatus.WillBeRemoved
+                            : ItemStatus.RemovalRequested),
                     IsRemovalRequest = true,
                     CanCancel = catalogItem?.Status != ItemStatus.Installing,
                     CatalogItem = catalogItem
                 });
             }
 
-            Items = new ObservableCollection<MyItem>(myItems.OrderBy(x => x.DisplayName));
-            IsEmpty = Items.Count == 0;
+            var ordered = myItems.OrderBy(x => x.DisplayName).ToList();
 
-            // Load icons
-            foreach (var item in Items)
+            // Load icons BEFORE assigning the bound collection — IconImage has no
+            // change notification, so a later assignment would not update rows.
+            foreach (var item in ordered)
             {
                 item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
             }
-            HasPendingActions = Items.Any(x => 
-                x.Status == ItemStatus.InstallRequested || 
+
+            Items = new ObservableCollection<MyItem>(ordered);
+            IsEmpty = Items.Count == 0;
+            HasPendingActions = Items.Any(x =>
+                x.Status == ItemStatus.InstallRequested ||
                 x.Status == ItemStatus.RemovalRequested);
         }
         finally
@@ -146,6 +184,26 @@ public partial class MyItemsViewModel : ObservableObject
         await _selfServiceService.RemoveRequestAsync(item.Name);
 
         // Refresh list
+        await LoadAsync();
+    }
+
+    /// <summary>
+    /// Uninstall an installed item directly from My Items: flip it to a removal
+    /// request (drops it from managed_installs, adds to managed_uninstalls) and
+    /// kick off a targeted run — same proven path as the Software page Remove.
+    /// </summary>
+    [RelayCommand]
+    private async Task RemoveItemAsync(MyItem item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.Name)) return;
+
+        if (item.CatalogItem != null)
+        {
+            item.CatalogItem.LiveStage = "pending";
+        }
+
+        await _selfServiceService.AddRemovalRequestAsync(item.Name);
+        await _triggerService.TriggerInstallItemAsync(item.Name, asRemoval: true);
         await LoadAsync();
     }
 
