@@ -1,5 +1,5 @@
 // ProgressServer.cs - TCP server for receiving progress from managedsoftwareupdate
-// Listens on TCP port 19847 (matching Go's PipeReporter)
+// Listens on TCP port 19848 (the login-window CimianStatus uses 19847)
 
 using System.IO;
 using System.Net;
@@ -18,7 +18,12 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 /// </summary>
 public class ProgressServer : IProgressPipeClient, IDisposable
 {
-    private const int Port = 19847;
+    // MSC listens on its OWN port, distinct from the login-window CimianStatus
+    // listener (19847). Both can be alive at once — e.g. a locked machine shows
+    // the login window (19847) while the user session's MSC is also running — so
+    // sharing a port made them collide (whoever bound first won; the other
+    // retried forever). MSC tells the engine to report here via --status-port.
+    public const int Port = 19848;
 
     private readonly ILogger<ProgressServer>? _logger;
     private TcpListener? _listener;
@@ -94,7 +99,9 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                         _isConnected = true;
                         Log("CLIENT CONNECTED!");
                         _logger?.LogInformation("managedsoftwareupdate connected");
-                        ConnectionChanged?.Invoke(this, true);
+                        // Listen loop runs on the threadpool; subscribers touch
+                        // XAML-bound state, so raise on the UI thread.
+                        UiDispatcher.Post(() => ConnectionChanged?.Invoke(this, true));
 
                         // Read messages from this client
                         await ReadMessagesAsync(cancellationToken);
@@ -120,7 +127,7 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                         if (wasConnected)
                         {
                             Log("Client disconnected");
-                            ConnectionChanged?.Invoke(this, false);
+                            UiDispatcher.Post(() => ConnectionChanged?.Invoke(this, false));
                         }
                     }
                 }
@@ -178,7 +185,7 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                             progressMessage.Type, progressMessage.Message, progressMessage.Detail, progressMessage.Percent);
                         System.Diagnostics.Debug.WriteLine($"[ProgressServer] Parsed: Type={progressMessage.Type}, Message={progressMessage.Message}");
                         
-                        ProgressReceived?.Invoke(this, progressMessage);
+                        UiDispatcher.Post(() => ProgressReceived?.Invoke(this, progressMessage));
                     }
 
                     // Check for quit message
@@ -238,6 +245,16 @@ public class ProgressServer : IProgressPipeClient, IDisposable
                 progress.Detail = goMessage.Data;
                 break;
 
+            case "itemStatus":
+                // Per-item lifecycle stage: pending, downloading, downloaded,
+                // installing, installed, removing, removed, failed. For "failed",
+                // Message carries the reason (e.g. "Exit code 1603").
+                progress.Type = ProgressMessageType.ItemStatus;
+                progress.ItemName = goMessage.Item;
+                progress.Detail = goMessage.Data;
+                progress.Message = goMessage.Message ?? string.Empty;
+                break;
+
             case "quit":
                 progress.Type = ProgressMessageType.Complete;
                 progress.Message = "Complete";
@@ -276,11 +293,31 @@ public class ProgressServer : IProgressPipeClient, IDisposable
     }
 
     /// <inheritdoc />
-    public Task SendCommandAsync(CommandMessage command)
+    public async Task SendCommandAsync(CommandMessage command)
     {
-        // Commands not supported in TCP mode - Go reporter doesn't listen for responses
-        _logger?.LogDebug("SendCommand not supported in TCP server mode");
-        return Task.CompletedTask;
+        // The status connection is duplex: managedsoftwareupdate's reporter
+        // runs a command read loop. Stop is the only supported command.
+        var stream = _stream;
+        if (stream == null || _client?.Connected != true)
+        {
+            _logger?.LogWarning("Cannot send {Type} command - no client connected", command.Type);
+            return;
+        }
+
+        try
+        {
+            var json = command.Type == CommandType.Stop
+                ? "{\"type\":\"stop\"}"
+                : "{\"type\":\"requestStatus\"}";
+            var bytes = Encoding.UTF8.GetBytes(json + "\n");
+            await stream.WriteAsync(bytes);
+            await stream.FlushAsync();
+            _logger?.LogInformation("Sent {Type} command to managedsoftwareupdate", command.Type);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to send {Type} command", command.Type);
+        }
     }
 
     private async Task CleanupClientAsync()
@@ -330,6 +367,12 @@ internal class GoStatusMessage
 
     [JsonPropertyName("data")]
     public string? Data { get; set; }
+
+    [JsonPropertyName("message")]
+    public string? Message { get; set; }
+
+    [JsonPropertyName("item")]
+    public string? Item { get; set; }
 
     [JsonPropertyName("percent")]
     public int Percent { get; set; }

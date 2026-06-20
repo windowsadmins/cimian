@@ -35,14 +35,21 @@
                        Margin="0,16,0,0" />
         </StackPanel>
 
-        <!-- Categories list -->
-        <ListView x:Name="CategoriesList"
+        <!-- Categories grid: fixed-width cards that wrap to fill the window -->
+        <GridView x:Name="CategoriesList"
                   Grid.Row="1"
                   SelectionMode="Single"
-                  SelectionChanged="OnCategorySelectionChanged">
-            <ListView.ItemTemplate>
+                  SelectionChanged="OnCategorySelectionChanged"
+                  IsItemClickEnabled="False">
+            <GridView.ItemContainerStyle>
+                <Style TargetType="GridViewItem">
+                    <Setter Property="Margin" Value="0,0,12,12"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                </Style>
+            </GridView.ItemContainerStyle>
+            <GridView.ItemTemplate>
                 <DataTemplate>
-                    <Border Margin="0,8" Padding="16" 
+                    <Border Width="320" Height="148" Padding="16"
                           Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                           CornerRadius="8"
                           BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -50,7 +57,7 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
                             <!-- Category header -->
@@ -59,20 +66,23 @@
                                           Margin="0,0,10,0" VerticalAlignment="Center"
                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock Text="{Binding Name}"
-                                           Style="{StaticResource SubtitleTextBlockStyle}" />
-                                <TextBlock Text="{Binding ItemCount}" 
+                                           Style="{StaticResource SubtitleTextBlockStyle}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxWidth="180"/>
+                                <TextBlock Text="{Binding ItemCount}"
                                            Margin="8,0,0,0"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />
-                                <TextBlock Text="items" 
+                                <TextBlock Text="items"
                                            Margin="4,0,0,0"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />
                             </StackPanel>
 
                             <!-- Preview icons -->
-                            <ItemsControl Grid.Row="1" 
+                            <ItemsControl Grid.Row="1"
                                           ItemsSource="{Binding PreviewItems}"
+                                          VerticalAlignment="Bottom"
                                           Margin="0,12,0,0">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -94,7 +104,7 @@
                         </Grid>
                     </Border>
                 </DataTemplate>
-            </ListView.ItemTemplate>
-        </ListView>
+            </GridView.ItemTemplate>
+        </GridView>
     </Grid>
 </Page>

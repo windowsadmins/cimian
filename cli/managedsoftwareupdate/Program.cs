@@ -231,6 +231,7 @@ public class Program
                 skipPreflight: options.NoPreflight,
                 skipPostflight: options.NoPostflight,
                 showStatus: options.ShowStatus,
+                statusPort: options.StatusPort,
                 itemFilter: options.Items);
 
             return result;
@@ -1137,6 +1138,10 @@ public class Options
 
     [Option("show-status", Required = false, HelpText = "Show status window during operations")]
     public bool ShowStatus { get; set; }
+
+    [Option("status-port", Required = false, Default = 19847,
+        HelpText = "TCP port of the GUI status listener (default 19847 = login window). Managed Software Center passes its own port so the two listeners never collide.")]
+    public int StatusPort { get; set; } = 19847;
 
     // Verbosity options (note: -v, -vv, -vvv handled by preprocessing)
     // Keep the Option for help text purposes but it won't be used for parsing

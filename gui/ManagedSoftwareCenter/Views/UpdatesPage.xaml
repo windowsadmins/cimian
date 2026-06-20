@@ -4,11 +4,15 @@
     x:Class="Cimian.GUI.ManagedSoftwareCenter.Views.UpdatesPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:converters="using:Cimian.GUI.ManagedSoftwareCenter.Converters">
+    xmlns:converters="using:Cimian.GUI.ManagedSoftwareCenter.Converters"
+    xmlns:controls="using:Cimian.GUI.ManagedSoftwareCenter.Controls">
 
     <Page.Resources>
         <converters:StringFormatConverter x:Key="StringFormatConverter" />
         <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        <converters:ItemStageConverter x:Key="ItemStageConverter" />
+        <converters:NoStageToVisibilityConverter x:Key="NoStageToVisibilityConverter" />
+        <converters:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
     </Page.Resources>
 
     <Grid>
@@ -44,7 +48,39 @@
                                 <FontIcon Glyph="&#xE7C3;" FontSize="16"/>
                                 <TextBlock Text="View Log" Margin="8,0,0,0"/>
                             </StackPanel>
+                            <Button.Flyout>
+                                <Flyout x:Name="LogFlyout"
+                                        Placement="BottomEdgeAlignedRight"
+                                        Opening="LogFlyout_Opening"
+                                        Closed="LogFlyout_Closed">
+                                    <Flyout.FlyoutPresenterStyle>
+                                        <Style TargetType="FlyoutPresenter">
+                                            <Setter Property="MaxWidth" Value="820"/>
+                                            <Setter Property="MaxHeight" Value="560"/>
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="CornerRadius" Value="8"/>
+                                        </Style>
+                                    </Flyout.FlyoutPresenterStyle>
+                                    <controls:LogViewerControl x:Name="FlyoutLogViewer"
+                                                               Width="780"
+                                                               Height="520"/>
+                                </Flyout>
+                            </Button.Flyout>
                         </Button>
+                        <!-- Always available when idle so the user can re-scan at
+                             any time ("sitting"); sits left of Install Now as the
+                             secondary action. Matches the reference MSC. -->
+                        <Button x:Name="HeaderCheckAgainButton"
+                                Visibility="Collapsed"
+                                Click="CheckNow_Click"
+                                MinWidth="140"
+                                Height="44">
+                            <StackPanel Orientation="Horizontal">
+                                <FontIcon Glyph="&#xE72C;" FontSize="16"/>
+                                <TextBlock Text="Check Again" Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Button>
+                        <!-- Primary action; shown only when there is pending work. -->
                         <Button x:Name="InstallNowButton"
                                 Style="{StaticResource AccentButtonStyle}"
                                 Click="InstallNow_Click"
@@ -55,8 +91,72 @@
                                 <TextBlock Text="Install Now" Margin="8,0,0,0" FontWeight="SemiBold"/>
                             </StackPanel>
                         </Button>
+                        <!-- Replaces Install Now during a targeted per-item run,
+                             where progress lives in the rows and the banner (with
+                             its Cancel) is hidden. -->
+                        <Button x:Name="HeaderStopButton"
+                                Visibility="Collapsed"
+                                Click="StopButton_Click"
+                                MinWidth="140"
+                                Height="44">
+                            <StackPanel Orientation="Horizontal">
+                                <FontIcon Glyph="&#xE71A;" FontSize="16"/>
+                                <TextBlock Text="Stop" Margin="8,0,0,0" FontWeight="SemiBold"/>
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </Grid>
+
+                <!-- In-flight Progress Banner: shown while managedsoftwareupdate
+                     runs. Items stay visible below with per-row live stages. -->
+                <Border x:Name="ProgressOverlay"
+                        Visibility="Collapsed"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="16"
+                        Margin="0,0,0,16">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <ProgressRing x:Name="ProgressSpinner"
+                                      IsActive="False"
+                                      Width="28" Height="28"
+                                      VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="1" Margin="16,0" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock x:Name="ProgressMessageText"
+                                           Text="Working..."
+                                           FontWeight="SemiBold"/>
+                                <TextBlock x:Name="ProgressPercentText"
+                                           Text=""
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                            <TextBlock x:Name="ProgressDetailText"
+                                       Text=""
+                                       FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <ProgressBar x:Name="ProgressBar"
+                                         Minimum="0" Maximum="100" Value="0"
+                                         IsIndeterminate="True"
+                                         Margin="0,8,0,0"/>
+                        </StackPanel>
+
+                        <Button x:Name="StopButton"
+                                Grid.Column="2"
+                                Content="Cancel"
+                                Click="StopButton_Click"
+                                VerticalAlignment="Center"
+                                MinWidth="100"/>
+                    </Grid>
+                </Border>
 
                 <!-- Restart Required Warning -->
                 <Border x:Name="RestartWarning"
@@ -125,13 +225,44 @@
                                                        Margin="0,2,0,0"/>
                                         </StackPanel>
 
-                                        <!-- Size -->
-                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" 
+                                        <!-- Status: idle label, or live stage while a run reports -->
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center"
                                                     HorizontalAlignment="Right">
                                             <TextBlock Text="Will be installed"
                                                        FontSize="12"
                                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                                       HorizontalAlignment="Right"/>
+                                                       HorizontalAlignment="Right"
+                                                       Visibility="{Binding LiveStage, Converter={StaticResource NoStageToVisibilityConverter}}"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6"
+                                                        HorizontalAlignment="Right"
+                                                        Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=panel}">
+                                                <ProgressRing Width="16" Height="16" IsActive="True"
+                                                              Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=spinner}"/>
+                                                <FontIcon Glyph="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=glyph}"
+                                                          FontSize="14"
+                                                          Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                          Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=icon}"/>
+                                                <TextBlock Text="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=text}"
+                                                           FontSize="12"
+                                                           Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <!-- Slim in-row progress for a targeted per-item run -->
+                                            <ProgressBar IsIndeterminate="True"
+                                                         Height="2" Width="160"
+                                                         Margin="0,4,0,0"
+                                                         HorizontalAlignment="Right"
+                                                         Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=bar}"/>
+                                            <!-- Failure reason (e.g. "Exit code 1603") while a run reports it -->
+                                            <TextBlock Text="{Binding LiveStageDetail}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="300"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding LiveStageDetail, Converter={StaticResource NullToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
@@ -199,8 +330,40 @@
                                                        Margin="0,2,0,0"/>
                                         </StackPanel>
 
-                                        <!-- Spacer -->
-                                        <Border Grid.Column="2"/>
+                                        <!-- Live stage while a run reports; the failure
+                                             reason stays visible independently so a
+                                             persisted problem shows even when idle. -->
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Right"
+                                                        Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=panel}">
+                                                <ProgressRing Width="16" Height="16" IsActive="True"
+                                                              Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=spinner}"/>
+                                                <FontIcon Glyph="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=glyph}"
+                                                          FontSize="14"
+                                                          Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                          Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=icon}"/>
+                                                <TextBlock Text="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=text}"
+                                                           FontSize="12"
+                                                           Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <!-- Slim in-row progress for a targeted per-item run -->
+                                            <ProgressBar IsIndeterminate="True"
+                                                         Height="2" Width="160"
+                                                         Margin="0,4,0,0"
+                                                         HorizontalAlignment="Right"
+                                                         Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=bar}"/>
+                                            <!-- Failure reason (e.g. "Exit code 1603") from a run or a persisted problem -->
+                                            <TextBlock Text="{Binding LiveStageDetail}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="300"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding LiveStageDetail, Converter={StaticResource NullToVisibilityConverter}}"/>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -249,12 +412,42 @@
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                         </StackPanel>
 
-                                        <!-- Removal Badge -->
-                                        <TextBlock Grid.Column="2" 
-                                                   Text="Will be removed"
-                                                   FontSize="12"
-                                                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                                   VerticalAlignment="Center"/>
+                                        <!-- Removal status: idle label, or live stage while a run reports -->
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                            <TextBlock Text="Will be removed"
+                                                       FontSize="12"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       Visibility="{Binding LiveStage, Converter={StaticResource NoStageToVisibilityConverter}}"/>
+                                            <StackPanel Orientation="Horizontal" Spacing="6"
+                                                        Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=panel}">
+                                                <ProgressRing Width="16" Height="16" IsActive="True"
+                                                              Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=spinner}"/>
+                                                <FontIcon Glyph="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=glyph}"
+                                                          FontSize="14"
+                                                          Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                          Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=icon}"/>
+                                                <TextBlock Text="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=text}"
+                                                           FontSize="12"
+                                                           Foreground="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=brush}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                            <!-- Slim in-row progress for a targeted per-item run -->
+                                            <ProgressBar IsIndeterminate="True"
+                                                         Height="2" Width="160"
+                                                         Margin="0,4,0,0"
+                                                         HorizontalAlignment="Right"
+                                                         Visibility="{Binding LiveStage, Converter={StaticResource ItemStageConverter}, ConverterParameter=bar}"/>
+                                            <!-- Failure reason while a run reports it -->
+                                            <TextBlock Text="{Binding LiveStageDetail}"
+                                                       FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                       TextWrapping="Wrap"
+                                                       MaxWidth="300"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Right"
+                                                       Margin="0,2,0,0"
+                                                       Visibility="{Binding LiveStageDetail, Converter={StaticResource NullToVisibilityConverter}}"/>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -328,68 +521,5 @@
                          HorizontalAlignment="Center"
                          VerticalAlignment="Center"/>
 
-        <!-- Full-Page Progress View (during install/check) - takes over entire page -->
-        <Grid x:Name="ProgressOverlay" 
-              Visibility="Collapsed"
-              Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-            
-            <!-- Center the progress content -->
-            <StackPanel HorizontalAlignment="Center" 
-                        VerticalAlignment="Center"
-                        Margin="48">
-                
-                <!-- Progress Ring -->
-                <ProgressRing x:Name="ProgressSpinner"
-                                 IsActive="True"
-                                 Width="80" Height="80"
-                                 HorizontalAlignment="Center"/>
-                
-                <!-- Progress Message -->
-                <TextBlock x:Name="ProgressMessageText"
-                           Text="Checking for updates..."
-                           FontSize="24"
-                           FontWeight="SemiBold"
-                           HorizontalAlignment="Center"
-                           TextAlignment="Center"
-                           Margin="0,32,0,0"/>
-                
-                <!-- Progress Detail -->
-                <TextBlock x:Name="ProgressDetailText"
-                           Text=""
-                           FontSize="14"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           HorizontalAlignment="Center"
-                           TextAlignment="Center"
-                           TextWrapping="Wrap"
-                           MaxWidth="500"
-                           Margin="0,12,0,0"/>
-                
-                <!-- Progress Bar -->
-                <ProgressBar x:Name="ProgressBar"
-                             Minimum="0"
-                             Maximum="100"
-                             Value="0"
-                             IsIndeterminate="True"
-                             Width="400"
-                             Margin="0,32,0,0"/>
-                
-                <!-- Percent Text -->
-                <TextBlock x:Name="ProgressPercentText"
-                           Text=""
-                           FontSize="13"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           HorizontalAlignment="Center"
-                           Margin="0,12,0,0"/>
-                
-                <!-- Stop Button -->
-                <Button x:Name="StopButton"
-                        Content="Stop"
-                        Click="StopButton_Click"
-                        HorizontalAlignment="Center"
-                        MinWidth="120"
-                        Margin="0,32,0,0"
-                        Visibility="Collapsed"/>
-            </StackPanel>
-        </Grid>
     </Grid>
 </Page>

@@ -79,7 +79,9 @@ public class ProgressPipeClient : IProgressPipeClient, IDisposable
                 _writer = new StreamWriter(_pipe) { AutoFlush = true };
 
                 _logger?.LogInformation("Connected to progress pipe");
-                ConnectionChanged?.Invoke(this, true);
+                // Connection loop runs on the threadpool; subscribers touch
+                // XAML-bound state, so raise on the UI thread.
+                UiDispatcher.Post(() => ConnectionChanged?.Invoke(this, true));
 
                 // Read messages until disconnected
                 await ReadMessagesAsync(cancellationToken);
@@ -95,7 +97,7 @@ public class ProgressPipeClient : IProgressPipeClient, IDisposable
             finally
             {
                 await CleanupPipeAsync();
-                ConnectionChanged?.Invoke(this, false);
+                UiDispatcher.Post(() => ConnectionChanged?.Invoke(this, false));
             }
 
             if (!cancellationToken.IsCancellationRequested)
@@ -125,7 +127,7 @@ public class ProgressPipeClient : IProgressPipeClient, IDisposable
                     _logger?.LogDebug("Received progress: {Message} - {Detail} ({Percent}%)", 
                         message.Message, message.Detail, message.Percent);
                     
-                    ProgressReceived?.Invoke(this, message);
+                    UiDispatcher.Post(() => ProgressReceived?.Invoke(this, message));
                 }
             }
             catch (OperationCanceledException)

@@ -33,17 +33,19 @@ public class BootstrapArgsBuilderTests
     }
 
     [Fact]
-    public void BuildSelfServeInstallArgs_MultipleItems_EmitsItemFlagPerEntry()
+    public void BuildSelfServeInstallArgs_MultipleItems_EmitsSingleItemFlag()
     {
+        // One --item flag with all values — repeated flags crash the engine's
+        // CommandLineParser sequence option ("defined multiple times" -> exit 1).
         var args = BootstrapArgsBuilder.BuildSelfServeInstallArgs(new[] { "Gimp", "Cyberduck" });
-        Assert.Equal("--item Gimp --item Cyberduck --no-preflight --show-status -vv", args);
+        Assert.Equal("--item Gimp Cyberduck --no-preflight --show-status -vv", args);
     }
 
     [Fact]
     public void BuildSelfServeInstallArgs_QuotesNamesWithSpaces()
     {
         var args = BootstrapArgsBuilder.BuildSelfServeInstallArgs(new[] { "VS Code", "Gimp" });
-        Assert.Equal("--item \"VS Code\" --item Gimp --no-preflight --show-status -vv", args);
+        Assert.Equal("--item \"VS Code\" Gimp --no-preflight --show-status -vv", args);
     }
 
     [Fact]

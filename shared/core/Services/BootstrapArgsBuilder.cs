@@ -68,33 +68,37 @@ public static class BootstrapArgsBuilder
 
     /// <summary>
     /// Builds the full Args line for a self-serve targeted install:
-    /// "--item N1 --item N2 ... --no-preflight --show-status -vv".
+    /// "--item N1 N2 ... --no-preflight --show-status -vv".
     /// Order of items is preserved from the input; duplicates (case-insensitive)
     /// are dropped so callers can pass raw click history without preprocessing.
     /// </summary>
+    /// <remarks>
+    /// All names follow a SINGLE --item flag. The engine's --item is a
+    /// CommandLineParser sequence option, populated by "--item A B C" (one flag,
+    /// many values). Repeating the flag ("--item A --item B") throws
+    /// "Option 'item' is defined multiple times" and the run exits 1 — which is
+    /// exactly what stranded multi-item self-serve batches.
+    /// </remarks>
     public static string BuildSelfServeInstallArgs(IEnumerable<string> itemNames)
     {
         if (itemNames == null) throw new ArgumentNullException(nameof(itemNames));
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var sb = new StringBuilder();
+        var names = new StringBuilder();
         foreach (var name in itemNames)
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
             if (!seen.Add(name)) continue;
-            if (sb.Length > 0) sb.Append(' ');
-            sb.Append("--item ");
-            sb.Append(QuoteArgument(name));
+            if (names.Length > 0) names.Append(' ');
+            names.Append(QuoteArgument(name));
         }
 
-        if (sb.Length == 0)
+        if (names.Length == 0)
         {
             throw new ArgumentException("At least one item name is required", nameof(itemNames));
         }
 
-        sb.Append(' ');
-        sb.Append(SelfServeTrailingArgs);
-        return sb.ToString();
+        return $"--item {names} {SelfServeTrailingArgs}";
     }
 
     /// <summary>
@@ -117,10 +121,14 @@ public static class BootstrapArgsBuilder
         for (int i = 0; i < tokens.Count; i++)
         {
             if (!string.Equals(tokens[i], "--item", StringComparison.Ordinal)) continue;
-            if (i + 1 >= tokens.Count) break;
-            var next = tokens[i + 1];
-            if (next.StartsWith("--", StringComparison.Ordinal)) continue;
-            result.Add(next);
+            // Collect every value token following the flag until the next switch
+            // ("--item A B C"). Also tolerates the legacy repeated-flag form
+            // ("--item A --item B"), where each inner loop stops at the next --item.
+            for (int j = i + 1; j < tokens.Count; j++)
+            {
+                if (tokens[j].StartsWith("--", StringComparison.Ordinal)) break;
+                result.Add(tokens[j]);
+            }
         }
         return result;
     }
