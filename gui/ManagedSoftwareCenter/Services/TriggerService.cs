@@ -16,6 +16,10 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 public class TriggerService : ITriggerService, IDisposable
 {
     private const string BootstrapFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
+    // Tell the engine to report progress to MSC's own listener (ProgressServer.Port)
+    // instead of the default 19847 used by the login-window CimianStatus, so the
+    // two never collide. Appended to every --show-status run MSC triggers.
+    private static readonly string StatusPortArg = $"--status-port {ProgressServer.Port}";
     private static readonly TimeSpan ServiceTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
 
@@ -23,6 +27,11 @@ public class TriggerService : ITriggerService, IDisposable
     private readonly SemaphoreSlim _flagFileLock = new(1, 1);
     private readonly HashSet<string> _pendingItems = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _pendingItemOrder = new();
+    // Subset of _pendingItems the caller flagged as removals, so the progress
+    // label reads "Removing X..." instead of "Installing X...". The engine still
+    // decides install vs uninstall from the self-serve manifest — this only
+    // affects the human-facing banner verb.
+    private readonly HashSet<string> _pendingRemovals = new(StringComparer.OrdinalIgnoreCase);
 
     // A single in-flight Task per targeted-install batch. Concurrent
     // TriggerInstallItemAsync calls that arrive while the flag file from a
@@ -33,9 +42,12 @@ public class TriggerService : ITriggerService, IDisposable
     // races the first.
     private Task? _currentBatch;
     private bool _isOperationRunning;
+    private bool _isItemScopedOperation;
     private string? _currentOperationLabel;
 
     public bool IsOperationRunning => _isOperationRunning;
+
+    public bool IsItemScopedOperation => _isItemScopedOperation;
 
     public string? CurrentOperationLabel => _currentOperationLabel;
 
@@ -51,10 +63,11 @@ public class TriggerService : ITriggerService, IDisposable
     public async Task TriggerCheckAsync()
     {
         _logger?.LogInformation("Triggering check via CimianWatcher");
+        _isItemScopedOperation = false;
         _currentOperationLabel = "Checking for updates...";
         try
         {
-            await WriteFlagFileAndWaitAsync("--checkonly --show-status -vv").ConfigureAwait(false);
+            await WriteFlagFileAndWaitAsync($"--checkonly --show-status -vv {StatusPortArg}").ConfigureAwait(false);
         }
         finally
         {
@@ -66,10 +79,11 @@ public class TriggerService : ITriggerService, IDisposable
     public async Task TriggerInstallAsync()
     {
         _logger?.LogInformation("Triggering install via CimianWatcher");
+        _isItemScopedOperation = false;
         _currentOperationLabel = "Installing pending updates...";
         try
         {
-            await WriteFlagFileAndWaitAsync("--installonly --show-status -vv").ConfigureAwait(false);
+            await WriteFlagFileAndWaitAsync($"--installonly --show-status -vv {StatusPortArg}").ConfigureAwait(false);
         }
         finally
         {
@@ -78,28 +92,51 @@ public class TriggerService : ITriggerService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task TriggerInstallItemAsync(string itemName)
+    public Task TriggerInstallItemAsync(string itemName, bool asRemoval = false)
     {
         if (string.IsNullOrWhiteSpace(itemName))
         {
             throw new ArgumentException("itemName must be provided", nameof(itemName));
         }
 
-        // Validate the name up front — BuildSelfServeInstallArgs would throw on
+        return TriggerInstallItemsAsync(new[] { itemName }, asRemoval ? new[] { itemName } : null);
+    }
+
+    /// <inheritdoc />
+    public async Task TriggerInstallItemsAsync(IEnumerable<string> itemNames, IEnumerable<string>? removalNames = null)
+    {
+        if (itemNames == null) throw new ArgumentNullException(nameof(itemNames));
+
+        var names = itemNames.Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+        if (names.Count == 0)
+        {
+            throw new ArgumentException("At least one item name is required", nameof(itemNames));
+        }
+
+        // Validate names up front — BuildSelfServeInstallArgs would throw on
         // control characters too, but catching it here gives a clearer caller
         // stack trace than something coming from inside the merge loop.
-        _ = BootstrapArgsBuilder.QuoteArgument(itemName);
+        foreach (var n in names) _ = BootstrapArgsBuilder.QuoteArgument(n);
 
         Task batchTask;
         await _flagFileLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_pendingItems.Add(itemName))
+            foreach (var n in names)
             {
-                _pendingItemOrder.Add(itemName);
+                if (_pendingItems.Add(n))
+                {
+                    _pendingItemOrder.Add(n);
+                }
             }
-            var mergedArgs = BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder);
-            _currentOperationLabel = BuildOperationLabel(_pendingItemOrder);
+            if (removalNames != null)
+            {
+                foreach (var r in removalNames.Where(n => !string.IsNullOrWhiteSpace(n)))
+                    _pendingRemovals.Add(r);
+            }
+            var mergedArgs = $"{BootstrapArgsBuilder.BuildSelfServeInstallArgs(_pendingItemOrder)} {StatusPortArg}";
+            _isItemScopedOperation = true;
+            _currentOperationLabel = BuildOperationLabel(_pendingItemOrder, _pendingRemovals);
 
             if (_currentBatch != null && !_currentBatch.IsCompleted)
             {
@@ -109,8 +146,8 @@ public class TriggerService : ITriggerService, IDisposable
                 // The existing batch's poll loop is what we await.
                 await WriteFlagFileAsync(mergedArgs).ConfigureAwait(false);
                 _logger?.LogInformation(
-                    "Merged {Item} into in-flight self-serve batch ({Label})",
-                    itemName, _currentOperationLabel);
+                    "Merged [{Items}] into in-flight self-serve batch ({Label})",
+                    string.Join(", ", names), _currentOperationLabel);
                 batchTask = _currentBatch;
             }
             else
@@ -132,15 +169,23 @@ public class TriggerService : ITriggerService, IDisposable
 
     /// <summary>
     /// Composes the human-readable progress label rendered in the shell overlay
-    /// while a self-serve run is in flight. Long batches (4+ items) are
-    /// summarized as a count so the message stays single-line.
+    /// while a self-serve run is in flight. The verb follows the batch: all
+    /// removals read "Removing...", all installs "Installing...", and a mix is
+    /// summarized as "Processing N items...". Long single-verb batches (4+ items)
+    /// collapse to a count so the message stays single-line.
     /// </summary>
-    internal static string BuildOperationLabel(IReadOnlyList<string> items)
+    internal static string BuildOperationLabel(IReadOnlyList<string> items, IReadOnlySet<string> removals)
     {
-        if (items.Count == 0) return "Installing requested items...";
-        if (items.Count == 1) return $"Installing {items[0]}...";
-        if (items.Count <= 3) return $"Installing {string.Join(", ", items)}...";
-        return $"Installing {items.Count} items ({items[0]}, {items[1]}, +{items.Count - 2} more)...";
+        if (items.Count == 0) return "Working...";
+
+        var removalCount = items.Count(removals.Contains);
+        if (removalCount > 0 && removalCount < items.Count)
+            return $"Processing {items.Count} items...";
+
+        var verb = removalCount == items.Count ? "Removing" : "Installing";
+        if (items.Count == 1) return $"{verb} {items[0]}...";
+        if (items.Count <= 3) return $"{verb} {string.Join(", ", items)}...";
+        return $"{verb} {items.Count} items ({items[0]}, {items[1]}, +{items.Count - 2} more)...";
     }
 
     /// <summary>
@@ -181,7 +226,7 @@ public class TriggerService : ITriggerService, IDisposable
     private async Task RunSelfServeBatchAsync(string initialArgs)
     {
         _isOperationRunning = true;
-        OperationStatusChanged?.Invoke(this, true);
+        RaiseOperationStatusChanged(true);
         try
         {
             await WriteFlagFileAsync(initialArgs).ConfigureAwait(false);
@@ -190,7 +235,7 @@ public class TriggerService : ITriggerService, IDisposable
         catch (InvalidOperationException)
         {
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
             await ClearBatchStateAsync().ConfigureAwait(false);
             throw;
         }
@@ -198,17 +243,61 @@ public class TriggerService : ITriggerService, IDisposable
         {
             _logger?.LogError(ex, "Self-serve batch failed");
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
             await ClearBatchStateAsync().ConfigureAwait(false);
             return;
         }
 
         // Consumed cleanly — pending state cleared so the next click starts a
-        // fresh batch. _isOperationRunning stays true; completion of the install
-        // is signaled by the InstallInfo.yaml FileSystemWatcher or the
-        // StatusReporter pipe, which is also responsible for flipping the
-        // overlay back to idle.
+        // fresh batch. Completion of the install is normally signaled by the
+        // InstallInfo.yaml FileSystemWatcher or the StatusReporter quit, which
+        // flips the overlay back to idle.
         await ClearBatchStateAsync().ConfigureAwait(false);
+
+        // Safety net: a run that ends WITHOUT rewriting InstallInfo or sending
+        // quit (e.g. an immediate parse/lock failure) would otherwise leave the
+        // GUI stuck showing "Stop" forever. Wait for the launched process to
+        // actually exit, then clear the running state ourselves.
+        await SignalOperationDoneOnProcessExitAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Waits for the managedsoftwareupdate process the watcher just launched to
+    /// exit, then clears <see cref="_isOperationRunning"/> and notifies — UNLESS a
+    /// follow-up batch has been queued in the meantime (a fresh flag or a new
+    /// in-flight batch), in which case that batch owns the running state. This is
+    /// the backstop for runs that never signal completion any other way; normal
+    /// runs pass through harmlessly after InstallInfoChanged already reset the UI.
+    /// </summary>
+    private async Task SignalOperationDoneOnProcessExitAsync()
+    {
+        // Give the freshly-consumed flag a moment to spawn the process.
+        var startWait = TimeSpan.Zero;
+        while (!IsUpdateProcessRunning() && startWait < TimeSpan.FromSeconds(5))
+        {
+            await Task.Delay(PollInterval).ConfigureAwait(false);
+            startWait += PollInterval;
+        }
+        // Then wait for it to finish. No fixed cap — a real install can take
+        // minutes; the process either exits or the user closes the app.
+        while (IsUpdateProcessRunning())
+        {
+            await Task.Delay(PollInterval).ConfigureAwait(false);
+        }
+
+        await _flagFileLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // A queued follow-up (new batch or pending flag) now owns the state.
+            if (_currentBatch != null || File.Exists(BootstrapFlagFile)) return;
+            if (!_isOperationRunning) return;
+            _isOperationRunning = false;
+        }
+        finally
+        {
+            _flagFileLock.Release();
+        }
+        RaiseOperationStatusChanged(false);
     }
 
     /// <summary>
@@ -217,7 +306,7 @@ public class TriggerService : ITriggerService, IDisposable
     private async Task WriteFlagFileAndWaitAsync(string arguments)
     {
         _isOperationRunning = true;
-        OperationStatusChanged?.Invoke(this, true);
+        RaiseOperationStatusChanged(true);
         try
         {
             await WriteFlagFileAsync(arguments).ConfigureAwait(false);
@@ -226,16 +315,24 @@ public class TriggerService : ITriggerService, IDisposable
         catch (InvalidOperationException)
         {
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
             throw;
         }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Flag-file trigger failed");
             _isOperationRunning = false;
-            OperationStatusChanged?.Invoke(this, false);
+            RaiseOperationStatusChanged(false);
         }
     }
+
+    /// <summary>
+    /// Raises OperationStatusChanged on the UI thread. The poll loops run on
+    /// threadpool continuations (ConfigureAwait(false)) and subscribers set
+    /// XAML-bound observable properties.
+    /// </summary>
+    private void RaiseOperationStatusChanged(bool isRunning)
+        => UiDispatcher.Post(() => OperationStatusChanged?.Invoke(this, isRunning));
 
     private async Task WriteFlagFileAsync(string arguments)
     {
@@ -254,6 +351,17 @@ public class TriggerService : ITriggerService, IDisposable
         while (File.Exists(BootstrapFlagFile) && elapsed < ServiceTimeout)
         {
             await Task.Delay(PollInterval).ConfigureAwait(false);
+
+            if (IsUpdateProcessRunning())
+            {
+                // CimianWatcher defers flag consumption while a run is in
+                // flight (a second launch would just lose the instance lock).
+                // The flag file is our queued request, not a dead service —
+                // don't count this wait against the timeout.
+                elapsed = TimeSpan.Zero;
+                continue;
+            }
+
             elapsed += PollInterval;
         }
 
@@ -269,6 +377,21 @@ public class TriggerService : ITriggerService, IDisposable
         _logger?.LogInformation("CimianWatcher consumed flag file — managedsoftwareupdate is running");
     }
 
+    private static bool IsUpdateProcessRunning()
+    {
+        try
+        {
+            var procs = System.Diagnostics.Process.GetProcessesByName("managedsoftwareupdate");
+            var running = procs.Length > 0;
+            foreach (var p in procs) p.Dispose();
+            return running;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private async Task ClearBatchStateAsync()
     {
         await _flagFileLock.WaitAsync().ConfigureAwait(false);
@@ -276,6 +399,7 @@ public class TriggerService : ITriggerService, IDisposable
         {
             _pendingItems.Clear();
             _pendingItemOrder.Clear();
+            _pendingRemovals.Clear();
             _currentOperationLabel = null;
             _currentBatch = null;
         }

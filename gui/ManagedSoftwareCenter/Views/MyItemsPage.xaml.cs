@@ -72,6 +72,14 @@ public partial class MyItemsPage : Page
         }
     }
 
+    private async void OnRemoveClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is MyItem item)
+        {
+            await ViewModel.RemoveItemCommand.ExecuteAsync(item);
+        }
+    }
+
     private void ProcessAll_Click(object sender, RoutedEventArgs e)
     {
         _ = ViewModel.ProcessAllCommand.ExecuteAsync(null);
