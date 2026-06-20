@@ -158,9 +158,50 @@ public class VersionServiceTests
         else if (expectedSign > 0) result.Should().BePositive();
         else result.Should().Be(0);
     }
-    
+
     #endregion
-    
+
+    #region CompareOsVersion Tests
+
+    [Theory]
+    // Windows 11 reports a 10.0.<build> kernel version; a bare "11" requirement
+    // must match by generation (build >= 22000), not by literal major.
+    [InlineData("10.0.26200.0", "11.0", 0)]    // Win 11 25H2 satisfies "11"
+    [InlineData("10.0.26200.0", "11", 0)]      // bare major, no minor
+    [InlineData("10.0.22000.0", "11.0", 0)]    // first Win 11 build
+    [InlineData("10.0.19045.0", "11.0", -1)]   // Win 10 is older than "11"
+    [InlineData("10.0.26200.0", "10.0", 1)]    // Win 11 is newer than "10"
+    [InlineData("10.0.26200.0", "10", 1)]      // bare "10"
+    [InlineData("10.0.19045.0", "10.0", 0)]    // Win 10 satisfies "10"
+    // Build-pinned requirements compare numerically (no marketing mapping).
+    [InlineData("10.0.26200.0", "10.0.22631", 1)]
+    [InlineData("10.0.19045.0", "10.0.22631", -1)]
+    // Build-pinned marketing form ("11.0.<build>", as cimiimport's --maximum_os_version
+    // help prints) folds to the kernel "10.0.<build>" before the numeric compare.
+    [InlineData("10.0.26200.0", "11.0.22000", 1)]    // Win 11 25H2 newer than 11.0.22000 floor
+    [InlineData("10.0.22000.0", "11.0.22000", 0)]    // exact build match
+    [InlineData("10.0.19045.0", "11.0.22000", -1)]   // Win 10 older than 11.0.22000
+    public void CompareOsVersion_ReturnsCorrectSign(string current, string requirement, int expectedSign)
+    {
+        var result = VersionService.CompareOsVersion(current, requirement);
+
+        if (expectedSign < 0) result.Should().BeNegative();
+        else if (expectedSign > 0) result.Should().BePositive();
+        else result.Should().Be(0);
+    }
+
+    [Fact]
+    public void CompareOsVersion_Win11_SatisfiesBothMinAndMax11()
+    {
+        // Regression: a "11.0" minimum AND a "11.0" maximum must both admit Win 11.
+        const string win11 = "10.0.26200.0";
+
+        VersionService.CompareOsVersion(win11, "11.0").Should().Be(0, "Win 11 is not older than min 11.0");
+        VersionService.CompareOsVersion(win11, "11.0").Should().Be(0, "Win 11 is not newer than max 11.0");
+    }
+
+    #endregion
+
     #region Real-World Catalog Version Tests
     
     /// <summary>
