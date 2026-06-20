@@ -221,6 +221,39 @@ public class UpdateModelsTests
         Assert.True(item.IsUninstallable());
     }
 
+    [Fact]
+    public void CatalogItem_IsUninstallable_ExeInstaller_ReturnsTrue()
+    {
+        // An exe/NSIS app with no explicit uninstaller block is still removable:
+        // UninstallAsync drives the uninstaller the app registered in the Windows
+        // uninstall registry. This is the removal mechanism and is independent of
+        // unattended_uninstall (which only governs silent background removal).
+        var item = new CatalogItem
+        {
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "exe" },
+            UnattendedUninstall = false
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void CatalogItem_IsUninstallable_ExeButOptedOut_ReturnsFalse()
+    {
+        // uninstallable:false is the explicit admin opt-out and wins even for an exe
+        // app — the package is declared non-removable.
+        var item = new CatalogItem
+        {
+            Uninstallable = false,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "exe" }
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
     #endregion
 
     #region InstallerInfo Tests

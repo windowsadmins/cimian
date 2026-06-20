@@ -20,6 +20,24 @@ public partial class UpdatesViewModel : ObservableObject
     private readonly IIconService _iconService;
     private readonly IUpdateTrackingService _updateTrackingService;
     private readonly IAlertService _alertService;
+    private readonly IProgressPipeClient _progressClient;
+    private readonly ISelfServiceManifestService _selfServiceService;
+
+    // Set by an explicit re-check so the next load drops the lingering
+    // "Installed"/"Removed" rows instead of re-injecting them.
+    private bool _dropCompletedOnNextLoad;
+
+    /// <summary>A row that finished this session (terminal success stage).</summary>
+    private static bool IsDone(InstallableItem x) =>
+        x.LiveStage is "installed" or "removed";
+
+    /// <summary>
+    /// The user navigated away from the Updates page (or did an explicit
+    /// re-check): they have seen the finished rows, so drop the lingering green
+    /// "Installed"/"Removed" rows on the next load instead of keeping them
+    /// forever. Live reloads while the page is visible still retain them.
+    /// </summary>
+    public void DismissCompletedRows() => _dropCompletedOnNextLoad = true;
 
     [ObservableProperty]
     public partial ObservableCollection<InstallableItem> Updates { get; set; } = [];
@@ -73,15 +91,116 @@ public partial class UpdatesViewModel : ObservableObject
         ITriggerService triggerService,
         IIconService iconService,
         IUpdateTrackingService updateTrackingService,
-        IAlertService alertService)
+        IAlertService alertService,
+        IProgressPipeClient progressClient,
+        ISelfServiceManifestService selfServiceService)
     {
         _installInfoService = installInfoService;
         _triggerService = triggerService;
         _iconService = iconService;
         _updateTrackingService = updateTrackingService;
         _alertService = alertService;
+        _progressClient = progressClient;
+        _selfServiceService = selfServiceService;
 
         _installInfoService.InstallInfoChanged += OnInstallInfoChanged;
+        _progressClient.ProgressReceived += OnProgressReceived;
+        _selfServiceService.RequestsChanged += OnSelfServiceRequestsChanged;
+    }
+
+    /// <summary>
+    /// A self-serve request was added or cancelled elsewhere (e.g. My Items
+    /// "Cancel"). Reload so a cancelled install-requested item drops off the
+    /// Updates tab immediately instead of lingering until the next InstallInfo
+    /// rewrite. Marshalled to the UI thread — the manifest service may raise
+    /// this from a background continuation.
+    /// </summary>
+    private void OnSelfServiceRequestsChanged(object? sender, EventArgs e)
+    {
+        UiDispatcher.Post(() => _ = LoadAsync());
+    }
+
+    /// <summary>
+    /// Routes per-item lifecycle stages from the running managedsoftwareupdate
+    /// onto the matching row. Items the engine reports that aren't in the
+    /// current list yet (e.g. a fresh self-serve click whose InstallInfo
+    /// hasn't been rewritten) get a synthetic row so the user sees progress
+    /// immediately. Raised on the UI thread by the progress server.
+    /// </summary>
+    private async void OnProgressReceived(object? sender, ProgressMessage message)
+    {
+        // async void fed by external input over the progress channel: an unhandled
+        // exception after an await would crash the process. Catch, log, and ignore
+        // so a malformed/unexpected message can never take the app down.
+        try
+        {
+            await HandleProgressReceivedAsync(message);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[UpdatesViewModel] OnProgressReceived failed for '{message?.ItemName}': {ex}");
+        }
+    }
+
+    private async Task HandleProgressReceivedAsync(ProgressMessage message)
+    {
+        if (message.Type != ProgressMessageType.ItemStatus) return;
+        if (string.IsNullOrEmpty(message.ItemName)) return;
+
+        var stage = message.Detail;
+        var existing = PendingInstalls.Concat(Updates).Concat(PendingRemovals)
+            .FirstOrDefault(x => string.Equals(x.Name, message.ItemName, StringComparison.OrdinalIgnoreCase));
+
+        // For "failed", Message carries the reason (e.g. "Exit code 1603") so the
+        // user sees the exact code on the row instead of an unchanged "Will be
+        // installed". Other stages clear any prior detail.
+        var detail = string.Equals(stage, "failed", StringComparison.OrdinalIgnoreCase)
+            ? message.Message
+            : null;
+
+        if (existing != null)
+        {
+            existing.LiveStageDetail = detail;
+            existing.LiveStage = stage;
+            // The engine emits a generic "pending" for every item — including
+            // removals — before the real verb. A removal first seen that way can
+            // land under Pending Installs; once a removal stage arrives, move it
+            // to the removals section so it doesn't show "Removed" under installs.
+            if (stage is "removing" or "removed" && PendingInstalls.Contains(existing))
+            {
+                PendingInstalls.Remove(existing);
+                if (!PendingRemovals.Contains(existing)) PendingRemovals.Add(existing);
+                HasPendingInstalls = PendingInstalls.Count > 0;
+                HasPendingRemovals = true;
+            }
+            return;
+        }
+
+        // Unknown item: synthesize a row. Resolve the real catalog record first so
+        // it reads properly (display name, version, icon) instead of a bare
+        // placeholder with no name; fall back to just the engine's item name for
+        // anything not in InstallInfo. Removal stages go to the removals section,
+        // everything else to pending installs.
+        var item = await _installInfoService.GetItemByNameAsync(message.ItemName)
+                   ?? new InstallableItem { Name = message.ItemName };
+        item.LiveStage = stage;
+        item.LiveStageDetail = detail;
+        item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+
+        if (stage is "removing" or "removed")
+        {
+            PendingRemovals.Add(item);
+            HasPendingRemovals = true;
+        }
+        else
+        {
+            PendingInstalls.Add(item);
+            HasPendingInstalls = true;
+        }
+        IsEmpty = false;
+        TotalUpdateCount = Updates.Count + PendingInstalls.Count + PendingRemovals.Count;
+        OnPropertyChanged(nameof(HasPendingWork));
     }
 
     /// <summary>
@@ -92,6 +211,34 @@ public partial class UpdatesViewModel : ObservableObject
         IsLoading = true;
         try
         {
+            // Rows that finished this session keep their green "Installed"/"Removed"
+            // check on screen instead of vanishing the instant InstallInfo is
+            // rewritten. Capture them from the current collections before the
+            // rebuild; they are re-injected below and linger until the next
+            // explicit check (which sets _dropCompletedOnNextLoad).
+            var completedRows = _dropCompletedOnNextLoad
+                ? new Dictionary<string, InstallableItem>(StringComparer.OrdinalIgnoreCase)
+                : PendingInstalls.Concat(Updates).Concat(PendingRemovals)
+                    .Where(IsDone)
+                    .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            _dropCompletedOnNextLoad = false;
+
+            // A targeted --item run rewrites InstallInfo with only the scheduled
+            // subset, which would drop the OTHER pending rows from the Updates list
+            // mid-run. So the list stays a stable reflection of the whole run,
+            // capture the currently-pending (non-finished) rows while an operation
+            // is in flight; they are re-injected below unless the fresh InstallInfo
+            // shows them already satisfied. Gated on IsOperationRunning so a cold
+            // load (or a broad re-check) still reconciles fully.
+            var carryOverPending = _triggerService.IsOperationRunning
+                ? PendingInstalls.Concat(Updates).Where(x => !IsDone(x))
+                        .Select(x => (item: x, removal: false))
+                    .Concat(PendingRemovals.Where(x => !IsDone(x)).Select(x => (item: x, removal: true)))
+                    .GroupBy(t => t.item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, (InstallableItem item, bool removal)>(StringComparer.OrdinalIgnoreCase);
+
             // Updates tab is derived from managed_installs (records for items needing
             // install or update this session). Split by the needs_update flag set by
             // managedsoftwareupdate during the catalog comparison:
@@ -102,40 +249,173 @@ public partial class UpdatesViewModel : ObservableObject
             // re-evaluate needs_update). The previous version-string comparison
             // was case- and format-sensitive — use NeedsUpdate as the source of
             // truth.
-            var managedInstalls = await _installInfoService.GetManagedInstallsAsync();
+            // Load the self-serve manifest and optional catalog up front. An
+            // optional item only appears in managed_installs/removals because the
+            // user self-serve requested it (the engine promotes it from optional).
+            // If they have since cancelled that request via My Items "Cancel", drop
+            // it from the Updates list on this live reload instead of waiting for
+            // the next engine run to rewrite InstallInfo. Admin-required items are
+            // never in optional_installs, so they are never filtered this way.
+            var selfServe = await _selfServiceService.GetAllRequestsAsync();
+            var selfServeInstalls = new HashSet<string>(
+                selfServe.ManagedInstalls.Where(n => !string.IsNullOrWhiteSpace(n)),
+                StringComparer.OrdinalIgnoreCase);
+            var selfServeUninstalls = new HashSet<string>(
+                selfServe.ManagedUninstalls.Where(n => !string.IsNullOrWhiteSpace(n)),
+                StringComparer.OrdinalIgnoreCase);
+            var optionalNames = new HashSet<string>(
+                (await _installInfoService.GetOptionalInstallsAsync()).Select(x => x.Name),
+                StringComparer.OrdinalIgnoreCase);
+
+            bool IsCancelledSelfServeInstall(InstallableItem x) =>
+                optionalNames.Contains(x.Name) && !selfServeInstalls.Contains(x.Name);
+            bool IsCancelledSelfServeRemoval(InstallableItem x) =>
+                optionalNames.Contains(x.Name) && !selfServeUninstalls.Contains(x.Name);
+
+            var managedInstalls = (await _installInfoService.GetManagedInstallsAsync())
+                .Where(x => !IsCancelledSelfServeInstall(x))
+                .ToList();
 
             var updatesList = managedInstalls
                 .Where(x => x.NeedsUpdate ||
                             x.Status == ItemStatus.UpdateAvailable ||
                             x.Status == ItemStatus.UpdateWillBeInstalled)
                 .ToList();
+            var installsList = managedInstalls.Except(updatesList).ToList();
+
+            // Load pending removals (also dropping just-cancelled self-serve ones).
+            var removals = await _installInfoService.GetRemovalsAsync();
+            var pendingRemovals = removals
+                .Where(x => (x.WillBeRemoved || x.Installed) && !IsCancelledSelfServeRemoval(x))
+                .ToList();
+
+            // Surface self-serve install requests the engine hasn't written into
+            // managed_installs yet — a fresh click, or a run that hasn't finished
+            // (InstallInfo is only rewritten at the end). Without this an item the
+            // user just asked to install ("install-requested") is invisible on the
+            // Updates tab until the next full InstallInfo rewrite.
+            var known = new HashSet<string>(
+                updatesList.Concat(installsList).Concat(pendingRemovals).Select(x => x.Name),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var name in selfServe.ManagedInstalls)
+            {
+                if (string.IsNullOrWhiteSpace(name) || known.Contains(name)) continue;
+                var requested = await _installInfoService.GetItemByNameAsync(name);
+                if (requested == null) continue;
+                if (requested.Installed && !requested.NeedsUpdate) continue; // already satisfied
+                requested.Status = ItemStatus.InstallRequested;
+                requested.WillBeInstalled = true;
+                installsList.Add(requested);
+                known.Add(name);
+            }
+
+            // Symmetric to the install surfacing above: a removal the user just
+            // requested (My Items / Software "Remove") lives in the self-serve
+            // manifest's uninstalls, but the engine doesn't write it into
+            // InstallInfo `removals` until the run finishes (minutes later).
+            // Surface it now so it appears under Pending Removals immediately
+            // ("Will be removed") with its real name, version, and icon — installs
+            // and removals stay equally fluid. Skip anything already gone.
+            foreach (var name in selfServe.ManagedUninstalls)
+            {
+                if (string.IsNullOrWhiteSpace(name) || known.Contains(name)) continue;
+                var requested = await _installInfoService.GetItemByNameAsync(name);
+                if (requested == null) continue;
+                if (!requested.Installed) continue; // nothing to remove
+                requested.Status = ItemStatus.RemovalRequested;
+                requested.WillBeRemoved = true;
+                pendingRemovals.Add(requested);
+                known.Add(name);
+            }
+
+            // Re-inject items that finished earlier this session so the result
+            // stays visible (green check) even though they are no longer pending.
+            // They keep their terminal LiveStage, so the row renders the check
+            // and not the "Will be installed/removed" idle label.
+            foreach (var done in completedRows.Values)
+            {
+                if (known.Contains(done.Name)) continue; // still pending/listed
+                if (done.LiveStage == "removed") pendingRemovals.Add(done);
+                else installsList.Add(done);
+                known.Add(done.Name);
+            }
+
+            // Re-inject pending rows a targeted-run subset write dropped, so the
+            // whole run's pending set stays visible. Skip any the fresh InstallInfo
+            // now reports as satisfied (installed, not needing update or removal) so
+            // a completed item can't be resurrected; an item with no fresh record
+            // (e.g. an admin-required install outside the targeted subset) is kept
+            // and reconciles on the next broad check.
+            foreach (var (item, removal) in carryOverPending.Values)
+            {
+                if (known.Contains(item.Name)) continue;
+                // Never resurrect a self-serve request the user just cancelled.
+                if (removal ? IsCancelledSelfServeRemoval(item) : IsCancelledSelfServeInstall(item))
+                    continue;
+                var fresh = await _installInfoService.GetItemByNameAsync(item.Name);
+                if (fresh != null && fresh.Installed && !fresh.NeedsUpdate && !fresh.WillBeRemoved)
+                    continue; // already satisfied — let it drop
+                if (removal) pendingRemovals.Add(item);
+                else installsList.Add(item);
+                known.Add(item.Name);
+            }
+
+            // Load icons BEFORE assigning the bound collections — IconImage is a
+            // plain property without change notification, so a later assignment
+            // would not update an already-rendered row.
+            foreach (var item in updatesList.Concat(installsList).Concat(pendingRemovals))
+            {
+                item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
+            }
+
             Updates = new ObservableCollection<InstallableItem>(
                 updatesList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
                        .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
                        .ThenBy(x => x.GetDisplayName()));
 
-            var installsList = managedInstalls.Except(updatesList).ToList();
             PendingInstalls = new ObservableCollection<InstallableItem>(
                 installsList.OrderBy(x => x.ForceInstallAfterDate.HasValue ? 0 : 1)
                        .ThenBy(x => x.ForceInstallAfterDate ?? DateTime.MaxValue)
                        .ThenBy(x => x.GetDisplayName()));
 
-            // Load pending removals
-            var removals = await _installInfoService.GetRemovalsAsync();
-            var pendingRemovals = removals.Where(x => x.WillBeRemoved || x.Installed).ToList();
             PendingRemovals = new ObservableCollection<InstallableItem>(pendingRemovals.OrderBy(x => x.GetDisplayName()));
 
-            // Load problem items
+            // Load problem items and surface each error on its own row rather
+            // than in a separate section: match a problem to the pending install,
+            // update, or removal it belongs to and stamp the row's LiveStageDetail
+            // (the red inline reason). Only problems with no matching row — an
+            // item that isn't otherwise listed — remain in the standalone section
+            // so nothing is silently dropped.
             var problems = await _installInfoService.GetProblemItemsAsync();
-            ProblemItems = new ObservableCollection<ProblemItem>(problems);
+            var rowsByName = Updates.Concat(PendingInstalls).Concat(PendingRemovals)
+                .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-            // Update flags
+            var orphanProblems = new List<ProblemItem>();
+            foreach (var problem in problems)
+            {
+                if (!string.IsNullOrWhiteSpace(problem.Name) &&
+                    rowsByName.TryGetValue(problem.Name, out var row))
+                {
+                    row.LiveStageDetail = problem.ErrorMessage;
+                }
+                else
+                {
+                    orphanProblems.Add(problem);
+                }
+            }
+            ProblemItems = new ObservableCollection<ProblemItem>(orphanProblems);
+
+            // Section visibility includes finished rows (so the green check shows);
+            // the pending COUNT excludes them so the status text and Install Now
+            // reflect only outstanding work. (The nav badge is computed separately
+            // from InstallInfo by the shell, so it clears on its own.)
             HasUpdates = Updates.Count > 0;
             HasPendingInstalls = PendingInstalls.Count > 0;
             HasPendingRemovals = PendingRemovals.Count > 0;
             HasProblems = ProblemItems.Count > 0;
-            TotalUpdateCount = Updates.Count + PendingInstalls.Count + PendingRemovals.Count;
-            IsEmpty = TotalUpdateCount == 0 && !HasProblems;
+            TotalUpdateCount = Updates.Concat(PendingInstalls).Concat(PendingRemovals).Count(x => !IsDone(x));
+            IsEmpty = Updates.Count + PendingInstalls.Count + PendingRemovals.Count == 0 && !HasProblems;
             HasForcedDeadlines = Updates.Concat(PendingInstalls).Any(x => x.HasDeadline);
 
             // Notify HasPendingWork changed
@@ -148,12 +428,6 @@ public partial class UpdatesViewModel : ObservableObject
                 PendingInstalls.Any(x => 
                     x.RestartAction?.Equals("restart", StringComparison.OrdinalIgnoreCase) == true ||
                     x.RestartAction?.Equals("RequireRestart", StringComparison.OrdinalIgnoreCase) == true);
-
-            // Load icons for all items
-            foreach (var item in Updates.Concat(PendingInstalls).Concat(PendingRemovals))
-            {
-                item.IconImage = await _iconService.GetIconAsync(item.Name, item.Icon);
-            }
 
             // Track days pending for updates and pending installs
             var allPending = Updates.Concat(PendingInstalls).ToList();
@@ -179,6 +453,9 @@ public partial class UpdatesViewModel : ObservableObject
     /// </summary>
     public async Task CheckForUpdatesAsync()
     {
+        // An explicit re-check is the user acknowledging the last run's results —
+        // drop the lingering "Installed"/"Removed" rows on the reload that follows.
+        _dropCompletedOnNextLoad = true;
         IsLoading = true;
         try
         {
@@ -197,15 +474,41 @@ public partial class UpdatesViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallAllUpdatesAsync()
     {
-        if (!HasPendingWork) return;
+        // Only outstanding work counts — lingering finished rows don't.
+        if (TotalUpdateCount == 0) return;
 
         // Check battery status before installing
         if (!await CheckBatteryAsync()) return;
 
-        // Trigger installation of all pending updates
+        // Install exactly the items shown as pending (installs, updates, and
+        // removals) via one targeted `--item ... --no-preflight` run. This is
+        // the same fast path as a single self-serve click — it skips preflight
+        // and the full ~85-item catalog re-evaluation that --installonly forced,
+        // and it streams per-item lifecycle stages onto each row. Removals are
+        // already classified as uninstalls in the self-serve manifest, so naming
+        // them with --item triggers the removal.
+        // Exclude rows that already finished this session (lingering green check)
+        // so a second Install Now doesn't re-trigger them.
+        var targets = Updates.Concat(PendingInstalls).Concat(PendingRemovals)
+            .Where(x => !IsDone(x))
+            .Select(x => x.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var removalTargets = PendingRemovals
+            .Where(x => !IsDone(x))
+            .Select(x => x.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .ToList();
+
         try
         {
-            await _triggerService.TriggerInstallAsync();
+            if (targets.Count > 0)
+            {
+                await _triggerService.TriggerInstallItemsAsync(targets, removalTargets);
+            }
+            // No outstanding targets (only lingering finished rows) — nothing to do.
         }
         catch (InvalidOperationException ex)
         {
@@ -216,13 +519,16 @@ public partial class UpdatesViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallUpdateAsync(InstallableItem item)
     {
+        if (item == null || string.IsNullOrWhiteSpace(item.Name)) return;
+
         // Check battery status before installing
         if (!await CheckBatteryAsync()) return;
 
-        // For individual update installation
+        // Install just this row via the fast targeted path (was previously a
+        // full --installonly run that ignored the item entirely).
         try
         {
-            await _triggerService.TriggerInstallAsync();
+            await _triggerService.TriggerInstallItemAsync(item.Name);
         }
         catch (InvalidOperationException ex)
         {

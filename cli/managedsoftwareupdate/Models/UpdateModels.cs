@@ -331,6 +331,15 @@ public class ManifestItem
     public string Version { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty; // install, update, uninstall, profile, app, optional
     public string SourceManifest { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True when this item came from a manifest's optional_installs and the user's
+    /// self-serve request changed its Action (install or uninstall). Optional items
+    /// stay visible in the software list for their whole lifecycle — this flag lets
+    /// InstallInfo keep the optional record alongside the pending action record.
+    /// </summary>
+    public bool PromotedFromOptional { get; set; }
+
     /// <summary>
     /// True when this item's action was set by the user-writable
     /// SelfServeManifest (install request or promoted optional). SourceManifest
@@ -469,6 +478,13 @@ public class CatalogItem
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0
         || Check.Registry.Name != null
+        // exe-based app installers (NSIS, Inno, etc.) register their own
+        // uninstaller in the Windows uninstall registry, so the engine can remove
+        // them via that UninstallString without an explicit uninstaller block.
+        // This is the removal *mechanism* — orthogonal to unattended_uninstall,
+        // which only governs whether removal may run silently in the background.
+        // An admin opts a package out of removal entirely with `uninstallable: false`.
+        || string.Equals(Installer?.Type, "exe", StringComparison.OrdinalIgnoreCase)
         // Self-uninstallable MSI (canonical): installs[] entry of type=msi with a
         // ProductCode. EffectiveType() handles both explicit type=msi and typeless
         // entries that carry product_code/upgrade_code so a hand-written pkginfo

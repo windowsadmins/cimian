@@ -70,7 +70,7 @@ public class InstallInfo
 /// <summary>
 /// Represents a software item that can be installed/updated/removed
 /// </summary>
-public class InstallableItem
+public class InstallableItem : System.ComponentModel.INotifyPropertyChanged
 {
     /// <summary>
     /// Internal name/identifier
@@ -289,6 +289,47 @@ public class InstallableItem
     /// </summary>
     [YamlIgnore]
     public BitmapImage? IconImage { get; set; }
+
+    /// <summary>
+    /// Live lifecycle stage streamed from managedsoftwareupdate during a run:
+    /// pending, downloading, downloaded, installing, installed, removing,
+    /// removed, failed. Null when no run is reporting on this item. The only
+    /// property with change notification — rows must update in place as the
+    /// engine progresses through stages.
+    /// </summary>
+    [YamlIgnore]
+    public string? LiveStage
+    {
+        get => _liveStage;
+        set
+        {
+            if (_liveStage == value) return;
+            _liveStage = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LiveStage)));
+        }
+    }
+    private string? _liveStage;
+
+    /// <summary>
+    /// Detail accompanying the live stage — for the "failed" stage this is the
+    /// failure reason (e.g. "Exit code 1603") streamed from managedsoftwareupdate,
+    /// so the row can show users the exact code while a run is in flight. Null/empty
+    /// when there's nothing extra to show. Notifies so the row updates in place.
+    /// </summary>
+    [YamlIgnore]
+    public string? LiveStageDetail
+    {
+        get => _liveStageDetail;
+        set
+        {
+            if (_liveStageDetail == value) return;
+            _liveStageDetail = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LiveStageDetail)));
+        }
+    }
+    private string? _liveStageDetail;
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
     /// Days pending text for UI binding (not serialized)

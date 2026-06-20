@@ -172,16 +172,24 @@ public partial class SoftwareViewModel : ObservableObject
 
         foreach (var item in _allItems)
         {
-            // Check if user has requested install
+            // Check if user has requested install. The request persists in the
+            // self-serve manifest after the install completes (that's the user's
+            // standing subscription), so only show a pending state while the
+            // item still needs action — otherwise it reads "Install pending"
+            // forever on an installed item.
             if (selfService.ManagedInstalls.Any(x => x.Equals(item.Name, StringComparison.OrdinalIgnoreCase)))
             {
-                item.Status = item.WillBeInstalled ? ItemStatus.WillBeInstalled : ItemStatus.InstallRequested;
                 item.UserRequested = true;
+                item.Status = item.Installed && !item.NeedsUpdate
+                    ? ItemStatus.Installed
+                    : (item.WillBeInstalled ? ItemStatus.WillBeInstalled : ItemStatus.InstallRequested);
             }
-            // Check if user has requested removal
+            // Check if user has requested removal — pending only while still installed.
             else if (selfService.ManagedUninstalls.Any(x => x.Equals(item.Name, StringComparison.OrdinalIgnoreCase)))
             {
-                item.Status = item.WillBeRemoved ? ItemStatus.WillBeRemoved : ItemStatus.RemovalRequested;
+                item.Status = !item.Installed
+                    ? ItemStatus.NotInstalled
+                    : (item.WillBeRemoved ? ItemStatus.WillBeRemoved : ItemStatus.RemovalRequested);
             }
             // Set appropriate status based on installed state
             else if (item.Installed)
@@ -243,7 +251,7 @@ public partial class SoftwareViewModel : ObservableObject
         item.Status = ItemStatus.RemovalRequested;
 
         // Targeted, preflight-skipping trigger — fast feedback for the just-clicked item.
-        await _triggerService.TriggerInstallItemAsync(item.Name);
+        await _triggerService.TriggerInstallItemAsync(item.Name, asRemoval: true);
 
         ApplyFilters();
     }

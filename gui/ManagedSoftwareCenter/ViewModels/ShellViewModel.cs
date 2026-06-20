@@ -43,6 +43,13 @@ public partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial bool IsInstalling { get; set; }
 
+    // True when the current run should use the global progress banner (a broad
+    // run: check, install-all, or an externally launched session). False for a
+    // targeted --item run, where progress is rendered inside each item's row
+    // instead. Set at the start of a run; reset when it ends.
+    [ObservableProperty]
+    public partial bool ShowGlobalBanner { get; set; }
+
     [ObservableProperty]
     public partial string ProgressMessage { get; set; } = string.Empty;
 
@@ -126,6 +133,9 @@ public partial class ShellViewModel : ObservableObject
         if (IsManagedSoftwareUpdateRunning())
         {
             IsInstalling = true;
+            // An already-running session was launched outside the GUI (scheduled /
+            // bootstrap), so it is broad — use the global banner.
+            ShowGlobalBanner = true;
             CanRefresh = false;
             ProgressMessage = "Update in progress...";
             ProgressDetail = "Waiting for status...";
@@ -169,12 +179,15 @@ public partial class ShellViewModel : ObservableObject
         ProgressPercent = 0;
         IsProgressIndeterminate = true;
         CanStopInstall = false;
-        
+
+        // A check is a broad run — show the global banner.
+        ShowGlobalBanner = true;
+
         // Now set installing - this will trigger UI updates
         IsInstalling = true;
-        
+
         // Navigate to Updates page to show progress
-        NavigateToPage = "updates";
+        RequestNavigate("updates");
         
         try
         {
@@ -205,9 +218,14 @@ public partial class ShellViewModel : ObservableObject
     [RelayCommand]
     private async Task StopInstallAsync()
     {
-        if (!CanStopInstall) return;
-
+        // Cancel covers both phases: delete a queued (not yet consumed) flag
+        // file, and tell a running managedsoftwareupdate to stop gracefully
+        // before its next item.
+        await _triggerService.TriggerStopAsync();
         await _progressClient.SendCommandAsync(new CommandMessage { Type = CommandType.Stop });
+
+        ProgressMessage = "Cancelling...";
+        ProgressDetail = "Finishing the current item, then stopping.";
     }
 
     private async Task RefreshDataAsync()
@@ -319,6 +337,7 @@ public partial class ShellViewModel : ObservableObject
         // Re-enable refresh and end installing state
         CanRefresh = true;
         IsInstalling = false;
+        ShowGlobalBanner = false;
 
         // Always fire SessionCompleted when InstallInfo.yaml changes — this ensures
         // the Updates page reloads with fresh data even when IsInstalling was already
@@ -347,10 +366,12 @@ public partial class ShellViewModel : ObservableObject
         {
             case ProgressMessageType.Status:
                 ProgressMessage = message.Message;
+                // Per-item failures are surfaced inline — a red reason on the
+                // item's own row and in the Updates "Problem Items" section — so a
+                // session error needs no interrupting modal.
                 if (message.Error)
                 {
                     IsInstalling = false;
-                    _ = ShowErrorRecoveryDialogAsync(message);
                 }
                 break;
                 
@@ -366,6 +387,7 @@ public partial class ShellViewModel : ObservableObject
                 
             case ProgressMessageType.Complete:
                 IsInstalling = false;
+                ShowGlobalBanner = false;
                 CanRefresh = true;
                 ProgressMessage = "Complete";
                 ProgressDetail = string.Empty;
@@ -377,8 +399,10 @@ public partial class ShellViewModel : ObservableObject
                 
             case ProgressMessageType.Error:
                 IsInstalling = false;
+                ShowGlobalBanner = false;
                 CanRefresh = true;
-                _ = ShowErrorRecoveryDialogAsync(message);
+                // No modal — the failed item shows its reason inline on its row
+                // and under "Problem Items"; an interrupting dialog is redundant.
                 break;
                 
             case ProgressMessageType.RestartRequired:
@@ -404,28 +428,6 @@ public partial class ShellViewModel : ObservableObject
         }
         
         CanStopInstall = message.StopButtonEnabled;
-    }
-
-    private async Task ShowErrorRecoveryDialogAsync(ProgressMessage message)
-    {
-        var itemName = message.ItemName ?? "Unknown";
-        var isRemoval = message.Message?.Contains("remov", StringComparison.OrdinalIgnoreCase) == true;
-
-        var title = isRemoval ? "Removal Error" : "Installation Error";
-        var detail = !string.IsNullOrEmpty(message.Detail) ? message.Detail : message.Message;
-        var guidance = isRemoval
-            ? $"The removal of \"{itemName}\" failed.\n\n{detail}\n\nRemoval will be attempted again. If this situation continues, contact your systems administrator."
-            : $"The installation of \"{itemName}\" failed.\n\n{detail}\n\nInstallation will be attempted again. If this situation continues, contact your systems administrator.";
-
-        try
-        {
-            await _alertService.ShowInfoAsync(title, guidance);
-        }
-        catch
-        {
-            // Dialog might fail if window is not ready
-            _notificationService.ShowInstallFailed(itemName, detail);
-        }
     }
 
     /// <summary>
@@ -471,8 +473,11 @@ public partial class ShellViewModel : ObservableObject
     {
         if (connected && !IsInstalling)
         {
-            // MSU just connected — enter progress mode
+            // MSU connected without the GUI having triggered a targeted run — it
+            // was launched externally (scheduled / bootstrap), so it is broad:
+            // use the global banner.
             IsInstalling = true;
+            ShowGlobalBanner = true;
             CanRefresh = false;
             ProgressMessage = "Update in progress...";
             ProgressDetail = string.Empty;
@@ -487,6 +492,18 @@ public partial class ShellViewModel : ObservableObject
         // fire OnInstallInfoChanged which resets state.
     }
 
+    /// <summary>
+    /// Requests navigation even when NavigateToPage already holds the target.
+    /// MainWindow reacts to PropertyChanged, and the generated setter suppresses
+    /// it for equal values — so a second navigation to the same page would be
+    /// silently dropped without the null reset.
+    /// </summary>
+    private void RequestNavigate(string page)
+    {
+        NavigateToPage = null;
+        NavigateToPage = page;
+    }
+
     private void OnOperationStatusChanged(object? sender, bool isRunning)
     {
         if (isRunning)
@@ -496,12 +513,19 @@ public partial class ShellViewModel : ObservableObject
             // "Installing Gimp...") so users immediately see what they kicked
             // off; fall back to the generic message for unattributed triggers.
             IsInstalling = true;
+            // A targeted --item run renders progress per-row; only broad runs
+            // (check / install-all) use the global banner.
+            ShowGlobalBanner = !_triggerService.IsItemScopedOperation;
             CanRefresh = false;
             ProgressMessage = _triggerService.CurrentOperationLabel ?? "Checking for updates...";
             ProgressDetail = string.Empty;
             ProgressPercent = 0;
             IsProgressIndeterminate = true;
             CanStopInstall = false;
+
+            // Bring the Updates page forward so the user sees the pending item
+            // and its progress regardless of which page they clicked Install on.
+            RequestNavigate("updates");
         }
         else
         {
