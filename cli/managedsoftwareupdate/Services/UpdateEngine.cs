@@ -145,7 +145,7 @@ public class UpdateEngine : IDisposable
         var current = Cimian.Core.Version.VersionService.GetCurrentOsVersion();
 
         if (!string.IsNullOrWhiteSpace(min) &&
-            Cimian.Core.Version.VersionService.CompareVersions(current, min) < 0)
+            Cimian.Core.Version.VersionService.CompareOsVersion(current, min) < 0)
         {
             reason = $"requires OS {min} or newer, running {current}";
             reasonCode = StatusReasonCode.OsVersionTooOld;
@@ -153,7 +153,7 @@ public class UpdateEngine : IDisposable
         }
 
         if (!string.IsNullOrWhiteSpace(max) &&
-            Cimian.Core.Version.VersionService.CompareVersions(current, max) > 0)
+            Cimian.Core.Version.VersionService.CompareOsVersion(current, max) > 0)
         {
             reason = $"requires OS {max} or older, running {current}";
             reasonCode = StatusReasonCode.OsVersionTooNew;
@@ -232,8 +232,12 @@ public class UpdateEngine : IDisposable
         _verbosity = verbosity;
         _showStatus = showStatus;
 
-        // Initialize loop guard for install loop prevention
-        _loopGuard = new LoopGuard(_isBootstrap);
+        // Initialize loop guard for install loop prevention. Admins can disable it
+        // fleet-wide via LoopGuardEnabled: false in config.yaml. The startup notice
+        // is emitted further down, once ConsoleLogger.Verbosity is set and the
+        // SessionLogger is attached, so it actually reaches the console and run.log.
+        var loopGuardDisabled = !_config.LoopGuardEnabled;
+        _loopGuard = new LoopGuard(_isBootstrap, disabled: loopGuardDisabled);
 
         // Track session duration for run.log summary
         var sessionStopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -282,6 +286,11 @@ public class UpdateEngine : IDisposable
         
         _sessionLogger.Log("INFO", $"Session started: {sessionId}");
         _sessionLogger.Log("INFO", $"Run type: {runType}");
+
+        // Now that verbosity is set and the SessionLogger is attached, surface the
+        // LoopGuard kill-switch so it reaches both the console and run.log.
+        if (loopGuardDisabled)
+            ConsoleLogger.Info("LoopGuard disabled by config (LoopGuardEnabled: false) — install-loop suppression is off");
 
         try
         {
@@ -1032,13 +1041,17 @@ public class UpdateEngine : IDisposable
                         // --item targets specific packages by name; bypass LoopGuard for those
                         // (run-scoped only — persistent suppression state is left intact so
                         // future runs without --item still honor it).
-                        var bypassLoopGuard = itemFilterService != null
-                            && itemFilterService.HasFilter
-                            && itemFilterService.Items.Contains(catalogItem.Name);
+                        // OnDemand items also bypass: by design they (re)install every run, so
+                        // the loop guard would otherwise suppress legitimate repeat installs.
+                        var bypassLoopGuard = catalogItem.OnDemand
+                            || (itemFilterService != null
+                                && itemFilterService.HasFilter
+                                && itemFilterService.Items.Contains(catalogItem.Name));
 
                         if (bypassLoopGuard)
                         {
-                            var msg = $"--item: bypassing LoopGuard for '{catalogItem.Name}'";
+                            var bypassReason = catalogItem.OnDemand ? "OnDemand" : "--item";
+                            var msg = $"{bypassReason}: bypassing LoopGuard for '{catalogItem.Name}'";
                             ConsoleLogger.Info(msg);
                             _sessionLogger?.Log("INFO", msg);
                         }
