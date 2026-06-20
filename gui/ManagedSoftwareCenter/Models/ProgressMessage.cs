@@ -111,6 +111,13 @@ public enum ProgressMessageType
     ShowLog,
 
     /// <summary>
+    /// Per-item lifecycle stage update (ItemName + stage string in Detail):
+    /// pending, downloading, downloaded, installing, installed, removing,
+    /// removed, failed
+    /// </summary>
+    ItemStatus,
+
+    /// <summary>
     /// Download progress
     /// </summary>
     Downloading,

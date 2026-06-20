@@ -33,6 +33,16 @@ public class SelfServiceManifest
 public interface ISelfServiceManifestService
 {
     /// <summary>
+    /// Raised whenever the manifest changes on disk via this service (an install
+    /// or removal request added, or a request cancelled). Lets viewmodels that
+    /// derive their list from the self-serve manifest (e.g. the Updates tab's
+    /// install-requested cross-reference) refresh immediately instead of waiting
+    /// for the next InstallInfo rewrite. May be raised on a background thread —
+    /// subscribers that touch UI must marshal.
+    /// </summary>
+    event EventHandler? RequestsChanged;
+
+    /// <summary>
     /// Load the self-service manifest from disk
     /// </summary>
     Task<SelfServiceManifest> LoadAsync();
@@ -85,6 +95,9 @@ public class SelfServiceManifestService : ISelfServiceManifestService
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
     private readonly SemaphoreSlim _lock = new(1, 1);
+
+    /// <inheritdoc />
+    public event EventHandler? RequestsChanged;
 
     public SelfServiceManifestService(ILogger<SelfServiceManifestService>? logger = null)
     {
@@ -190,6 +203,7 @@ public class SelfServiceManifestService : ISelfServiceManifestService
         manifest.ManagedInstalls.Add(itemName);
 
         await SaveAsync(manifest);
+        RequestsChanged?.Invoke(this, EventArgs.Empty);
         _logger?.LogInformation("Successfully added install request for {ItemName}", itemName);
     }
 
@@ -221,6 +235,7 @@ public class SelfServiceManifestService : ISelfServiceManifestService
         manifest.ManagedUninstalls.Add(itemName);
 
         await SaveAsync(manifest);
+        RequestsChanged?.Invoke(this, EventArgs.Empty);
         _logger?.LogInformation("Successfully added removal request for {ItemName}", itemName);
     }
 
@@ -255,6 +270,7 @@ public class SelfServiceManifestService : ISelfServiceManifestService
         if (wasRemoved)
         {
             await SaveAsync(manifest);
+            RequestsChanged?.Invoke(this, EventArgs.Empty);
             _logger?.LogInformation("Successfully removed request for {ItemName}", itemName);
         }
         else

@@ -14,6 +14,13 @@ public static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // App.UnhandledException only sees XAML-thread exceptions. Exceptions
+        // escaping async void handlers on threadpool threads (e.g. service
+        // event callbacks) kill the process with no trace in msc_crash.log —
+        // log them here so post-mortems don't depend on Windows Error Reporting.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            Log($"FATAL (background): {e.ExceptionObject}");
+
         try
         {
             Log("Starting COM wrappers initialization...");

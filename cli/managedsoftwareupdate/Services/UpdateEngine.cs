@@ -37,6 +37,10 @@ public class UpdateEngine : IDisposable
     private SessionLogger? _sessionLogger;
     private LoopGuard? _loopGuard;
 
+    // Cancelled when the GUI sends a stop command over the status connection.
+    // Checked between items so a user cancel aborts gracefully, never mid-install.
+    private readonly CancellationTokenSource _userStop = new();
+
     private int _verbosity;
     private bool _isBootstrap;
     private bool _checkOnly;
@@ -214,6 +218,7 @@ public class UpdateEngine : IDisposable
         bool skipPreflight = false,
         bool skipPostflight = false,
         bool showStatus = false,
+        int statusPort = StatusReporter.DefaultPort,
         IEnumerable<string>? itemFilter = null,
         CancellationToken cancellationToken = default)
     {
@@ -243,7 +248,9 @@ public class UpdateEngine : IDisposable
         // Initialize status reporter if --show-status is set
         if (_showStatus)
         {
-            _statusReporter = new StatusReporter(verbosity);
+            _statusReporter = new StatusReporter(verbosity, statusPort);
+            // GUI Cancel button: stop gracefully before the next item.
+            _statusReporter.StopRequested += () => _userStop.Cancel();
             _statusReporter.TryConnect();
         }
 
@@ -456,19 +463,50 @@ public class UpdateEngine : IDisposable
                 toInstall = itemFilterService.FilterCatalogItems(toInstall);
                 toUpdate = itemFilterService.FilterCatalogItems(toUpdate);
                 toUninstall = itemFilterService.FilterCatalogItems(toUninstall);
-                
+
                 // Log if everything was filtered out
                 if (toInstall.Count == 0 && toUpdate.Count == 0 && toUninstall.Count == 0)
                 {
                     ConsoleLogger.Warn("No pending actions match the --item filter");
                 }
+
+                // A self-serve click drives --item: the user explicitly asked for
+                // these item(s). Any that produced no action are already in the
+                // desired state, but with no signal the GUI navigates to Updates and
+                // sits empty ("nothing happened"). Emit a terminal stage per
+                // already-satisfied request so its row shows a confirming check
+                // (Installed/Removed) instead of silence. Intent comes from the
+                // manifest Action the self-serve merge set (install vs uninstall).
+                // No-op without --show-status (no reporter).
+                var actionedNames = new HashSet<string>(
+                    toInstall.Concat(toUpdate).Concat(toUninstall).Select(c => c.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var requested in itemFilterService.Items)
+                {
+                    if (actionedNames.Contains(requested)) continue;
+                    var mi = manifestItems.FirstOrDefault(m =>
+                        string.Equals(m.Name, requested, StringComparison.OrdinalIgnoreCase));
+                    var alreadyRemoved = string.Equals(mi?.Action, "uninstall", StringComparison.OrdinalIgnoreCase);
+                    ReportItemStatus(requested, alreadyRemoved ? "removed" : "installed");
+                }
             }
+
+            // Emit an early "pending" stage for every item this session will act on,
+            // so the GUI shows a per-row spinner immediately — through dependency
+            // resolution and downloads — instead of each row looking idle
+            // ("Will be installed") until the install loop finally reaches it. The
+            // per-item pending/downloading/installing/installed stages then update
+            // each row in place. No-op when --show-status is off (no reporter).
+            foreach (var ci in toInstall.Concat(toUpdate))
+                ReportItemStatus(ci.Name, "pending");
+            foreach (var ci in toUninstall)
+                ReportItemStatus(ci.Name, "pending");
 
             // Resolve dependencies and update_for items (Go parity: process.go dependency resolution).
             // Walks both `requires` and `update_for` to the transitive closure so that a stale
             // dep gets surfaced even when its parent is already at the catalog version
             // (e.g. ManageUsersPrefs current, ManageUsers stale).
-            ResolveDependencies(manifestItems, catalogMap, toUpdate);
+            ResolveDependencies(manifestItems, catalogMap, toUpdate, itemFilterService);
 
             // Print hierarchy and tables in checkonly mode (matches Go behavior - always shows this)
             if (_checkOnly)
@@ -769,6 +807,10 @@ public class UpdateEngine : IDisposable
                 _sessionLogger?.Log("INFO", $"Removing {toUninstall.Count} items...");
                 uninstallOutcomes = await PerformUninstallsAsync(toUninstall, cancellationToken);
                 uninstallSuccess = uninstallOutcomes.All(o => o.Success);
+
+                // Consume satisfied self-serve removal requests so they are not
+                // re-queued and shown as pending every run (clean_up_managed_uninstalls).
+                await CleanUpSelfServeUninstallsAsync(uninstallOutcomes);
             }
 
             // Combine install + uninstall outcomes keyed by lower-invariant name so
@@ -815,7 +857,7 @@ public class UpdateEngine : IDisposable
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: actions completed)
-                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName.Values);
 
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
@@ -842,7 +884,7 @@ public class UpdateEngine : IDisposable
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
-                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName.Values);
 
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
@@ -909,6 +951,20 @@ public class UpdateEngine : IDisposable
         foreach (var item in manifestItems)
         {
             if (string.IsNullOrEmpty(item.Name)) continue;
+
+            // Go parity: pkg/filter applies the --item filter to manifestItems
+            // BEFORE status checking, so a targeted run only status-checks the
+            // named items (their dependency closure is resolved and checked
+            // separately by ResolveDependencies). Skipping the rest here turns a
+            // self-serve install from a full ~85-item CheckStatus sweep — the
+            // "starting from scratch / taking forever" slowness — into a handful
+            // of checks. Non-targeted managed items default to "Installed" in the
+            // session report (SessionItemStatusResolver), which is what they were.
+            if (itemFilterService?.HasFilter == true
+                && !itemFilterService.Items.Contains(item.Name))
+            {
+                continue;
+            }
 
             var key = item.Name.ToLowerInvariant();
             
@@ -1339,7 +1395,8 @@ public class UpdateEngine : IDisposable
     private void ResolveDependencies(
         List<ManifestItem> manifestItems,
         Dictionary<string, CatalogItem> catalogMap,
-        List<CatalogItem> itemsToProcess)
+        List<CatalogItem> itemsToProcess,
+        ItemFilterService? itemFilterService = null)
     {
         LogInfo("Resolving dependencies (requires and update_for)...");
 
@@ -1367,8 +1424,13 @@ public class UpdateEngine : IDisposable
         // Seeds: every manifest item whose intent is install/update. Action comes
         // from manifest intent (managed_installs/managed_updates), not current
         // install state, so up-to-date items are still walked for stale deps.
+        // On a targeted (--item) run, only seed the dependency walk from the
+        // named items. Otherwise ResolveDependencies would rebuild the full
+        // closure from every install/update manifest item and CheckStatus each
+        // one — re-introducing the very sweep the IdentifyActions filter skips.
         var seedNames = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "install" || m.Action?.ToLowerInvariant() == "update")
+            .Where(m => itemFilterService?.HasFilter != true || itemFilterService.Items.Contains(m.Name))
             .Select(m => m.Name)
             .ToList();
 
@@ -1484,6 +1546,13 @@ public class UpdateEngine : IDisposable
         ReportStatus("Downloading...");
         ReportDetail($"Downloading {items.Count} items...");
         LogInfo($"Downloading {items.Count} items...");
+
+        // Seed every row in the GUI before work starts.
+        foreach (var item in items)
+        {
+            ReportItemStatus(item.Name, "pending");
+        }
+
         var downloadCount = 0;
         var downloadProgress = new Progress<(string ItemName, double Percent)>(p =>
         {
@@ -1496,10 +1565,21 @@ public class UpdateEngine : IDisposable
             {
                 // Starting a new item download
                 downloadCount++;
+                ReportItemStatus(p.ItemName, "downloading");
                 ReportDetail($"Downloading {label} ({downloadCount}/{items.Count})");
             }
         });
         var downloadedPaths = await _downloadService.DownloadItemsAsync(items, downloadProgress, cancellationToken);
+
+        // Anything with a resolved local path is on disk (downloaded now or
+        // already cached) — flip those rows to downloaded.
+        foreach (var item in items)
+        {
+            if (downloadedPaths.ContainsKey(item.Name))
+            {
+                ReportItemStatus(item.Name, "downloaded");
+            }
+        }
 
         // Track installed and scheduled items for dependency checking
         // Start with items that are already confirmed installed (from status checks)
@@ -1517,10 +1597,18 @@ public class UpdateEngine : IDisposable
         {
             if (cancellationToken.IsCancellationRequested) break;
 
+            if (_userStop.IsCancellationRequested)
+            {
+                LogInfo("Stop requested from GUI - aborting before next item");
+                ReportStatus("Cancelled");
+                break;
+            }
+
             itemIndex++;
             var progressPercent = (itemIndex * 100) / totalItems;
             var installLabel = !string.IsNullOrEmpty(item.Version)
                 ? $"{item.Name} {item.Version}" : item.Name;
+            ReportItemStatus(item.Name, "installing");
             ReportDetail($"Installing {installLabel} ({itemIndex}/{totalItems})");
             ReportPercent(progressPercent);
 
@@ -1528,6 +1616,7 @@ public class UpdateEngine : IDisposable
             if (installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
             {
                 LogDetail($"Skipping {item.Name}: already installed as dependency");
+                ReportItemStatus(item.Name, "installed");
                 successCount++;
                 continue;
             }
@@ -1539,6 +1628,11 @@ public class UpdateEngine : IDisposable
                 downloadedPaths,
                 outcomes,
                 cancellationToken);
+
+            var failureDetail = success ? null : SummarizeFailure(
+                outcomes.LastOrDefault(o =>
+                    string.Equals(o.Name, item.Name, StringComparison.OrdinalIgnoreCase) && !o.Success)?.ErrorMessage);
+            ReportItemStatus(item.Name, success ? "installed" : "failed", failureDetail);
 
             if (success)
             {
@@ -1961,8 +2055,10 @@ public class UpdateEngine : IDisposable
         }
 
         LogInfo($"Removing: {item.Name}");
+        ReportItemStatus(item.Name, "removing");
         var (success, output) = await _installerService.UninstallAsync(item, cancellationToken);
         outcomes.Add(new ItemOutcome(item.Name, item.Version, "remove", success, success ? null : output, DateTime.UtcNow));
+        ReportItemStatus(item.Name, success ? "removed" : "failed", success ? null : SummarizeFailure(output));
 
         if (success)
         {
@@ -2013,6 +2109,13 @@ public class UpdateEngine : IDisposable
         foreach (var item in items)
         {
             if (cancellationToken.IsCancellationRequested) break;
+
+            if (_userStop.IsCancellationRequested)
+            {
+                LogInfo("Stop requested from GUI - aborting before next removal");
+                ReportStatus("Cancelled");
+                break;
+            }
 
             // Skip if already removed (may have been removed as a dependent)
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -2603,6 +2706,54 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
+    /// Reports a per-item lifecycle stage to the GUI (pending, downloading,
+    /// downloaded, installing, installed, removing, removed, failed) so the
+    /// Updates list can render live status on each row.
+    /// </summary>
+    private void ReportItemStatus(string itemName, string stage, string? detail = null)
+    {
+        _statusReporter?.ItemStatus(itemName, stage, detail);
+    }
+
+    /// <summary>
+    /// Condenses an installer's raw failure output into a short, user-readable
+    /// reason for the GUI and problem_items — exit code first, with a plain-English
+    /// gloss for the common MSI codes so users can report a meaningful issue
+    /// instead of "Will be installed" that never changes.
+    /// </summary>
+    private static string? SummarizeFailure(string? rawOutput)
+    {
+        if (string.IsNullOrWhiteSpace(rawOutput)) return null;
+
+        var firstLine = rawOutput
+            .Split('\n')
+            .Select(l => l.Trim())
+            .FirstOrDefault(l => l.Length > 0) ?? rawOutput.Trim();
+
+        var match = System.Text.RegularExpressions.Regex.Match(firstLine, @"-?\d{3,5}");
+        if (match.Success && int.TryParse(match.Value, out var code))
+        {
+            var gloss = code switch
+            {
+                1603 => "fatal error during installation (often a leftover/partial prior install)",
+                1618 => "another installation is already in progress",
+                1619 => "installer package could not be opened",
+                1620 => "installer package could not be opened (invalid)",
+                1622 => "error opening installation log file",
+                1625 => "installation forbidden by system policy",
+                1638 => "another version of this product is already installed",
+                1639 => "invalid command line argument",
+                3010 => "success, but a restart is required",
+                _ => null
+            };
+            return gloss != null ? $"Exit code {code} - {gloss}" : $"Exit code {code}";
+        }
+
+        // No numeric code (script/exe message) — surface a trimmed first line.
+        return firstLine.Length > 200 ? firstLine[..200] + "..." : firstLine;
+    }
+
+    /// <summary>
     /// Reports an error to the GUI
     /// </summary>
     private void ReportError(string message)
@@ -2783,7 +2934,8 @@ public class UpdateEngine : IDisposable
         List<CatalogItem> toInstall,
         List<CatalogItem> toUpdate,
         List<CatalogItem> toUninstall,
-        Dictionary<string, CatalogItem> catalogMap)
+        Dictionary<string, CatalogItem> catalogMap,
+        IReadOnlyCollection<ItemOutcome>? outcomes = null)
     {
         try
         {
@@ -2819,31 +2971,62 @@ public class UpdateEngine : IDisposable
                         if (action == "update")
                             info.ManagedUpdates.Add(mi.Name);
 
-                        if (toUpdateNames.Contains(key) || toInstallNames.Contains(key))
+                        // Re-check status at write time. The toInstall/toUpdate lists were
+                        // computed before the install phase ran, so an item installed this
+                        // session is no longer pending and must not be written as such.
+                        var installCheck = cat != null
+                            ? _statusService.CheckStatus(cat, action, _config.CachePath)
+                            : null;
+                        var installScheduled = toUpdateNames.Contains(key) || toInstallNames.Contains(key);
+                        var needsAction = installCheck?.NeedsAction ?? installScheduled;
+
+                        // Targeted runs (--item) schedule only the filtered subset, but a
+                        // queued self-serve item outside the filter is still pending — keep
+                        // its record so the Updates list survives partial writes.
+                        var installPending = needsAction && (installScheduled || mi.PromotedFromOptional);
+
+                        if (installPending)
                         {
                             // Needs install or update this session — full record on managed_installs.
-                            var isUpdate = toUpdateNames.Contains(key);
+                            var isUpdate = toUpdateNames.Contains(key) || (installCheck?.IsUpdate ?? false);
                             var item = BuildInstallInfoItem(mi.Name, cat);
                             item.Status = isUpdate ? "update-available" : "will-be-installed";
                             item.WillBeInstalled = true;
                             item.NeedsUpdate = isUpdate;
-
-                            if (cat != null)
-                            {
-                                var status = _statusService.CheckStatus(cat, action, _config.CachePath);
-                                item.InstalledVersion = status.InstalledVersion;
-                                item.Installed = !string.IsNullOrEmpty(status.InstalledVersion);
-                            }
-
+                            item.InstalledVersion = installCheck?.InstalledVersion;
+                            item.Installed = !string.IsNullOrEmpty(installCheck?.InstalledVersion);
                             info.ManagedInstalls.Add(item);
                         }
-                        // Else: already installed and up-to-date. No record is written;
-                        // the name on processed_installs is the only trace, matching Munki.
+                        // Else: already installed and up-to-date. No pending record is written;
+                        // the name on processed_installs is the only trace.
+
+                        // A user-requested optional item stays on the optional list for its
+                        // whole lifecycle; its status tracks the pending action.
+                        if (mi.PromotedFromOptional)
+                        {
+                            info.OptionalInstalls.Add(BuildOptionalInstallRecord(
+                                mi.Name, cat, installPending ? "will-be-installed" : null));
+                        }
                         break;
 
                     case "uninstall":
                         info.ProcessedUninstalls.Add(mi.Name);
-                        if (toUninstallNames.Contains(key))
+
+                        // An item is a pending removal only while it is still installed.
+                        // CheckStatus(install).NeedsAction == false means the item is
+                        // present (same signal BuildOptionalInstallRecord uses for the
+                        // Installed flag). Once the uninstall has actually taken it off
+                        // the system it is no longer pending, and CleanUpSelfServeUninstalls
+                        // (run after the removal phase) drops the managed_uninstalls entry
+                        // so it is not re-queued every run. Keying on real install state
+                        // avoids the inverted reading of an uninstall status check, where
+                        // "not verifiable" (NeedsAction) would read as "still pending".
+                        var removalScheduled = toUninstallNames.Contains(key);
+                        var stillInstalled = cat != null
+                            && !_statusService.CheckStatus(cat, "install", _config.CachePath).NeedsAction;
+                        var removalPending = stillInstalled && (removalScheduled || mi.PromotedFromOptional);
+
+                        if (removalPending)
                         {
                             var item = BuildInstallInfoItem(mi.Name, cat);
                             item.Status = "will-be-removed";
@@ -2851,39 +3034,25 @@ public class UpdateEngine : IDisposable
                             item.Installed = true;
                             info.Removals.Add(item);
                         }
+
+                        // A user-removed optional item stays offered on the optional list.
+                        if (mi.PromotedFromOptional)
+                        {
+                            info.OptionalInstalls.Add(BuildOptionalInstallRecord(
+                                mi.Name, cat, removalPending ? "will-be-removed" : null));
+                        }
                         break;
 
                     case "optional":
                         // Optional installs always appear — with installed/needs_update booleans
-                        var optItem = BuildInstallInfoItem(mi.Name, cat);
-                        if (cat != null)
-                        {
-                            var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
-                            optItem.Installed = !status.NeedsAction;
-                            optItem.InstalledVersion = status.InstalledVersion;
-                            optItem.NeedsUpdate = status.IsUpdate;
-                            optItem.Status = status.NeedsAction
-                                ? (status.IsUpdate ? "update-available" : "not-installed")
-                                : "installed";
-
-                            // Check if installer is precached (already downloaded to local cache)
-                            if (!string.IsNullOrEmpty(cat.Installer?.Location))
-                            {
-                                var cachePath = _downloadService.GetCachePath(cat);
-                                optItem.Precached = File.Exists(cachePath);
-                            }
-                        }
-                        else
-                        {
-                            optItem.Status = "not-installed";
-                        }
-                        info.OptionalInstalls.Add(optItem);
+                        info.OptionalInstalls.Add(BuildOptionalInstallRecord(mi.Name, cat, null));
                         break;
 
                     case "default":
                         // Default installs: treated like managed_installs but only when not already installed.
                         // If already installed, they silently disappear (not re-enforced).
-                        if (toInstallNames.Contains(key))
+                        if (toInstallNames.Contains(key) &&
+                            (cat == null || _statusService.CheckStatus(cat, "install", _config.CachePath).NeedsAction))
                         {
                             var defItem = BuildInstallInfoItem(mi.Name, cat);
                             defItem.Status = "will-be-installed";
@@ -2902,6 +3071,27 @@ public class UpdateEngine : IDisposable
                 LogInfo($"Featured items: {string.Join(", ", info.FeaturedItems)}");
             }
 
+            // Surface this session's install/uninstall failures as problem_items so
+            // the GUI shows them (with the exit code) until the next successful
+            // attempt — instead of silently reverting to "Will be installed". This
+            // is the durable, user-reportable record of every failure code.
+            if (outcomes != null)
+            {
+                foreach (var o in outcomes.Where(o => !o.Success))
+                {
+                    catalogMap.TryGetValue(o.Name.ToLowerInvariant(), out var pcat);
+                    info.ProblemItems.Add(new InstallInfoProblem
+                    {
+                        Name = o.Name,
+                        DisplayName = pcat?.DisplayName,
+                        Version = string.IsNullOrEmpty(o.Version) ? pcat?.Version : o.Version,
+                        ErrorMessage = SummarizeFailure(o.ErrorMessage)
+                            ?? $"{o.Action} failed",
+                        Note = o.ErrorMessage
+                    });
+                }
+            }
+
             // Serialize and write
             var yaml = YamlUtils.SerializeInstallInfo(info);
             var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
@@ -2913,6 +3103,48 @@ public class UpdateEngine : IDisposable
         {
             ConsoleLogger.Warn($"Failed to write InstallInfo.yaml: {ex.Message}");
             _sessionLogger?.Log("WARN", $"Failed to write InstallInfo.yaml: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Consumes self-serve removal requests that have been satisfied: once the
+    /// uninstaller for an item the user asked to remove has succeeded, its name is
+    /// dropped from SelfServeManifest.managed_uninstalls. Without this a completed
+    /// removal is re-queued every run and keeps showing as a pending removal.
+    /// Keyed on the uninstall outcome, not a post-removal status check: NSIS
+    /// uninstallers relaunch themselves from %TEMP% and the launched process exits
+    /// before file deletion finishes, so an immediate "is it still installed?" check
+    /// races the deletion. A failed removal (app still present) is retained and
+    /// retried next run. Mirrors the reference clean_up_managed_uninstalls.
+    /// </summary>
+    private async Task CleanUpSelfServeUninstallsAsync(List<ItemOutcome> uninstallOutcomes)
+    {
+        if (_config.SkipSelfService) return;
+
+        var removed = uninstallOutcomes
+            .Where(o => o.Success)
+            .Select(o => o.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (removed.Count == 0) return;
+
+        try
+        {
+            var svc = new SelfServiceManifestService();
+            var manifest = await svc.LoadAsync();
+            var before = manifest.ManagedUninstalls.Count;
+            manifest.ManagedUninstalls = manifest.ManagedUninstalls
+                .Where(n => !removed.Contains(n))
+                .ToList();
+            var cleared = before - manifest.ManagedUninstalls.Count;
+            if (cleared > 0)
+            {
+                await svc.SaveAsync(manifest);
+                LogInfo($"Self-serve: consumed {cleared} completed removal(s) from SelfServeManifest");
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Self-serve uninstall cleanup failed: {ex.Message}");
         }
     }
 
@@ -2932,6 +3164,42 @@ public class UpdateEngine : IDisposable
             ForceInstallAfterDate = cat?.ForceInstallAfterDate,
         };
         return item;
+    }
+
+    /// <summary>
+    /// Builds the optional_installs record for an item, with live install status.
+    /// <paramref name="pendingStatus"/> ("will-be-installed" / "will-be-removed")
+    /// overrides the natural status while a user-requested action is pending, so
+    /// the software list reflects the in-flight state instead of a stale snapshot.
+    /// </summary>
+    private InstallInfoItem BuildOptionalInstallRecord(string name, CatalogItem? cat, string? pendingStatus)
+    {
+        var optItem = BuildInstallInfoItem(name, cat);
+        if (cat != null)
+        {
+            var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
+            optItem.Installed = !status.NeedsAction;
+            optItem.InstalledVersion = status.InstalledVersion;
+            optItem.NeedsUpdate = status.IsUpdate;
+            optItem.Status = pendingStatus ?? (status.NeedsAction
+                ? (status.IsUpdate ? "update-available" : "not-installed")
+                : "installed");
+
+            // Check if installer is precached (already downloaded to local cache)
+            if (!string.IsNullOrEmpty(cat.Installer?.Location))
+            {
+                var cachePath = _downloadService.GetCachePath(cat);
+                optItem.Precached = File.Exists(cachePath);
+            }
+        }
+        else
+        {
+            optItem.Status = pendingStatus ?? "not-installed";
+        }
+
+        optItem.WillBeInstalled = pendingStatus == "will-be-installed";
+        optItem.WillBeRemoved = pendingStatus == "will-be-removed";
+        return optItem;
     }
 
     internal static bool IsEligibleForAgentVersion(CatalogItem item, out string reason, out string reasonCode)

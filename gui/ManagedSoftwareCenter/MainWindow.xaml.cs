@@ -31,8 +31,14 @@ public partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
-        // Set window size and center on screen
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(2100, 1170));
+        // Set window size (capped to the work area) and center on screen
+        var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
+        var workArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(
+            Math.Min(2100, workArea.Width),
+            Math.Min(1170, workArea.Height)));
         CenterOnScreen();
 
         // Get ViewModel from DI
@@ -43,14 +49,17 @@ public partial class MainWindow : Window
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
+    // Centers on the work area using the actual window size, clamped so the
+    // window never opens outside the visible area on smaller displays.
     private void CenterOnScreen()
     {
         var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
-        var displayArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
-            windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
-        var x = (displayArea.WorkArea.Width - 2100) / 2;
-        var y = (displayArea.WorkArea.Height - 1170) / 2;
+        var work = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            windowId, Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;
+        var size = AppWindow.Size;
+        var x = work.X + Math.Max(0, (work.Width - size.Width) / 2);
+        var y = work.Y + Math.Max(0, (work.Height - size.Height) / 2);
         AppWindow.Move(new Windows.Graphics.PointInt32(x, y));
     }
 
