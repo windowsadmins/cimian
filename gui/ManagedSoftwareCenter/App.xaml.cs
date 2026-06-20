@@ -35,7 +35,11 @@ public partial class App : Application
     public App()
     {
         this.InitializeComponent();
-        
+
+        // The App is constructed on the UI thread (Application.Start callback);
+        // capture its DispatcherQueue so background services can marshal events.
+        UiDispatcher.Initialize(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+
         this.UnhandledException += App_UnhandledException;
 
         // Configure dependency injection
@@ -55,11 +59,19 @@ public partial class App : Application
         services.AddSingleton<IBrandingService, BrandingService>();
 
         // ViewModels
-        services.AddTransient<ShellViewModel>();
+        // ShellViewModel is app-wide shell state (progress overlay, badges,
+        // navigation requests). It MUST be a singleton: pages resolve it on
+        // construction, and a transient instance would be created after the
+        // operation-started event already fired — the new page would see
+        // IsInstalling=false and show stale content while a run is in flight.
+        services.AddSingleton<ShellViewModel>();
         services.AddTransient<SoftwareViewModel>();
         services.AddTransient<CategoriesViewModel>();
         services.AddTransient<MyItemsViewModel>();
-        services.AddTransient<UpdatesViewModel>();
+        // UpdatesViewModel holds live per-item stage state streamed from the
+        // progress pipe — singleton so navigation doesn't drop mid-run state
+        // (and so it doesn't leak a pipe subscription per page visit).
+        services.AddSingleton<UpdatesViewModel>();
         services.AddTransient<HistoryViewModel>();
         services.AddTransient<ItemDetailViewModel>();
         services.AddTransient<ProgressViewModel>();
