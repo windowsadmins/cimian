@@ -23,14 +23,29 @@ public class ScriptService
     //   CIMIAN-WARNING: <message>
     // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage,
     // which higher layers map to ItemRecord.currentStatus = "Warning" with last_warning set.
+    // The marker is matched anywhere on a line (not just at line-start): PowerShell
+    // prefixes Write-Error output when it renders to stderr, so a start-anchored
+    // pattern would never catch a marker emitted via stderr. Windows PowerShell's
+    // NormalView even echoes the offending command, putting the marker on the line
+    // twice ("Write-Error 'CIMIAN-WARNING: x' : CIMIAN-WARNING: x"); the leading
+    // greedy ".*" walks to the LAST occurrence on the line so we capture the
+    // rendered message, not the echoed source.
     private static readonly Regex CimianWarningMarker = new(
-        @"^\s*CIMIAN-WARNING:\s*(.+?)\s*$",
+        @".*CIMIAN-WARNING:\s*(.+?)\s*$",
         RegexOptions.Compiled | RegexOptions.Multiline);
+
+    // pwsh 7 colorizes Write-Error output with ANSI escape sequences even when
+    // stderr is redirected, so the marker arrives wrapped (e.g.
+    // "<ESC>[31;1mWrite-Error: <ESC>[31;1mCIMIAN-WARNING: reason<ESC>[0m").
+    // Strip those before matching so the captured message is clean.
+    private static readonly Regex AnsiEscape = new(
+        @"\x1B\[[0-9;]*[A-Za-z]", RegexOptions.Compiled);
 
     private static string? ExtractWarningMarker(string output)
     {
         if (string.IsNullOrEmpty(output)) return null;
-        var match = CimianWarningMarker.Match(output);
+        var clean = AnsiEscape.Replace(output, string.Empty);
+        var match = CimianWarningMarker.Match(clean);
         return match.Success ? match.Groups[1].Value.Trim() : null;
     }
 

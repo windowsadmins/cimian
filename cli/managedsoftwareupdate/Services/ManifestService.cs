@@ -740,6 +740,7 @@ public class ManifestService
                 {
                     optional.Action = "install";
                     optional.IsSelfServe = true;
+                    optional.PromotedFromOptional = true;
                     SetItemSource(name, selfServeSource, "managed_installs");
                     ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {optional.SourceManifest}");
                 }
@@ -777,6 +778,7 @@ public class ManifestService
                 if (optional != null)
                 {
                     optional.Action = "uninstall";
+                    optional.PromotedFromOptional = true;
                     SetItemSource(name, selfServeSource, "managed_uninstalls");
                     ConsoleLogger.Debug($"SelfServe: flipped optional to uninstall item: {name} originalSource: {optional.SourceManifest}");
                 }
