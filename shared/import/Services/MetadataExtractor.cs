@@ -159,6 +159,14 @@ public partial class MetadataExtractor
             if (!string.IsNullOrEmpty(fullVersion))
                 metadata.Version = ParseVersion(fullVersion);
 
+            // Installer-type wrapper detection: cimipkg leaves install_location empty and sets
+            // ARPSYSTEMCOMPONENT=1 when the payload is itself a vendor installer run by the
+            // postinstall. The MSI's ProductCode is then the hidden per-build wrapper and its
+            // BOM is the staged payload — neither is the wrapped app, so neither may become
+            // detection (see PopulateMsiBom below + ImportService + the pre-commit check).
+            metadata.IsInstallerType = buildInfo != null
+                && string.IsNullOrWhiteSpace(buildInfo.InstallLocation);
+
             // Auto-populate the defense-in-depth file checks from the MSI's
             // native bill of materials (File ⨯ Component ⨯ Directory tables).
             // The pkginfo gets either:
@@ -208,6 +216,14 @@ public partial class MetadataExtractor
 
             if (buildInfo != null)
             {
+                // Installer-type wrapper: the BOM is the STAGED vendor installer (e.g.
+                // setup.exe under the [INSTALLDIR] temp folder), not the wrapped app. Picking
+                // it as the key_path would produce bogus detection, so leave KeyPath empty
+                // unless build-info supplied an explicit key_path (handled in branch 1 above,
+                // which the user would point at the WRAPPED app).
+                if (metadata.IsInstallerType)
+                    return;
+
                 // cimipkg MSI, no override — pick single primary binary by heuristic.
                 var productName = buildInfo.Product?.Name ?? metadata.Title;
                 metadata.KeyPath = MsiBomReader.PickPrimaryBinary(exes, productName) ?? "";
