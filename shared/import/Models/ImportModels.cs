@@ -246,6 +246,15 @@ public class InstallerMetadata
     /// display_name. Empty for normal MSIs.
     /// </summary>
     public string ArpDisplayName { get; set; } = "";
+
+    /// <summary>
+    /// True when this is a cimipkg "installer-type" wrapper: empty install_location,
+    /// ARPSYSTEMCOMPONENT=1, a fresh per-build ProductCode, and a payload that is itself a
+    /// vendor installer run by the postinstall. The MSI's own ProductCode and BOM are the
+    /// HIDDEN wrapper / staged payload — NOT the wrapped app — so they must never be emitted
+    /// as detection. Wrapped-app installs[] is authored in the repo (pre-commit enforces it).
+    /// </summary>
+    public bool IsInstallerType { get; set; }
 }
 
 /// <summary>
