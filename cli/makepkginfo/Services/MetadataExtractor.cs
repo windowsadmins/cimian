@@ -22,7 +22,15 @@ public class MetadataExtractor
         string Developer,
         string Description,
         string ProductCode,
-        string UpgradeCode);
+        string UpgradeCode)
+    {
+        /// <summary>
+        /// True when the MSI is a cimipkg installer-type wrapper (ARPSYSTEMCOMPONENT=1):
+        /// the ProductCode is the hidden per-build wrapper, not the wrapped app, so it must
+        /// not be emitted as installs[] detection.
+        /// </summary>
+        public bool IsInstallerType { get; init; }
+    }
 
     /// <summary>
     /// NUPKG metadata extraction result
@@ -63,7 +71,13 @@ public class MetadataExtractor
                 ReadProp("Comments")?.Trim() ?? "",
                 ReadProp("ProductCode")?.Trim() ?? "",
                 ReadProp("UpgradeCode")?.Trim() ?? ""
-            );
+            )
+            {
+                // cimipkg sets ARPSYSTEMCOMPONENT=1 on installer-type wrappers (empty
+                // install_location). Their ProductCode is the hidden per-build wrapper, not
+                // the wrapped app — don't emit it as detection.
+                IsInstallerType = ReadProp("ARPSYSTEMCOMPONENT")?.Trim() == "1"
+            };
         }
         catch
         {
