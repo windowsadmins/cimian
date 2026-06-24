@@ -117,7 +117,11 @@ public class PkgInfoBuilder
                 productCode = msiMeta.ProductCode;
                 upgradeCode = msiMeta.UpgradeCode;
 
-                installs.Add(BuildMsiInstallItem(msiMeta));
+                // Installer-type wrappers (ARPSYSTEMCOMPONENT=1) carry a hidden per-build
+                // ProductCode that detects the WRAPPER, not the wrapped app — never emit it.
+                // Wrapped-app detection is authored in the repo (pre-commit enforces it).
+                if (!msiMeta.IsInstallerType)
+                    installs.Add(BuildMsiInstallItem(msiMeta));
                 break;
 
             case ".exe":

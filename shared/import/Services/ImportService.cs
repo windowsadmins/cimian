@@ -590,6 +590,33 @@ public class ImportService
                 }
             ];
         }
+        else if (metadata.IsInstallerType)
+        {
+            // Installer-type wrapper (empty install_location, hidden ARPSYSTEMCOMPONENT, fresh
+            // per-build ProductCode): the MSI's own ProductCode/BOM are the wrapper + staged
+            // payload, NOT the wrapped app — never emit them as detection. If build-info gave a
+            // key_path (pointing at the wrapped app's binary), emit a type=file check; else
+            // leave installs[] empty so the wrapped-app detection is authored in the repo
+            // (the pre-commit installer-type check enforces it for these hidden wrappers).
+            if (!string.IsNullOrWhiteSpace(metadata.KeyPath))
+            {
+                prompter.ReportInfo($"Installer-type wrapper — wrapped-app key_path => {metadata.KeyPath}");
+                finalInstalls =
+                [
+                    new InstallItem
+                    {
+                        Type = "file",
+                        Path = metadata.KeyPath,
+                        Version = packageVersion
+                    }
+                ];
+            }
+            else
+            {
+                prompter.ReportInfo("Installer-type wrapper (hidden ARPSYSTEMCOMPONENT) — installs[] must describe the WRAPPED app; none derivable from the wrapper, leaving empty for repo authoring.");
+                finalInstalls = [];
+            }
+        }
         else if (metadata.InstallerType == "msi"
             && (!string.IsNullOrEmpty(metadata.ProductCode) || !string.IsNullOrEmpty(metadata.UpgradeCode)))
         {
@@ -633,7 +660,9 @@ public class ImportService
             finalInstalls = [];
         }
 
-        if (metadata.Installs.Count > 0)
+        // Skip the MSI BOM file checks for installer-type wrappers — those enumerate the
+        // staged vendor installer under temp, not the wrapped app.
+        if (!metadata.IsInstallerType && metadata.Installs.Count > 0)
         {
             finalInstalls.AddRange(metadata.Installs);
         }
