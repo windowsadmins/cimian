@@ -135,6 +135,20 @@ public class FileWatcherService : BackgroundService
         }
         finally
         {
+            // A flag file still on disk after the run was neither consumed as an
+            // ack nor cleared by a converged UpdateEngine run — i.e. a bare
+            // bootstrap marker left in place to retry. CheckFlagFile only fires
+            // when the modification time advances past lastSeen, so clear lastSeen
+            // to force the next poll to re-detect the unchanged marker and retry
+            // (the converge loop). Reset before releasing the slot so a concurrent
+            // poll can't observe the stale lastSeen and skip the retry. For files
+            // consumed as an ack (MSC self-service, headless) this is a no-op —
+            // they are already gone.
+            if (File.Exists(flagFile))
+            {
+                if (withGUI) _lastSeenGUI = DateTime.MinValue;
+                else _lastSeenHeadless = DateTime.MinValue;
+            }
             Interlocked.Exchange(ref _updateRunning, 0);
         }
     }
@@ -179,25 +193,49 @@ public class FileWatcherService : BackgroundService
             _logger.LogWarning(ex, "Could not read flag file content, using defaults");
         }
 
+        // A bare GUI marker (.cimian.bootstrap with no Args: line) is written by
+        // `managedsoftwareupdate --set-bootstrap-mode` and means "run a real
+        // bootstrap and keep looping until converged". It is handled differently
+        // from an MSC/self-service request (which always carries an Args: line):
+        //   • Launch: --bootstrap (NOT --auto). Bootstrap installs everything;
+        //     --auto would trip UpdateEngine's active-user gate
+        //     (_auto && IsUserActive()) and restrict the run to non-disruptive
+        //     items — the opposite of bootstrap intent.
+        //   • Flag lifecycle: DO NOT delete the marker here. UpdateEngine owns it —
+        //     it clears the flag via DisableBootstrapMode() on converged success
+        //     and leaves it in place on failure so a later poll retries (the
+        //     Munki-style converge loop). Deleting it before the agent starts
+        //     would strip bootstrap mode (IsBootstrapMode() == File.Exists) and
+        //     silently downgrade the run to a restricted --auto run. Nobody polls
+        //     a bare marker for deletion, so leaving it is safe.
+        bool isBareBootstrapMarker = withGUI && customArgs == null;
+
         // Delete the flag file immediately after reading it, BEFORE launching MSU.
         // MSC's TriggerService polls for this deletion as the "acknowledged" signal.
         // If we wait until after MSU finishes, MSC's 30s timeout expires and throws.
-        try
+        // Skipped for a bare bootstrap marker (see above): UpdateEngine owns that flag.
+        if (!isBareBootstrapMarker)
         {
-            if (File.Exists(flagFile))
+            try
             {
-                File.Delete(flagFile);
-                _logger.LogInformation("Consumed {UpdateType} flag file (acknowledged)", updateType);
+                if (File.Exists(flagFile))
+                {
+                    File.Delete(flagFile);
+                    _logger.LogInformation("Consumed {UpdateType} flag file (acknowledged)", updateType);
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not delete {UpdateType} flag file early", updateType);
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not delete {UpdateType} flag file early", updateType);
+            }
         }
 
         try
         {
-            var updateArgs = customArgs ?? (withGUI ? "--auto --show-status -vv" : "--auto --show-status");
+            var updateArgs = customArgs
+                ?? (isBareBootstrapMarker
+                    ? "--bootstrap --show-status -vv"
+                    : (withGUI ? "--auto --show-status -vv" : "--auto --show-status"));
             var updateProcess = new Process
             {
                 StartInfo = new ProcessStartInfo
