@@ -19,7 +19,13 @@ public class FileWatcherService : BackgroundService
 
     private readonly ILogger<FileWatcherService> _logger;
     private readonly object _lock = new();
-    
+
+    // Event-driven notification for flag files. This is ADDITIVE to the periodic
+    // poll below, not a replacement: FileSystemWatcher can silently drop events on
+    // internal-buffer overflow and never fires for files created while the service
+    // was down, so the poll remains the reliability backstop.
+    private FileSystemWatcher? _watcher;
+
     private DateTime _lastSeenGUI = DateTime.MinValue;
     private DateTime _lastSeenHeadless = DateTime.MinValue;
     private bool _isPaused;
@@ -46,29 +52,42 @@ public class FileWatcherService : BackgroundService
         _logger.LogInformation("Monitoring bootstrap files:");
         _logger.LogInformation("  GUI: {BootstrapFile}", BootstrapFlagFile);
         _logger.LogInformation("  Headless: {HeadlessFile}", HeadlessFlagFile);
-        _logger.LogInformation("Poll interval: {Interval} seconds", PollInterval.TotalSeconds);
+        _logger.LogInformation("Poll interval (fallback): {Interval} seconds", PollInterval.TotalSeconds);
 
-        while (!stoppingToken.IsCancellationRequested)
+        // Start event-driven detection so flag files are picked up near-instantly
+        // instead of waiting up to a full poll interval. The poll below still runs
+        // as the reliability backstop.
+        StartWatching(stoppingToken);
+
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                if (!_isPaused)
+                try
                 {
-                    CheckBootstrapFiles(stoppingToken);
+                    if (!_isPaused)
+                    {
+                        CheckBootstrapFiles(stoppingToken);
+                    }
+
+                    await Task.Delay(PollInterval, stoppingToken);
                 }
-                
-                await Task.Delay(PollInterval, stoppingToken);
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    // Normal shutdown
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error during file monitoring");
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                // Normal shutdown
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error during file monitoring");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-            }
+        }
+        finally
+        {
+            _watcher?.Dispose();
+            _watcher = null;
         }
 
         _logger.LogInformation("CimianWatcher file monitoring service stopped");
@@ -81,8 +100,73 @@ public class FileWatcherService : BackgroundService
             ref _lastSeenGUI, cancellationToken);
         
         // Check headless bootstrap file
-        CheckFlagFile(HeadlessFlagFile, "Headless", withGUI: false, 
+        CheckFlagFile(HeadlessFlagFile, "Headless", withGUI: false,
             ref _lastSeenHeadless, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sets up a FileSystemWatcher on the ManagedInstalls root so flag files are
+    /// detected the moment they're written instead of on the next poll. Additive to
+    /// the periodic poll and startup scan — never a replacement. Failure to start
+    /// the watcher is non-fatal; the poll continues to cover flag files.
+    /// </summary>
+    private void StartWatching(CancellationToken stoppingToken)
+    {
+        var directory = CimianPaths.ManagedInstallsRoot;
+        try
+        {
+            // The directory normally exists (installer creates it), but ensure it so
+            // the watcher can attach on a fresh machine before the first write.
+            Directory.CreateDirectory(directory);
+
+            _watcher = new FileSystemWatcher(directory)
+            {
+                // Matches .cimian.bootstrap / .cimian.headless (and .cimian.selfupdate,
+                // which yields a harmless no-op CheckBootstrapFiles pass).
+                Filter = ".cimian.*",
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.CreationTime,
+                EnableRaisingEvents = true
+            };
+
+            // Created and Changed can both fire for a single write; the claim-slot /
+            // lastSeen logic in CheckFlagFile absorbs the duplicate, so no extra
+            // debounce is needed here.
+            _watcher.Created += (_, e) => OnFlagFileEvent(e, stoppingToken);
+            _watcher.Changed += (_, e) => OnFlagFileEvent(e, stoppingToken);
+            _watcher.Error += OnWatcherError;
+
+            _logger.LogInformation("Watching {Directory} for flag files (event-driven)", directory);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not start FileSystemWatcher on {Directory} - relying on periodic poll", directory);
+        }
+    }
+
+    private void OnFlagFileEvent(FileSystemEventArgs e, CancellationToken stoppingToken)
+    {
+        // FileSystemWatcher callbacks run on threadpool threads; never let one bubble
+        // up and tear down the service. Concurrency with the poll is handled by the
+        // same _updateRunning interlock in CheckFlagFile.
+        try
+        {
+            if (_isPaused || stoppingToken.IsCancellationRequested)
+                return;
+
+            _logger.LogDebug("Flag file event: {ChangeType} {Name}", e.ChangeType, e.Name);
+            CheckBootstrapFiles(stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling flag file event");
+        }
+    }
+
+    private void OnWatcherError(object sender, ErrorEventArgs e)
+    {
+        // FileSystemWatcher can drop events on internal-buffer overflow. Log and lean
+        // on the periodic poll, which stays the reliability backstop.
+        _logger.LogWarning(e.GetException(), "FileSystemWatcher error - falling back to periodic poll");
     }
 
     private void CheckFlagFile(string flagFile, string updateType, bool withGUI,
