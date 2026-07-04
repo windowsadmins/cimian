@@ -4,7 +4,7 @@ Cimian is an open-source software deployment solution designed for managing and 
 
 Cimian aims to allow Mac Admins that manage Windows with Munki to have the exact same experience on Windows and to provide Windows Admins with a powerful and flexible tool for software management or those looking to transition away from traditional imaging and towards modern management with Git and DevOps principles.
 
-Cimian is developed in C# using .NET 10. It leverages a YAML-based configuration system for easy management and customization, and includes native a WPF GUI application for end-user self-service software installation.
+Cimian is developed in C# using .NET 10. It leverages a YAML-based configuration system for easy management and customization, and includes a native WinUI 3 GUI application for end-user self-service software installation.
 
 Cimian is ideal for organizations of all sizes looking to streamline their Windows software deployment processes. It can be used in small environments with just a few machines, or scaled up to manage thousands of systems across multiple locations.
 
