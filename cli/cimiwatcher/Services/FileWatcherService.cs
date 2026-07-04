@@ -379,26 +379,12 @@ public class FileWatcherService : BackgroundService
             return;
         }
 
-        try
-        {
-            var guiProcess = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = cimistatus,
-                    UseShellExecute = true  // Use shell execute for GUI app
-                }
-            };
-
-            if (guiProcess.Start())
-            {
-                _logger.LogInformation("Started CimianStatus UI (PID: {Pid})", guiProcess.Id);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start CimianStatus UI");
-        }
+        // The service runs as LocalSystem in Session 0, which has no visible desktop.
+        // A plain Process.Start would land cimistatus in Session 0, invisible to the
+        // console user. Launch it into the active console session as the logged-in
+        // user instead. TryLaunch handles all logging and never throws; a headless
+        // host (no interactive session) is a graceful skip, not an error.
+        InteractiveSessionLauncher.TryLaunch(cimistatus, _logger);
     }
 
     public void Pause()
