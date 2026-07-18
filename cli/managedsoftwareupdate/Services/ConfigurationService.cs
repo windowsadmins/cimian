@@ -37,25 +37,75 @@ public class ConfigurationService
     }
 
     /// <summary>
+    /// MDM policy overrides delivered by the CimianPrefs Intune profile
+    /// (ADMX-ingested Policy CSP writing to HKLM\SOFTWARE\Policies\Cimian).
+    /// Policy wins over Config.yaml so fleet-wide settings can ship as an
+    /// Intune configuration profile instead of per-device file edits (AB#3709).
+    /// </summary>
+    private const string PolicyRegistryPath = @"SOFTWARE\Policies\Cimian";
+
+    private static CimianConfig ApplyPolicyOverrides(CimianConfig config)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(PolicyRegistryPath, false);
+            if (key == null)
+            {
+                return config;
+            }
+
+            if (key.GetValue("SoftwareRepoURL") is string repoUrl && !string.IsNullOrWhiteSpace(repoUrl))
+            {
+                config.SoftwareRepoURL = repoUrl.Trim();
+            }
+
+            if (key.GetValue("ClientIdentifier") is string clientId && !string.IsNullOrWhiteSpace(clientId))
+            {
+                config.ClientIdentifier = clientId.Trim();
+            }
+
+            // ADMX decimal elements arrive as REG_DWORD; the Policy CSP has also
+            // been observed delivering numerics as strings, so accept both.
+            var timeoutRaw = key.GetValue("InstallerTimeout");
+            var timeout = timeoutRaw switch
+            {
+                int i => i,
+                string s when int.TryParse(s, out var parsed) => parsed,
+                _ => 0
+            };
+            if (timeout >= 60)
+            {
+                config.InstallerTimeout = timeout;
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"Policy override read failed (using Config.yaml values): {ex.Message}");
+        }
+
+        return config;
+    }
+
+    /// <summary>
     /// Loads configuration from a specific path
     /// </summary>
     public CimianConfig LoadConfig(string path)
     {
         if (!File.Exists(path))
         {
-            return GetDefaultConfig();
+            return ApplyPolicyOverrides(GetDefaultConfig());
         }
 
         try
         {
             var yaml = File.ReadAllText(path);
             var config = _deserializer.Deserialize<CimianConfig>(yaml);
-            return config ?? GetDefaultConfig();
+            return ApplyPolicyOverrides(config ?? GetDefaultConfig());
         }
         catch (Exception ex)
         {
             ConsoleLogger.Error($"Failed to load configuration from {path}: {ex.Message}");
-            return GetDefaultConfig();
+            return ApplyPolicyOverrides(GetDefaultConfig());
         }
     }
 
