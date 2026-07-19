@@ -833,10 +833,22 @@ public class InstallerService
         // cimipkg-built MSI have CIMIAN_PKG_BUILD_INFO in the Property table.
         // Route these through sbin-installer (deterministic structure, tested path).
         // Commercial/vendor MSI go straight to msiexec (battle-tested, 25 years of edge cases).
-        if (IsCimianBuiltMsi(localFile) && IsSbinInstallerAvailable())
+        //
+        // Exception: SbinInstaller's own MSI must NOT go through sbin-installer.
+        // The running sbin-installer.exe locks C:\Program Files\sbin\installer.exe,
+        // so the MSI either fails with 1603 (file in use) or schedules a
+        // reboot-replace that lab machines never perform — the installed version
+        // pins at the old build and the item reinstall-loops every session until
+        // LoopGuard suppresses it (73 devices, AB#3709).
+        var replacesSbinInstaller = string.Equals(item.Name, "SbinInstaller", StringComparison.OrdinalIgnoreCase);
+        if (!replacesSbinInstaller && IsCimianBuiltMsi(localFile) && IsSbinInstallerAvailable())
         {
             ConsoleLogger.Info($"[INSTALLER METHOD: sbin-installer] cimipkg-built MSI detected: {item.Name}");
             return await RunSbinInstallerAsync(localFile, item, cancellationToken);
+        }
+        if (replacesSbinInstaller)
+        {
+            ConsoleLogger.Info($"[INSTALLER METHOD: msiexec] {item.Name} replaces sbin-installer itself - bypassing sbin-installer to avoid self-replacement file lock");
         }
 
         ConsoleLogger.Info($"[INSTALLER METHOD: msiexec] Installing MSI: {item.Name}");
