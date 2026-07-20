@@ -272,16 +272,19 @@ public class LoopGuardTests : IDisposable
     }
 
     [Fact]
-    public void SameVersion_EightAttempts_IndefiniteSuppression()
+    public void SameVersion_EightAttempts_CappedSuppression()
     {
         for (int i = 1; i <= 8; i++)
             CreateEventsFile($"session{i}", "EscPkg8", "3.0.0", "completed", DateTime.UtcNow.AddDays(-8 + i));
 
         var guard = CreateGuard();
 
+        // Top tier is now a finite cap (default 7 days), not indefinite — so a package
+        // stranded by a transient failure retries automatically instead of being blacklisted.
         var (suppress, reason) = guard.ShouldSuppress("EscPkg8", "3.0.0");
         suppress.Should().BeTrue();
-        reason.Should().Contain("indefinite");
+        reason.Should().Contain("7-day");
+        reason.Should().NotContain("indefinite");
     }
 
     #endregion
