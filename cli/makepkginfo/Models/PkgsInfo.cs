@@ -124,6 +124,11 @@ public class PkgsInfo
     [YamlMember(Alias = "OnDemand", Order = 22, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
     public bool OnDemand { get; set; }
 
+    // Exempts idempotent recurring-maintenance items from LoopGuard suppression
+    // (see UpdateEngine). Omitted from output unless set true.
+    [YamlMember(Alias = "recurring", Order = 22, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
+    public bool Recurring { get; set; }
+
     [YamlMember(Alias = "managed_profiles", Order = 23, DefaultValuesHandling = DefaultValuesHandling.OmitEmptyCollections)]
     public List<string>? ManagedProfiles { get; set; }
 
