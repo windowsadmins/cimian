@@ -39,17 +39,8 @@ public class ConfigurationService
     /// <summary>
     /// MDM policy overrides delivered by the CimianPrefs Intune profile
     /// (ADMX-ingested Policy CSP writing to HKLM\SOFTWARE\Policies\Cimian).
-    /// Policy wins over Config.yaml so genuinely fleet-STATIC settings can ship as an
+    /// Policy wins over Config.yaml so fleet-wide settings can ship as an
     /// Intune configuration profile instead of per-device file edits (AB#3709).
-    ///
-    /// ONLY fleet-static values are honored here. Per-device / runtime-computed values —
-    /// ClientIdentifier (derived from the serial via Snipe-IT by preflight) and
-    /// SoftwareRepoURL (preflight picks the local-cache/Mars vs central endpoint at run
-    /// time) — are deliberately NOT policy-overridable: preflight recomputes them every
-    /// cycle, so letting a static policy win silently overrides the correct per-device
-    /// value. A stale/placeholder ClientIdentifier ("EnrollClient") shipped this way once
-    /// forced the whole fleet onto the enrollment manifest and ORPHANED devices (AB#3709);
-    /// this exclusion is the guardrail so that class of profile mistake can never recur.
     /// </summary>
     private const string PolicyRegistryPath = @"SOFTWARE\Policies\Cimian";
 
@@ -63,9 +54,15 @@ public class ConfigurationService
                 return config;
             }
 
-            // NOTE: SoftwareRepoURL and ClientIdentifier are intentionally NOT read from
-            // policy — they are per-device / runtime values owned by preflight. See the
-            // method summary. Only fleet-static settings (InstallerTimeout) are honored.
+            if (key.GetValue("SoftwareRepoURL") is string repoUrl && !string.IsNullOrWhiteSpace(repoUrl))
+            {
+                config.SoftwareRepoURL = repoUrl.Trim();
+            }
+
+            if (key.GetValue("ClientIdentifier") is string clientId && !string.IsNullOrWhiteSpace(clientId))
+            {
+                config.ClientIdentifier = clientId.Trim();
+            }
 
             // ADMX decimal elements arrive as REG_DWORD; the Policy CSP has also
             // been observed delivering numerics as strings, so accept both.
