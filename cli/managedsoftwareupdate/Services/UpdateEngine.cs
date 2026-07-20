@@ -1043,14 +1043,19 @@ public class UpdateEngine : IDisposable
                         // future runs without --item still honor it).
                         // OnDemand items also bypass: by design they (re)install every run, so
                         // the loop guard would otherwise suppress legitimate repeat installs.
+                        // Recurring items bypass for the same reason: idempotent maintenance
+                        // scripts (cache clears, time sync, account checks) are meant to run
+                        // every session, so their repeated same-version runs are not a loop.
                         var bypassLoopGuard = catalogItem.OnDemand
+                            || catalogItem.Recurring
                             || (itemFilterService != null
                                 && itemFilterService.HasFilter
                                 && itemFilterService.Items.Contains(catalogItem.Name));
 
                         if (bypassLoopGuard)
                         {
-                            var bypassReason = catalogItem.OnDemand ? "OnDemand" : "--item";
+                            var bypassReason = catalogItem.OnDemand ? "OnDemand"
+                                : catalogItem.Recurring ? "recurring" : "--item";
                             var msg = $"{bypassReason}: bypassing LoopGuard for '{catalogItem.Name}'";
                             ConsoleLogger.Info(msg);
                             _sessionLogger?.Log("INFO", msg);

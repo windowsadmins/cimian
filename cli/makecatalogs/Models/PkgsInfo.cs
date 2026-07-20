@@ -178,6 +178,14 @@ public class PkgsInfo
     [YamlMember(Alias = "OnDemand")]
     public bool OnDemand { get; set; }
 
+    // Recurring items are idempotent maintenance actions (cache clears, time sync,
+    // account/user checks) that are DESIGNED to run every session, so their
+    // installcheck legitimately returns "install needed" run after run. This flag
+    // exempts them from LoopGuard suppression (see UpdateEngine) without the OnDemand
+    // no-receipt/never-installed semantics. Round-trips pkgsinfo -> catalog here.
+    [YamlMember(Alias = "recurring")]
+    public bool Recurring { get; set; }
+
     /// <summary>
     /// Source file path (not serialized)
     /// </summary>
