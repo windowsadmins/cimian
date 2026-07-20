@@ -104,6 +104,16 @@ public class CimianConfig
     public bool LoopGuardEnabled { get; set; } = true;
 
     /// <summary>
+    /// Longest a package can stay loop-suppressed, in days (the LoopGuard backoff cap).
+    /// The top escalation tier suppresses for this long, then retries automatically — so a
+    /// package stranded by a transient failure (e.g. a download outage) self-heals instead
+    /// of being permanently blacklisted. Default 7. A non-positive value falls back to the
+    /// default. This replaces the old indefinite (never-retry) tier.
+    /// </summary>
+    [YamlMember(Alias = "LoopMaxTime")]
+    public int LoopMaxTime { get; set; } = 7;
+
+    /// <summary>
     /// Master switch for unused-software removal (unused_software_removal_info).
     /// On by default — harmless fleet-wide because every package must still
     /// opt in via pkginfo, and the pass only ever touches self-serve/optional
