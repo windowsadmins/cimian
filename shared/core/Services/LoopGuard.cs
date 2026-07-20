@@ -23,11 +23,18 @@ namespace Cimian.Core.Services;
 /// cleared — the root cause may have been fixed. Change detection uses a SHA256 fingerprint
 /// of all install-behavior fields, computed by the caller and passed as catalogFingerprint.
 ///
-/// Backoff strategy:
+/// Backoff strategy (finite — never a permanent blacklist, so a transient failure
+/// like a download outage self-heals on retry instead of needing a manual clear):
 ///   3+ installs of same version across 3+ sessions → suppress 6 hours
 ///   5+ installs across 5+ sessions → suppress 24 hours
-///   8+ installs → suppress indefinitely until manual clear
+///   8+ installs → suppress 7 days (the cap), then retry automatically
 ///   3 installs within 2 hours (rapid-fire) → suppress 12 hours
+///
+/// A genuinely-broken package therefore retries at most once a week and re-suppresses;
+/// one whose root cause was fixed (pkgsinfo change auto-clears immediately, or the
+/// underlying failure simply went away) installs cleanly on its next window. Legacy
+/// permanently-suppressed entries (DateTime.MaxValue, written before this cap) are
+/// migrated to a finite window (LoopMaxTime) anchored on their last attempt when first seen.
 ///
 /// State persisted to: %ProgramData%\ManagedInstalls\reports\state.json
 /// Clear with: managedsoftwareupdate --clear-loop (name or all)
@@ -45,6 +52,14 @@ public class LoopGuard
 
     private static readonly string CacheDir = CimianPaths.CacheDir;
 
+    // Default upper bound (days) on any single suppression window, overridable per-fleet
+    // via the LoopMaxTime config setting. The top escalation tier used to be
+    // DateTime.MaxValue (permanent until a manual --clear-loop or a pkgsinfo change),
+    // which turned a transient failure — e.g. a download outage that stranded a package
+    // for 8+ sessions — into an indefinite blacklist. Capping at a long-but-finite window
+    // keeps the system self-healing: the worst case is a once-per-LoopMaxTime retry.
+    private const int DefaultMaxSuppressionDays = 7;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -61,17 +76,21 @@ public class LoopGuard
     private LoopGuardState _state;
     private readonly bool _isBootstrap;
     private readonly bool _disabled;
+    private readonly int _maxSuppressionDays;
 
     /// <summary>
     /// Creates a new LoopGuard.
     /// If isBootstrap is true, suppression is disabled to avoid blocking first-run provisioning.
     /// If disabled is true, suppression is turned off entirely — the admin-facing global
     /// kill-switch, driven by the LoopGuardEnabled config setting.
+    /// maxSuppressionDays caps the longest suppression window (the global LoopMaxTime config,
+    /// in days); a non-positive value falls back to the DefaultMaxSuppressionDays default.
     /// </summary>
-    public LoopGuard(bool isBootstrap = false, bool disabled = false)
+    public LoopGuard(bool isBootstrap = false, bool disabled = false, int maxSuppressionDays = DefaultMaxSuppressionDays)
     {
         _isBootstrap = isBootstrap;
         _disabled = disabled;
+        _maxSuppressionDays = maxSuppressionDays > 0 ? maxSuppressionDays : DefaultMaxSuppressionDays;
         _state = LoadState();
         BuildHistoryFromEvents();
     }
@@ -79,10 +98,11 @@ public class LoopGuard
     /// <summary>
     /// For unit testing — constructor that takes custom paths.
     /// </summary>
-    internal LoopGuard(string statePath, string logsDir, bool isBootstrap = false, string? cacheDir = null, bool disabled = false)
+    internal LoopGuard(string statePath, string logsDir, bool isBootstrap = false, string? cacheDir = null, bool disabled = false, int maxSuppressionDays = DefaultMaxSuppressionDays)
     {
         _isBootstrap = isBootstrap;
         _disabled = disabled;
+        _maxSuppressionDays = maxSuppressionDays > 0 ? maxSuppressionDays : DefaultMaxSuppressionDays;
         StatePath_Override = statePath;
         LogsDir_Override = logsDir;
         CacheDir_Override = cacheDir;
@@ -185,10 +205,16 @@ public class LoopGuard
                     return (false, $"Auto-cleared: {changeDetail}");
                 }
 
+                // Migrate any legacy permanent suppression (DateTime.MaxValue, written
+                // before the finite cap existed) to a concrete 7-day window anchored on
+                // the last real attempt. A package stranded permanently by a transient
+                // failure then self-heals: entries stuck longer than the cap are already
+                // past the window and retry now; recent ones wait out the remainder — no
+                // manual --clear-loop required.
                 if (pkgState.SuppressedUntil.Value == DateTime.MaxValue)
                 {
-                    // Indefinite suppression
-                    return (true, $"LOOP SUPPRESSED: {packageName} — indefinitely suppressed after {pkgState.AttemptCount} install attempts. Clear with: managedsoftwareupdate --clear-loop {packageName}");
+                    pkgState.SuppressedUntil = pkgState.LastAttempt.GetValueOrDefault().AddDays(_maxSuppressionDays);
+                    SaveState();
                 }
 
                 if (DateTime.UtcNow < pkgState.SuppressedUntil.Value)
@@ -411,9 +437,9 @@ public class LoopGuard
 
             if (versionCount >= 8)
             {
-                // Indefinite — requires manual clear
-                suppressUntil = DateTime.MaxValue;
-                reason = $"Persistent loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions (indefinite)";
+                // Top tier — capped at 7 days (finite), then retries automatically
+                suppressUntil = DateTime.UtcNow.AddDays(_maxSuppressionDays);
+                reason = $"Persistent loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)";
             }
             else if (versionCount >= 5)
             {
@@ -435,8 +461,9 @@ public class LoopGuard
         // Threshold 3: High total attempt count across sessions (any version)
         if (pkgState.AttemptCount >= 8 && pkgState.SessionCount >= 5)
         {
-            var suppressUntil = DateTime.MaxValue;
-            var reason = $"Persistent loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions (indefinite)";
+            // Top tier — capped at 7 days (finite), then retries automatically
+            var suppressUntil = DateTime.UtcNow.AddDays(_maxSuppressionDays);
+            var reason = $"Persistent loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)";
             pkgState.SuppressedUntil = suppressUntil;
             pkgState.SuppressionReason = reason;
             SaveState();

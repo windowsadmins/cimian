@@ -237,7 +237,7 @@ public class UpdateEngine : IDisposable
         // is emitted further down, once ConsoleLogger.Verbosity is set and the
         // SessionLogger is attached, so it actually reaches the console and run.log.
         var loopGuardDisabled = !_config.LoopGuardEnabled;
-        _loopGuard = new LoopGuard(_isBootstrap, disabled: loopGuardDisabled);
+        _loopGuard = new LoopGuard(_isBootstrap, disabled: loopGuardDisabled, maxSuppressionDays: _config.LoopMaxTime);
 
         // Track session duration for run.log summary
         var sessionStopwatch = System.Diagnostics.Stopwatch.StartNew();
