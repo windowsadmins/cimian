@@ -50,6 +50,11 @@ public class InstallItem
 
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
+
+    // ARP DisplayName fallback for wrapper MSIs (e.g. Firefox) that keep no
+    // Windows Installer registration; carried through so it survives round-trips.
+    [YamlMember(Alias = "display_name")]
+    public string? DisplayName { get; set; }
 }
 
 /// <summary>
