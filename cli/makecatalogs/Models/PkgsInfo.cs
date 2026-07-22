@@ -72,6 +72,16 @@ public class InstallItem
     [YamlMember(Alias = "upgrade_code")]
     public string? UpgradeCode { get; set; }
 
+    /// <summary>
+    /// ARP DisplayName fallback for wrapper MSIs (empty File table; payload
+    /// installed by an embedded setup.exe, e.g. Mozilla Firefox) that keep no
+    /// Windows Installer registration. The client (managedsoftwareupdate) opts
+    /// in per entry for its ARP substring match; makecatalogs must carry the
+    /// field through so it is not stripped out of the generated catalog.
+    /// </summary>
+    [YamlMember(Alias = "display_name")]
+    public string? DisplayName { get; set; }
+
     /// <summary>MSIX/APPX package identity name (from AppxManifest Identity/@Name).</summary>
     [YamlMember(Alias = "identity_name")]
     public string? IdentityName { get; set; }
