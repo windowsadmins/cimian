@@ -218,6 +218,60 @@ public class VersionServiceTests
     {
         VersionService.IsOlderVersion(local, remote).Should().Be(expected);
     }
-    
+
+    #endregion
+
+    #region Calendar Build Stamp Tests (AB#3754)
+
+    [Theory]
+    // The core bug: the legacy 3-component "yyyy.M.DDHH" stamp (day+hour merged, no
+    // minutes) must not sort newer than the 4-component "yyyy.MM.dd.HHmm" stamp.
+    // "2026.7.2006" is 2026-07-20 06:00; "2026.07.20.0632" is 2026-07-20 06:32.
+    [InlineData("2026.7.2006", "2026.07.20.0632", true)]    // 06:00 older than 06:32
+    [InlineData("2026.07.20.0632", "2026.7.2006", false)]   // and the reverse
+    [InlineData("2026.6.2405", "2026.06.24.0519", true)]    // 2026-06-24 05:00 < 05:19
+    [InlineData("2026.6.2418", "2026.06.24.0519", false)]   // 2026-06-24 18:00 > 05:19
+    [InlineData("2026.6.511", "2026.06.05.0221", false)]    // 2026-06-05 11:00 > 02:21
+    // Same build in both encodings compares equal enough for "not older".
+    [InlineData("2026.07.20.0632", "2026.07.20.0632", false)]
+    // Cross-encoding across months / year boundary.
+    [InlineData("2025.12.17.2120", "2026.01.20.1609", true)]
+    [InlineData("2026.7.2006", "2026.06.24.0519", false)]   // July build newer than June
+    public void IsOlderVersion_CalendarBuildStamps_ReturnsCorrectResult(string local, string remote, bool expected)
+    {
+        VersionService.IsOlderVersion(local, remote).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("2026.07.20.0632", 202607200632L)]  // canonical yyyy.MM.dd.HHmm
+    [InlineData("2026.7.2006", 202607200600L)]       // 3-component yyyy.M.DDHH -> 06:00
+    [InlineData("2026.6.511", 202606051100L)]        // DDHH with single-digit day
+    [InlineData("2026.6.2418", 202606241800L)]       // DDHH, hour 18
+    [InlineData("2026.7.5", 202607050000L)]          // plain yyyy.M.d -> midnight
+    [InlineData("2025.09.13.2245", 202509132245L)]
+    public void TryParseCalendarBuildStamp_ValidStamps_DecodeToSortKey(string version, long expected)
+    {
+        VersionService.TryParseCalendarBuildStamp(version, out var sortKey).Should().BeTrue();
+        sortKey.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("1.2.3")]              // semver
+    [InlineData("10.0.22621")]         // Windows build number
+    [InlineData("139.0.7258.139")]     // Chrome
+    [InlineData("26.7.2118")]          // MSI 2-digit-year form (out of scope by design)
+    [InlineData("2.55.0.windows.1")]   // NuGet-style suffix
+    [InlineData("2026.07.20.0632-beta1")] // pre-release suffix is not a bare stamp
+    [InlineData("2101.01.01.0000")]    // year above range
+    [InlineData("2026.13.01.0000")]    // month out of range
+    [InlineData("2026.7.99")]          // 32..99 third component: neither day nor DDHH
+    [InlineData("2026")]               // too few components
+    [InlineData("2026.7")]             // too few components
+    [InlineData("")]
+    public void TryParseCalendarBuildStamp_NonStamps_ReturnFalse(string version)
+    {
+        VersionService.TryParseCalendarBuildStamp(version, out _).Should().BeFalse();
+    }
+
     #endregion
 }
