@@ -66,21 +66,7 @@ public static class VersionService
         if (string.IsNullOrWhiteSpace(remote))
             return false; // Any local is not older than empty remote
         
-        // Normalize both versions
-        var localNormalized = Normalize(local);
-        var remoteNormalized = Normalize(remote);
-        
-        // Parse and compare
-        var localParsed = ParseVersion(localNormalized);
-        var remoteParsed = ParseVersion(remoteNormalized);
-        
-        if (localParsed == null || remoteParsed == null)
-        {
-            // Fallback to string comparison if parsing fails
-            return string.Compare(localNormalized, remoteNormalized, StringComparison.OrdinalIgnoreCase) < 0;
-        }
-        
-        return localParsed.CompareTo(remoteParsed) < 0;
+        return CompareVersions(local, remote) < 0;
     }
     
     /// <summary>
@@ -97,7 +83,18 @@ public static class VersionService
             
         if (string.IsNullOrWhiteSpace(v2))
             return 1;
-        
+
+        // When both are Cimian calendar build stamps, compare by decoded build time.
+        // Element-wise numeric comparison mis-orders the legacy 3-component form:
+        // "2026.7.2006" -> [2026,7,2006] sorts newer than "2026.07.20.0632" ->
+        // [2026,7,20,632] because 2006 > 20, which would let a stale agent consider
+        // itself current and suppress its own self-update. See TryParseCalendarBuildStamp.
+        if (TryParseCalendarBuildStamp(v1, out var stamp1) &&
+            TryParseCalendarBuildStamp(v2, out var stamp2))
+        {
+            return stamp1.CompareTo(stamp2);
+        }
+
         var v1Normalized = Normalize(v1);
         var v2Normalized = Normalize(v2);
         
@@ -241,6 +238,98 @@ public static class VersionService
         return string.Join(".", trimmedParts);
     }
     
+    /// <summary>
+    /// Bounds for treating a leading 4-digit component as a calendar year rather
+    /// than a large version major (e.g. Unity's 6000.x). Mirrors cimipkg's
+    /// VersionParser year gate.
+    /// </summary>
+    private const int CalendarYearMin = 2000;
+    private const int CalendarYearMax = 2100;
+
+    /// <summary>
+    /// Decodes a Cimian calendar build stamp into a sortable YYYYMMDDHHMM key.
+    ///
+    /// The client stamps builds as <c>yyyy.MM.dd.HHmm</c> (canonical, e.g.
+    /// <c>2026.07.20.0632</c>). Older builds emitted a 3-component <c>yyyy.M.DDHH</c>
+    /// form with day and hour merged and no minutes (<c>2026.7.2006</c> is
+    /// 2026-07-20 06:00), or a plain <c>yyyy.M.d</c>. All encode a build datetime;
+    /// this returns them on one comparable scale so agent-version currency is reliable.
+    ///
+    /// Requires an explicit 4-digit year in [<see cref="CalendarYearMin"/>,
+    /// <see cref="CalendarYearMax"/>]. Semantic versions, Windows build numbers, and
+    /// Chrome-style versions therefore never match and fall through to the general
+    /// comparison unchanged. The 2-digit MSI ProductVersion form (<c>26.7.2118</c>) is
+    /// deliberately not matched — it never enters the agent version path and matching
+    /// it would collide with ordinary two-digit-major semver.
+    /// </summary>
+    /// <returns>True and sets <paramref name="sortKey"/> if <paramref name="version"/>
+    /// is a recognizable calendar build stamp; otherwise false.</returns>
+    internal static bool TryParseCalendarBuildStamp(string? version, out long sortKey)
+    {
+        sortKey = 0;
+        if (string.IsNullOrWhiteSpace(version))
+            return false;
+
+        var parts = version.Trim().Split('.');
+        if (parts.Length < 3)
+            return false;
+        foreach (var part in parts)
+        {
+            if (part.Length == 0 || !part.All(char.IsDigit))
+                return false;
+        }
+
+        // 4-digit calendar-year gate.
+        if (parts[0].Length != 4 || !int.TryParse(parts[0], out var year))
+            return false;
+        if (year < CalendarYearMin || year > CalendarYearMax)
+            return false;
+
+        var month = int.Parse(parts[1]);
+        if (month < 1 || month > 12)
+            return false;
+
+        int day, hour, minute;
+        if (parts.Length >= 4)
+        {
+            // yyyy.MM.dd.HHmm
+            day = int.Parse(parts[2]);
+            var hhmm = int.Parse(parts[3]);
+            hour = hhmm / 100;
+            minute = hhmm % 100;
+        }
+        else
+        {
+            // Exactly 3 components.
+            var third = int.Parse(parts[2]);
+            if (third <= 31)
+            {
+                // yyyy.M.d — plain calendar day, no time component.
+                day = third;
+                hour = 0;
+                minute = 0;
+            }
+            else if (third >= 100)
+            {
+                // yyyy.M.DDHH — day and hour merged, minutes dropped.
+                day = third / 100;
+                hour = third % 100;
+                minute = 0;
+            }
+            else
+            {
+                // 32..99: neither a valid day nor a DDHH pair.
+                return false;
+            }
+        }
+
+        if (day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59)
+            return false;
+
+        sortKey = ((((long)year * 100 + month) * 100 + day) * 100 + hour) * 100 + minute;
+        return true;
+    }
+
     /// <summary>
     /// Parses a version string into a comparable Version object.
     /// Handles various formats: semantic, Windows build, Chrome-style, date-based.
