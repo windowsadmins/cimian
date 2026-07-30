@@ -188,6 +188,28 @@ public class SystemFacts
     /// </summary>
     public long GpuVramGb { get; set; }
 
+    /// <summary>
+    /// Normalized PCI hardware ID of every display adapter, e.g. "PCI\VEN_10DE&amp;DEV_24B0".
+    /// Read from the PCI enumerator rather than the driver, so a card still reports its
+    /// identity when no vendor driver is installed and it has no model name.
+    /// Maps to 'gpu_pci_ids' / 'gpu_pci_id' fact keys (used with CONTAINS)
+    /// </summary>
+    public List<string> GpuPciIds { get; set; } = new();
+
+    /// <summary>
+    /// GPU vendors resolved from PCI vendor IDs ("NVIDIA", "AMD", "Intel", ...).
+    /// Driver-independent, so a card whose driver is missing still reports its vendor.
+    /// Maps to 'gpu_vendors' / 'gpu_vendor' fact keys (used with CONTAINS)
+    /// </summary>
+    public List<string> GpuVendors { get; set; } = new();
+
+    /// <summary>
+    /// True when at least one display adapter has no vendor driver bound - Windows is
+    /// showing a generic adapter, or the device sits unclaimed under "Other devices".
+    /// Maps to 'gpu_driver_missing' fact key
+    /// </summary>
+    public bool GpuDriverMissing { get; set; }
+
     // --- CPU Facts (predicate-friendly shortcuts from ProcessorInfo) ---
 
     /// <summary>
@@ -291,6 +313,9 @@ public class SystemFacts
             "gpu_names" or "gpu_name" => GpuNames,
             "gpu_driver_version" => GpuDriverVersion,
             "gpu_vram_gb" => GpuVramGb,
+            "gpu_pci_ids" or "gpu_pci_id" => GpuPciIds,
+            "gpu_vendors" or "gpu_vendor" => GpuVendors,
+            "gpu_driver_missing" => GpuDriverMissing,
             
             // CPU facts
             "cpu_name" => CpuName,
