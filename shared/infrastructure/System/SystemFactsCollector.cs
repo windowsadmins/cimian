@@ -1,5 +1,6 @@
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using Cimian.Core.Models;
@@ -481,7 +482,7 @@ public class SystemFactsCollector : ISystemFactsCollector
         try
         {
             using var searcher = new ManagementObjectSearcher(
-                "SELECT Name, DriverVersion, AdapterRAM FROM Win32_VideoController");
+                "SELECT Name, DriverVersion, AdapterRAM, PNPDeviceID FROM Win32_VideoController");
 
             string? discreteGpuName = null;
             string? discreteDriverVersion = null;
@@ -492,11 +493,16 @@ public class SystemFactsCollector : ISystemFactsCollector
                 var name = mo["Name"]?.ToString() ?? "";
                 var driverVersion = mo["DriverVersion"]?.ToString() ?? "";
                 var adapterRam = Convert.ToInt64(mo["AdapterRAM"] ?? 0);
+                var pnpDeviceId = mo["PNPDeviceID"]?.ToString() ?? "";
 
                 if (string.IsNullOrWhiteSpace(name))
                     continue;
 
                 facts.GpuNames.Add(name);
+
+                var hardwareId = ExtractPciVendorDeviceId(pnpDeviceId);
+                if (!string.IsNullOrWhiteSpace(hardwareId))
+                    facts.GpuHardwareIds.Add(hardwareId);
 
                 // Prioritize discrete GPUs for driver version and VRAM
                 if (IsDiscreteGpu(name))
@@ -525,6 +531,19 @@ public class SystemFactsCollector : ISystemFactsCollector
         {
             _logger.LogWarning(ex, "Failed to collect GPU info");
         }
+    }
+
+    private static string ExtractPciVendorDeviceId(string pnpDeviceId)
+    {
+        if (string.IsNullOrWhiteSpace(pnpDeviceId))
+            return string.Empty;
+
+        var match = Regex.Match(
+            pnpDeviceId,
+            @"PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}",
+            RegexOptions.IgnoreCase);
+
+        return match.Success ? match.Value.ToUpperInvariant() : string.Empty;
     }
 
     /// <summary>

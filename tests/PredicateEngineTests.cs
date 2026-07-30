@@ -632,6 +632,19 @@ public class PredicateEngineTests
     }
 
     [Fact]
+    public async Task EvaluateCondition_GpuHardwareIds_ContainsCheck()
+    {
+        var facts = CreateFacts(
+            gpuHardwareIds: new[] { "PCI\\VEN_10DE&DEV_2C02", "PCI\\VEN_8086&DEV_4692" });
+
+        var plural = await _engine.EvaluateConditionAsync("gpu_hardware_ids CONTAINS 'PCI\\VEN_10DE&DEV_2C02'", facts);
+        plural.Should().BeTrue();
+
+        var singular = await _engine.EvaluateConditionAsync("gpu_hardware_id CONTAINS 'VEN_8086&DEV_4692'", facts);
+        singular.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task EvaluateCondition_GpuDriverVersion_Comparison()
     {
         var facts = CreateFacts(gpuDriverVersion: "32.0.15.9174");
@@ -839,6 +852,7 @@ public class PredicateEngineTests
         string modelVersion = "",
         string[]? catalogs = null,
         string[]? gpuNames = null,
+        string[]? gpuHardwareIds = null,
         string gpuDriverVersion = "",
         long gpuVramGb = 0,
         string cpuName = "",
@@ -864,6 +878,7 @@ public class PredicateEngineTests
             ModelVersion = modelVersion,
             Catalogs = catalogs?.ToList() ?? new List<string>(),
             GpuNames = gpuNames?.ToList() ?? new List<string>(),
+            GpuHardwareIds = gpuHardwareIds?.ToList() ?? new List<string>(),
             GpuDriverVersion = gpuDriverVersion,
             GpuVramGb = gpuVramGb,
             CpuName = cpuName,
