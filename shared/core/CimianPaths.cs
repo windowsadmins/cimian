@@ -34,7 +34,16 @@ public static class CimianPaths
     public static readonly string ConditionsDir  = Path.Combine(ManagedInstallsRoot, "conditions");
     public static readonly string ReceiptsDir    = Path.Combine(ManagedInstallsRoot, "Receipts");
     public static readonly string SbinDir        = Path.Combine(ManagedInstallsRoot, "sbin");
+    public static readonly string FactsDir       = Path.Combine(ManagedInstallsRoot, "facts");
     public static readonly string SelfUpdateBackupDir = Path.Combine(ManagedInstallsRoot, "SelfUpdateBackup");
+
+    // ── Persisted hardware facts ─────────────────────────────────────────────
+    /// <summary>
+    /// Last known display adapter identity, keyed by PCI hardware ID. Windows only
+    /// reports a GPU's model name while its vendor driver is bound, so this cache is
+    /// what lets driver predicates keep matching after a driver goes missing.
+    /// </summary>
+    public static readonly string GpuFactsCache = Path.Combine(FactsDir, "gpu-adapters.json");
 
     // ── Script hooks (sbin) ──────────────────────────────────────────────────
     public static readonly string PreflightScript  = Path.Combine(SbinDir, "preflight.ps1");

@@ -680,6 +680,64 @@ public class PredicateEngineTests
         (await _engine.EvaluateConditionAsync(condition, factsGeforce)).Should().BeFalse("GeForce should not match Quadro/RTX A");
     }
 
+    [Theory]
+    [InlineData("gpu_pci_ids CONTAINS 'VEN_10DE'", true)]
+    [InlineData("gpu_pci_ids CONTAINS 'DEV_24B0'", true)]
+    [InlineData("gpu_pci_ids CONTAINS 'DEV_1B80'", false)]
+    public async Task EvaluateCondition_GpuPciIds_ContainsCheck(string condition, bool expected)
+    {
+        var facts = CreateFacts(gpuPciIds: new[] { @"PCI\VEN_10DE&DEV_24B0", @"PCI\VEN_8086&DEV_3E92" });
+
+        (await _engine.EvaluateConditionAsync(condition, facts)).Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuVendors_MatchesWithoutAModelName()
+    {
+        // A card whose driver has been removed reports no model, but the PCI enumerator
+        // still names the vendor.
+        var facts = CreateFacts(
+            gpuNames: new[] { "Microsoft Basic Display Adapter" },
+            gpuPciIds: new[] { @"PCI\VEN_10DE&DEV_24B0" },
+            gpuVendors: new[] { "NVIDIA" },
+            gpuDriverMissing: true);
+
+        (await _engine.EvaluateConditionAsync("gpu_vendors CONTAINS 'NVIDIA'", facts)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync("gpu_names CONTAINS 'NVIDIA'", facts)).Should().BeFalse(
+            "the generic adapter name carries no vendor");
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_GpuDriverMissing_BooleanComparison()
+    {
+        var missing = CreateFacts(gpuVendors: new[] { "NVIDIA" }, gpuDriverMissing: true);
+        var healthy = CreateFacts(gpuVendors: new[] { "NVIDIA" }, gpuDriverMissing: false);
+
+        var condition = "gpu_vendors CONTAINS 'NVIDIA' AND gpu_driver_missing == 'true'";
+
+        (await _engine.EvaluateConditionAsync(condition, missing)).Should().BeTrue();
+        (await _engine.EvaluateConditionAsync(condition, healthy)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task EvaluateCondition_QuadroDriverStillMatchesAfterDriverGoesMissing()
+    {
+        // Regression: when a workstation's Quadro driver disappeared, Windows fell back to a
+        // generic adapter name and the manifest stopped offering the driver that would have
+        // fixed it. The collector now re-supplies the last known model name, so a model-name
+        // condition has to keep matching.
+        var condition = "gpu_names CONTAINS 'Quadro' OR gpu_names CONTAINS 'RTX A' OR gpu_names CONTAINS 'RTX PRO'";
+
+        var recovered = CreateFacts(
+            gpuNames: new[] { "NVIDIA RTX A4000" },   // restored from the GPU fact cache
+            gpuPciIds: new[] { @"PCI\VEN_10DE&DEV_24B0" },
+            gpuVendors: new[] { "NVIDIA" },
+            gpuDriverVersion: "",                     // deliberately not restored - the driver is gone
+            gpuDriverMissing: true);
+
+        (await _engine.EvaluateConditionAsync(condition, recovered)).Should().BeTrue();
+    }
+
     #endregion
 
     #region CPU Predicate Tests
@@ -841,6 +899,9 @@ public class PredicateEngineTests
         string[]? gpuNames = null,
         string gpuDriverVersion = "",
         long gpuVramGb = 0,
+        string[]? gpuPciIds = null,
+        string[]? gpuVendors = null,
+        bool gpuDriverMissing = false,
         string cpuName = "",
         string cpuManufacturer = "",
         int cpuCores = 0,
@@ -866,6 +927,9 @@ public class PredicateEngineTests
             GpuNames = gpuNames?.ToList() ?? new List<string>(),
             GpuDriverVersion = gpuDriverVersion,
             GpuVramGb = gpuVramGb,
+            GpuPciIds = gpuPciIds?.ToList() ?? new List<string>(),
+            GpuVendors = gpuVendors?.ToList() ?? new List<string>(),
+            GpuDriverMissing = gpuDriverMissing,
             CpuName = cpuName,
             CpuManufacturer = cpuManufacturer,
             CpuCores = cpuCores,
