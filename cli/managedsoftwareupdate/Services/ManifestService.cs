@@ -485,7 +485,7 @@ public class ManifestService
             var collector = new SystemFactsCollector(new ConsoleForwardingLogger<SystemFactsCollector>());
             collector.SetCatalogs(_config.Catalogs);
             _systemFacts = collector.CollectAsync().GetAwaiter().GetResult();
-            ConsoleLogger.Info($"    SystemFacts: machine_model='{_systemFacts.MachineModel}' machine_type='{_systemFacts.MachineType}' gpu_names=[{string.Join(", ", _systemFacts.GpuNames)}] arch='{_systemFacts.Architecture}'");
+            ConsoleLogger.Info($"    SystemFacts: machine_model='{_systemFacts.MachineModel}' machine_type='{_systemFacts.MachineType}' gpu_names=[{string.Join(", ", _systemFacts.GpuNames)}] gpu_pci_ids=[{string.Join(", ", _systemFacts.GpuPciIds)}] gpu_vendors=[{string.Join(", ", _systemFacts.GpuVendors)}] gpu_driver_missing={_systemFacts.GpuDriverMissing} arch='{_systemFacts.Architecture}'");
         }
         catch (Exception ex)
         {
