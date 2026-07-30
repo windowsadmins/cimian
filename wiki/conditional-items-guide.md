@@ -36,9 +36,12 @@ Cimian automatically gathers the following system facts for conditional evaluati
 - **date**: Current date in `YYYY-MM-DD` format
 
 ### Hardware Facts
-- **gpu_names** / **gpu_name**: GPU names from `Win32_VideoController` (array — use with `ANY` / `CONTAINS`)
-- **gpu_driver_version**: Driver version of the primary GPU
+- **gpu_names** / **gpu_name**: GPU names from `Win32_VideoController` (array — use with `ANY` / `CONTAINS`). Falls back to the last known model name when a driver is missing — see [Targeting a GPU whose driver is missing](#targeting-a-gpu-whose-driver-is-missing).
+- **gpu_driver_version**: Driver version of the primary GPU. Empty when no vendor driver is bound.
 - **gpu_vram_gb**: VRAM of primary GPU in GB
+- **gpu_pci_ids** / **gpu_pci_id**: PCI hardware ID of every adapter (array — use with `CONTAINS`), e.g. `["PCI\VEN_10DE&DEV_24B0"]`. Read from the PCI enumerator, so it is present with no driver installed.
+- **gpu_vendors** / **gpu_vendor**: Vendors resolved from PCI vendor IDs (array — use with `CONTAINS`): `NVIDIA`, `AMD`, `Intel`, `Qualcomm`, ...
+- **gpu_driver_missing**: Boolean — whether at least one adapter has no vendor driver bound
 - **cpu_name**: Cleaned processor name (e.g., "Core i9-13900K")
 - **cpu_manufacturer**: CPU manufacturer (Intel, AMD, Qualcomm, ARM)
 - **cpu_cores**: Physical core count
@@ -55,6 +58,32 @@ Cimian automatically gathers the following system facts for conditional evaluati
 - **isdomainjoined**: Boolean — whether the system is domain-joined
 
 > **Note**: There is no `enrolled_usage`, `enrolled_area`, `device_id`, `build_number`, or `serial_number` fact in the current fact map. Use `os_build_number` for the build number. If you need a per-device custom fact, populate `SystemFacts.CustomFacts`, `EnvironmentVariables`, or `RegistryValues` — `GetFactValue` will look these up by name as a fallback.
+
+### Targeting a GPU whose driver is missing
+
+Windows only reports a model name in `gpu_names` while the vendor driver is bound. Once
+that driver is gone the card falls back to a placeholder such as "Microsoft Basic Display
+Adapter" or "3D Video Controller", which would otherwise stop a driver predicate matching
+on exactly the machines that need the driver reinstalled.
+
+Two facts are driver-independent because they come from the PCI enumerator rather than the
+driver: `gpu_pci_ids` and `gpu_vendors`. In addition, `managedsoftwareupdate` remembers each
+adapter's model name against its PCI hardware ID in
+`%ProgramData%\ManagedInstalls\facts\gpu-adapters.json`, and re-supplies that name in
+`gpu_names` when the driver disappears — so a model-name condition keeps matching on any
+machine Cimian has previously seen with a working driver.
+
+`gpu_driver_version` is deliberately *not* restored from that cache, so a package's own
+installcheck still sees that no driver is present.
+
+For a machine that has never had the driver there is nothing cached, and a vendor ID alone
+cannot distinguish Quadro from GeForce. Target those by exact device ID:
+
+```yaml
+- condition: gpu_pci_ids CONTAINS "DEV_24B0"
+  managed_installs:
+    - YourWorkstationGpuDriver
+```
 
 ### Available Operators
 
