@@ -1,7 +1,9 @@
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
+using Cimian.Core;
 using Cimian.Core.Models;
 
 namespace Cimian.Infrastructure.System;
@@ -476,54 +478,246 @@ public class SystemFactsCollector : ISystemFactsCollector
     // GPU Collection
     // ==========================================================================
 
+    /// <summary>
+    /// Collects display adapter facts.
+    ///
+    /// Win32_VideoController only reports a GPU's model name while its vendor driver is
+    /// bound. Once that driver is missing the card either falls back to a generic adapter
+    /// name or drops out of the Display class entirely, which used to make driver
+    /// predicates like 'gpu_names CONTAINS "Quadro"' stop matching on exactly the machines
+    /// that need the driver reinstalled. So identity is also read from the PCI enumerator,
+    /// and model names seen in earlier runs are remembered per hardware ID.
+    /// </summary>
     private void CollectGpuInfo(SystemFacts facts)
     {
+        var adapters = new List<GpuAdapter>();
+
         try
         {
-            using var searcher = new ManagementObjectSearcher(
-                "SELECT Name, DriverVersion, AdapterRAM FROM Win32_VideoController");
-
-            string? discreteGpuName = null;
-            string? discreteDriverVersion = null;
-            long discreteVram = 0;
-
-            foreach (ManagementObject mo in searcher.Get())
-            {
-                var name = mo["Name"]?.ToString() ?? "";
-                var driverVersion = mo["DriverVersion"]?.ToString() ?? "";
-                var adapterRam = Convert.ToInt64(mo["AdapterRAM"] ?? 0);
-
-                if (string.IsNullOrWhiteSpace(name))
-                    continue;
-
-                facts.GpuNames.Add(name);
-
-                // Prioritize discrete GPUs for driver version and VRAM
-                if (IsDiscreteGpu(name))
-                {
-                    discreteGpuName = name;
-                    discreteDriverVersion = driverVersion;
-                    discreteVram = adapterRam;
-                }
-                else if (discreteGpuName == null)
-                {
-                    // Use first GPU as fallback if no discrete found yet
-                    discreteDriverVersion = driverVersion;
-                    discreteVram = adapterRam;
-                }
-            }
-
-            facts.GpuDriverVersion = discreteDriverVersion ?? "";
-            facts.GpuVramGb = RoundToCommonVramSize(discreteVram);
-
-            _logger.LogDebug("GPU info collected: {Count} GPUs, primary={Primary}, driver={Driver}, VRAM={Vram}GB",
-                facts.GpuNames.Count,
-                discreteGpuName ?? (facts.GpuNames.Count > 0 ? facts.GpuNames[0] : "none"),
-                facts.GpuDriverVersion, facts.GpuVramGb);
+            CollectVideoControllers(adapters);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to collect GPU info");
+            _logger.LogWarning(ex, "Failed to query Win32_VideoController for GPU info");
+        }
+
+        try
+        {
+            MergePnpGpuDevices(adapters);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to query Win32_PnPEntity for GPU hardware IDs");
+        }
+
+        RestoreLastKnownGpuNames(adapters);
+
+        string? discreteGpuName = null;
+        string? discreteDriverVersion = null;
+        long discreteVram = 0;
+
+        foreach (var adapter in adapters)
+        {
+            if (!string.IsNullOrWhiteSpace(adapter.Name))
+                facts.GpuNames.Add(adapter.Name);
+
+            if (adapter.PciId.Length > 0 && !facts.GpuPciIds.Contains(adapter.PciId))
+                facts.GpuPciIds.Add(adapter.PciId);
+
+            var vendor = GpuIdentity.VendorFromPciId(adapter.PciId);
+            if (vendor.Length > 0 && !facts.GpuVendors.Contains(vendor))
+                facts.GpuVendors.Add(vendor);
+
+            // Prioritize discrete GPUs for driver version and VRAM
+            if (IsDiscreteGpu(adapter.Name))
+            {
+                discreteGpuName = adapter.Name;
+                discreteDriverVersion = adapter.DriverVersion;
+                discreteVram = adapter.VramBytes;
+            }
+            else if (discreteGpuName == null)
+            {
+                // Use first GPU as fallback if no discrete found yet
+                discreteDriverVersion = adapter.DriverVersion;
+                discreteVram = adapter.VramBytes;
+            }
+        }
+
+        facts.GpuDriverVersion = discreteDriverVersion ?? "";
+        facts.GpuVramGb = RoundToCommonVramSize(discreteVram);
+        facts.GpuDriverMissing = adapters.Any(a => a.DriverMissing);
+
+        _logger.LogDebug("GPU info collected: {Count} GPUs, primary={Primary}, driver={Driver}, VRAM={Vram}GB, pci=[{Pci}], driverMissing={DriverMissing}, namesRestoredFromCache={Restored}",
+            facts.GpuNames.Count,
+            discreteGpuName ?? (facts.GpuNames.Count > 0 ? facts.GpuNames[0] : "none"),
+            facts.GpuDriverVersion, facts.GpuVramGb,
+            string.Join(", ", facts.GpuPciIds), facts.GpuDriverMissing,
+            adapters.Count(a => a.RestoredFromCache));
+    }
+
+    /// <summary>
+    /// Reads adapters Windows has bound a display driver to.
+    /// </summary>
+    private void CollectVideoControllers(List<GpuAdapter> adapters)
+    {
+        using var searcher = new ManagementObjectSearcher(
+            "SELECT Name, DriverVersion, AdapterRAM, PNPDeviceID FROM Win32_VideoController");
+
+        foreach (ManagementObject mo in searcher.Get())
+        {
+            var name = mo["Name"]?.ToString()?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            var instanceId = mo["PNPDeviceID"]?.ToString() ?? "";
+
+            adapters.Add(new GpuAdapter
+            {
+                InstanceId = instanceId,
+                PciId = GpuIdentity.NormalizePciId(instanceId),
+                Name = name,
+                NameIsGeneric = GpuIdentity.IsGenericAdapterName(name),
+                DriverVersion = mo["DriverVersion"]?.ToString() ?? "",
+                VramBytes = ToInt64(mo["AdapterRAM"])
+            });
+        }
+    }
+
+    /// <summary>
+    /// Adds GPUs the PCI enumerator can see but Win32_VideoController cannot. A card with
+    /// no driver installed lands under "Other devices" with no PNPClass and a placeholder
+    /// name such as "3D Video Controller", so it never appears as a display adapter.
+    /// </summary>
+    private void MergePnpGpuDevices(List<GpuAdapter> adapters)
+    {
+        // Doubled backslashes are WQL escaping: this matches PNP device IDs starting "PCI\VEN".
+        // The trailing underscore is left off the pattern because '_' is a WQL wildcard.
+        using var searcher = new ManagementObjectSearcher(
+            "SELECT DeviceID, Name, PNPClass, ConfigManagerErrorCode FROM Win32_PnPEntity WHERE DeviceID LIKE 'PCI\\\\VEN%'");
+
+        foreach (ManagementObject mo in searcher.Get())
+        {
+            var deviceId = mo["DeviceID"]?.ToString() ?? "";
+            var pciId = GpuIdentity.NormalizePciId(deviceId);
+            if (pciId.Length == 0)
+                continue;
+
+            var pnpClass = mo["PNPClass"]?.ToString() ?? "";
+            var name = mo["Name"]?.ToString()?.Trim() ?? "";
+            var errorCode = (int)ToInt64(mo["ConfigManagerErrorCode"]);
+
+            var isDisplayClass = string.Equals(pnpClass, "Display", StringComparison.OrdinalIgnoreCase);
+            var isUnclaimed = pnpClass.Length == 0
+                || string.Equals(pnpClass, "Unknown", StringComparison.OrdinalIgnoreCase);
+            if (!isDisplayClass && !(isUnclaimed && GpuIdentity.IsGenericAdapterName(name)))
+                continue;
+
+            // Match on instance ID, falling back to name for the rare adapter that reports
+            // no PNPDeviceID - otherwise it would be counted twice.
+            var existing = adapters.FirstOrDefault(a =>
+                    string.Equals(a.InstanceId, deviceId, StringComparison.OrdinalIgnoreCase))
+                ?? adapters.FirstOrDefault(a =>
+                    a.PciId.Length == 0 && string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
+
+            if (existing != null)
+            {
+                existing.InstanceId = deviceId;
+                existing.PciId = pciId;
+                existing.ConfigManagerErrorCode = errorCode;
+                continue;
+            }
+
+            adapters.Add(new GpuAdapter
+            {
+                InstanceId = deviceId,
+                PciId = pciId,
+                Name = name,
+                NameIsGeneric = GpuIdentity.IsGenericAdapterName(name),
+                ConfigManagerErrorCode = errorCode
+            });
+        }
+    }
+
+    /// <summary>
+    /// Remembers every model name a vendor driver currently reports, and substitutes the
+    /// remembered name for any adapter that has since lost its driver. This is what keeps
+    /// a driver predicate matching after the driver it installs disappears.
+    ///
+    /// Driver version is deliberately not restored - the driver really is gone, and the
+    /// package's own installcheck must still see that.
+    /// </summary>
+    private void RestoreLastKnownGpuNames(List<GpuAdapter> adapters)
+    {
+        var cache = LoadGpuCache();
+        var changed = false;
+
+        foreach (var adapter in adapters.Where(a => !a.NameIsGeneric && a.PciId.Length > 0))
+        {
+            if (cache.TryGetValue(adapter.PciId, out var known) && known.Name == adapter.Name)
+                continue;
+
+            cache[adapter.PciId] = new GpuCacheEntry
+            {
+                Name = adapter.Name,
+                VramBytes = adapter.VramBytes,
+                LastSeenUtc = DateTime.UtcNow
+            };
+            changed = true;
+        }
+
+        foreach (var adapter in adapters.Where(a => a.NameIsGeneric && a.PciId.Length > 0))
+        {
+            if (!cache.TryGetValue(adapter.PciId, out var known) || known.Name.Length == 0)
+                continue;
+
+            _logger.LogInformation(
+                "GPU {PciId} has no vendor driver bound (Windows reports '{Generic}'); using last known model '{Known}' so driver predicates still match",
+                adapter.PciId, adapter.Name, known.Name);
+
+            adapter.Name = known.Name;
+            adapter.RestoredFromCache = true;
+            if (adapter.VramBytes == 0)
+                adapter.VramBytes = known.VramBytes;
+        }
+
+        if (changed)
+            SaveGpuCache(cache);
+    }
+
+    private Dictionary<string, GpuCacheEntry> LoadGpuCache()
+    {
+        try
+        {
+            if (!File.Exists(CimianPaths.GpuFactsCache))
+                return new Dictionary<string, GpuCacheEntry>(StringComparer.OrdinalIgnoreCase);
+
+            var json = File.ReadAllText(CimianPaths.GpuFactsCache);
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, GpuCacheEntry>>(json);
+            return loaded == null
+                ? new Dictionary<string, GpuCacheEntry>(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, GpuCacheEntry>(loaded, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read GPU fact cache {Path}; starting a fresh one",
+                CimianPaths.GpuFactsCache);
+            return new Dictionary<string, GpuCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void SaveGpuCache(Dictionary<string, GpuCacheEntry> cache)
+    {
+        try
+        {
+            Directory.CreateDirectory(CimianPaths.FactsDir);
+            File.WriteAllText(
+                CimianPaths.GpuFactsCache,
+                JsonSerializer.Serialize(cache, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: without the cache the collector simply loses driver-less recovery.
+            _logger.LogWarning(ex, "Could not write GPU fact cache {Path}", CimianPaths.GpuFactsCache);
         }
     }
 
@@ -558,6 +752,54 @@ public class SystemFactsCollector : ISystemFactsCollector
         double gb = bytes / (1024.0 * 1024.0 * 1024.0);
         int[] commonSizes = { 1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32, 48, 64 };
         return commonSizes.OrderBy(s => Math.Abs(s - gb)).First();
+    }
+
+    private static long ToInt64(object? value)
+    {
+        try
+        {
+            return value == null ? 0 : Convert.ToInt64(value);
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// One display adapter for the duration of a collection run, merged from
+    /// Win32_VideoController (driver-supplied detail) and Win32_PnPEntity (hardware identity).
+    /// </summary>
+    private sealed class GpuAdapter
+    {
+        /// <summary>Full PNP instance ID, used to match the two WMI views to each other.</summary>
+        public string InstanceId { get; set; } = "";
+
+        /// <summary>Stable hardware identity, e.g. "PCI\VEN_10DE&amp;DEV_24B0".</summary>
+        public string PciId { get; set; } = "";
+
+        public string Name { get; set; } = "";
+        public string DriverVersion { get; set; } = "";
+        public long VramBytes { get; set; }
+
+        /// <summary>True when Name came from Windows' fallback rather than a vendor driver.</summary>
+        public bool NameIsGeneric { get; set; }
+
+        /// <summary>True once Name has been replaced with a previously observed model name.</summary>
+        public bool RestoredFromCache { get; set; }
+
+        /// <summary>Device Manager status; 28 means no driver is installed.</summary>
+        public int ConfigManagerErrorCode { get; set; }
+
+        public bool DriverMissing => NameIsGeneric || ConfigManagerErrorCode != 0;
+    }
+
+    /// <summary>One remembered adapter, persisted to <see cref="CimianPaths.GpuFactsCache"/>.</summary>
+    private sealed class GpuCacheEntry
+    {
+        public string Name { get; set; } = "";
+        public long VramBytes { get; set; }
+        public DateTime LastSeenUtc { get; set; }
     }
 
     // ==========================================================================
