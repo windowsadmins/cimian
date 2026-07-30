@@ -177,12 +177,6 @@ public class SystemFacts
     public List<string> GpuNames { get; set; } = new();
 
     /// <summary>
-    /// List of GPU PCI vendor/device IDs from Win32_VideoController.PNPDeviceID (e.g., "PCI\VEN_10DE&amp;DEV_2C02")
-    /// Maps to 'gpu_hardware_ids' / 'gpu_hardware_id' fact keys (used with CONTAINS, ANY)
-    /// </summary>
-    public List<string> GpuHardwareIds { get; set; } = new();
-
-    /// <summary>
     /// Driver version of the primary (discrete) GPU
     /// Maps to 'gpu_driver_version' fact key
     /// </summary>
@@ -295,7 +289,6 @@ public class SystemFacts
             
             // GPU facts
             "gpu_names" or "gpu_name" => GpuNames,
-            "gpu_hardware_ids" or "gpu_hardware_id" => GpuHardwareIds,
             "gpu_driver_version" => GpuDriverVersion,
             "gpu_vram_gb" => GpuVramGb,
             
