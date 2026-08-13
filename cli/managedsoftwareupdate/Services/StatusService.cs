@@ -865,40 +865,48 @@ if ($results.Count -gt 0) {{
 
     /// <summary>
     /// Converts a standard GUID format to Windows Installer packed GUID format.
-    /// Example: {C1DFDF69-5945-32F2-A35E-EE94C99C7CF4} -> 96FDFD1C5495F232A3E5EE499CC9C74F
+    /// Example: {31AB5147-9A97-4452-8443-D9709F0516E1} -> 7415BA1379A9254448349D07F950611E
+    /// (verified against HKLM\SOFTWARE\Classes\Installer\UpgradeCodes for the
+    /// PowerShell 7-x64 MSI).
     /// </summary>
-    private static string PackGuid(string guid)
+    internal static string PackGuid(string guid)
     {
         // Remove braces and hyphens
         guid = guid.Replace("{", "").Replace("}", "").Replace("-", "").ToUpperInvariant();
-        
+
         if (guid.Length != 32)
             return string.Empty;
-        
-        // Packed format reverses specific sections
+
+        // Sections 1-3 are stored little-endian, so each is written out fully
+        // reversed character by character. Sections 4-5 keep their byte order and
+        // only swap the two hex digits within each byte.
+        //
+        // Reversing merely the ORDER of the character pairs (without also
+        // reversing within each pair) yields a GUID that no key ever matches, so
+        // every UpgradeCode lookup silently missed and any pkgsinfo relying on an
+        // upgrade_code-only installs[] entry reinstalled every session until
+        // LoopGuard suppressed it (AB#4416: PowerShell + AzureCLI, ~540 devices).
         var result = new char[32];
-        
-        // Section 1: first 8 chars, reversed in pairs
-        result[0] = guid[6]; result[1] = guid[7];
-        result[2] = guid[4]; result[3] = guid[5];
-        result[4] = guid[2]; result[5] = guid[3];
-        result[6] = guid[0]; result[7] = guid[1];
-        
-        // Section 2: next 4 chars, reversed in pairs
-        result[8] = guid[10]; result[9] = guid[11];
-        result[10] = guid[8]; result[11] = guid[9];
-        
-        // Section 3: next 4 chars, reversed in pairs  
-        result[12] = guid[14]; result[13] = guid[15];
-        result[14] = guid[12]; result[15] = guid[13];
-        
-        // Section 4+5: remaining 16 chars, reversed in pairs
+
+        // Section 1: first 8 chars, fully reversed
+        for (int i = 0; i < 8; i++)
+            result[i] = guid[7 - i];
+
+        // Section 2: next 4 chars, fully reversed
+        for (int i = 0; i < 4; i++)
+            result[8 + i] = guid[11 - i];
+
+        // Section 3: next 4 chars, fully reversed
+        for (int i = 0; i < 4; i++)
+            result[12 + i] = guid[15 - i];
+
+        // Section 4+5: remaining 16 chars, hex digits swapped within each byte
         for (int i = 16; i < 32; i += 2)
         {
             result[i] = guid[i + 1];
             result[i + 1] = guid[i];
         }
-        
+
         return new string(result);
     }
 
