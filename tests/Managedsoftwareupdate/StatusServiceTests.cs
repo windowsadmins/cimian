@@ -502,4 +502,54 @@ public class StatusServiceTests
     }
 
     #endregion
+
+    #region PackGuid Tests
+
+    // Windows Installer stores sections 1-3 of a GUID little-endian (each written
+    // out fully reversed) and swaps the two hex digits within each byte of
+    // sections 4-5. Expected values below were read out of
+    // HKLM\SOFTWARE\Classes\Installer\UpgradeCodes on real fleet machines, so they
+    // are ground truth rather than a restatement of the implementation.
+    //
+    // Regression guard for [tracked internally]: the previous implementation reversed only the
+    // ORDER of character pairs in sections 1-3 without reversing within each pair,
+    // producing a packed GUID that matched no registry key. Every UpgradeCode
+    // lookup missed, so upgrade_code-only installs[] entries (PowerShell 7.6.4.0,
+    // AzureCLI 2.89.0) reinstalled every session until LoopGuard suppressed them.
+    [Theory]
+    [InlineData("{31AB5147-9A97-4452-8443-D9709F0516E1}", "7415BA1379A9254448349D07F950611E")] // PowerShell 7-x64 UpgradeCode
+    [InlineData("{90762FEC-9554-4729-A107-C6A8EA316698}", "CEF26709455992741A706C8AAE136689")] // Azure CLI UpgradeCode
+    public void PackGuid_MatchesWindowsInstallerPackedForm(string guid, string expected)
+    {
+        Assert.Equal(expected, StatusService.PackGuid(guid));
+    }
+
+    [Fact]
+    public void PackGuid_AcceptsUnbracedAndLowercaseInput()
+    {
+        Assert.Equal(
+            "7415BA1379A9254448349D07F950611E",
+            StatusService.PackGuid("31ab5147-9a97-4452-8443-d9709f0516e1"));
+    }
+
+    [Fact]
+    public void PackGuid_DoesNotMerelyTransposePairs()
+    {
+        // The exact wrong value the old implementation produced. Pinning it keeps a
+        // future refactor from silently reintroducing the pair-transposition bug.
+        Assert.NotEqual(
+            "4751AB31979A524448349D07F950611E",
+            StatusService.PackGuid("{31AB5147-9A97-4452-8443-D9709F0516E1}"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    [InlineData("{31AB5147-9A97-4452-8443-D9709F0516}")] // too short
+    public void PackGuid_ReturnsEmptyForMalformedInput(string guid)
+    {
+        Assert.Equal(string.Empty, StatusService.PackGuid(guid));
+    }
+
+    #endregion
 }
