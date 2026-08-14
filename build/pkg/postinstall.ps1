@@ -89,7 +89,7 @@ try {
     $action = New-ScheduledTaskAction -Execute $managedSoftwareUpdateExe -Argument "--auto" -WorkingDirectory $InstallDir
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 1)
     $settings = New-ScheduledTaskSettingsSet `
-        -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
         -RestartCount 3 `
         -RestartInterval (New-TimeSpan -Minutes 10) `
         -RunOnlyIfNetworkAvailable `
