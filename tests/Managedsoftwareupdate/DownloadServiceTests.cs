@@ -319,4 +319,116 @@ public class DownloadServiceTests : IDisposable
     }
 
     #endregion
+
+    #region Cached-file verification memo
+
+    // Re-hashing a multi-GB package on every hourly run is what starved the
+    // scheduled task of its 30-minute budget. Once a file has been verified,
+    // an unchanged size and mtime stand in for the hash.
+
+    private static string MarkerFor(string path) => path + ".verified";
+
+    private string WriteCachedFile(string name, string content)
+    {
+        var path = Path.Combine(_testCacheDir, name);
+        File.WriteAllText(path, content);
+        return path;
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_CacheHit_RecordsVerificationMarker()
+    {
+        var path = WriteCachedFile("cached.msi", "Hello, World!");
+        var hash = DownloadService.CalculateSHA256(path);
+
+        var result = await _service.DownloadFileAsync("https://test.example.com/unused", path, hash);
+
+        Assert.True(result);
+        Assert.True(File.Exists(MarkerFor(path)));
+
+        var parts = File.ReadAllText(MarkerFor(path)).Split('|');
+        var info = new FileInfo(path);
+        Assert.Equal(hash, parts[0]);
+        Assert.Equal(info.Length.ToString(), parts[1]);
+        Assert.Equal(info.LastWriteTimeUtc.Ticks.ToString(), parts[2]);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_MarkerForDifferentHash_IsIgnoredAndRewritten()
+    {
+        // A new version in the catalog means a new expected hash; the old marker
+        // must not be allowed to vouch for the file.
+        var path = WriteCachedFile("stale-marker.msi", "Hello, World!");
+        var hash = DownloadService.CalculateSHA256(path);
+        var info = new FileInfo(path);
+        File.WriteAllText(MarkerFor(path), $"{new string('a', 64)}|{info.Length}|{info.LastWriteTimeUtc.Ticks}");
+
+        var result = await _service.DownloadFileAsync("https://test.example.com/unused", path, hash);
+
+        Assert.True(result);
+        Assert.StartsWith(hash, File.ReadAllText(MarkerFor(path)));
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_MarkerWithStaleMtime_IsIgnoredAndRewritten()
+    {
+        var path = WriteCachedFile("touched.msi", "Hello, World!");
+        var hash = DownloadService.CalculateSHA256(path);
+        var info = new FileInfo(path);
+        var staleTicks = info.LastWriteTimeUtc.AddDays(-1).Ticks;
+        File.WriteAllText(MarkerFor(path), $"{hash}|{info.Length}|{staleTicks}");
+
+        var result = await _service.DownloadFileAsync("https://test.example.com/unused", path, hash);
+
+        Assert.True(result);
+        Assert.EndsWith(new FileInfo(path).LastWriteTimeUtc.Ticks.ToString(), File.ReadAllText(MarkerFor(path)));
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_MalformedMarker_FallsBackToHashing()
+    {
+        var path = WriteCachedFile("garbage-marker.msi", "Hello, World!");
+        var hash = DownloadService.CalculateSHA256(path);
+        File.WriteAllText(MarkerFor(path), "not a marker");
+
+        var result = await _service.DownloadFileAsync("https://test.example.com/unused", path, hash);
+
+        Assert.True(result);
+        Assert.StartsWith(hash, File.ReadAllText(MarkerFor(path)));
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_RemovesOrphanedVerificationMarkers()
+    {
+        var kept = WriteCachedFile("present.msi", "content");
+        File.WriteAllText(MarkerFor(kept), "hash|7|123");
+        var orphanMarker = MarkerFor(Path.Combine(_testCacheDir, "deleted.msi"));
+        File.WriteAllText(orphanMarker, "hash|7|123");
+
+        _service.ValidateAndCleanCache();
+
+        Assert.True(File.Exists(MarkerFor(kept)));
+        Assert.False(File.Exists(orphanMarker));
+    }
+
+    #endregion
+
+    #region Hashing
+
+    [Fact]
+    public void CalculateSHA256_FileLargerThanBuffer_MatchesSingleShotHash()
+    {
+        // Hashing now streams through a 1MB buffer in TransformBlock chunks
+        // rather than one ComputeHash(stream) call — guard the equivalence.
+        var path = Path.Combine(_testCacheDir, "large.bin");
+        var data = new byte[(3 * 1024 * 1024) + 7];
+        new Random(1234).NextBytes(data);
+        File.WriteAllBytes(path, data);
+
+        var expected = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)).ToLowerInvariant();
+
+        Assert.Equal(expected, DownloadService.CalculateSHA256(path));
+    }
+
+    #endregion
 }
