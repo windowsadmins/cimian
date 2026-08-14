@@ -27,6 +27,9 @@ public class DownloadService
     private const int BandwidthLogIntervalSeconds = 10;
     private const int MaxRetries = 5;
     private const int BufferSize = 64 * 1024; // 64KB buffer
+    private const int HashBufferSize = 1024 * 1024; // 1MB buffer for hashing multi-GB packages
+    private const int HashLogIntervalSeconds = 10;
+    private const string VerifiedMarkerSuffix = ".verified";
 
     public DownloadService(CimianConfig config, HttpClient? httpClient = null)
     {
@@ -54,15 +57,28 @@ public class DownloadService
         // Check if file exists and matches hash
         if (File.Exists(localPath) && !string.IsNullOrEmpty(expectedHash))
         {
+            // A prior run already hashed this exact file: skip the re-read.
+            // Hashing a 10GB package costs 2-3 minutes, and the scheduled task
+            // only gets so long to live — spending it re-verifying an unchanged
+            // cache means nothing ever installs.
+            if (IsVerificationCurrent(localPath, expectedHash))
+            {
+                ConsoleLogger.Info($"Using cached file: {Path.GetFileName(localPath)}");
+                ConsoleLogger.Detail($"    Cached file previously verified (size and mtime unchanged): {localPath}");
+                return true;
+            }
+
             ConsoleLogger.Detail($"    Verifying cached file: {localPath}");
-            var existingHash = CalculateSHA256(localPath);
+            var existingHash = CalculateSHA256(localPath, Path.GetFileName(localPath));
             if (existingHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
             {
                 ConsoleLogger.Info($"Using cached file: {Path.GetFileName(localPath)}");
                 ConsoleLogger.Detail($"    Hash verification passed for cached file: {localPath}");
+                RecordVerification(localPath, expectedHash);
                 return true;
             }
             ConsoleLogger.Detail($"    Cached file hash mismatch, re-downloading expected: {expectedHash.Substring(0, 12)}... got: {existingHash.Substring(0, 12)}...");
+            ClearVerification(localPath);
         }
 
         var tempPath = localPath + ".downloading";
@@ -187,6 +203,12 @@ public class DownloadService
 
                 // Move temp file to final path
                 File.Move(tempPath, localPath, overwrite: true);
+
+                // Freshly hashed above — record it so the next run skips the re-read.
+                if (!string.IsNullOrEmpty(expectedHash))
+                {
+                    RecordVerification(localPath, expectedHash);
+                }
 
                 ConsoleLogger.Detail($"    File saved successfully file: {localPath}");
                 return true;
@@ -451,14 +473,124 @@ public class DownloadService
     }
 
     /// <summary>
+    /// Path of the sidecar recording that a cached file was hash-verified.
+    /// </summary>
+    private static string VerifiedMarkerPath(string localPath) => localPath + VerifiedMarkerSuffix;
+
+    /// <summary>
+    /// True when a previous run verified this exact file against this exact hash and
+    /// nothing about it has changed since. The marker records the expected hash, the
+    /// file length and the last-write time; any difference in any of the three — a
+    /// re-download, a truncation, a new version in the catalog — invalidates it and
+    /// forces a full re-hash.
+    /// </summary>
+    private static bool IsVerificationCurrent(string localPath, string expectedHash)
+    {
+        var markerPath = VerifiedMarkerPath(localPath);
+        if (!File.Exists(markerPath))
+            return false;
+
+        try
+        {
+            var parts = File.ReadAllText(markerPath).Trim().Split('|');
+            if (parts.Length != 3)
+                return false;
+
+            var info = new FileInfo(localPath);
+            return parts[0].Equals(expectedHash, StringComparison.OrdinalIgnoreCase)
+                && long.TryParse(parts[1], out var length) && length == info.Length
+                && long.TryParse(parts[2], out var ticks) && ticks == info.LastWriteTimeUtc.Ticks;
+        }
+        catch (Exception ex)
+        {
+            // An unreadable marker just means we re-hash — never a failure.
+            ConsoleLogger.Detail($"    Could not read verification marker {markerPath}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void RecordVerification(string localPath, string expectedHash)
+    {
+        try
+        {
+            var info = new FileInfo(localPath);
+            File.WriteAllText(
+                VerifiedMarkerPath(localPath),
+                $"{expectedHash.ToLowerInvariant()}|{info.Length}|{info.LastWriteTimeUtc.Ticks}");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Detail($"    Could not write verification marker for {localPath}: {ex.Message}");
+        }
+    }
+
+    private static void ClearVerification(string localPath)
+    {
+        try
+        {
+            var markerPath = VerifiedMarkerPath(localPath);
+            if (File.Exists(markerPath))
+                File.Delete(markerPath);
+        }
+        catch { /* best effort */ }
+    }
+
+    /// <summary>
     /// Calculates SHA256 hash of a file
     /// </summary>
     public static string CalculateSHA256(string filePath)
     {
+        return CalculateSHA256(filePath, null);
+    }
+
+    /// <summary>
+    /// Calculates SHA256 hash of a file, optionally logging throughput while it runs.
+    /// Reads with a 1MB sequential-scan buffer: File.OpenRead defaults to 4KB, which
+    /// costs minutes on the multi-GB packages in the cache.
+    /// </summary>
+    public static string CalculateSHA256(string filePath, string? progressLabel)
+    {
         using var sha256 = SHA256.Create();
-        using var stream = File.OpenRead(filePath);
-        var hash = sha256.ComputeHash(stream);
-        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        using var stream = new FileStream(
+            filePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+            HashBufferSize, FileOptions.SequentialScan);
+
+        var totalSize = stream.Length;
+        var buffer = new byte[HashBufferSize];
+        long read = 0;
+        var stopwatch = Stopwatch.StartNew();
+        var lastLog = DateTime.UtcNow;
+
+        while (true)
+        {
+            var bytesRead = stream.Read(buffer, 0, buffer.Length);
+            if (bytesRead == 0)
+                break;
+
+            sha256.TransformBlock(buffer, 0, bytesRead, null, 0);
+            read += bytesRead;
+
+            // Without this a multi-minute verify emits nothing at all and is
+            // indistinguishable from a hung process.
+            if (progressLabel != null && (DateTime.UtcNow - lastLog).TotalSeconds >= HashLogIntervalSeconds)
+            {
+                var speed = read / stopwatch.Elapsed.TotalSeconds;
+                var percent = totalSize > 0 ? (double)read / totalSize * 100 : 0;
+                ConsoleLogger.Detail($"    Verify progress file: {progressLabel} hashed_mb: {read / (1024 * 1024)} total_mb: {totalSize / (1024 * 1024)} percent: {percent:F1}% speed: {FormatSpeed(speed)}");
+                lastLog = DateTime.UtcNow;
+            }
+        }
+
+        sha256.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        stopwatch.Stop();
+
+        if (progressLabel != null && stopwatch.Elapsed.TotalSeconds >= HashLogIntervalSeconds)
+        {
+            var avgSpeed = read / stopwatch.Elapsed.TotalSeconds;
+            ConsoleLogger.Detail($"    Verify completed file: {progressLabel} size_mb: {read / (1024 * 1024)} duration: {FormatDuration(stopwatch.Elapsed)} avg_speed: {FormatSpeed(avgSpeed)}");
+        }
+
+        return Convert.ToHexString(sha256.Hash!).ToLowerInvariant();
     }
 
     /// <summary>
@@ -474,6 +606,7 @@ public class DownloadService
         var files = Directory.GetFiles(_config.CachePath, "*", SearchOption.AllDirectories);
         var corruptCount = 0;
         var abandonedDownloads = 0;
+        var orphanedMarkers = 0;
 
         foreach (var file in files)
         {
@@ -494,6 +627,25 @@ public class DownloadService
                 }
             }
             
+            // Drop verification markers whose package is no longer cached
+            if (file.EndsWith(VerifiedMarkerSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                var packagePath = file.Substring(0, file.Length - VerifiedMarkerSuffix.Length);
+                if (!File.Exists(packagePath))
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        orphanedMarkers++;
+                    }
+                    catch (Exception ex)
+                    {
+                        ConsoleLogger.Warn($"Failed to remove orphaned verification marker {file}: {ex.Message}");
+                    }
+                }
+                continue;
+            }
+
             // Clean up old abandoned .downloading files (older than 24 hours)
             if (file.EndsWith(".downloading", StringComparison.OrdinalIgnoreCase))
             {
@@ -517,9 +669,9 @@ public class DownloadService
             }
         }
 
-        if (corruptCount > 0 || abandonedDownloads > 0)
+        if (corruptCount > 0 || abandonedDownloads > 0 || orphanedMarkers > 0)
         {
-            ConsoleLogger.Info($"Cache cleanup: removed {corruptCount} corrupt files, {abandonedDownloads} abandoned downloads");
+            ConsoleLogger.Info($"Cache cleanup: removed {corruptCount} corrupt files, {abandonedDownloads} abandoned downloads, {orphanedMarkers} orphaned verification markers");
         }
     }
 
