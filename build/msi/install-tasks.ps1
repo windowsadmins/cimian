@@ -61,9 +61,14 @@ try {
     # Task trigger: start immediately and repeat every hour indefinitely (adds randomization across deployments)
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Hours 1)
     
-    # Task settings: 30 minute timeout, restart on failure, hidden, run on battery
+    # Task settings: 4 hour timeout, restart on failure, hidden, run on battery.
+    # A first run on a freshly imaged machine downloads and installs the whole
+    # manifest, including packages over 9GB whose own download timeout is ~190
+    # minutes; the previous 30 minute limit killed the run every time, so those
+    # machines never converged. The hourly trigger cannot stack on top of a long
+    # run because MultipleInstances defaults to IgnoreNew.
     $settings = New-ScheduledTaskSettingsSet `
-        -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 4) `
         -RestartCount 3 `
         -RestartInterval (New-TimeSpan -Minutes 10) `
         -RunOnlyIfNetworkAvailable `
