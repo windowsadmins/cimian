@@ -511,7 +511,7 @@ public class StatusServiceTests
     // HKLM\SOFTWARE\Classes\Installer\UpgradeCodes on real fleet machines, so they
     // are ground truth rather than a restatement of the implementation.
     //
-    // Regression guard for [tracked internally]: the previous implementation reversed only the
+    // Regression guard: the previous implementation reversed only the
     // ORDER of character pairs in sections 1-3 without reversing within each pair,
     // producing a packed GUID that matched no registry key. Every UpgradeCode
     // lookup missed, so upgrade_code-only installs[] entries (PowerShell 7.6.4.0,
