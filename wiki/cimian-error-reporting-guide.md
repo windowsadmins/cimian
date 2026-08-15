@@ -199,7 +199,7 @@ C:\ProgramData\ManagedInstalls\reports\
   "packages_handled": ["PowerShell", "Cimian", "DotNetRuntime"],
   "config": {
     "manifest": "Assigned/Staff/IT/B1115/RodChristiansen",
-    "software_repo_url": "https://cimian.ecuad.ca/deployment"
+    "software_repo_url": "https://cimian.example.org/deployment"
   }
 }
 ```

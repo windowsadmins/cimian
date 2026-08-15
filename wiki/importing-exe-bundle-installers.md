@@ -208,22 +208,22 @@ After importing, the pkginfo and rebuilt catalog must reach every client. The Ci
 | Location | Purpose | Sync method |
 |---|---|---|
 | local repo (`deployment/`) | Source of truth for editing | git push |
-| Mars (`admin@mars.its.ecuad.ca:/Users/Shared/Cimian/deployment/`) | On-campus HTTP origin (`http://mars.its.ecuad.ca/deployment`) | `scp` after `makecatalogs` |
-| Azure blob (`cimiancloudstorage/repo/deployment/`) | Off-campus origin via FrontDoor | `az storage blob upload` |
+| On-prem origin (`$REPO_ORIGIN_USER@$REPO_ORIGIN_HOST:/Users/Shared/Cimian/deployment/`) | On-campus HTTP origin (`http://$REPO_ORIGIN_HOST/deployment`) | `scp` after `makecatalogs` |
+| Azure blob (`$AZURE_STORAGE_ACCOUNT/repo/deployment/`) | Off-campus origin via FrontDoor | `az storage blob upload` |
 
 A typical post-import sync:
 
 ```powershell
 sudo makecatalogs
-scp deployment/pkgsinfo/apps/modeling/MyApp-*.yaml admin@mars.its.ecuad.ca:/Users/Shared/Cimian/deployment/pkgsinfo/apps/modeling/
-scp deployment/catalogs/Production.yaml deployment/catalogs/All.yaml admin@mars.its.ecuad.ca:/Users/Shared/Cimian/deployment/catalogs/
-az storage blob upload --account-name cimiancloudstorage --container-name repo `
+scp deployment/pkgsinfo/apps/modeling/MyApp-*.yaml $REPO_ORIGIN_USER@$REPO_ORIGIN_HOST:/Users/Shared/Cimian/deployment/pkgsinfo/apps/modeling/
+scp deployment/catalogs/Production.yaml deployment/catalogs/All.yaml $REPO_ORIGIN_USER@$REPO_ORIGIN_HOST:/Users/Shared/Cimian/deployment/catalogs/
+az storage blob upload --account-name $AZURE_STORAGE_ACCOUNT --container-name repo `
   --name "deployment/pkgs/apps/modeling/MyApp-1.0.exe" `
   --file "deployment/pkgs/apps/modeling/MyApp-1.0.exe" --auth-mode login --overwrite
-az storage blob upload --account-name cimiancloudstorage --container-name repo `
+az storage blob upload --account-name $AZURE_STORAGE_ACCOUNT --container-name repo `
   --name "deployment/pkgsinfo/apps/modeling/MyApp-1.0.yaml" `
   --file "deployment/pkgsinfo/apps/modeling/MyApp-1.0.yaml" --auth-mode login --overwrite
-az storage blob upload --account-name cimiancloudstorage --container-name repo `
+az storage blob upload --account-name $AZURE_STORAGE_ACCOUNT --container-name repo `
   --name "deployment/catalogs/Production.yaml" `
   --file "deployment/catalogs/Production.yaml" --auth-mode login --overwrite
 ```
