@@ -41,7 +41,7 @@ The self-update detection has been refined to only trigger for the **main Cimian
 
 ### Test Environment
 - **System**: ARM64 Windows machine
-- **Repository**: https://cimian.example.edu/deployment
+- **Repository**: https://cimian.example.org/deployment
 - **Test Date**: August 18, 2025
 
 ### Packages in Repository
