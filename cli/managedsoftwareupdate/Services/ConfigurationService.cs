@@ -40,7 +40,7 @@ public class ConfigurationService
     /// MDM policy overrides delivered by the CimianPrefs Intune profile
     /// (ADMX-ingested Policy CSP writing to HKLM\SOFTWARE\Policies\Cimian).
     /// Policy wins over Config.yaml so fleet-wide settings can ship as an
-    /// Intune configuration profile instead of per-device file edits (AB#3709).
+    /// Intune configuration profile instead of per-device file edits.
     /// </summary>
     private const string PolicyRegistryPath = @"SOFTWARE\Policies\Cimian";
 

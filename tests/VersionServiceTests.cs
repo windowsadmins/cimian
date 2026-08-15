@@ -221,7 +221,7 @@ public class VersionServiceTests
 
     #endregion
 
-    #region Calendar Build Stamp Tests (AB#3754)
+    #region Calendar Build Stamp Tests
 
     [Theory]
     // The core bug: the legacy 3-component "yyyy.M.DDHH" stamp (day+hour merged, no

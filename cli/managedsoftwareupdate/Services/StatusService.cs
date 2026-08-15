@@ -885,7 +885,7 @@ if ($results.Count -gt 0) {{
         // reversing within each pair) yields a GUID that no key ever matches, so
         // every UpgradeCode lookup silently missed and any pkgsinfo relying on an
         // upgrade_code-only installs[] entry reinstalled every session until
-        // LoopGuard suppressed it (AB#4416: PowerShell + AzureCLI, ~540 devices).
+        // LoopGuard suppressed it (PowerShell + AzureCLI).
         var result = new char[32];
 
         // Section 1: first 8 chars, fully reversed
