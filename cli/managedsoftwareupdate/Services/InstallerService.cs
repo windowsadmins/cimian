@@ -839,7 +839,7 @@ public class InstallerService
         // so the MSI either fails with 1603 (file in use) or schedules a
         // reboot-replace that lab machines never perform — the installed version
         // pins at the old build and the item reinstall-loops every session until
-        // LoopGuard suppresses it (73 devices, [tracked internally]).
+        // LoopGuard suppresses it.
         var replacesSbinInstaller = string.Equals(item.Name, "SbinInstaller", StringComparison.OrdinalIgnoreCase);
         if (!replacesSbinInstaller && IsCimianBuiltMsi(localFile) && IsSbinInstallerAvailable())
         {
