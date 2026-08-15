@@ -17,7 +17,16 @@ namespace Cimian.CLI.Cimiimport.Services;
 /// </summary>
 public static class RepoResolver
 {
-    private const string CimianRemotePattern = "example-org/Devices/_git/Cimian";
+    // Substring an `origin` URL must contain for the ancestor to be accepted as a
+    // real Cimian deployment checkout. Deliberately just the repo portion so it is
+    // not tied to one organization's hosting path; override with
+    // CIMIAN_REMOTE_PATTERN when the repo lives somewhere that does not match.
+    private const string DefaultCimianRemotePattern = "/_git/Cimian";
+
+    private static string CimianRemotePattern =>
+        Environment.GetEnvironmentVariable("CIMIAN_REMOTE_PATTERN") is { Length: > 0 } p
+            ? p
+            : DefaultCimianRemotePattern;
 
     public static string? ResolveDefaultRepoPath()
     {
