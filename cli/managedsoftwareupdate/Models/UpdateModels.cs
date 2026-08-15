@@ -486,7 +486,7 @@ public class CatalogItem
     // session — cache clears, time sync, user/account checks) legitimately re-run
     // with the same version. LoopGuard would otherwise count those repeats as an
     // install loop and suppress them with a warning (the whole recurring-script tail
-    // of AB#3709). This flag exempts the item from loop suppression WITHOUT OnDemand's
+    // of the loop-suppression work). This flag exempts the item from loop suppression WITHOUT OnDemand's
     // no-receipt/never-installed semantics, so the item still tracks normally.
     [YamlMember(Alias = "recurring")]
     public bool Recurring { get; set; }
