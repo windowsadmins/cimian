@@ -246,9 +246,13 @@ function Import-DotEnv {
 
 Import-DotEnv
 
-# Enterprise certificate configuration - loaded from environment or .env file
-$Global:EnterpriseCertCN = $env:CIMIAN_CERT_CN ?? 'EmilyCarrU Intune Windows Enterprise Certificate'
-$Global:EnterpriseCertSubject = $env:CIMIAN_CERT_SUBJECT ?? 'EmilyCarrU'
+# Enterprise certificate configuration - loaded from environment or .env file.
+# No default: the certificate is organization-specific, so it is configured per
+# checkout via .env (see .env.example). An empty subject would match every cert
+# in the store, so signing is skipped rather than guessed at -- see
+# Get-SigningCertThumbprint.
+$Global:EnterpriseCertCN = $env:CIMIAN_CERT_CN ?? ''
+$Global:EnterpriseCertSubject = $env:CIMIAN_CERT_SUBJECT ?? ''
 
 # Script constants
 $script:RootDir = $PSScriptRoot
@@ -336,7 +340,15 @@ function Clean-OldPackages {
 function Get-SigningCertThumbprint {
     [OutputType([hashtable])]
     param()
-    
+
+    # Without a configured subject the -like filter below would be "**", which
+    # matches every certificate holding a private key -- signing with whatever
+    # happened to sort first is worse than not signing. Bail out instead.
+    if ([string]::IsNullOrWhiteSpace($Global:EnterpriseCertSubject)) {
+        Write-BuildLog "No signing certificate configured. Set CIMIAN_CERT_SUBJECT (and CIMIAN_CERT_CN) in .env -- see .env.example." "WARNING"
+        return $null
+    }
+
     # Check CurrentUser store first
     $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { 
         $_.HasPrivateKey -and $_.Subject -like "*$Global:EnterpriseCertSubject*" 
