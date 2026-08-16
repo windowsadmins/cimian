@@ -700,6 +700,157 @@ public class LoopGuardTests : IDisposable
 
     #endregion
 
+    #region Clears Survive History Rebuild
+
+    [Fact]
+    public void ClearAll_SurvivesHistoryRebuild()
+    {
+        // 3 sessions of installs → suppression trips
+        CreateEventsFile("ca_s1", "StuckPkg", "1.0.0", "completed", DateTime.UtcNow.AddHours(-3));
+        CreateEventsFile("ca_s2", "StuckPkg", "1.0.0", "completed", DateTime.UtcNow.AddHours(-2));
+        CreateEventsFile("ca_s3", "StuckPkg", "1.0.0", "completed", DateTime.UtcNow.AddMinutes(-90));
+
+        var guard = CreateGuard();
+        guard.ShouldSuppress("StuckPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        guard.ClearAll().Should().BeGreaterThan(0);
+
+        // A fresh instance rebuilds history from the same events.jsonl files.
+        // Before the ClearedAt watermark existed, this rebuild re-counted the
+        // cleared installs and re-tripped suppression immediately — making
+        // --clear-loop all (and any MDM-driven clear) a self-undoing no-op.
+        var rebuilt = CreateGuard();
+        rebuilt.ShouldSuppress("StuckPkg", "1.0.0").Suppress.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ClearLoop_SurvivesHistoryRebuild()
+    {
+        CreateEventsFile("cl_s1", "OnePkg", "1.0.0", "completed", DateTime.UtcNow.AddHours(-3));
+        CreateEventsFile("cl_s2", "OnePkg", "1.0.0", "completed", DateTime.UtcNow.AddHours(-2));
+        CreateEventsFile("cl_s3", "OnePkg", "1.0.0", "completed", DateTime.UtcNow.AddMinutes(-90));
+
+        var guard = CreateGuard();
+        guard.ShouldSuppress("OnePkg", "1.0.0").Suppress.Should().BeTrue();
+        guard.ClearLoop("OnePkg").Should().BeTrue();
+
+        var rebuilt = CreateGuard();
+        rebuilt.ShouldSuppress("OnePkg", "1.0.0").Suppress.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ClearAll_FreshInstallsAfterClear_StillTripSuppression()
+    {
+        CreateEventsFile("cf_s1", "StillLooping", "1.0.0", "completed", DateTime.UtcNow.AddHours(-3));
+        CreateEventsFile("cf_s2", "StillLooping", "1.0.0", "completed", DateTime.UtcNow.AddHours(-2));
+        CreateEventsFile("cf_s3", "StillLooping", "1.0.0", "completed", DateTime.UtcNow.AddMinutes(-90));
+
+        var guard = CreateGuard();
+        guard.ShouldSuppress("StillLooping", "1.0.0").Suppress.Should().BeTrue();
+        guard.ClearAll();
+
+        // The loop is still live: 3 more installs land AFTER the clear.
+        // Clears must not whitelist a still-broken package.
+        CreateEventsFile("cf_s4", "StillLooping", "1.0.0", "completed", DateTime.UtcNow.AddMinutes(1));
+        CreateEventsFile("cf_s5", "StillLooping", "1.0.0", "completed", DateTime.UtcNow.AddMinutes(2));
+        CreateEventsFile("cf_s6", "StillLooping", "1.0.0", "completed", DateTime.UtcNow.AddMinutes(3));
+
+        var rebuilt = CreateGuard();
+        rebuilt.ShouldSuppress("StillLooping", "1.0.0").Suppress.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Convergence (MarkNonConverged)
+
+    [Fact]
+    public void MarkNonConverged_SuppressesWithPreciseReason()
+    {
+        var guard = CreateGuard();
+        var reason = guard.MarkNonConverged("BadCheck", "1.0.0", "fp1", reprobeHours: 24);
+        reason.Should().Contain("did not converge");
+
+        var (suppress, msg) = guard.ShouldSuppress("BadCheck", "1.0.0", "fp1");
+        suppress.Should().BeTrue();
+        msg.Should().Contain("did not converge");
+    }
+
+    [Fact]
+    public void MarkNonConverged_AutoClearsOnFingerprintChange()
+    {
+        var guard = CreateGuard();
+        guard.MarkNonConverged("BadCheck", "1.0.0", "fp1", reprobeHours: 24);
+        guard.ShouldSuppress("BadCheck", "1.0.0", "fp1").Suppress.Should().BeTrue();
+
+        // Admin fixes the pkgsinfo (any install-behavior field) — clears immediately
+        var (suppress, reason) = guard.ShouldSuppress("BadCheck", "1.0.0", "fp2-fixed");
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+    }
+
+    [Fact]
+    public void MarkNonConverged_SurvivesReload()
+    {
+        var guard = CreateGuard();
+        guard.MarkNonConverged("BadCheck", "1.0.0", "fp1", reprobeHours: 24);
+
+        var reloaded = CreateGuard();
+        reloaded.ShouldSuppress("BadCheck", "1.0.0", "fp1").Suppress.Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Pending Restart Deferral
+
+    [Fact]
+    public void PendingRestart_DefersWhileNoRebootHasHappened()
+    {
+        var guard = CreateGuard();
+        // Machine booted an hour ago; install just happened
+        guard.BootTimeUtcProvider = () => DateTime.UtcNow.AddHours(-1);
+        guard.RecordPendingRestart("FirmwarePkg", "1.0.0", "fp1");
+
+        var (defer, reason) = guard.ShouldDeferForRestart("FirmwarePkg", "fp1");
+        defer.Should().BeTrue();
+        reason.Should().Contain("PENDING RESTART");
+    }
+
+    [Fact]
+    public void PendingRestart_ClearsAfterReboot()
+    {
+        var guard = CreateGuard();
+        guard.BootTimeUtcProvider = () => DateTime.UtcNow.AddHours(-1);
+        guard.RecordPendingRestart("FirmwarePkg", "1.0.0", "fp1");
+        guard.ShouldDeferForRestart("FirmwarePkg", "fp1").Defer.Should().BeTrue();
+
+        // Reboot: boot time is now AFTER the memo was stamped
+        guard.BootTimeUtcProvider = () => DateTime.UtcNow.AddMinutes(5);
+        guard.ShouldDeferForRestart("FirmwarePkg", "fp1").Defer.Should().BeFalse();
+
+        // Memo is gone — stays cleared even if boot time regresses (state, not luck)
+        guard.BootTimeUtcProvider = () => DateTime.UtcNow.AddHours(-1);
+        guard.ShouldDeferForRestart("FirmwarePkg", "fp1").Defer.Should().BeFalse();
+    }
+
+    [Fact]
+    public void PendingRestart_ClearsOnFingerprintChange()
+    {
+        var guard = CreateGuard();
+        guard.BootTimeUtcProvider = () => DateTime.UtcNow.AddHours(-1);
+        guard.RecordPendingRestart("FirmwarePkg", "1.0.0", "fp1");
+
+        guard.ShouldDeferForRestart("FirmwarePkg", "fp2-changed").Defer.Should().BeFalse();
+    }
+
+    [Fact]
+    public void PendingRestart_UnknownPackage_DoesNotDefer()
+    {
+        var guard = CreateGuard();
+        guard.ShouldDeferForRestart("NeverSeen", "fp1").Defer.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>

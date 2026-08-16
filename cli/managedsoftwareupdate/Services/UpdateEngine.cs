@@ -128,6 +128,14 @@ public class UpdateEngine : IDisposable
         sb.Append(item.Check?.File?.Hash ?? "");
         sb.Append(':');
         sb.Append(item.Check?.Script ?? "");
+        sb.Append('|');
+        // Running agent version: a Cimian client update may itself be the fix for a
+        // loop (installer semantics, detection logic — e.g. the packed-GUID MSI
+        // detection bug). Folding it in means every client update auto-clears all
+        // suppressions once, fleet-wide, on the first post-update run — without
+        // this, a client-side fix could never break through standing suppression
+        // and an MDM-side clear was the only way out.
+        sb.Append(VersionService.GetRunningAgentVersion());
 
         return LoopGuard.ComputeFingerprint(sb.ToString());
     }
@@ -415,7 +423,7 @@ public class UpdateEngine : IDisposable
             // and in a sibling reports/loop_suppressed.json for dashboards.
             var loopSuppressedByName = loopSuppressed.ToDictionary(
                 x => x.Item.Name.ToLowerInvariant(),
-                x => (x.Reason, x.InstalledVersion, x.WasUpdate));
+                x => (x.Reason, x.InstalledVersion, x.WasUpdate, x.PendingRestart));
 
             // AutoRemove: queue uninstall for packages installed by Cimian but no longer in any manifest
             if (_config.AutoRemove)
@@ -932,7 +940,7 @@ public class UpdateEngine : IDisposable
     }
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
-             List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate)> LoopSuppressed)
+             List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
                         ItemFilterService? itemFilterService = null)
     {
@@ -941,7 +949,9 @@ public class UpdateEngine : IDisposable
         var toUninstall = new List<CatalogItem>();
         // Items LoopGuard refused this run. Tracked separately so CollectSessionItems
         // can stamp them as Warning instead of letting them fall through to "Installed".
-        var loopSuppressed = new List<(CatalogItem, string, string?, bool)>();
+        // PendingRestart entries are the benign flavor: a prior install just needs a
+        // reboot to finalize — surfaced as Pending, not Warning.
+        var loopSuppressed = new List<(CatalogItem, string, string?, bool, bool)>();
 
         var sysArch = StatusService.GetSystemArchitecture();
 
@@ -1065,6 +1075,29 @@ public class UpdateEngine : IDisposable
                         if (_loopGuard != null && !bypassLoopGuard)
                         {
                             var fingerprint = ComputeCatalogFingerprint(catalogItem);
+
+                            // A prior successful install may be awaiting a reboot to
+                            // finalize (restart_action items whose installcheck can't
+                            // pass until the machine restarts). Defer instead of
+                            // reinstalling every session until the reboot happens.
+                            var (defer, deferReason) = _loopGuard.ShouldDeferForRestart(catalogItem.Name, fingerprint);
+                            if (defer)
+                            {
+                                ConsoleLogger.Info(deferReason);
+                                _sessionLogger?.Log("INFO", deferReason);
+                                _sessionLogger?.LogStatusCheck(
+                                    catalogItem.Name,
+                                    catalogItem.Version,
+                                    "deferred",
+                                    deferReason,
+                                    Cimian.Core.Models.StatusReasonCode.PendingReboot,
+                                    Cimian.Core.Models.DetectionMethod.None,
+                                    status.InstalledVersion,
+                                    false);
+                                loopSuppressed.Add((catalogItem, deferReason, status.InstalledVersion, status.IsUpdate, true));
+                                break; // Skip this item
+                            }
+
                             var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
                             if (suppress)
                             {
@@ -1079,7 +1112,7 @@ public class UpdateEngine : IDisposable
                                     Cimian.Core.Models.DetectionMethod.None,
                                     status.InstalledVersion,
                                     false);
-                                loopSuppressed.Add((catalogItem, loopReason, status.InstalledVersion, status.IsUpdate));
+                                loopSuppressed.Add((catalogItem, loopReason, status.InstalledVersion, status.IsUpdate, false));
                                 break; // Skip this item
                             }
                         }
@@ -1895,7 +1928,21 @@ public class UpdateEngine : IDisposable
         }
 
         var (success, output, warningMessage) = await _installerService.InstallAsync(item, localFile ?? "", cancellationToken);
-        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow, warningMessage));
+
+        // Convergence verification: a successful install must flip its own
+        // installcheck to "no action needed", or the pkgsinfo is provably broken
+        // and would loop every session until the counting thresholds gag it with
+        // a generic warning 3+ sessions later. Prove it here, on the first
+        // install, with a message that names the actual defect. Items whose
+        // restart_action finalizes at reboot are the legitimate exception.
+        string? convergenceWarning = null;
+        var convergencePendingRestart = false;
+        if (success && warningMessage == null)
+        {
+            (convergenceWarning, convergencePendingRestart) = VerifyConvergence(item);
+        }
+
+        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow, warningMessage ?? convergenceWarning));
 
         if (success)
         {
@@ -1939,6 +1986,19 @@ public class UpdateEngine : IDisposable
                 success: true,
                 ComputeCatalogFingerprint(item),
                 selfReportedWarning: warningMessage != null);
+
+            // Act on the convergence verdict from above.
+            if (convergencePendingRestart)
+            {
+                LogInfo($"{item.Name} installed but is finalized by a reboot (restart_action: {item.RestartAction}) — reinstalls deferred until the machine restarts");
+                _loopGuard?.RecordPendingRestart(item.Name, item.Version, ComputeCatalogFingerprint(item));
+            }
+            else if (convergenceWarning != null)
+            {
+                ConsoleLogger.Warn(convergenceWarning);
+                _sessionLogger?.Log("WARN", convergenceWarning);
+                _loopGuard?.MarkNonConverged(item.Name, item.Version, ComputeCatalogFingerprint(item), _config.LoopReprobeHours);
+            }
 
             // Add to installed items
             if (!installedItems.Contains(item.Name, StringComparer.OrdinalIgnoreCase))
@@ -2782,7 +2842,7 @@ public class UpdateEngine : IDisposable
         List<CatalogItem> toUninstall,
         Dictionary<string, CatalogItem> catalogMap,
         IReadOnlyDictionary<string, ItemOutcome> outcomesByName,
-        IReadOnlyDictionary<string, (string Reason, string? InstalledVersion, bool WasUpdate)> loopSuppressedByName)
+        IReadOnlyDictionary<string, (string Reason, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> loopSuppressedByName)
     {
         if (_sessionLogger == null) return;
 
@@ -2825,23 +2885,27 @@ public class UpdateEngine : IDisposable
             // acted on, but it is broken — surface as Warning so dashboards flag it.
             // Keep the conditional short-circuited so suppressed items don't fall
             // through to outcome/plan logic below.
+            // Pending-restart deferrals share the channel but are NOT warnings: the
+            // install succeeded and a reboot finalizes it — surface as Pending.
             if (loopSuppressedByName.TryGetValue(key, out var suppression))
             {
                 items.Add(new SessionPackageInfo
                 {
                     Name = mi.Name,
                     Version = version,
-                    Status = "Warning",
+                    Status = suppression.PendingRestart ? "Pending" : "Warning",
                     ItemType = itemType,
                     DisplayName = displayName,
                     InstalledVersion = suppression.InstalledVersion,
-                    WarningMessage = suppression.Reason,
+                    WarningMessage = suppression.PendingRestart ? null : suppression.Reason,
                     StatusReason = suppression.Reason,
-                    StatusReasonCode = Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
+                    StatusReasonCode = suppression.PendingRestart
+                        ? Cimian.Core.Models.StatusReasonCode.PendingReboot
+                        : Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
                     DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
                     // Mark as touched this run so DataExporter stamps last_seen_in_session.
                     // Distinct from install/update/remove so consumers can filter on it.
-                    ActionPerformed = "loop_suppressed",
+                    ActionPerformed = suppression.PendingRestart ? "restart_deferred" : "loop_suppressed",
                     OutcomeTimestamp = DateTime.UtcNow
                 });
                 continue;
@@ -3226,6 +3290,39 @@ public class UpdateEngine : IDisposable
         reason = $"requires Cimian {item.MinimumCimianVersion} or newer, running {currentVersion}";
         reasonCode = StatusReasonCode.AgentVersionTooOld;
         return false;
+    }
+
+    /// <summary>
+    /// Re-runs the item's install status check immediately after a successful
+    /// install to prove the pkgsinfo is self-consistent. A correct pkgsinfo's
+    /// installcheck reports "no action needed" once the installer has run; one
+    /// that still reports "action needed" will reinstall every session — the
+    /// entire install-loop defect class, detected here on session 1 instead of
+    /// after 3+ sessions of churn.
+    /// Returns (warning, pendingRestart): warning carries the precise defect
+    /// message for a broken pkgsinfo; pendingRestart is true for the legitimate
+    /// case where the item's restart_action finalizes the install at reboot.
+    /// Verification must never fail a completed install — any error here is
+    /// swallowed and treated as converged.
+    /// </summary>
+    private (string? Warning, bool PendingRestart) VerifyConvergence(CatalogItem item)
+    {
+        try
+        {
+            var status = _statusService.CheckStatus(item, "install", _config.CachePath);
+            if (!status.NeedsAction)
+                return (null, false);
+
+            if (RequiresRestart(item) || RequiresLogout(item))
+                return (null, true);
+
+            var warning = $"installcheck did not converge: {item.Name} v{item.Version} still reports action needed ({status.Reason}) immediately after a successful install — fix the pkgsinfo installcheck/installs criteria (re-probes in {(_config.LoopReprobeHours > 0 ? _config.LoopReprobeHours : 24)}h; clears immediately on pkgsinfo change)";
+            return (warning, false);
+        }
+        catch
+        {
+            return (null, false);
+        }
     }
 
     /// <summary>
