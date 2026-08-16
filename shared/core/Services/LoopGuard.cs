@@ -199,6 +199,8 @@ public class LoopGuard
                     pkgState.SessionCount = 0;
                     pkgState.VersionAttempts.Clear();
                     pkgState.RecentTimestamps.Clear();
+                    pkgState.PendingRestartSince = null;
+                    pkgState.ClearedAt = DateTime.UtcNow;
                     pkgState.LastVersion = version;
                     pkgState.CatalogFingerprint = catalogFingerprint;
                     SaveState();
@@ -313,6 +315,11 @@ public class LoopGuard
 
     /// <summary>
     /// Clears loop suppression for a specific package.
+    /// Stamps a ClearedAt watermark so the cleared history is not re-counted by the
+    /// next run's rebuild from events.jsonl — only installs that happen AFTER the
+    /// clear accumulate toward suppression again. A still-looping package therefore
+    /// re-suppresses after 3 fresh installs (as it should), but a clear is never
+    /// silently undone by history.
     /// </summary>
     public bool ClearLoop(string packageName)
     {
@@ -325,6 +332,9 @@ public class LoopGuard
             pkgState.SessionCount = 0;
             pkgState.VersionAttempts.Clear();
             pkgState.RecentTimestamps.Clear();
+            pkgState.ProcessedSessions.Clear();
+            pkgState.PendingRestartSince = null;
+            pkgState.ClearedAt = DateTime.UtcNow;
             SaveState();
             return true;
         }
@@ -333,13 +343,145 @@ public class LoopGuard
 
     /// <summary>
     /// Clears loop suppression for all packages.
+    /// Stamps the root ClearedAt watermark for the same reason as ClearLoop: the
+    /// old implementation reset state wholesale, which the next run promptly undid
+    /// by re-counting 7 days of events.jsonl and re-tripping "3 installs across 3
+    /// sessions" — making --clear-loop all (and any MDM-driven clear) a no-op.
     /// </summary>
     public int ClearAll()
     {
         var count = _state.Packages.Count(p => p.Value.SuppressedUntil.HasValue);
-        _state = new LoopGuardState();
+        _state = new LoopGuardState { ClearedAt = DateTime.UtcNow };
         SaveState();
         return count;
+    }
+
+    /// <summary>
+    /// System boot time (UTC), injectable for tests. Default derives it from uptime.
+    /// </summary>
+    internal Func<DateTime> BootTimeUtcProvider { get; set; } =
+        () => DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+
+    // Clock-skew fudge when comparing boot time against the pending-restart memo.
+    private static readonly TimeSpan BootTimeSkewTolerance = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Records that a successful install has not yet converged because the item's
+    /// restart_action finalizes it at the next reboot/logout. While the memo stands,
+    /// ShouldDeferForRestart tells the engine to skip the reinstall instead of
+    /// churning the installer every session until the machine restarts.
+    /// </summary>
+    public void RecordPendingRestart(string packageName, string version, string? catalogFingerprint = null)
+    {
+        if (_disabled || string.IsNullOrEmpty(packageName))
+            return;
+
+        var key = packageName.ToLowerInvariant();
+        if (!_state.Packages.TryGetValue(key, out var pkgState))
+        {
+            pkgState = new PackageLoopState { PackageName = packageName };
+            _state.Packages[key] = pkgState;
+        }
+
+        pkgState.PendingRestartSince = DateTime.UtcNow;
+        pkgState.LastVersion = version;
+        if (!string.IsNullOrEmpty(catalogFingerprint))
+            pkgState.CatalogFingerprint = catalogFingerprint;
+        SaveState();
+    }
+
+    /// <summary>
+    /// Whether an install for this package should be deferred because a prior
+    /// successful install is awaiting a reboot/logout to finalize. The memo clears
+    /// itself when: the system boot time advances past it (the reboot happened —
+    /// re-evaluate normally), the pkgsinfo fingerprint changes (admin shipped a
+    /// change), or it ages past the LoopMaxTime cap (defensive: a logout-finalized
+    /// item on a machine that never reboots, or drift such as a user uninstalling
+    /// the app, must not be deferred forever).
+    /// </summary>
+    public (bool Defer, string Reason) ShouldDeferForRestart(string packageName, string? catalogFingerprint = null)
+    {
+        if (_isBootstrap || _disabled || string.IsNullOrEmpty(packageName))
+            return (false, "");
+
+        var key = packageName.ToLowerInvariant();
+        if (!_state.Packages.TryGetValue(key, out var pkgState) || !pkgState.PendingRestartSince.HasValue)
+            return (false, "");
+
+        var since = pkgState.PendingRestartSince.Value;
+
+        // Pkgsinfo changed since the memo was stamped — defer no longer applies.
+        if (!string.IsNullOrEmpty(catalogFingerprint) && !string.IsNullOrEmpty(pkgState.CatalogFingerprint) &&
+            !string.Equals(catalogFingerprint, pkgState.CatalogFingerprint, StringComparison.OrdinalIgnoreCase))
+        {
+            pkgState.PendingRestartSince = null;
+            SaveState();
+            return (false, "");
+        }
+
+        // Reboot happened — clear the memo and let the normal installcheck decide.
+        DateTime bootTime;
+        try { bootTime = BootTimeUtcProvider(); }
+        catch { bootTime = DateTime.MinValue; }
+        if (bootTime - BootTimeSkewTolerance > since)
+        {
+            pkgState.PendingRestartSince = null;
+            SaveState();
+            return (false, "");
+        }
+
+        // Defensive age-out.
+        if (DateTime.UtcNow - since > TimeSpan.FromDays(_maxSuppressionDays))
+        {
+            pkgState.PendingRestartSince = null;
+            SaveState();
+            return (false, "");
+        }
+
+        return (true, $"PENDING RESTART: {packageName} v{pkgState.LastVersion} installed successfully but is finalized by a reboot — deferring reinstall until the machine restarts");
+    }
+
+    /// <summary>
+    /// Marks a package whose successful install provably did not converge: the
+    /// installcheck that scheduled the install still reports "action needed"
+    /// immediately afterwards, so the pkgsinfo's detection criteria never match
+    /// what the installer lays down. This is the root cause of the install-loop
+    /// class — recording it here on the FIRST install replaces churning through
+    /// 3+ sessions before the counting thresholds notice. Suppression re-probes
+    /// after <paramref name="reprobeHours"/> (capped by LoopMaxTime) and, as with
+    /// any suppression, auto-clears the moment the pkgsinfo fingerprint changes.
+    /// Returns the reason recorded, for surfacing on the session's outcome.
+    /// </summary>
+    public string MarkNonConverged(string packageName, string version, string? catalogFingerprint, int reprobeHours = 24)
+    {
+        var hours = reprobeHours > 0 ? reprobeHours : 24;
+        hours = Math.Min(hours, _maxSuppressionDays * 24);
+        var reason = $"installcheck did not converge: {packageName} v{version} still reports action needed immediately after a successful install — fix the pkgsinfo installcheck/installs criteria (re-probes in {hours}h; clears immediately on pkgsinfo change)";
+
+        if (_disabled || string.IsNullOrEmpty(packageName))
+            return reason;
+
+        var key = packageName.ToLowerInvariant();
+        if (!_state.Packages.TryGetValue(key, out var pkgState))
+        {
+            pkgState = new PackageLoopState { PackageName = packageName };
+            _state.Packages[key] = pkgState;
+        }
+
+        pkgState.SuppressedUntil = DateTime.UtcNow.AddHours(hours);
+        pkgState.SuppressionReason = reason;
+        pkgState.LastVersion = version;
+        if (!string.IsNullOrEmpty(catalogFingerprint))
+            pkgState.CatalogFingerprint = catalogFingerprint;
+        SaveState();
+        return reason;
+    }
+
+    private static DateTime? MaxNullable(DateTime? a, DateTime? b)
+    {
+        if (!a.HasValue) return b;
+        if (!b.HasValue) return a;
+        return a.Value > b.Value ? a : b;
     }
 
     /// <summary>
@@ -593,9 +735,22 @@ public class LoopGuard
                         _state.Packages[key] = pkgState;
                     }
 
+                    // Clear watermark: events older than the most recent clear
+                    // (--clear-loop, per-package or all) are history that was
+                    // deliberately discarded. Skip counting them — but still mark
+                    // the session processed so they are never revisited. Without
+                    // this gate, every clear was undone on the next run by this
+                    // very rebuild re-counting the last 7 days of events.
+                    var clearWatermark = MaxNullable(_state.ClearedAt, pkgState.ClearedAt);
+                    DateTime? eventTime = DateTime.TryParse(timestamp, out var ts2)
+                        ? ts2.ToUniversalTime()
+                        : null;
+                    var preClearHistory = clearWatermark.HasValue &&
+                        (!eventTime.HasValue || eventTime.Value < clearWatermark.Value);
+
                     // Only count if not already tracked in state (avoid double-counting
                     // from both state file and events)
-                    if (!pkgState.ProcessedSessions.Contains(sessionId))
+                    if (!pkgState.ProcessedSessions.Contains(sessionId) && !preClearHistory)
                     {
                         pkgState.AttemptCount++;
                         pkgState.LastSuccess = string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)
@@ -608,11 +763,11 @@ public class LoopGuard
                             pkgState.VersionAttempts[version] = vc + 1;
                         }
 
-                        if (DateTime.TryParse(timestamp, out var ts2))
+                        if (eventTime.HasValue)
                         {
-                            pkgState.RecentTimestamps.Add(ts2.ToUniversalTime());
-                            if (pkgState.LastAttempt == null || ts2.ToUniversalTime() > pkgState.LastAttempt)
-                                pkgState.LastAttempt = ts2.ToUniversalTime();
+                            pkgState.RecentTimestamps.Add(eventTime.Value);
+                            if (pkgState.LastAttempt == null || eventTime.Value > pkgState.LastAttempt)
+                                pkgState.LastAttempt = eventTime.Value;
                         }
                     }
 
@@ -840,6 +995,15 @@ public class LoopGuardState
     [JsonPropertyName("last_updated")]
     public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Watermark stamped by ClearAll(). History rebuilds ignore install events older
+    /// than this, so a fleet-wide clear is not silently undone by the next run
+    /// re-counting the last 7 days of events.jsonl.
+    /// </summary>
+    [JsonPropertyName("cleared_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? ClearedAt { get; set; }
+
     [JsonPropertyName("packages")]
     public Dictionary<string, PackageLoopState> Packages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
@@ -896,6 +1060,27 @@ public class PackageLoopState
     /// </summary>
     [JsonPropertyName("processed_sessions")]
     public HashSet<string> ProcessedSessions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Watermark stamped by ClearLoop(). Same contract as LoopGuardState.ClearedAt
+    /// but scoped to this package: install events older than this are never
+    /// re-counted, so a per-package clear survives history rebuilds.
+    /// </summary>
+    [JsonPropertyName("cleared_at")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? ClearedAt { get; set; }
+
+    /// <summary>
+    /// Set when a successful install did not converge (installcheck still reports
+    /// action needed) and the item's restart_action explains why — the install is
+    /// finalized by a reboot/logout. While set, reinstalls are deferred instead of
+    /// churning every session until the machine restarts. Cleared when the system
+    /// boot time advances past this timestamp, when the pkgsinfo changes, or when
+    /// the memo ages out (defensive cap — see ShouldDeferForRestart).
+    /// </summary>
+    [JsonPropertyName("pending_restart_since")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? PendingRestartSince { get; set; }
 }
 
 #endregion
