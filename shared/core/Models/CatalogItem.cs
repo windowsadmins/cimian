@@ -48,6 +48,13 @@ public class CatalogItem
     public string? Developer { get; set; }
 
     /// <summary>
+    /// Icon filename in the repo's icons directory (e.g. "AppName.png").
+    /// When unset, clients fall back to "&lt;name&gt;.png".
+    /// </summary>
+    [YamlMember(Alias = "icon_name")]
+    public string? IconName { get; set; }
+
+    /// <summary>
     /// Direct download URL for the package
     /// </summary>
     [YamlMember(Alias = "url")]
