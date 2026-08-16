@@ -114,6 +114,16 @@ public class CimianConfig
     public int LoopMaxTime { get; set; } = 7;
 
     /// <summary>
+    /// How often, in hours, a package flagged as non-converged (its installcheck
+    /// still reports "action needed" immediately after a successful install — a
+    /// proven pkgsinfo defect) is re-probed with a fresh install attempt. Between
+    /// probes the package is suppressed with a message naming the defect. Default
+    /// 24; capped at LoopMaxTime. Any pkgsinfo change clears the flag immediately.
+    /// </summary>
+    [YamlMember(Alias = "LoopReprobeHours")]
+    public int LoopReprobeHours { get; set; } = 24;
+
+    /// <summary>
     /// Master switch for unused-software removal (unused_software_removal_info).
     /// On by default — harmless fleet-wide because every package must still
     /// opt in via pkginfo, and the pass only ever touches self-serve/optional
