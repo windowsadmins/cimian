@@ -534,6 +534,20 @@ public class UpdateEngine : IDisposable
             // Print summary
             PrintActionSummary(manifestItems, toInstall, toUpdate, toUninstall);
 
+            // Mirror repo icons down for the MSC GUI so it renders real tiles
+            // instead of generated solid-color fallbacks. Cosmetic: conditional
+            // requests keep steady-state cost at one 304 per icon, and any
+            // failure is logged and swallowed without affecting the run.
+            await new IconSyncService(_config).SyncAsync(
+                manifestItems
+                    .Where(mi => !string.IsNullOrEmpty(mi.Name))
+                    .Select(mi =>
+                    {
+                        catalogMap.TryGetValue(mi.Name.ToLowerInvariant(), out var cat);
+                        return (mi.Name, cat);
+                    }),
+                cancellationToken);
+
             // Exit if check-only mode
             if (_checkOnly)
             {
@@ -3227,6 +3241,7 @@ public class UpdateEngine : IDisposable
             Description = cat?.Description,
             Category = cat?.Category,
             Developer = cat?.Developer,
+            Icon = cat?.IconName,
             InstallerItemSize = cat?.Installer?.Size ?? 0,
             Uninstallable = cat?.IsUninstallable() ?? false,
             RestartAction = cat?.RestartAction,
