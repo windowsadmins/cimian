@@ -9,8 +9,12 @@
         <ScrollViewer Padding="24">
             <StackPanel Spacing="4">
                 <TextBlock Text="Installation History"
-                           Style="{StaticResource TitleTextBlockStyle}"
-                           Margin="0,0,0,16" />
+                           Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock Text="Every software run on this computer, including automatic background maintenance. Managed software installs and updates on its own, so items here may never have appeared under Updates."
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,16" />
 
                 <ItemsRepeater ItemsSource="{Binding Sessions}">
                     <ItemsRepeater.Layout>
