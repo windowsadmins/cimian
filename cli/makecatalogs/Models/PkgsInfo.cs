@@ -117,6 +117,14 @@ public class PkgsInfo
     [YamlMember(Alias = "developer")]
     public string? Developer { get; set; }
 
+    /// <summary>
+    /// Icon filename in the repo's icons directory. Carried through to the
+    /// generated catalogs so clients can resolve icons whose filename differs
+    /// from the package name (icon_name != "&lt;name&gt;.png").
+    /// </summary>
+    [YamlMember(Alias = "icon_name")]
+    public string? IconName { get; set; }
+
     [YamlMember(Alias = "requires")]
     public List<string>? Requires { get; set; }
 
