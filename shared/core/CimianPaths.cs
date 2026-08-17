@@ -28,6 +28,7 @@ public static class CimianPaths
     // ── Subdirectories under ManagedInstallsRoot ─────────────────────────────
     public static readonly string CacheDir       = Path.Combine(ManagedInstallsRoot, "Cache");
     public static readonly string CatalogsDir    = Path.Combine(ManagedInstallsRoot, "catalogs");
+    public static readonly string IconsDir       = Path.Combine(ManagedInstallsRoot, "icons");
     public static readonly string ManifestsDir   = Path.Combine(ManagedInstallsRoot, "manifests");
     public static readonly string LogsDir        = Path.Combine(ManagedInstallsRoot, "logs");
     public static readonly string ReportsDir     = Path.Combine(ManagedInstallsRoot, "reports");
