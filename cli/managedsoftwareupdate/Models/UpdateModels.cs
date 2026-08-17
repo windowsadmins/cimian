@@ -402,6 +402,13 @@ public class CatalogItem
     [YamlMember(Alias = "developer")]
     public string? Developer { get; set; }
 
+    /// <summary>
+    /// Icon filename in the repo's icons directory (e.g. "AppName.png").
+    /// When unset, icon sync falls back to "&lt;name&gt;.png".
+    /// </summary>
+    [YamlMember(Alias = "icon_name")]
+    public string? IconName { get; set; }
+
     [YamlMember(Alias = "installer")]
     public InstallerInfo Installer { get; set; } = new();
 
