@@ -10,7 +10,7 @@
     <AssemblyName>cimistatus</AssemblyName>
     <AssemblyTitle>Cimian Status</AssemblyTitle>
     <AssemblyDescription>Cimian Software Management Status Monitor</AssemblyDescription>
-    <AssemblyCompany>Example Organisation</AssemblyCompany>
+    <AssemblyCompany Condition="'$(AssemblyCompany)' == ''">Windows Admins Open Source</AssemblyCompany>
     <AssemblyProduct>Cimian</AssemblyProduct>
     <AssemblyVersion>2025.12.0.0</AssemblyVersion>
     <FileVersion>2025.12.0.0</FileVersion>
