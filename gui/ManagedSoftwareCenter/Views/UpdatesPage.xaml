@@ -504,6 +504,13 @@
                        Style="{StaticResource BodyTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        HorizontalAlignment="Center"/>
+            <TextBlock Text="Managed software also installs and updates automatically in the background — the History page lists those runs."
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       MaxWidth="420"
+                       HorizontalAlignment="Center"/>
             <Button x:Name="CheckAgainButton"
                     Content="CHECK AGAIN"
                     Style="{StaticResource AccentButtonStyle}"
