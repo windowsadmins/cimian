@@ -152,7 +152,7 @@ public static class SelfUpdateService
             case "msi":
             {
                 var logFile = Path.Combine(
-                    CimianPaths.LogsDir,
+                    CimianPaths.SelfUpdateLogsDir,
                     $"selfupdate-{DateTime.Now:yyyyMMdd-HHmmss}.log");
                 Directory.CreateDirectory(Path.GetDirectoryName(logFile)!);
                 fileName = "msiexec.exe";
@@ -352,7 +352,7 @@ public static class SelfUpdateService
             ConsoleLogger.Info($"Executing MSI update: {msiPath}");
 
             var logFile = Path.Combine(
-                CimianPaths.LogsDir,
+                CimianPaths.SelfUpdateLogsDir,
                 $"selfupdate-{DateTime.Now:yyyyMMdd-HHmmss}.log");
 
             // Ensure log directory exists

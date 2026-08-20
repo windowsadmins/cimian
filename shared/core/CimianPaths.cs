@@ -55,6 +55,30 @@ public static class CimianPaths
     public static readonly string HeadlessFlagFile   = Path.Combine(ManagedInstallsRoot, ".cimian.headless");
     public static readonly string SelfUpdateFlagFile = Path.Combine(ManagedInstallsRoot, ".cimian.selfupdate");
 
+    // ── Log subdirectories ───────────────────────────────────────────────────
+    // The logs root holds the dated session tree (logs\YYYY-MM-DD\HHMM\) and nothing
+    // else. Anything written outside a session goes in a named subdirectory here, so
+    // the root stays readable and retention has a directory to sweep rather than a
+    // pile of loose files it has to pattern-match.
+
+    /// <summary>Verbose installer logs from client self-updates.</summary>
+    public static readonly string SelfUpdateLogsDir = Path.Combine(LogsDir, "selfupdate");
+
+    /// <summary>
+    /// Verbose msiexec / MSIX logs for managed installs, kept across sessions so a
+    /// failed attempt still has its predecessor to compare against. These used to sit in
+    /// the download cache, where nothing expired them and they were mixed in with the
+    /// payloads.
+    /// </summary>
+    public static readonly string InstallLogsDir = Path.Combine(LogsDir, "installs");
+
+    /// <summary>
+    /// Per-package script output, one directory per package. Written by the packaging
+    /// tool's MSI custom actions rather than by this client; named here so retention
+    /// knows where to look.
+    /// </summary>
+    public static readonly string PackageLogsDir = Path.Combine(LogsDir, "packages");
+
     // ── Specific log files ───────────────────────────────────────────────────
     public static readonly string CimiwatcherLog = Path.Combine(LogsDir, "cimiwatcher.log");
 

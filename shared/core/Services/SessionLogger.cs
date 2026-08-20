@@ -12,8 +12,8 @@ namespace Cimian.Core.Services;
 /// 
 /// Features:
 /// - Day-nested directories: logs/YYYY-MM-DD/HHMM/ for easy navigation
-/// - Creates session.json, events.jsonl, install.log, and run.log files
-/// - 7-day rolling retention with automatic cleanup
+/// - Creates session.json, events.jsonl and install.log files
+/// - 30-day rolling retention with automatic cleanup, covering the whole logs tree
 /// - Writes reports to C:\ProgramData\ManagedInstalls\reports
 /// - Structured data formats for external tool integration
 /// </summary>
@@ -45,7 +45,6 @@ public class SessionLogger : IDisposable
     private string _runType = "manual";
 
     private StreamWriter? _logFile;        // install.log
-    private StreamWriter? _runLogFile;     // run.log (session copy)
     private StreamWriter? _reportRunLog;   // reports/run.log
     private StreamWriter? _eventsFile;     // events.jsonl
 
@@ -150,9 +149,11 @@ public class SessionLogger : IDisposable
             var installLogPath = Path.Combine(_sessionDir, "install.log");
             _logFile = new StreamWriter(installLogPath, append: true) { AutoFlush = true };
 
-            // Session run log (run.log in session directory)
-            var sessionRunLogPath = Path.Combine(_sessionDir, "run.log");
-            _runLogFile = new StreamWriter(sessionRunLogPath, append: true) { AutoFlush = true };
+            // There is deliberately no second copy in the session directory. install.log
+            // and the old sibling run.log received the identical formatted line from
+            // Log(), so the session tree carried every byte twice. reports/run.log below
+            // still exists: it is the fixed path external tooling tails, and it is
+            // truncated per session rather than accumulating.
 
             // Report run log (reports/run.log - truncated each session)
             // This may fail if the file is locked by another process (e.g., Go version running)
@@ -196,7 +197,6 @@ public class SessionLogger : IDisposable
             try
             {
                 _logFile?.WriteLine(formattedLine);
-                _runLogFile?.WriteLine(formattedLine);
                 _reportRunLog?.WriteLine(formattedLine);
             }
             catch
@@ -378,9 +378,17 @@ public class SessionLogger : IDisposable
     }
 
     /// <summary>
-    /// Performs 7-day rolling retention cleanup.
-    /// Removes day directories older than retention window and cleans up any legacy flat-format sessions.
+    /// Performs the 30-day rolling retention cleanup over the whole logs tree.
     /// </summary>
+    /// <remarks>
+    /// This used to enumerate directories only. Everything the client itself writes
+    /// lives in a directory, so that looked sufficient — but the logs root is shared:
+    /// package scripts, msiexec verbose logs and the self-update installer all drop
+    /// loose files there, and none of them were ever considered for deletion. Files at
+    /// the root are swept by age here, and named subdirectories are swept by the age of
+    /// their newest file, so a package that stops being installed eventually goes away
+    /// with its logs.
+    /// </remarks>
     private void PerformRetentionCleanup()
     {
         try
@@ -417,11 +425,87 @@ public class SessionLogger : IDisposable
                     }
                 }
             }
+
+            SweepExpiredFiles(BaseLogsDir, cutoff);
+            SweepExpiredFiles(CimianPaths.SelfUpdateLogsDir, cutoff);
+            SweepExpiredFiles(CimianPaths.InstallLogsDir, cutoff);
+            SweepExpiredSubdirectories(CimianPaths.PackageLogsDir, cutoff);
         }
         catch
         {
             // Silent failure - retention cleanup is non-critical
         }
+    }
+
+    /// <summary>
+    /// Deletes files directly inside <paramref name="directory"/> that were last written
+    /// before <paramref name="cutoff"/>. Not recursive: subdirectories are handled by
+    /// their own rules.
+    /// </summary>
+    internal static void SweepExpiredFiles(string directory, DateTime cutoff)
+    {
+        if (!Directory.Exists(directory))
+            return;
+
+        foreach (var file in Directory.GetFiles(directory))
+        {
+            try
+            {
+                var info = new FileInfo(file);
+                if (info.LastWriteTime < cutoff)
+                    info.Delete();
+            }
+            catch
+            {
+                // A log still held open by another process throws here. Ignore it and
+                // try again next session rather than failing the whole sweep.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes immediate subdirectories of <paramref name="directory"/> whose most
+    /// recently written file predates <paramref name="cutoff"/>. Used for trees keyed by
+    /// something other than a date — per-package log directories, where the meaningful
+    /// question is "has anything touched this package lately".
+    /// </summary>
+    internal static void SweepExpiredSubdirectories(string directory, DateTime cutoff)
+    {
+        if (!Directory.Exists(directory))
+            return;
+
+        foreach (var entry in Directory.GetDirectories(directory))
+        {
+            try
+            {
+                // No files at all means an empty leftover, which is also expired.
+                var newest = NewestWriteTime(entry);
+                if (newest is null || newest < cutoff)
+                    Directory.Delete(entry, recursive: true);
+            }
+            catch
+            {
+                // Ignore - retention is best-effort.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Most recent LastWriteTime among the files under <paramref name="directory"/>, or
+    /// null when it holds no files at all.
+    /// </summary>
+    private static DateTime? NewestWriteTime(string directory)
+    {
+        DateTime? newest = null;
+
+        foreach (var file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            var written = new FileInfo(file).LastWriteTime;
+            if (newest is null || written > newest)
+                newest = written;
+        }
+
+        return newest;
     }
 
     /// <summary>
@@ -758,8 +842,6 @@ public class SessionLogger : IDisposable
             _logFile?.Dispose();
             _logFile = null;
 
-            _runLogFile?.Dispose();
-            _runLogFile = null;
 
             _reportRunLog?.Dispose();
             _reportRunLog = null;
