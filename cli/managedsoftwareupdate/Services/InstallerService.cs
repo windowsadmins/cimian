@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core;
 using Cimian.Core.Services;
 using Microsoft.Win32;
 using WixToolset.Dtf.WindowsInstaller;
@@ -34,7 +35,20 @@ public class InstallerService
     private readonly CimianConfig _config;
     private readonly ScriptService _scriptService;
     private SessionLogger? _sessionLogger;
-    
+
+    /// <summary>
+    /// Where verbose installer logs go. Ensured on first use: msiexec will not create a
+    /// missing directory for /l*v, it just silently produces no log.
+    /// </summary>
+    private static string InstallLogsDir
+    {
+        get
+        {
+            Directory.CreateDirectory(CimianPaths.InstallLogsDir);
+            return CimianPaths.InstallLogsDir;
+        }
+    }
+
     // Cached sbin-installer path (null = not checked, empty = not available)
     private static string? _sbinInstallerBin;
 
@@ -865,7 +879,7 @@ public class InstallerService
             // output so a failure leaves the prior good log alongside the failing
             // one. Newest attempt is _install.1.log.
             RotateMsiInstallLogs(item.Name);
-            var logPath = Path.Combine(_config.CachePath, $"{item.Name}_install.1.log");
+            var logPath = Path.Combine(InstallLogsDir, $"{item.Name}_install.1.log");
 
             List<string> BuildArgs() => new()
             {
@@ -936,7 +950,7 @@ public class InstallerService
     }
 
     /// <summary>
-    /// Rotate {cache}/{item}_install.N.log files keeping the newest MsiInstallLogRetention
+    /// Rotate logs/installs/{item}_install.N.log files keeping the newest MsiInstallLogRetention
     /// attempts. Highest N is dropped; lower indices shift up. Slot .1 is freed for the
     /// next msiexec invocation. Safe to call when no logs exist yet.
     /// </summary>
@@ -944,7 +958,7 @@ public class InstallerService
     {
         try
         {
-            var basePath = Path.Combine(_config.CachePath, $"{itemName}_install");
+            var basePath = Path.Combine(InstallLogsDir, $"{itemName}_install");
             // Drop the oldest, then shift each down toward higher N
             var oldest = $"{basePath}.{MsiInstallLogRetention}.log";
             if (File.Exists(oldest))
@@ -1190,7 +1204,7 @@ public class InstallerService
             || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
         var identityName = msixInstallEntry?.IdentityName ?? "";
 
-        var logPath = Path.Combine(_config.CachePath, $"{item.Name}_msix_install.log");
+        var logPath = Path.Combine(InstallLogsDir, $"{item.Name}_msix_install.log");
         var escapedPath = localFile.Replace("'", "''");
         var escapedLog = logPath.Replace("'", "''");
         var escapedIdentity = identityName.Replace("'", "''");

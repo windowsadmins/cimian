@@ -431,4 +431,94 @@ public class DownloadServiceTests : IDisposable
     }
 
     #endregion
+
+    #region Cache retention
+
+    // CacheRetentionDays was a configuration field that nothing acted on: no code path
+    // ever deleted a cached payload, so every installer a machine had downloaded stayed
+    // on disk forever. These pin the behaviour the setting now has.
+
+    private string WriteCacheFile(string relativePath, DateTime lastWrite, string content = "payload")
+    {
+        var full = Path.Combine(_testCacheDir, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, content);
+        File.SetLastWriteTime(full, lastWrite);
+        return full;
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_RemovesPayloadsPastRetention()
+    {
+        var stale = WriteCacheFile(Path.Combine("design", "Suite-2025.1.pkg"), DateTime.Now.AddDays(-60));
+        var current = WriteCacheFile(Path.Combine("design", "Suite-2026.8.pkg"), DateTime.Now.AddDays(-3));
+
+        _service.ValidateAndCleanCache();
+
+        Assert.False(File.Exists(stale));
+        Assert.True(File.Exists(current));
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_RemovesTheVerificationMarkerWithItsPayload()
+    {
+        var stale = WriteCacheFile(Path.Combine("apps", "Tool-1.0.msi"), DateTime.Now.AddDays(-60));
+        var marker = WriteCacheFile(Path.Combine("apps", "Tool-1.0.msi.verified"), DateTime.Now.AddDays(-60), "ok");
+
+        _service.ValidateAndCleanCache();
+
+        Assert.False(File.Exists(stale));
+        Assert.False(File.Exists(marker));
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_KeepsAMarkerWhosePayloadIsStillCurrent()
+    {
+        // The marker is older than the window but the payload it vouches for is not.
+        // Dropping it would force a pointless re-verification of a good download.
+        var payload = WriteCacheFile(Path.Combine("apps", "Tool-2.0.msi"), DateTime.Now.AddDays(-3));
+        var marker = WriteCacheFile(Path.Combine("apps", "Tool-2.0.msi.verified"), DateTime.Now.AddDays(-60), "ok");
+
+        _service.ValidateAndCleanCache();
+
+        Assert.True(File.Exists(payload));
+        Assert.True(File.Exists(marker));
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_LeavesPartialDownloadsToTheirOwnRule()
+    {
+        // .downloading files are resumable and already have a 24-hour rule; retention
+        // must not race it.
+        var partial = WriteCacheFile("Big-1.0.pkg.downloading", DateTime.Now.AddHours(-1));
+
+        _service.ValidateAndCleanCache();
+
+        Assert.True(File.Exists(partial));
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_RemovesCategoryDirectoriesLeftEmpty()
+    {
+        WriteCacheFile(Path.Combine("animation", "Renderer-1.0.exe"), DateTime.Now.AddDays(-60));
+
+        _service.ValidateAndCleanCache();
+
+        Assert.False(Directory.Exists(Path.Combine(_testCacheDir, "animation")));
+        // The cache root is a known path other code expects; it stays.
+        Assert.True(Directory.Exists(_testCacheDir));
+    }
+
+    [Fact]
+    public void ValidateAndCleanCache_RetentionIsDisabledByANonPositiveSetting()
+    {
+        _testConfig.CacheRetentionDays = 0;
+        var ancient = WriteCacheFile(Path.Combine("apps", "Tool-0.1.msi"), DateTime.Now.AddDays(-400));
+
+        _service.ValidateAndCleanCache();
+
+        Assert.True(File.Exists(ancient));
+    }
+
+    #endregion
 }
