@@ -673,6 +673,107 @@ public class DownloadService
         {
             ConsoleLogger.Info($"Cache cleanup: removed {corruptCount} corrupt files, {abandonedDownloads} abandoned downloads, {orphanedMarkers} orphaned verification markers");
         }
+
+        PruneExpiredCacheEntries();
+    }
+
+    /// <summary>
+    /// Removes cached payloads that have not been written for CacheRetentionDays.
+    /// </summary>
+    /// <remarks>
+    /// CacheRetentionDays has been a configuration field, and printed by --show-config,
+    /// without anything ever acting on it: no code path deleted a cached payload, so
+    /// every installer ever downloaded stayed on disk. Superseded payloads are the bulk
+    /// of it, and large suites run to double-digit gigabytes each.
+    ///
+    /// This runs before the download phase, so an item still wanted this session is
+    /// simply fetched again — the only cost of an over-eager delete is one download.
+    /// Partial downloads are left alone; they have their own 24-hour rule above.
+    /// Set CacheRetentionDays to 0 or less to disable.
+    /// </remarks>
+    private void PruneExpiredCacheEntries()
+    {
+        var retentionDays = _config.CacheRetentionDays;
+        if (retentionDays <= 0)
+        {
+            return;
+        }
+
+        var cutoff = DateTime.Now.AddDays(-retentionDays);
+        var removed = 0;
+        long reclaimed = 0;
+
+        foreach (var file in Directory.GetFiles(_config.CachePath, "*", SearchOption.AllDirectories))
+        {
+            if (file.EndsWith(".downloading", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Markers are reaped by the orphan rule once their payload is gone; deleting
+            // one here while its payload survives would force a needless re-verification.
+            if (file.EndsWith(VerifiedMarkerSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                var info = new FileInfo(file);
+                if (info.LastWriteTime >= cutoff)
+                {
+                    continue;
+                }
+
+                var size = info.Length;
+                info.Delete();
+                removed++;
+                reclaimed += size;
+
+                var marker = file + VerifiedMarkerSuffix;
+                if (File.Exists(marker))
+                {
+                    try { File.Delete(marker); } catch { /* orphan rule will catch it */ }
+                }
+
+                ConsoleLogger.Detail($"Removed expired cache entry: {Path.GetFileName(file)}");
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Warn($"Failed to remove expired cache entry {file}: {ex.Message}");
+            }
+        }
+
+        RemoveEmptyCacheDirectories(_config.CachePath);
+
+        if (removed > 0)
+        {
+            ConsoleLogger.Info(
+                $"Cache retention: removed {removed} entries older than {retentionDays} days, reclaimed {reclaimed / 1024 / 1024:N0} MB");
+        }
+    }
+
+    /// <summary>
+    /// Deletes category directories left empty by retention. The cache root itself is
+    /// kept - it is a known path that other code expects to exist.
+    /// </summary>
+    private static void RemoveEmptyCacheDirectories(string cacheRoot)
+    {
+        foreach (var dir in Directory.GetDirectories(cacheRoot, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(d => d.Length))
+        {
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                {
+                    Directory.Delete(dir);
+                }
+            }
+            catch
+            {
+                // Ignore - an empty directory is harmless.
+            }
+        }
     }
 
     /// <summary>
