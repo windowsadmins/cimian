@@ -79,6 +79,7 @@ public static class CimianPaths
     /// </summary>
     public static readonly string PackageLogsDir = Path.Combine(LogsDir, "packages");
 
+
     // ── Specific log files ───────────────────────────────────────────────────
     public static readonly string CimiwatcherLog = Path.Combine(LogsDir, "cimiwatcher.log");
 

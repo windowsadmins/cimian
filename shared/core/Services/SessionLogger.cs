@@ -426,6 +426,10 @@ public class SessionLogger : IDisposable
                 }
             }
 
+            // Relocate before sweeping: a legacy artifact that is still being rewritten
+            // never looks expired, so age alone would never clear it.
+            RelocateLegacyArtifacts();
+
             SweepExpiredFiles(BaseLogsDir, cutoff);
             SweepExpiredFiles(CimianPaths.SelfUpdateLogsDir, cutoff);
             SweepExpiredFiles(CimianPaths.InstallLogsDir, cutoff);
@@ -434,6 +438,108 @@ public class SessionLogger : IDisposable
         catch
         {
             // Silent failure - retention cleanup is non-critical
+        }
+    }
+
+    /// <summary>
+    /// Moves everything this client no longer writes to the logs root out of it, and
+    /// pulls installer logs out of the download cache, so the root converges to holding
+    /// only the dated session tree.
+    /// </summary>
+    /// <remarks>
+    /// Age alone cannot do this job. The artifacts here are written by MSIs that are
+    /// already installed on the machine and by earlier versions of this client: an
+    /// already-installed package rewrites its sidecar log on every session, so the file
+    /// is permanently younger than any retention window and an age-based sweep never
+    /// reaches it. Waiting for every package on every endpoint to be rebuilt is not a
+    /// plan; relocating on sight is. Once packages are rebuilt this is a no-op.
+    ///
+    /// Relocation, not deletion, because the content is still wanted — an installcheck
+    /// may tail the last attempt's output, and it now looks for it at the new path.
+    /// </remarks>
+    internal static void RelocateLegacyArtifacts()
+        => RelocateLegacyArtifacts(BaseLogsDir, CimianPaths.CacheDir);
+
+    /// <summary>
+    /// Roots are parameters so this can be exercised against a temporary tree; the
+    /// production call site passes the real ones.
+    /// </summary>
+    internal static void RelocateLegacyArtifacts(string logsRoot, string cacheRoot)
+    {
+        // Pre-move sidecar logs: cimipkg-<ProductName>-Cimian<Action>.log, flat at the
+        // root. The product name can itself contain hyphens, so key off the suffix.
+        foreach (var action in new[] { "Preinstall", "Postinstall", "Uninstall" })
+        {
+            var suffix = $"-Cimian{action}.log";
+            foreach (var file in SafeGetFiles(logsRoot, $"cimipkg-*{suffix}"))
+            {
+                var name = Path.GetFileName(file);
+                if (!name.EndsWith(suffix, StringComparison.Ordinal))
+                    continue;
+
+                var product = name["cimipkg-".Length..^suffix.Length];
+                if (product.Length == 0)
+                    continue;
+
+                TryMove(file, Path.Combine(logsRoot, "packages", product,
+                    $"{action.ToLowerInvariant()}.log"));
+            }
+        }
+
+        // Pre-move self-update installer logs.
+        foreach (var file in SafeGetFiles(logsRoot, "selfupdate-*.log"))
+        {
+            TryMove(file, Path.Combine(logsRoot, "selfupdate", Path.GetFileName(file)));
+        }
+
+        // Pre-move msiexec / MSIX verbose logs, which used to be written into the
+        // download cache alongside the payloads.
+        foreach (var file in SafeGetFiles(cacheRoot, "*.log", recurse: true))
+        {
+            var name = Path.GetFileName(file);
+            if (!name.Contains("_install", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            TryMove(file, Path.Combine(logsRoot, "installs", name));
+        }
+
+        // Files left loose at the root by third-party package scripts are deliberately
+        // not touched here. This client does not own them and cannot tell a log from a
+        // state marker by looking - VerifyHarmony's sentinel was named ".log" and lived
+        // right here. They expire on age like anything else, which is the correct signal
+        // for "nothing is writing this any more".
+    }
+
+    private static IEnumerable<string> SafeGetFiles(string directory, string pattern, bool recurse = false)
+    {
+        try
+        {
+            if (!Directory.Exists(directory))
+                return Array.Empty<string>();
+
+            return Directory.GetFiles(directory, pattern,
+                recurse ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Moves a file, creating the destination directory and overwriting any previous
+    /// copy. Best-effort: a file still held open by its writer is left for next session.
+    /// </summary>
+    private static void TryMove(string source, string destination)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Move(source, destination, overwrite: true);
+        }
+        catch
+        {
+            // Ignore - relocation is best-effort and retried every session.
         }
     }
 
