@@ -593,13 +593,14 @@ postinstall_script: |
     # Additional configuration here
   }
 
-# Uninstaller
+# Uninstaller. This is a list; only the first entry is used.
 uninstaller:
-  location: Microsoft/VisualStudio/vs_community_2022.exe
-  arguments:
-    - uninstall
-    - --quiet
-    - --wait
+  - type: exe
+    location: Microsoft/VisualStudio/vs_community_2022.exe
+    arguments:
+      - uninstall
+      - --quiet
+      - --wait
 
 supported_architectures:
   - x64
@@ -694,23 +695,14 @@ requires:
   - DotNetFramework48
   - VisualCPPRedistributable
 
-# Advanced uninstall handling
+# Advanced uninstall handling. This is a list; only the first entry is used.
 uninstaller:
-  type: exe
-  location: Microsoft/Office365/setup.exe
-  arguments:
-    - /configure
-    - /quiet
-    - /uninstall
-
-uninstalls:
-  - type: directory
-    path: "C:\Program Files\Microsoft Office"
-    recursive: true
-    force: true
-  - type: registry
-    path: "HKLM\SOFTWARE\Microsoft\Office"
-    recursive: true
+  - type: exe
+    location: Microsoft/Office365/setup.exe
+    arguments:
+      - /configure
+      - /quiet
+      - /uninstall
 
 # System requirements
 supported_architectures:

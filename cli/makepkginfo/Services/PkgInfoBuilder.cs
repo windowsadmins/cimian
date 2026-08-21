@@ -244,8 +244,19 @@ public class PkgInfoBuilder
         }
         if (!string.IsNullOrEmpty(options.UninstallerPath))
         {
-            // Store the uninstaller path - typically used for EXE installers
-            pkgsinfo.UninstallerPath = options.UninstallerPath;
+            // Emit the canonical one-element `uninstaller:` sequence. Only
+            // Uninstaller[0] is ever consumed (InstallerService.UninstallAsync), so a
+            // single entry is the complete shape. Type is inferred from the extension
+            // and drives the removal dispatch on the client; an unrecognised
+            // extension is left null, which UninstallAsync treats as msi.
+            pkgsinfo.Uninstaller =
+            [
+                new Installer
+                {
+                    Type = InferUninstallerType(options.UninstallerPath),
+                    Location = options.UninstallerPath
+                }
+            ];
         }
 
         // Process additional -f file paths
@@ -373,6 +384,24 @@ public class PkgInfoBuilder
     /// <summary>
     /// Reads a file or returns empty string
     /// </summary>
+
+    /// <summary>
+    /// Picks the uninstaller `type` from the file extension so the client dispatches
+    /// removal correctly (msi -> msiexec /x, exe -> process, ps1 -> script host).
+    /// Returns null for anything unrecognised rather than guessing, which leaves
+    /// UninstallAsync on its existing default path.
+    /// </summary>
+    internal static string? InferUninstallerType(string uninstallerPath)
+    {
+        var ext = System.IO.Path.GetExtension(uninstallerPath ?? string.Empty).ToLowerInvariant();
+        return ext switch
+        {
+            ".msi" => "msi",
+            ".exe" => "exe",
+            ".ps1" => "ps1",
+            _ => null
+        };
+    }
     private static string? ReadFileOrEmpty(string? path)
     {
         if (string.IsNullOrEmpty(path))
@@ -439,6 +468,7 @@ public class PkgsInfoOptions
     public string? PostinstallScriptPath { get; set; }
     public string? PreuninstallScriptPath { get; set; }
     public string? PostuninstallScriptPath { get; set; }
+    /// <summary>Path to the uninstaller; emitted as `uninstaller: [ ... ]`.</summary>
     public string? UninstallerPath { get; set; }
     public List<string>? AdditionalFiles { get; set; }
 }

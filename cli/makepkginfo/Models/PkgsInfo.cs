@@ -123,8 +123,13 @@ public class PkgsInfo
     [YamlMember(Alias = "postuninstall_script", Order = 20, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string? PostuninstallScript { get; set; }
 
-    [YamlMember(Alias = "uninstaller_path", Order = 21, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
-    public string? UninstallerPath { get; set; }
+    // Emitted as a one-element sequence because that is the shape both
+    // makecatalogs and the client declare (List<Installer> / List<UninstallerInfo>),
+    // and the shape UninstallAsync executes. The previous `uninstaller_path` scalar
+    // was declared here and nowhere else, so it was stripped at catalog time and
+    // ignored by the client -- setting it did nothing at all.
+    [YamlMember(Alias = "uninstaller", Order = 21, DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
+    public List<Installer>? Uninstaller { get; set; }
 
     [YamlMember(Alias = "OnDemand", Order = 22, DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
     public bool OnDemand { get; set; }
