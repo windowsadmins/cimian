@@ -42,7 +42,7 @@ class Program
 
         var uninstallerOption = new Option<string?>(
             "--uninstaller",
-            "Path to uninstaller executable");
+            "Path to uninstaller executable; emitted as a one-element uninstaller: list");
 
         var catalogsOption = new Option<string>(
             "--catalogs",
