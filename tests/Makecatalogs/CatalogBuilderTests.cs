@@ -125,6 +125,88 @@ catalogs: []
     }
 
     [Fact]
+    public void ScanRepo_RecordsParseErrors()
+    {
+        CreatePkgInfo("invalid.yaml", "{ this is not valid yaml: [");
+
+        _builder.ScanRepo(_tempDir);
+
+        Assert.Single(_builder.ParseErrors);
+        Assert.Contains("invalid.yaml", _builder.ParseErrors[0]);
+    }
+
+    [Fact]
+    public void ScanRepo_ClearsParseErrorsBetweenRuns()
+    {
+        CreatePkgInfo("invalid.yaml", "{ this is not valid yaml: [");
+        _builder.ScanRepo(_tempDir);
+        Assert.Single(_builder.ParseErrors);
+
+        File.Delete(Path.Combine(_tempDir, "pkgsinfo", "invalid.yaml"));
+        _builder.ScanRepo(_tempDir);
+
+        Assert.Empty(_builder.ParseErrors);
+    }
+
+    [Fact]
+    public void Run_FailsAndDoesNotReportSuccess_WhenPkgsinfoCannotBeParsed()
+    {
+        // The regression: a package that fails to parse is absent from the catalogs
+        // that get written, but the run previously printed "completed successfully"
+        // and returned 0, so a pipeline would publish an incomplete catalog with no
+        // signal. Exit code and success message are both part of the contract here.
+        CreatePkgInfo("good.yaml", @"name: GoodApp
+version: 1.0
+catalogs:
+  - Testing
+");
+        CreatePkgInfo("broken.yaml", "{ this is not valid yaml: [");
+
+        var exitCode = _builder.Run(_tempDir, skipPayloadCheck: true);
+
+        Assert.Equal(1, exitCode);
+        Assert.DoesNotContain(_successes, m => m.Contains("completed successfully"));
+        Assert.Contains(_warnings, m => m.Contains("1 pkgsinfo skipped"));
+        Assert.Contains(_warnings, m => m.Contains("broken.yaml"));
+    }
+
+    [Fact]
+    public void Run_TolerateParseErrors_SucceedsButStillReportsSkipped()
+    {
+        // The escape hatch keeps the old exit code for pipelines that need it, but
+        // must never restate the unqualified "completed successfully" -- the whole
+        // point is that the outcome stays visible.
+        CreatePkgInfo("good.yaml", @"name: GoodApp
+version: 1.0
+catalogs:
+  - Testing
+");
+        CreatePkgInfo("broken.yaml", "{ this is not valid yaml: [");
+
+        var exitCode = _builder.Run(_tempDir, skipPayloadCheck: true, tolerateParseErrors: true);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains(_warnings, m => m.Contains("1 pkgsinfo skipped"));
+        Assert.Contains(_successes, m => m.Contains("1 skipped pkgsinfo"));
+        Assert.DoesNotContain(_successes, m => m.Contains("completed successfully"));
+    }
+
+    [Fact]
+    public void Run_ReportsSuccess_WhenAllPkgsinfoParse()
+    {
+        CreatePkgInfo("good.yaml", @"name: GoodApp
+version: 1.0
+catalogs:
+  - Testing
+");
+
+        var exitCode = _builder.Run(_tempDir, skipPayloadCheck: true);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains(_successes, m => m.Contains("completed successfully"));
+    }
+
+    [Fact]
     public void VerifyPayloads_ReturnsEmptyForExistingPayloads()
     {
         // Arrange

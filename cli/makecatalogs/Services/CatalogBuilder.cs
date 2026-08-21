@@ -13,6 +13,15 @@ public class CatalogBuilder
     private readonly Action<string> _warn;
     private readonly Action<string> _success;
 
+    // pkgsinfo files that failed to deserialize during the last ScanRepo. A parse
+    // failure means the package is absent from every catalog written afterwards,
+    // so this has to survive to the end of the run and affect the exit code --
+    // publishing a silently incomplete catalog is the failure mode this guards.
+    private readonly List<string> _parseErrors = new();
+
+    /// <summary>Files skipped by the last <see cref="ScanRepo"/> because they could not be parsed.</summary>
+    public IReadOnlyList<string> ParseErrors => _parseErrors;
+
     public CatalogBuilder(
         Action<string>? log = null,
         Action<string>? warn = null,
@@ -29,6 +38,7 @@ public class CatalogBuilder
     public List<PkgsInfo> ScanRepo(string repoPath)
     {
         var results = new List<PkgsInfo>();
+        _parseErrors.Clear();
         var pkgsInfoDir = Path.Combine(repoPath, "pkgsinfo");
 
         if (!Directory.Exists(pkgsInfoDir))
@@ -51,6 +61,7 @@ public class CatalogBuilder
             catch (Exception ex)
             {
                 _warn($"Error parsing {file}: {ex.Message}");
+                _parseErrors.Add($"{file}: {ex.Message}");
             }
         }
 
@@ -310,7 +321,7 @@ public class CatalogBuilder
     /// <summary>
     /// Runs the complete catalog building process
     /// </summary>
-    public int Run(string repoPath, bool skipPayloadCheck = false, bool hashCheck = false, bool silent = false)
+    public int Run(string repoPath, bool skipPayloadCheck = false, bool hashCheck = false, bool silent = false, bool tolerateParseErrors = false)
     {
         if (!silent)
         {
@@ -343,6 +354,28 @@ public class CatalogBuilder
             foreach (var warning in warnings)
             {
                 _warn(warning);
+            }
+
+            // A package that failed to parse is missing from the catalogs just
+            // written. Restate the failures here -- they scroll past mid-scan,
+            // long before this point -- and fail the run, so a pipeline cannot
+            // publish an incomplete catalog on a green exit code.
+            if (_parseErrors.Count > 0)
+            {
+                _warn($"{_parseErrors.Count} pkgsinfo skipped (parse errors); those packages are NOT in the catalogs:");
+                foreach (var err in _parseErrors)
+                {
+                    _warn($"  {err}");
+                }
+
+                if (!tolerateParseErrors)
+                {
+                    _warn("makecatalogs failed: fix the files above, or pass --tolerate_parse_errors to publish without them.");
+                    return 1;
+                }
+
+                _success($"makecatalogs completed with {_parseErrors.Count} skipped pkgsinfo (--tolerate_parse_errors).");
+                return 0;
             }
 
             _success("makecatalogs completed successfully.");
