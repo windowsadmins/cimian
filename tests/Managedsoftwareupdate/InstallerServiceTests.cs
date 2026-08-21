@@ -270,6 +270,87 @@ public class InstallerServiceTests
     }
 
     [Fact]
+    public void IsUninstallable_MsiInstallerWithoutProductCode_ReturnsTrue()
+    {
+        // An MSI registers itself with Windows Installer by definition, so the
+        // ProductCode is recoverable from the registry UninstallString at removal
+        // time. Requiring the pkginfo to restate it meant hand-written and
+        // Studio-authored MSI packages silently lost their Remove action while
+        // cimiimport-generated ones worked. Reported in #cimian on Mac Admins.
+        var item = new CatalogItem
+        {
+            Name = "Mozilla Firefox",
+            Version = "153.1.0.0",
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "msi", Location = "/mgmt/firefox.msi" },
+            // A file-type installs entry is a *detection* rule and contributes no
+            // removal mechanism — this is exactly the shape that regressed.
+            Installs = [
+                new InstallCheckItem { Type = "file", Path = @"C:\Program Files\Mozilla Firefox\firefox.exe" }
+            ]
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void IsUninstallable_UninstallScriptOnly_ReturnsTrue()
+    {
+        // uninstall_script is executed by UninstallAsync, so it has to count as a
+        // removal mechanism here — otherwise that branch is unreachable and a
+        // script-installed package (type: ps1, no registry uninstall entry) can
+        // never be removed.
+        var item = new CatalogItem
+        {
+            Name = "PrinterQueue",
+            Version = "1.0",
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "ps1", Location = "Scripts/install.ps1" },
+            UninstallScript = "Remove-Printer -Name \"LMZ VS\""
+        };
+
+        Assert.True(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void IsUninstallable_UninstallableFalseOverridesMsiAndScript_ReturnsFalse()
+    {
+        // `uninstallable: false` is the explicit opt-out and must still win over
+        // every mechanism clause, including the two added above.
+        var item = new CatalogItem
+        {
+            Name = "PinnedApp",
+            Version = "1.0",
+            Uninstallable = false,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "msi", Location = "/mgmt/pinned.msi" },
+            UninstallScript = "exit 0"
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
+    [Fact]
+    public void IsUninstallable_Ps1InstallerNoRemovalMechanism_ReturnsFalse()
+    {
+        // A script-installed package with no uninstall_script, no uninstaller block
+        // and no registry identity still has no way to be removed. Guards against
+        // the uninstall_script clause being widened into "any ps1 package".
+        var item = new CatalogItem
+        {
+            Name = "ScriptOnlyNoRemoval",
+            Version = "1.0",
+            Uninstallable = true,
+            Uninstaller = [],
+            Installer = new InstallerInfo { Type = "ps1", Location = "Scripts/install.ps1" }
+        };
+
+        Assert.False(item.IsUninstallable());
+    }
+
+    [Fact]
     public void IsUninstallable_NoUninstallerNoMsixInstalls_ReturnsFalse()
     {
         var item = new CatalogItem
