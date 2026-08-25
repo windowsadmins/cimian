@@ -1983,6 +1983,26 @@ exit 0
                     if (!msiFound)
                     {
                         var reason = $"MSI not registered in Windows Installer (ProductCode={install.ProductCode}, UpgradeCode={install.UpgradeCode})";
+
+                        // Second net for wrapper MSIs that were not classified as such at
+                        // import time, so the installs entry carries no display_name and the
+                        // fallback above could not run. Deliberately advisory, not a pass:
+                        // an ARP name match is weaker evidence than the declared codes, and
+                        // silently accepting it would mask a genuinely missing install. But
+                        // the bare message above is unactionable -- the admin sees the app
+                        // plainly installed and is told it is not. Naming the ARP entry we
+                        // can see turns that dead end into the exact fix.
+                        var probe = !string.IsNullOrWhiteSpace(item.DisplayName) ? item.DisplayName : item.Name;
+                        if (!string.IsNullOrWhiteSpace(probe) && string.IsNullOrEmpty(install.DisplayName))
+                        {
+                            var arpHit = FindArpVersionByDisplayName(probe);
+                            if (!string.IsNullOrEmpty(arpHit))
+                            {
+                                reason += $"; an ARP entry matching \"{probe}\" version {arpHit} is present"
+                                    + $" -- add `display_name: {probe}` to the installs entry to verify against it";
+                            }
+                        }
+
                         ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
                         return (false, reason);
                     }
