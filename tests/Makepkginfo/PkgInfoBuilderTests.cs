@@ -510,6 +510,65 @@ public class PkgsInfoOptionsTests
     }
 }
 
+public class UninstallerEmissionTests
+{
+    [Theory]
+    [InlineData("Vendor/App/uninstall.exe", "exe")]
+    [InlineData("Vendor/App/UNINSTALL.EXE", "exe")]
+    [InlineData("Vendor/App/remove.msi", "msi")]
+    [InlineData("Vendor/App/remove.ps1", "ps1")]
+    public void InferUninstallerType_FromExtension(string path, string expected)
+    {
+        Assert.Equal(expected, PkgInfoBuilder.InferUninstallerType(path));
+    }
+
+    [Theory]
+    [InlineData("Vendor/App/uninstall.bat")]
+    [InlineData("Vendor/App/uninstall")]
+    [InlineData("")]
+    public void InferUninstallerType_UnrecognisedExtension_ReturnsNull(string path)
+    {
+        // Deliberately null rather than a guess: UninstallAsync's switch treats an
+        // unknown type as msi, which is the pre-existing default, so guessing here
+        // would silently change dispatch for shapes we do not understand.
+        Assert.Null(PkgInfoBuilder.InferUninstallerType(path));
+    }
+
+    [Fact]
+    public void UninstallerPath_EmitsSingleElementUninstallerList()
+    {
+        // Regression guard for the write-only `uninstaller_path` scalar: makepkginfo
+        // declared it, nothing else did, so it was stripped at catalog time and
+        // ignored by the client. The emitted shape must be the List<Installer> that
+        // makecatalogs and the client both declare.
+        var yaml = Serialize(new PkgsInfo
+        {
+            Name = "TestApp",
+            Version = "1.0",
+            Uninstaller =
+            [
+                new Installer { Type = "exe", Location = "Vendor/App/uninstall.exe" }
+            ]
+        });
+
+        Assert.Contains("uninstaller:", yaml);
+        Assert.DoesNotContain("uninstaller_path", yaml);
+        // A sequence entry, not a mapping — "- type:" is what distinguishes them.
+        Assert.Matches(@"uninstaller:\s*?
+\s*-\s+type:\s*exe", yaml);
+    }
+
+    [Fact]
+    public void Uninstaller_OmittedWhenNotSet()
+    {
+        var yaml = Serialize(new PkgsInfo { Name = "TestApp", Version = "1.0" });
+        Assert.DoesNotContain("uninstaller", yaml);
+    }
+
+    private static string Serialize(PkgsInfo p) =>
+        Cimian.Core.Services.YamlUtils.Serializer.Serialize(p);
+}
+
 public class InstallerTypeDetectionTests
 {
     [Theory]
