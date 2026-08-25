@@ -527,11 +527,21 @@ public class CatalogItem
         // is treated consistently across status, verify, and uninstall paths.
         || Installs.Any(i =>
             i.EffectiveType() == "msi" && !string.IsNullOrEmpty(i.ProductCode))
-        // Self-uninstallable MSI (legacy): pkginfos written before product_code moved
-        // out of the installer: block. Same msiexec /x path either way.
-        || (Installer is { } msi
-            && string.Equals(msi.Type, "msi", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrEmpty(msi.ProductCode))
+        // Any MSI is removable, declared product_code or not. An MSI registers
+        // itself with Windows Installer by definition, so the code is always
+        // discoverable at removal time: UninstallAsync falls back to the app's
+        // registry UninstallString, which for an MSI is literally
+        // `MsiExec.exe /X{ProductCode}`. Requiring the admin to restate a GUID
+        // the system can already read was the bug -- hand-written and
+        // Studio-authored pkginfos silently lost removal, while cimiimport ones
+        // worked, for no reason the author could see. This clause also subsumes
+        // the legacy `installer.product_code` shape.
+        || string.Equals(Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase)
+        // A script-removable package: uninstall_script is a real removal
+        // mechanism executed by UninstallAsync, so it must count here too --
+        // without it that branch is unreachable, which is the whole removal
+        // story for `type: ps1` packages that have no registry uninstall entry.
+        || !string.IsNullOrWhiteSpace(UninstallScript)
         // Self-uninstallable MSIX: installs-array entry of type msix/appx with a
         // usable identity_name. Without identity_name, UninstallAsync can't
         // synthesize an uninstaller — so in that case this clause must be false.

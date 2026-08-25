@@ -166,10 +166,15 @@ public class UpdateModelsTests
     }
 
     [Fact]
-    public void CatalogItem_IsUninstallable_MsiInstallerWithoutProductCode_ReturnsFalse()
+    public void CatalogItem_IsUninstallable_MsiInstallerWithoutProductCode_ReturnsTrue()
     {
-        // An MSI installer with no product_code can't be uninstalled — we have nothing
-        // to feed msiexec /x.
+        // Deliberate behaviour change: this previously asserted False on the premise
+        // that "we have nothing to feed msiexec /x". That premise was wrong — an MSI
+        // always registers an UninstallString of the form `MsiExec.exe /X{ProductCode}`,
+        // so UninstallAsync recovers the GUID from the registry when the pkginfo omits
+        // it. Requiring the admin to restate it meant hand-written and Studio-authored
+        // MSI packages silently lost their Remove action while cimiimport-generated
+        // ones worked.
         var item = new CatalogItem
         {
             Uninstallable = true,
@@ -177,7 +182,7 @@ public class UpdateModelsTests
             Installer = new InstallerInfo { Type = "msi" }
         };
 
-        Assert.False(item.IsUninstallable());
+        Assert.True(item.IsUninstallable());
     }
 
     [Fact]
