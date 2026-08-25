@@ -777,15 +777,22 @@ public class InstallerService
                     };
                     result = await UninstallMsixAsync(item, synthetic, cancellationToken);
                 }
-                // Last resort for exe/NSIS/Inno apps that carry no explicit
-                // uninstaller block, product_code, or msix identity: drive the app's
-                // own uninstaller via the standard Windows uninstall registry entry.
-                // This is what makes an installed optional app (e.g. an NSIS-packaged
-                // player) removable without per-package uninstall metadata. Note this
-                // is gated on the installer *type*, not unattended_uninstall — a
-                // user-initiated Remove must work even for packages that opt out of
-                // silent background removal.
-                else if (string.Equals(item.Installer?.Type, "exe", StringComparison.OrdinalIgnoreCase))
+                // Last resort for exe/NSIS/Inno apps and for MSIs whose pkginfo
+                // never declared a product_code: drive the app's own uninstaller via
+                // the standard Windows uninstall registry entry. This is what makes
+                // an installed optional app (e.g. an NSIS-packaged player) removable
+                // without per-package uninstall metadata. Note this is gated on the
+                // installer *type*, not unattended_uninstall — a user-initiated
+                // Remove must work even for packages that opt out of silent
+                // background removal.
+                //
+                // MSI is included because an MSI always registers an UninstallString
+                // of the form `MsiExec.exe /X{ProductCode}`, so the GUID the pkginfo
+                // omitted is recoverable from the registry. UninstallViaRegistryAsync
+                // already normalises those entries (/I -> /X, appends /qn /norestart),
+                // so no MSI-specific handling is needed here.
+                else if (string.Equals(item.Installer?.Type, "exe", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(item.Installer?.Type, "msi", StringComparison.OrdinalIgnoreCase))
                 {
                     result = await UninstallViaRegistryAsync(item, cancellationToken);
                 }
