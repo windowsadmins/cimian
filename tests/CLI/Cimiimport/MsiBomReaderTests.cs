@@ -1,5 +1,6 @@
 using Xunit;
 using Cimian.CLI.Cimiimport.Services;
+using WixToolset.Dtf.WindowsInstaller;
 
 namespace Cimian.Tests.CLI.Cimiimport;
 
@@ -93,5 +94,63 @@ public class MsiBomReaderTests
         var result = MsiBomReader.PickPrimaryBinary(files, "");
 
         Assert.Equal(@"C:\Program Files\Vendor\big.exe", result);
+    }
+}
+
+/// <summary>
+/// HasInstalledFiles decides whether an MSI is a "wrapper" (no payload of its
+/// own). That single boolean gates the ArpDisplayName hint, which gates the
+/// runtime's ARP DisplayName fallback -- so getting it wrong surfaces as
+/// "MSI not registered in Windows Installer" for a product that installed fine.
+/// These build real MSI databases because the distinction under test is
+/// table-missing vs table-empty, which cannot be expressed without one.
+/// </summary>
+public class MsiBomReaderHasInstalledFilesTests : IDisposable
+{
+    private readonly List<string> _temp = new();
+
+    private Database NewMsi()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"bomtest_{Guid.NewGuid():N}.msi");
+        _temp.Add(path);
+        return new Database(path, DatabaseOpenMode.CreateDirect);
+    }
+
+    public void Dispose()
+    {
+        foreach (var p in _temp)
+        {
+            try { if (File.Exists(p)) File.Delete(p); } catch { }
+        }
+    }
+
+    [Fact]
+    public void NoFileTable_IsWrapper()
+    {
+        // The regression: SELECT from a nonexistent table throws, and the catch
+        // failed soft to true, so the purest wrapper shape -- no File table at
+        // all -- was reported as installing files.
+        using var db = NewMsi();
+
+        Assert.False(MsiBomReader.HasInstalledFiles(db));
+    }
+
+    [Fact]
+    public void EmptyFileTable_IsWrapper()
+    {
+        using var db = NewMsi();
+        db.Execute("CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)");
+
+        Assert.False(MsiBomReader.HasInstalledFiles(db));
+    }
+
+    [Fact]
+    public void PopulatedFileTable_IsNotWrapper()
+    {
+        using var db = NewMsi();
+        db.Execute("CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)");
+        db.Execute("INSERT INTO `File` (`File`) VALUES ('payload.exe')");
+
+        Assert.True(MsiBomReader.HasInstalledFiles(db));
     }
 }
