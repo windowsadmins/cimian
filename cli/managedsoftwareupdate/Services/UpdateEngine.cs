@@ -295,6 +295,11 @@ public class UpdateEngine : IDisposable
         _sessionLogger.Log("INFO", $"Session started: {sessionId}");
         _sessionLogger.Log("INFO", $"Run type: {runType}");
 
+        // Anything a package's install scripts wrote out-of-band since the last run -
+        // an install performed outside this client, or a session that died before it
+        // could collect them - belongs in this log rather than in a file nothing reads.
+        _installerService.EmitPendingPackageScriptOutput();
+
         // Now that verbosity is set and the SessionLogger is attached, surface the
         // LoopGuard kill-switch so it reaches both the console and run.log.
         if (loopGuardDisabled)
