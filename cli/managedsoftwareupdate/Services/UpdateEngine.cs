@@ -3327,6 +3327,16 @@ public class UpdateEngine : IDisposable
     /// </summary>
     private (string? Warning, bool PendingRestart) VerifyConvergence(CatalogItem item)
     {
+        // OnDemand items never converge by design: CheckStatus reports them as
+        // needing action on every call, before any installcheck runs, because
+        // they are (re)installed each time they are requested and never recorded
+        // as installed. Probing one here always produces the "did not converge"
+        // warning and a 24h suppression, so every bootstrap and provisioning
+        // helper lights up as a broken pkgsinfo the moment it runs. There is
+        // nothing to verify for them.
+        if (item.OnDemand)
+            return (null, false);
+
         try
         {
             var status = _statusService.CheckStatus(item, "install", _config.CachePath);
