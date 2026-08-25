@@ -642,6 +642,11 @@ public class InstallerService
             _ => await InstallExeAsync(item, localFile, cancellationToken) // Default to EXE
         };
 
+        // The installer has returned, so any script it ran as an MSI custom action has
+        // finished writing. Fold that output into this session's log before branching on
+        // the result - a failed install is exactly when the script's output matters.
+        EmitPackageScriptOutput();
+
         if (!result.Success)
         {
             _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", result.Output);
@@ -815,10 +820,48 @@ public class InstallerService
             }
         }
 
+        EmitPackageScriptOutput();
+
         // Remove from ManagedInstalls registry
         UnregisterInstallation(item);
 
         return result;
+    }
+
+    /// <summary>
+    /// Moves package script output out of the sidecar files the packaging tool's custom
+    /// actions leave behind and into this session's log.
+    /// </summary>
+    /// <remarks>
+    /// A pre/postinstall script packaged into an MSI runs as a custom action inside
+    /// msiexec, not as a child of this process, so there is no stdout for us to read.
+    /// The custom action redirects it to a file instead; this is the other half of that
+    /// handoff. Without it an install's story is split between the session log and a
+    /// parallel tree that nothing ingests - the packaging side already had to grow a
+    /// workaround where an installcheck tails the sidecar just to get its own output
+    /// into the run log.
+    /// </remarks>
+    /// <summary>
+    /// Same drain, exposed for the once-per-session sweep at startup.
+    /// </summary>
+    public void EmitPendingPackageScriptOutput() => EmitPackageScriptOutput();
+
+    private void EmitPackageScriptOutput()
+    {
+        foreach (var output in SessionLogger.CollectPackageScriptLogs())
+        {
+            foreach (var line in output.Lines)
+            {
+                ConsoleLogger.Detail($"[{output.Package}] {output.Phase} | {line}");
+            }
+
+            if (output.Truncated)
+            {
+                ConsoleLogger.Detail(
+                    $"[{output.Package}] {output.Phase} | ... output truncated at " +
+                    $"{SessionLogger.MaxPackageScriptLogLines} lines");
+            }
+        }
     }
 
     private string GetInstallerType(CatalogItem item, string localFile)
