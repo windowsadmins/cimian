@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Cimian.Core.Models;
@@ -508,6 +509,159 @@ public class SessionLogger : IDisposable
         // state marker by looking - VerifyHarmony's sentinel was named ".log" and lived
         // right here. They expire on age like anything else, which is the correct signal
         // for "nothing is writing this any more".
+    }
+
+    /// <summary>
+    /// One package script's output, recovered from the sidecar file its MSI custom
+    /// action wrote.
+    /// </summary>
+    public sealed record PackageScriptOutput(
+        string Package, string Phase, IReadOnlyList<string> Lines, bool Truncated);
+
+    /// <summary>
+    /// A script that prints more than this has a problem of its own; the session log
+    /// should not become unreadable because of it.
+    /// </summary>
+    public const int MaxPackageScriptLogLines = 500;
+
+    private static readonly string[] ScriptPhases = { "preinstall", "postinstall", "uninstall" };
+
+    /// <summary>
+    /// Takes the output a package's install scripts produced and hands it back so the
+    /// caller can put it in this session's log. The sidecar files are removed as they
+    /// are read.
+    /// </summary>
+    /// <remarks>
+    /// A cimipkg pre/postinstall script runs as an MSI custom action inside msiexec,
+    /// not as a child of this process, so its stdout cannot be captured directly. The
+    /// custom action redirects it to a file, and this drains that file: it is a handoff
+    /// between two processes, not a log, and nothing should be left behind once its
+    /// contents are in the session log where ReportMate will pick them up.
+    ///
+    /// Draining here rather than changing what the custom action writes means every
+    /// package already deployed is covered without waiting for a rebuild — the same
+    /// reason <see cref="RelocateLegacyArtifacts(string, string)"/> exists.
+    /// </remarks>
+    public static IReadOnlyList<PackageScriptOutput> CollectPackageScriptLogs()
+        => CollectPackageScriptLogs(BaseLogsDir);
+
+    /// <summary>
+    /// Root is a parameter so this can be exercised against a temporary tree; the
+    /// production call site passes the real one.
+    /// </summary>
+    internal static IReadOnlyList<PackageScriptOutput> CollectPackageScriptLogs(string logsRoot)
+    {
+        var collected = new List<PackageScriptOutput>();
+
+        // Current layout: logs\packages\<Package>\<phase>.log
+        var packagesRoot = Path.Combine(logsRoot, "packages");
+        foreach (var dir in SafeGetDirectories(packagesRoot))
+        {
+            var package = Path.GetFileName(dir);
+            foreach (var file in SafeGetFiles(dir, "*.log"))
+            {
+                if (TryDrainScriptLog(file, package, Path.GetFileNameWithoutExtension(file), out var drained))
+                    collected.Add(drained);
+            }
+
+            TryRemoveEmptyDirectory(dir);
+        }
+
+        // Hand-rolled sidecars: <Package>-<phase>.log, flat at the logs root, written by
+        // package scripts that opened a file themselves instead of printing to stdout.
+        // Matched by suffix, never by "any .log here" — a file at this root can just as
+        // easily be a state marker owned by something else, and deleting one of those
+        // makes its package reinstall forever.
+        foreach (var phase in ScriptPhases)
+        {
+            var suffix = $"-{phase}.log";
+            foreach (var file in SafeGetFiles(logsRoot, $"*{suffix}"))
+            {
+                var name = Path.GetFileName(file);
+                if (name.Length <= suffix.Length)
+                    continue;
+
+                if (TryDrainScriptLog(file, name[..^suffix.Length], phase, out var drained))
+                    collected.Add(drained);
+            }
+        }
+
+        return collected;
+    }
+
+    /// <summary>
+    /// Reads a sidecar and removes it. Returns false when there was nothing worth
+    /// logging, or when the file could not be read — in which case it is left for the
+    /// next session rather than silently dropped.
+    /// </summary>
+    private static bool TryDrainScriptLog(
+        string file, string package, string phase, out PackageScriptOutput output)
+    {
+        output = null!;
+
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines(file);
+        }
+        catch
+        {
+            // Still held open by its writer. Leave it; this runs every session.
+            return false;
+        }
+
+        var truncated = lines.Length > MaxPackageScriptLogLines;
+        var kept = truncated ? lines[..MaxPackageScriptLogLines] : lines;
+
+        // Delete only after a successful read. Losing the file without having recorded
+        // what was in it is worse than draining the same content twice.
+        try
+        {
+            File.Delete(file);
+        }
+        catch
+        {
+            return false;
+        }
+
+        // An empty sidecar means the script ran and printed nothing. The file is gone
+        // either way; there is just nothing to say about it.
+        var meaningful = kept.Where(line => !string.IsNullOrWhiteSpace(line)).ToArray();
+        if (meaningful.Length == 0)
+            return false;
+
+        output = new PackageScriptOutput(package, phase, meaningful, truncated);
+        return true;
+    }
+
+    private static IEnumerable<string> SafeGetDirectories(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory)
+                ? Directory.GetDirectories(directory)
+                : Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    private static void TryRemoveEmptyDirectory(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory) &&
+                Directory.GetFileSystemEntries(directory).Length == 0)
+            {
+                Directory.Delete(directory);
+            }
+        }
+        catch
+        {
+            // Best-effort tidying; an empty directory harms nothing.
+        }
     }
 
     private static IEnumerable<string> SafeGetFiles(string directory, string pattern, bool recurse = false)
