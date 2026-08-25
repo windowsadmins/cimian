@@ -190,6 +190,32 @@ public class PkgsInfo
     [YamlMember(Alias = "uninstallable")]
     public bool? Uninstallable { get; set; }
 
+    // The client's CatalogItem parses several fields this model was missing, so
+    // makecatalogs silently dropped them between pkgsinfo and catalog and the
+    // fleet never received them (same defect class as icon_name previously).
+    // All are nullable passthroughs: absent in the pkgsinfo stays absent in the
+    // catalog because the shared serializer omits nulls.
+    [YamlMember(Alias = "install_script")]
+    public string? InstallScript { get; set; }
+
+    [YamlMember(Alias = "uninstall_script")]
+    public string? UninstallScript { get; set; }
+
+    [YamlMember(Alias = "version_script")]
+    public string? VersionScript { get; set; }
+
+    [YamlMember(Alias = "restart_action")]
+    public string? RestartAction { get; set; }
+
+    [YamlMember(Alias = "force_install_after_date")]
+    public DateTime? ForceInstallAfterDate { get; set; }
+
+    [YamlMember(Alias = "precache")]
+    public bool? Precache { get; set; }
+
+    [YamlMember(Alias = "check")]
+    public CheckInfo? Check { get; set; }
+
     [YamlMember(Alias = "install_window")]
     public InstallWindow? InstallWindow { get; set; }
 
@@ -240,6 +266,50 @@ public class InstallWindow
 
     [YamlMember(Alias = "weekdays")]
     public List<string>? Weekdays { get; set; }
+}
+
+
+/// <summary>
+/// check: block — registry/file/script detection, mirroring the client's
+/// CheckInfo shape (fully nullable here so this tool stays a passthrough).
+/// </summary>
+public class CheckInfo
+{
+    [YamlMember(Alias = "registry")]
+    public RegistryCheck? Registry { get; set; }
+
+    [YamlMember(Alias = "file")]
+    public FileCheck? File { get; set; }
+
+    [YamlMember(Alias = "script")]
+    public string? Script { get; set; }
+}
+
+public class RegistryCheck
+{
+    [YamlMember(Alias = "name")]
+    public string? Name { get; set; }
+
+    [YamlMember(Alias = "version")]
+    public string? Version { get; set; }
+
+    [YamlMember(Alias = "path")]
+    public string? Path { get; set; }
+
+    [YamlMember(Alias = "value")]
+    public string? Value { get; set; }
+}
+
+public class FileCheck
+{
+    [YamlMember(Alias = "path")]
+    public string? Path { get; set; }
+
+    [YamlMember(Alias = "version")]
+    public string? Version { get; set; }
+
+    [YamlMember(Alias = "hash")]
+    public string? Hash { get; set; }
 }
 
 /// <summary>
