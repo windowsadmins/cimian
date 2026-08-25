@@ -34,6 +34,10 @@ class Program
             aliases: ["--silent", "-q"],
             description: "Minimize output");
 
+        var tolerateParseErrorsOption = new Option<bool>(
+            aliases: ["--tolerate_parse_errors"],
+            description: "Write catalogs even if some pkgsinfo failed to parse (they are omitted)");
+
         var versionOption = new Option<bool>(
             aliases: ["-V"],
             description: "Print version and exit");
@@ -42,6 +46,7 @@ class Program
         rootCommand.AddOption(skipPayloadCheckOption);
         rootCommand.AddOption(hashCheckOption);
         rootCommand.AddOption(silentOption);
+        rootCommand.AddOption(tolerateParseErrorsOption);
         rootCommand.AddOption(versionOption);
 
         rootCommand.SetHandler((context) =>
@@ -50,11 +55,12 @@ class Program
             var skipPayloadCheck = context.ParseResult.GetValueForOption(skipPayloadCheckOption);
             var hashCheck = context.ParseResult.GetValueForOption(hashCheckOption);
             var silent = context.ParseResult.GetValueForOption(silentOption);
+            var tolerateParseErrors = context.ParseResult.GetValueForOption(tolerateParseErrorsOption);
             var showVersion = context.ParseResult.GetValueForOption(versionOption);
 
             try
             {
-                context.ExitCode = Run(repoPath, skipPayloadCheck, hashCheck, silent, showVersion);
+                context.ExitCode = Run(repoPath, skipPayloadCheck, hashCheck, silent, showVersion, tolerateParseErrors);
             }
             catch (Exception ex)
             {
@@ -66,7 +72,7 @@ class Program
         return await rootCommand.InvokeAsync(args);
     }
 
-    private static int Run(string? repoPath, bool skipPayloadCheck, bool hashCheck, bool silent, bool showVersion)
+    private static int Run(string? repoPath, bool skipPayloadCheck, bool hashCheck, bool silent, bool showVersion, bool tolerateParseErrors = false)
     {
         if (showVersion)
         {
@@ -92,7 +98,7 @@ class Program
             success: msg => Console.WriteLine(msg)
         );
 
-        return builder.Run(repoPath, skipPayloadCheck, hashCheck, silent);
+        return builder.Run(repoPath, skipPayloadCheck, hashCheck, silent, tolerateParseErrors);
     }
 
     private static string? LoadRepoPathFromConfig()
