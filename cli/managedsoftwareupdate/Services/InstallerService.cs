@@ -274,8 +274,9 @@ public class InstallerService
         var args = argsBuilder.ToString();
 
         // Use configured timeout or default to 30 minutes
-        var timeoutMinutes = _config.InstallerTimeout > 0 
-            ? _config.InstallerTimeout / 60 
+        var effectiveTimeout = item.InstallerTimeout is > 0 ? item.InstallerTimeout.Value : _config.InstallerTimeout;
+        var timeoutMinutes = effectiveTimeout > 0
+            ? effectiveTimeout / 60
             : 30;
 
         ConsoleLogger.Debug($"sbin-installer command: {sbinPath} {args}");
@@ -955,7 +956,7 @@ public class InstallerService
                     CreateNoWindow = true
                 };
 
-                var (ok, output) = await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
+                var (ok, output) = await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout);
                 if (ok) return (true, output);
 
                 // 1618 = ERROR_INSTALL_ALREADY_RUNNING. Retry with backoff.
@@ -1154,7 +1155,7 @@ public class InstallerService
             CreateNoWindow = true
         };
 
-        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
+        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout);
     }
 
     private async Task<(bool Success, string Output)> InstallChocolateyAsync(
@@ -1200,7 +1201,7 @@ public class InstallerService
             CreateNoWindow = true
         };
 
-        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken);
+        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout);
     }
 
     /// <summary>
@@ -1858,10 +1859,16 @@ exit 0
     private async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
         ProcessStartInfo startInfo,
         string itemName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? itemTimeoutSeconds = null)
     {
         var output = new StringBuilder();
-        var timeout = TimeSpan.FromSeconds(_config.InstallerTimeout);
+        // A pkgsinfo may declare installer_timeout for payloads that legitimately
+        // take longer than the fleet default (multi-gigabyte packages). Until now
+        // the field was parsed and ignored, so those installs were killed at the
+        // global limit, counted as failed installs, and looped.
+        var timeoutSeconds = itemTimeoutSeconds is > 0 ? itemTimeoutSeconds.Value : _config.InstallerTimeout;
+        var timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
         ConsoleLogger.Detail($"Launching process: {startInfo.FileName}");
         if (!string.IsNullOrEmpty(startInfo.Arguments))
