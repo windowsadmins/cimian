@@ -486,6 +486,10 @@ public class CatalogItem
     [YamlMember(Alias = "restart_action")]
     public string? RestartAction { get; set; }
 
+    /// <summary>Per-item override of the fleet InstallerTimeout, in seconds, for payloads that legitimately run long.</summary>
+    [YamlMember(Alias = "installer_timeout")]
+    public int? InstallerTimeout { get; set; }
+
     [YamlMember(Alias = "version_script")]
     public string? VersionScript { get; set; }
 
