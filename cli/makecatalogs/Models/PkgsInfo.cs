@@ -25,6 +25,9 @@ public class Installer
 
     [YamlMember(Alias = "flags")]
     public List<string>? Flags { get; set; }
+    /// <summary>Additional process exit codes to treat as a successful install, beyond 0 and 3010 (e.g. an installer that returns 2 for "installed, reboot recommended").</summary>
+    [YamlMember(Alias = "success_codes")]
+    public List<int>? SuccessCodes { get; set; }
 
     [YamlMember(Alias = "subcommand")]
     public string? Subcommand { get; set; }

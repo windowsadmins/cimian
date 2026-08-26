@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
@@ -956,7 +957,7 @@ public class InstallerService
                     CreateNoWindow = true
                 };
 
-                var (ok, output) = await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout);
+                var (ok, output) = await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout, item.Installer?.SuccessCodes);
                 if (ok) return (true, output);
 
                 // 1618 = ERROR_INSTALL_ALREADY_RUNNING. Retry with backoff.
@@ -1155,7 +1156,7 @@ public class InstallerService
             CreateNoWindow = true
         };
 
-        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout);
+        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout, item.Installer?.SuccessCodes);
     }
 
     private async Task<(bool Success, string Output)> InstallChocolateyAsync(
@@ -1201,7 +1202,7 @@ public class InstallerService
             CreateNoWindow = true
         };
 
-        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout);
+        return await RunProcessWithTimeoutAsync(startInfo, item.Name, cancellationToken, item.InstallerTimeout, item.Installer?.SuccessCodes);
     }
 
     /// <summary>
@@ -1860,7 +1861,8 @@ exit 0
         ProcessStartInfo startInfo,
         string itemName,
         CancellationToken cancellationToken,
-        int? itemTimeoutSeconds = null)
+        int? itemTimeoutSeconds = null,
+        IEnumerable<int>? extraSuccessCodes = null)
     {
         var output = new StringBuilder();
         // A pkgsinfo may declare installer_timeout for payloads that legitimately
@@ -1924,8 +1926,14 @@ exit 0
             var exitCode = process.ExitCode;
             ConsoleLogger.Detail($"Process exited with code {exitCode}");
             
-            // Common success exit codes
-            if (exitCode == 0 || exitCode == 3010) // 3010 = reboot required
+            // Common success exit codes, plus any the pkgsinfo declares under
+            // installer.success_codes for installers with their own convention.
+            var declaredSuccess = extraSuccessCodes != null && extraSuccessCodes.Contains(exitCode);
+            if (declaredSuccess)
+            {
+                output.AppendLine($"Note: exit code {exitCode} is declared a success code for this installer");
+            }
+            if (exitCode == 0 || exitCode == 3010 || declaredSuccess) // 3010 = reboot required
             {
                 if (exitCode == 3010)
                 {
