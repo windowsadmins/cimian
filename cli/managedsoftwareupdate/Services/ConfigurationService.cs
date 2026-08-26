@@ -77,6 +77,20 @@ public class ConfigurationService
             {
                 config.InstallerTimeout = timeout;
             }
+
+            // Cache retention is the only lever against superseded multi-gigabyte
+            // payloads filling small system drives; let policy set it fleet-wide.
+            var retentionRaw = key.GetValue("CacheRetentionDays");
+            var retention = retentionRaw switch
+            {
+                int i => i,
+                string s when int.TryParse(s, out var parsed) => parsed,
+                _ => int.MinValue
+            };
+            if (retention != int.MinValue && retention >= 0)
+            {
+                config.CacheRetentionDays = retention;
+            }
         }
         catch (Exception ex)
         {

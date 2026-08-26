@@ -207,6 +207,10 @@ public class PkgsInfo
     [YamlMember(Alias = "restart_action")]
     public string? RestartAction { get; set; }
 
+    /// <summary>Per-item override of the fleet InstallerTimeout, in seconds, for payloads that legitimately run long.</summary>
+    [YamlMember(Alias = "installer_timeout")]
+    public int? InstallerTimeout { get; set; }
+
     [YamlMember(Alias = "force_install_after_date")]
     public DateTime? ForceInstallAfterDate { get; set; }
 
