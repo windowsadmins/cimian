@@ -340,7 +340,35 @@ public class CatalogService
         if (validParts.Count == 0)
             return null;
 
-        return string.Join(".", validParts);
+        return ExpandBuildTimestamp(validParts);
+    }
+
+    /// <summary>
+    /// cimipkg encodes a build timestamp two ways: the pkgsinfo/registry form
+    /// YYYY.MM.DD.HHMM and the MSI ProductVersion form yy.M.ddHH (three parts,
+    /// each field limited by Windows Installer). Compared element-wise the
+    /// compressed form always loses to the full form, so an April build with
+    /// DisplayVersion 2026.04.28.1212 outranked the catalog's 26.8.1712 and the
+    /// August package never installed. Expand the compressed form to the full
+    /// form when it can only be a timestamp; the mapping is monotonic, so pairs
+    /// that were already the same encoding keep their order.
+    /// </summary>
+    private static string ExpandBuildTimestamp(System.Collections.Generic.List<string> parts)
+    {
+        if (parts.Count == 3
+            && int.TryParse(parts[0], out var yy) && yy >= 20 && yy <= 99
+            && int.TryParse(parts[1], out var month) && month >= 1 && month <= 12
+            && parts[2].Length >= 3 && parts[2].Length <= 4
+            && int.TryParse(parts[2], out var ddhh))
+        {
+            var day = ddhh / 100;
+            var hour = ddhh % 100;
+            if (day >= 1 && day <= 31 && hour <= 23)
+            {
+                return $"{2000 + yy}.{month:D2}.{day:D2}.{hour:D2}00";
+            }
+        }
+        return string.Join(".", parts);
     }
 
     private static int ParseVersionPart(string part)
