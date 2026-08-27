@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Cimian.Core.Services;
 
@@ -156,7 +158,7 @@ public static class SelfUpdateService
                     $"selfupdate-{DateTime.Now:yyyyMMdd-HHmmss}.log");
                 Directory.CreateDirectory(Path.GetDirectoryName(logFile)!);
                 fileName = "msiexec.exe";
-                arguments = $"/i \"{metadata.LocalFile}\" /quiet /norestart /l*v \"{logFile}\" REINSTALLMODE=vamus REINSTALL=ALL";
+                arguments = BuildMsiArguments(metadata.LocalFile, logFile, log);
                 break;
             }
             case "pkg":
@@ -345,6 +347,89 @@ public static class SelfUpdateService
         }
     }
 
+    /// <summary>
+    /// REINSTALL=ALL is only valid for a product that is already installed. Every
+    /// CimianTools build carries a fresh ProductCode, so on an upgrade Windows
+    /// Installer saw REINSTALL on an unknown product, ran a "maintenance" pass that
+    /// skipped RemoveExistingProducts, logged "Installation completed successfully"
+    /// and changed nothing - hosts that only had this path stayed on their old
+    /// build for weeks. Ask the MSI for its ProductCode and pass the repair
+    /// properties only when that exact product is present.
+    /// </summary>
+    internal static string BuildMsiArguments(string msiPath, string logFile, Action<string> log)
+    {
+        var baseArgs = $"/i \"{msiPath}\" /quiet /norestart /l*v \"{logFile}\"";
+        var productCode = TryReadProductCode(msiPath);
+        if (productCode == null)
+        {
+            log("Could not read ProductCode from MSI; running a plain install");
+            return baseArgs;
+        }
+
+        var state = MsiQueryProductStateW(productCode);
+        if (state == INSTALLSTATE_DEFAULT)
+        {
+            log($"ProductCode {productCode} is already installed; running a repair (REINSTALL=ALL)");
+            return baseArgs + " REINSTALLMODE=vamus REINSTALL=ALL";
+        }
+
+        log($"ProductCode {productCode} not installed (state {state}); running a plain install so the major upgrade removes the previous build");
+        return baseArgs;
+    }
+
+    private const int INSTALLSTATE_DEFAULT = 5;
+    private const uint MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE = 1;
+    private const uint INSTALLUILEVEL_NONE = 2;
+
+    [DllImport("msi.dll", CharSet = CharSet.Unicode)]
+    private static extern int MsiQueryProductStateW(string productCode);
+
+    [DllImport("msi.dll", CharSet = CharSet.Unicode)]
+    private static extern uint MsiOpenPackageExW(string packagePath, uint options, out IntPtr product);
+
+    [DllImport("msi.dll", CharSet = CharSet.Unicode)]
+    private static extern uint MsiGetProductPropertyW(IntPtr product, string property, StringBuilder value, ref uint length);
+
+    [DllImport("msi.dll")]
+    private static extern uint MsiCloseHandle(IntPtr handle);
+
+    [DllImport("msi.dll")]
+    private static extern uint MsiSetInternalUI(uint uiLevel, IntPtr window);
+
+    private static string? TryReadProductCode(string msiPath)
+    {
+        var handle = IntPtr.Zero;
+        try
+        {
+            MsiSetInternalUI(INSTALLUILEVEL_NONE, IntPtr.Zero);
+            if (MsiOpenPackageExW(msiPath, MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE, out handle) != 0 || handle == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            var buffer = new StringBuilder(64);
+            var length = (uint)buffer.Capacity;
+            if (MsiGetProductPropertyW(handle, "ProductCode", buffer, ref length) != 0)
+            {
+                return null;
+            }
+
+            var code = buffer.ToString().Trim();
+            return code.Length > 0 ? code : null;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (handle != IntPtr.Zero)
+            {
+                MsiCloseHandle(handle);
+            }
+        }
+    }
+
     private static bool PerformMsiUpdate(string msiPath, string itemName)
     {
         try
@@ -363,7 +448,7 @@ public static class SelfUpdateService
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = "msiexec.exe",
-                    Arguments = $"/i \"{msiPath}\" /quiet /norestart /l*v \"{logFile}\" REINSTALLMODE=vamus REINSTALL=ALL",
+                    Arguments = BuildMsiArguments(msiPath, logFile, ConsoleLogger.Info),
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
