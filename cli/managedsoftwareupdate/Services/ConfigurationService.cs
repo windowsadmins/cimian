@@ -114,13 +114,38 @@ public class ConfigurationService
         {
             var yaml = File.ReadAllText(path);
             var config = _deserializer.Deserialize<CimianConfig>(yaml);
-            return ApplyPolicyOverrides(config ?? GetDefaultConfig());
+            return ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig()));
         }
         catch (Exception ex)
         {
             ConsoleLogger.Error($"Failed to load configuration from {path}: {ex.Message}");
             return ApplyPolicyOverrides(GetDefaultConfig());
         }
+    }
+
+    /// <summary>
+    /// An explicit empty string in Config.yaml (older bootstraps wrote
+    /// CachePath: "") deserialises over the CimianPaths default, and every
+    /// Path.Combine on it then yields a relative path resolved against the
+    /// process working directory - Program Files\Cimian when launched by the
+    /// watcher service. Downloads landed there, outside the retention sweep,
+    /// and filled system drives. Blank means "default", never "here".
+    /// </summary>
+    private static CimianConfig NormalizePaths(CimianConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(config.CachePath))
+        {
+            config.CachePath = CimianPaths.CacheDir;
+        }
+        if (string.IsNullOrWhiteSpace(config.CatalogsPath))
+        {
+            config.CatalogsPath = CimianPaths.CatalogsDir;
+        }
+        if (string.IsNullOrWhiteSpace(config.ManifestsPath))
+        {
+            config.ManifestsPath = CimianPaths.ManifestsDir;
+        }
+        return config;
     }
 
     /// <summary>
