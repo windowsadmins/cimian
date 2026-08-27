@@ -242,6 +242,11 @@ public class FileWatcherService : BackgroundService
         {
             _logger.LogError(ex, "{UpdateType} bootstrap update process failed", updateType);
         }
+
+        // The run that just finished may have scheduled a self-update. Checking
+        // only at service start meant a host that never rebooted kept downloading
+        // the new CimianTools MSI every night without ever installing it.
+        CheckAndPerformSelfUpdate();
     }
 
     private void LaunchCimianStatus()
