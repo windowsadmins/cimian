@@ -271,6 +271,7 @@ public class UpdateEngine : IDisposable
                       _installOnly ? "installonly" : "manual";
         
         _sessionLogger = new SessionLogger();
+        _loopGuard.SetCurrentSession(_sessionLogger.SessionDir);
         var sessionId = _sessionLogger.StartSession(runType, new Dictionary<string, object>
         {
             ["verbosity"] = verbosity,
