@@ -527,6 +527,22 @@ public class SessionLogger : IDisposable
     private static readonly string[] ScriptPhases = { "preinstall", "postinstall", "uninstall" };
 
     /// <summary>
+    /// Shared files that package scripts used to append to instead of printing to
+    /// stdout. Matched by exact name, never by pattern: a file at the logs root can be
+    /// a state marker owned by something else.
+    /// </summary>
+    /// <remarks>
+    /// Every script that wrote these has since been changed to print to stdout, but the
+    /// deployed payloads still carry the old version, so the file is recreated on every
+    /// install until each package happens to be rebuilt. Draining it retires the file on
+    /// every machine now, and puts the contents somewhere ReportMate actually reads.
+    ///
+    /// These are aggregates -- many packages appended to one file -- so the lines cannot
+    /// be attributed to a single package the way a sidecar can.
+    /// </remarks>
+    private static readonly string[] LegacyAggregateLogs = { "installers.log" };
+
+    /// <summary>
     /// Takes the output a package's install scripts produced and hands it back so the
     /// caller can put it in this session's log. The sidecar files are removed as they
     /// are read.
@@ -584,6 +600,17 @@ public class SessionLogger : IDisposable
                 if (TryDrainScriptLog(file, name[..^suffix.Length], phase, out var drained))
                     collected.Add(drained);
             }
+        }
+
+        // Shared aggregate files, matched by exact name.
+        foreach (var name in LegacyAggregateLogs)
+        {
+            var file = Path.Combine(logsRoot, name);
+            if (!File.Exists(file))
+                continue;
+
+            if (TryDrainScriptLog(file, name, "legacy", out var drained))
+                collected.Add(drained);
         }
 
         return collected;
