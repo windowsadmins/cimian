@@ -51,7 +51,7 @@ public class PredicateEngineTests
     [InlineData("hostname CONTAINS 'Design'", "DESIGN-001", true)]
     [InlineData("hostname CONTAINS 'Design'", "design-workstation", true)]
     [InlineData("hostname CONTAINS 'Design'", "STUDIO-001", false)]
-    [InlineData("hostname CONTAINS 'Studio'", "STUDIO-RENDER-01", true)]
+    [InlineData("hostname CONTAINS 'Studio'", "RENDER-NODE-01", true)]
     public async Task EvaluateCondition_ContainsOperator_ShouldMatch(string condition, string hostname, bool expected)
     {
         var facts = CreateFacts(hostname: hostname);
@@ -62,7 +62,7 @@ public class PredicateEngineTests
     [Theory]
     [InlineData("hostname BEGINSWITH 'DESIGN'", "DESIGN-001", true)]
     [InlineData("hostname BEGINSWITH 'DESIGN'", "MY-DESIGN-001", false)]
-    [InlineData("hostname BEGINSWITH 'Studio'", "Studio-Render-01", true)]
+    [InlineData("hostname BEGINSWITH 'Studio'", "Render-Node-01", true)]
     public async Task EvaluateCondition_BeginsWithOperator_ShouldMatch(string condition, string hostname, bool expected)
     {
         var facts = CreateFacts(hostname: hostname);
@@ -300,7 +300,7 @@ public class PredicateEngineTests
     [Fact]
     public async Task EvaluateCondition_ComplexParentheses_ShouldMatch()
     {
-        var facts = CreateFacts(hostname: "STUDIO-RENDER-01", domain: "PRODUCTION", arch: "x64");
+        var facts = CreateFacts(hostname: "RENDER-NODE-01", domain: "PRODUCTION", arch: "x64");
         
         // Match: (Studio OR Design machines) AND (Production domain) AND (x64 arch)
         var result = await _engine.EvaluateConditionAsync(
