@@ -88,8 +88,12 @@ public class PackageScriptLogDrainTests : IDisposable
     }
 
     [Theory]
+    /// <remarks>
+    /// "installers.log" used to be listed here as third-party. It is not: every line in
+    /// it comes from one of our own package scripts, each of which has since been
+    /// changed to print to stdout instead. It is drained above.
+    /// </remarks>
     [InlineData("vendor-state-marker.log")]          // a state marker: deleting it reinstalls forever
-    [InlineData("installers.log")]               // third-party, not ours to consume
     [InlineData("cimiwatcher20260824.log")]      // Serilog owns it
     [InlineData("ManagedSoftwareUpdate.log")]
     [InlineData("postinstall.log")]              // no package name in front of it
@@ -160,5 +164,50 @@ public class PackageScriptLogDrainTests : IDisposable
     public void IsSilentWhenNothingHasBeenWritten()
     {
         Assert.Empty(Drain());
+    }
+
+    [Fact]
+    public void SharedInstallersLogIsDrainedAndRemoved()
+    {
+        // Several packages appended to this one file instead of printing to stdout, so
+        // its contents never reached the session log and nothing ever expired it.
+        var file = Write("installers.log",
+            "Example app installed on 2026-01-01 00:00:00.",
+            "Another app installed on 2026-01-01 00:01:00.");
+
+        var drained = Drain();
+
+        Assert.False(File.Exists(file));
+        var one = Assert.Single(drained);
+        Assert.Equal("installers.log", one.Package);
+        Assert.Equal("legacy", one.Phase);
+        Assert.Equal(2, one.Lines.Count);
+    }
+
+    [Fact]
+    public void SharedInstallersLogIsCappedLikeAnySidecar()
+    {
+        Write("installers.log",
+            Enumerable.Range(0, SessionLogger.MaxPackageScriptLogLines + 50)
+                .Select(i => $"line {i}").ToArray());
+
+        var one = Assert.Single(Drain());
+
+        Assert.True(one.Truncated);
+        Assert.Equal(SessionLogger.MaxPackageScriptLogLines, one.Lines.Count);
+    }
+
+    [Fact]
+    public void UnrelatedLogsAtTheRootAreLeftAlone()
+    {
+        // A file at this root can be a state marker whose existence means "already
+        // done". Draining one would make its package reinstall forever.
+        var sentinel = Write("verifiedHarmony.log", "done");
+        var watcher = Write("cimiwatcher20260101.log", "service started");
+
+        Drain();
+
+        Assert.True(File.Exists(sentinel));
+        Assert.True(File.Exists(watcher));
     }
 }
