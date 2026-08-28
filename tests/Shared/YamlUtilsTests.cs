@@ -232,7 +232,7 @@ public class YamlUtilsTests
             name: Foo
             version: 1.0
             _metadata:
-              created_by: rchristiansen
+              created_by: adoe
               creation_date: '2025-01-06T00:07:42Z'
               cimian-promoter_edit_date: '2026-04-24T18:01:29Z'
             """;
@@ -246,7 +246,7 @@ public class YamlUtilsTests
         Assert.Equal("created_by", keys[0]);
         Assert.Equal("creation_date", keys[1]);
         Assert.Equal("cimian-promoter_edit_date", keys[2]);
-        Assert.Equal("rchristiansen", meta["created_by"]);
+        Assert.Equal("adoe", meta["created_by"]);
     }
 
     [Fact]
