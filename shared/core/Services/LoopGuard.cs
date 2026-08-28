@@ -237,6 +237,26 @@ public class LoopGuard
     }
 
     /// <summary>
+    /// Session id of the run that owns this guard, in the same "yyyy-MM-dd/HHMM" form
+    /// the events.jsonl rebuild uses. RecordAttempt stamps it into the package's
+    /// processed-session set so the next run's rebuild does not count the same
+    /// install a second time. Without it every real attempt was counted twice
+    /// (once live, once from history), so four successful upgrades of a
+    /// frequently-released package read as "8 installs across 4 sessions" and
+    /// tripped the total-attempt threshold on the fifth version.
+    /// </summary>
+    private string? _currentSessionId;
+
+    public void SetCurrentSession(string? sessionDir)
+    {
+        if (string.IsNullOrEmpty(sessionDir))
+            return;
+        var timeDir = Path.GetFileName(sessionDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var dayDir = Path.GetFileName(Path.GetDirectoryName(sessionDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? "");
+        _currentSessionId = string.IsNullOrEmpty(dayDir) ? timeDir : $"{dayDir}/{timeDir}";
+    }
+
+    /// <summary>
     /// Records an install attempt (call after InstallerService.InstallAsync completes).
     /// catalogFingerprint should match what was passed to ShouldSuppress for consistency.
     /// <para>
@@ -282,6 +302,11 @@ public class LoopGuard
 
         pkgState.AttemptCount++;
         pkgState.LastAttempt = DateTime.UtcNow;
+        if (!string.IsNullOrEmpty(_currentSessionId) && !pkgState.ProcessedSessions.Contains(_currentSessionId))
+        {
+            pkgState.ProcessedSessions.Add(_currentSessionId);
+            pkgState.SessionCount = pkgState.ProcessedSessions.Count;
+        }
         pkgState.LastVersion = version;
         pkgState.LastSuccess = success;
         if (!string.IsNullOrEmpty(catalogFingerprint))
@@ -600,8 +625,17 @@ public class LoopGuard
             return (true, reason);
         }
 
-        // Threshold 3: High total attempt count across sessions (any version)
-        if (pkgState.AttemptCount >= 8 && pkgState.SessionCount >= 5)
+        // Threshold 3: High total attempt count across sessions (any version).
+        // The first attempt at each distinct version is a legitimate upgrade, not
+        // evidence of a loop: a package that ships five builds in a week must not
+        // be gagged for installing each of them once. Only attempts beyond the
+        // first per version count here; a genuine loop (many attempts, one
+        // version) is unaffected.
+        var distinctVersions = pkgState.VersionAttempts.Count;
+        var loopAttempts = distinctVersions > 1
+            ? pkgState.AttemptCount - (distinctVersions - 1)
+            : pkgState.AttemptCount;
+        if (loopAttempts >= 8 && pkgState.SessionCount >= 5)
         {
             // Top tier — capped at 7 days (finite), then retries automatically
             var suppressUntil = DateTime.UtcNow.AddDays(_maxSuppressionDays);
@@ -612,7 +646,7 @@ public class LoopGuard
             return (true, reason);
         }
 
-        if (pkgState.AttemptCount >= 5 && pkgState.SessionCount >= 4)
+        if (loopAttempts >= 5 && pkgState.SessionCount >= 4)
         {
             var suppressUntil = DateTime.UtcNow.AddHours(24);
             var reason = $"Escalated loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions (24h suppression)";
