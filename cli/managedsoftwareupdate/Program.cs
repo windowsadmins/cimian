@@ -475,10 +475,20 @@ public class Program
         Console.WriteLine("Cleaning Cimian Cache");
         Console.WriteLine("════════════════════════════");
 
-        var cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Cimian", "Cache");
+        // %ProgramData%\ManagedInstalls\Cache. This used to build its own
+        // %ProgramData%\Cimian\Cache, which is not where the cache has ever been, so
+        // the command found no directory, reported nothing to clean and exited 0 while
+        // the real cache kept growing.
+        return CleanCacheDirectory(CimianPaths.CacheDir);
+    }
 
+    /// <summary>
+    /// Deletes everything under <paramref name="cacheDir"/> and removes the directories
+    /// left empty behind it. Takes the directory as a parameter so the behaviour can be
+    /// exercised against a temporary tree.
+    /// </summary>
+    internal static int CleanCacheDirectory(string cacheDir)
+    {
         if (!Directory.Exists(cacheDir))
         {
             Console.WriteLine("Cache directory does not exist. Nothing to clean.");
