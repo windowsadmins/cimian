@@ -71,13 +71,33 @@ public static class MsiBomReader
     }
 
     /// <summary>
-    /// True when the MSI's File table has at least one row. Wrapper MSIs
-    /// (payload embedded in the Binary table, installed by a custom action)
-    /// have an empty File table. Fails soft to true on read errors so an
-    /// unreadable MSI is never misclassified as a wrapper.
+    /// True when the MSI installs files of its own. Wrapper MSIs (payload
+    /// embedded in the Binary table, installed by a custom action) either have
+    /// an empty File table or no File table at all.
     /// </summary>
+    /// <remarks>
+    /// A <em>missing</em> File table is checked before the query rather than
+    /// being left to the catch below. Selecting from a table that does not
+    /// exist throws, and the catch fails soft to true -- so the purest wrapper
+    /// shape, the one with no File table whatsoever, was reported as installing
+    /// files and never classified as a wrapper. That suppressed the
+    /// ArpDisplayName hint in MetadataExtractor, which in turn suppressed the
+    /// runtime's ARP DisplayName fallback, surfacing as "MSI not registered in
+    /// Windows Installer" for a product that had installed correctly.
+    ///
+    /// Failing soft to true is still right for a genuine read error: an
+    /// unreadable MSI must not be misclassified as a wrapper, because a fuzzy
+    /// ARP match could mask an install that really is missing. A well-formed
+    /// MSI with no File table is not an error condition -- it is the signal.
+    /// </remarks>
     public static bool HasInstalledFiles(Database db)
     {
+        // Not an error: no File table means the MSI lays down no payload itself.
+        if (!db.Tables.Contains("File"))
+        {
+            return false;
+        }
+
         try
         {
             using var view = db.OpenView("SELECT `File` FROM `File`");
