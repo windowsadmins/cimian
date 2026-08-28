@@ -62,7 +62,7 @@ public class PredicateEngineTests
     [Theory]
     [InlineData("hostname BEGINSWITH 'DESIGN'", "DESIGN-001", true)]
     [InlineData("hostname BEGINSWITH 'DESIGN'", "MY-DESIGN-001", false)]
-    [InlineData("hostname BEGINSWITH 'Studio'", "RENDER-NODE-01", true)]
+    [InlineData("hostname BEGINSWITH 'Studio'", "Render-Node-01", true)]
     public async Task EvaluateCondition_BeginsWithOperator_ShouldMatch(string condition, string hostname, bool expected)
     {
         var facts = CreateFacts(hostname: hostname);
