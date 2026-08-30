@@ -63,18 +63,14 @@ public sealed class InstallTrigger
     public string Key => $"{ReasonCode}|{DetectionMethod}|{Detail}";
 
     /// <summary>
-    /// One-line operator-facing form: the code, the check that produced it, and the
-    /// detail. Reads as "why does this keep wanting to install".
+    /// Operator-facing form: the detail in plain words, since it already names the check
+    /// that produced it. The reason code is machine-facing and is appended by the caller
+    /// rather than lodged in the middle of the sentence.
     /// </summary>
-    public string Describe()
-    {
-        var head = string.IsNullOrEmpty(ReasonCode) ? "check" : ReasonCode;
-        var method = string.IsNullOrEmpty(DetectionMethod) || DetectionMethod == Models.DetectionMethod.None
-            ? null
-            : DetectionMethod;
-        var lead = method == null ? head : $"{head} via {method}";
-        return string.IsNullOrEmpty(Detail) ? lead : $"{lead} — {Detail}";
-    }
+    public string Describe() =>
+        string.IsNullOrEmpty(Detail)
+            ? (string.IsNullOrEmpty(ReasonCode) ? "an unnamed check" : ReasonCode)
+            : Detail;
 
     private static string Flatten(string? text)
     {
