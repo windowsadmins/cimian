@@ -70,16 +70,31 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
-    /// Computes a LoopGuard catalog fingerprint from a CatalogItem's install-behavior fields.
-    /// If ANY of these fields change in the pkgsinfo, the fingerprint changes and LoopGuard
-    /// auto-clears suppression — the admin may have fixed the root cause of the loop.
+    /// Computes the LoopGuard catalog fingerprint for an item. If it changes, LoopGuard
+    /// clears the package's loop suppression — the admin may have fixed the root cause.
     ///
-    /// Fields included: version, installcheck_script, installs array, check info,
-    /// installer hash/url/type, install_script, postinstall_script, preinstall_script.
+    /// <para>
+    /// The authoritative value is <c>loop_fingerprint</c>, stamped per item by
+    /// makecatalogs over the item's whole catalog content, so any pkgsinfo edit that
+    /// reaches the fleet clears the loop. Only when the catalog predates that field
+    /// (older, version-pinned makecatalogs) do we fall back to hashing the
+    /// install-behavior fields here — a hand-picked list that misses fixes to
+    /// product_code/upgrade_code, installer switches, blocking_applications and the
+    /// like, which is exactly why the server-side stamp exists.
+    /// </para>
     /// </summary>
     private static string ComputeCatalogFingerprint(CatalogItem item)
     {
         var sb = new System.Text.StringBuilder(512);
+
+        if (!string.IsNullOrWhiteSpace(item.LoopFingerprint))
+        {
+            sb.Append(item.LoopFingerprint);
+            sb.Append('|');
+            sb.Append(VersionService.GetRunningAgentVersion());
+            return LoopGuard.ComputeFingerprint(sb.ToString());
+        }
+
         sb.Append(item.Version);
         sb.Append('|');
         sb.Append(item.InstallcheckScript ?? "");
