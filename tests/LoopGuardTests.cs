@@ -1,6 +1,7 @@
 using Xunit;
 using FluentAssertions;
 using Cimian.Core.Services;
+using Cimian.Core.Models;
 using System.Text.Json;
 
 namespace Cimian.Tests.Core.Services;
@@ -1009,6 +1010,178 @@ public class LoopGuardTests : IDisposable
         var eventsPath = Path.Combine(sessionDir, "events.jsonl");
         // Append to allow multiple events in same session
         File.AppendAllText(eventsPath, JsonSerializer.Serialize(evt) + "\n");
+    }
+
+    #endregion
+
+    #region Trigger reporting — why the package keeps installing
+
+    private static InstallTrigger FileMissingTrigger(string path = "C:/Program Files/Thing/thing.exe") =>
+        InstallTrigger.From(StatusReasonCode.FileMissing, DetectionMethod.InstallsArray,
+            $"installs[0] file {path}: file not found")!;
+
+    [Fact]
+    public void SuppressionMessage_NamesTheCheckThatKeepsTriggeringTheInstall()
+    {
+        var guard = CreateGuard();
+        var trigger = FileMissingTrigger();
+
+        guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
+
+        var (suppress, reason) = guard.ShouldSuppress("LoopPkg", "1.0.0", null, trigger);
+
+        suppress.Should().BeTrue();
+        reason.Should().Contain("Needs install because");
+        reason.Should().Contain(StatusReasonCode.FileMissing);
+        reason.Should().Contain("installs[0] file");
+        reason.Should().Contain("thing.exe");
+        reason.Should().Contain("same on all 3 attempts");
+        reason.Should().Contain("--clear-loop LoopPkg");
+    }
+
+    [Fact]
+    public void SuppressionMessage_StillReportsTheLoopRuleAndTheVersion()
+    {
+        var guard = CreateGuard();
+        var trigger = FileMissingTrigger();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("LoopPkg", "2.5.0", true, trigger: trigger);
+
+        var (_, reason) = guard.ShouldSuppress("LoopPkg", "2.5.0", null, trigger);
+
+        reason.Should().Contain("LoopPkg v2.5.0");
+        reason.Should().Contain("Loop rule:");
+        reason.Should().MatchRegex("Rapid-fire|Install loop|Escalated|Persistent");
+    }
+
+    [Fact]
+    public void SuppressionMessage_SummarisesMultipleDistinctTriggers()
+    {
+        var guard = CreateGuard();
+        var missing = FileMissingTrigger();
+        var outdated = InstallTrigger.From(StatusReasonCode.VersionOutdated, DetectionMethod.Msi,
+            "installs[1] msi product_code={GUID}: registered version 1.0 is older than the catalog's 2.0")!;
+
+        guard.RecordAttempt("MixedPkg", "1.0.0", true, trigger: missing);
+        guard.RecordAttempt("MixedPkg", "1.0.0", true, trigger: outdated);
+        guard.RecordAttempt("MixedPkg", "1.0.0", true, trigger: outdated);
+
+        var (suppress, reason) = guard.ShouldSuppress("MixedPkg", "1.0.0", null, outdated);
+
+        suppress.Should().BeTrue();
+        reason.Should().Contain("most recent of 3 attempts");
+        reason.Should().Contain($"{StatusReasonCode.VersionOutdated} x2");
+        reason.Should().Contain($"{StatusReasonCode.FileMissing} x1");
+    }
+
+    [Fact]
+    public void SuppressionMessage_SaysSoWhenNoTriggerWasEverRecorded()
+    {
+        // State written by a client that predates trigger capture: the warning must
+        // admit it has no cause rather than silently reporting only the counting rule.
+        var guard = CreateGuard();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("OldPkg", "1.0.0", true);
+
+        var (suppress, reason) = guard.ShouldSuppress("OldPkg", "1.0.0");
+
+        suppress.Should().BeTrue();
+        reason.Should().Contain("not recorded");
+    }
+
+    [Fact]
+    public void SuppressedEvaluation_RefreshesTheReportedCauseWithoutCountingAnAttempt()
+    {
+        var guard = CreateGuard();
+        var missing = FileMissingTrigger();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: missing);
+
+        var nowOutdated = InstallTrigger.From(StatusReasonCode.VersionOutdated, DetectionMethod.File,
+            "installs[0] file C:/Program Files/Thing/thing.exe: file version 1.0 is older than the catalog's 2.0")!;
+        var (suppress, reason) = guard.ShouldSuppress("LoopPkg", "1.0.0", null, nowOutdated);
+
+        suppress.Should().BeTrue();
+        reason.Should().Contain(StatusReasonCode.VersionOutdated);
+
+        // The refresh must not inflate the attempt evidence — it was never installed.
+        var state = guard.GetPackageState("LoopPkg")!;
+        state.AttemptCount.Should().Be(3);
+        state.TriggerCounts.Values.Sum().Should().Be(3);
+    }
+
+    [Fact]
+    public void CatalogChange_ClearsTheRecordedTriggerEvidence()
+    {
+        var guard = CreateGuard();
+        var trigger = FileMissingTrigger();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("LoopPkg", "1.0.0", true, "fingerprint-a", trigger: trigger);
+
+        guard.ShouldSuppress("LoopPkg", "1.0.0", "fingerprint-b").Suppress.Should().BeFalse();
+
+        var state = guard.GetPackageState("LoopPkg")!;
+        state.TriggerCounts.Should().BeEmpty();
+        state.Trigger.Should().BeNull();
+    }
+
+    [Fact]
+    public void MarkNonConverged_NamesTheCheckThatDidNotConverge()
+    {
+        var guard = CreateGuard();
+        var trigger = InstallTrigger.From(StatusReasonCode.InstallcheckNeeded, DetectionMethod.Script,
+            "installcheck_script exited 0, which means install needed (script output: legacy key still present)")!;
+
+        var reason = guard.MarkNonConverged("StuckPkg", "1.0.0", "fp", 24, trigger);
+
+        reason.Should().Contain("installcheck_script exited 0");
+        reason.Should().Contain("legacy key still present");
+
+        var (suppress, message) = guard.ShouldSuppress("StuckPkg", "1.0.0", "fp");
+        suppress.Should().BeTrue();
+        message.Should().Contain("legacy key still present");
+    }
+
+    [Fact]
+    public void Trigger_DetailIsFlattenedAndTruncated()
+    {
+        var noisy = "line one" + Environment.NewLine + new string('x', 500);
+        var trigger = InstallTrigger.From(StatusReasonCode.ScriptError, DetectionMethod.Script, noisy)!;
+
+        trigger.Detail.Should().NotContainAny(Environment.NewLine, "\r", "\n");
+        trigger.Detail.Length.Should().BeLessThanOrEqualTo(InstallTrigger.MaxDetailLength + 1);
+    }
+
+    [Fact]
+    public void Trigger_SurvivesAStateReload()
+    {
+        var trigger = FileMissingTrigger();
+        var guard = CreateGuard();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
+
+        var reloaded = CreateGuard();
+        var (suppress, reason) = reloaded.ShouldSuppress("LoopPkg", "1.0.0");
+
+        suppress.Should().BeTrue();
+        reason.Should().Contain("thing.exe");
+    }
+
+    [Fact]
+    public void SuppressedReport_CarriesTheTrigger()
+    {
+        var guard = CreateGuard();
+        var trigger = FileMissingTrigger();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
+        guard.ShouldSuppress("LoopPkg", "1.0.0");
+
+        var report = guard.GetSuppressedReport().Single(r => r.Name == "LoopPkg");
+        report.Trigger.Should().NotBeNull();
+        report.Trigger!.ReasonCode.Should().Be(StatusReasonCode.FileMissing);
+        report.TriggerSummary.Should().Contain("thing.exe");
     }
 
     #endregion

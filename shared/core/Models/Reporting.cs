@@ -733,6 +733,18 @@ public class LoopSuppressedReportItem
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTime? SuppressedUntil { get; set; }
 
+    /// <summary>
+    /// The detection result that keeps deciding this package must run — the cause of the
+    /// loop, as opposed to the counting rule that suppressed it.
+    /// </summary>
+    [JsonPropertyName("trigger")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public InstallTrigger? Trigger { get; set; }
+
+    /// <summary>Human-readable form of the trigger, including how consistent it has been.</summary>
+    [JsonPropertyName("trigger_summary")]
+    public string TriggerSummary { get; set; } = string.Empty;
+
     /// <summary>Operator-actionable command string (matches LoopGuard's WARN log line).</summary>
     [JsonPropertyName("clear_command")]
     public string ClearCommand { get; set; } = string.Empty;

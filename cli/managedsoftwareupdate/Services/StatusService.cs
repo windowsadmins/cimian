@@ -323,7 +323,8 @@ public class StatusService
                 result.Status = "pending";
                 result.NeedsAction = true;
                 result.IsUpdate = hasRegistryEntry;
-                result.Reason = $"installcheck_script returned 0 (install needed): {output}";
+                var scriptSaid = string.IsNullOrWhiteSpace(output) ? "no output" : output.Trim();
+                result.Reason = $"installcheck_script exited 0, which means install needed (script output: {scriptSaid})";
                 result.ReasonCode = StatusReasonCode.InstallcheckNeeded;
                 ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
             }
@@ -430,8 +431,16 @@ public class StatusService
         // Go parity: Read the ManagedInstalls registry version first
         var registryVersion = GetManagedInstallsVersion(item.Name);
 
+        var installIndex = -1;
         foreach (var installItem in item.Installs)
         {
+            // Every failure below names the exact entry that decided it. A pkgsinfo with
+            // six installs entries used to report "File not found: <path>" with no way to
+            // tell which entry (or which identity field) produced it without opening the
+            // catalog by hand — which is the whole diagnosis when the item is looping.
+            installIndex++;
+            var where = DescribeInstallsEntry(installIndex, installItem);
+
             switch (installItem.EffectiveType())
             {
                 case "file":
@@ -446,7 +455,7 @@ public class StatusService
                             result.Status = "pending";
                             result.NeedsAction = true;
                             result.IsUpdate = hasRegistryEntry; // If has registry entry, it was installed before
-                            result.Reason = $"File not found: {installItem.Path}";
+                            result.Reason = $"{where}: file not found";
                             result.ReasonCode = StatusReasonCode.FileMissing;
                             result.DetectionMethod = DetectionMethod.File;
                             return result;
@@ -465,7 +474,7 @@ public class StatusService
                                 result.Status = "pending";
                                 result.NeedsAction = true;
                                 result.IsUpdate = true; // File exists but hash mismatch = update
-                                result.Reason = $"Hash mismatch for {installItem.Path}: expected {installItem.Md5Checksum}, got {actualHash}";
+                                result.Reason = $"{where}: hash mismatch — expected {installItem.Md5Checksum}, found {actualHash}";
                                 result.ReasonCode = StatusReasonCode.HashMismatch;
                                 result.DetectionMethod = DetectionMethod.File;
                                 return result;
@@ -502,7 +511,7 @@ public class StatusService
                                         result.Status = "pending";
                                         result.NeedsAction = true;
                                         result.IsUpdate = true;
-                                        result.Reason = $"Version outdated: {fileVersion} -> {expectedVersion}";
+                                        result.Reason = $"{where}: file version {fileVersion} is older than the catalog's {expectedVersion}";
                                         result.ReasonCode = StatusReasonCode.VersionOutdated;
                                         result.DetectionMethod = DetectionMethod.File;
                                         return result;
@@ -521,7 +530,7 @@ public class StatusService
                                 result.Status = "pending";
                                 result.NeedsAction = true;
                                 result.IsUpdate = true;
-                                result.Reason = $"No file version metadata available for {installItem.Path}";
+                                result.Reason = $"{where}: file has no version metadata and the entry declares no md5checksum, so installation can never be confirmed";
                                 result.ReasonCode = StatusReasonCode.VersionOutdated;
                                 result.DetectionMethod = DetectionMethod.File;
                                 return result;
@@ -546,7 +555,7 @@ public class StatusService
                             result.Status = "pending";
                             result.NeedsAction = true;
                             result.IsUpdate = hasRegistryEntry;
-                            result.Reason = $"Directory not found: {installItem.Path}";
+                            result.Reason = $"{where}: directory not found";
                             result.ReasonCode = StatusReasonCode.DirectoryMissing;
                             result.DetectionMethod = DetectionMethod.Directory;
                             return result;
@@ -621,7 +630,7 @@ public class StatusService
                         result.Status = "pending";
                         result.NeedsAction = true;
                         result.IsUpdate = hasRegistryEntry;
-                        result.Reason = $"MSI product not installed";
+                        result.Reason = $"{where}: not registered in Windows Installer";
                         result.ReasonCode = StatusReasonCode.ProductCodeMissing;
                         result.DetectionMethod = DetectionMethod.Msi;
                         return result;
@@ -633,7 +642,7 @@ public class StatusService
                         result.NeedsAction = true;
                         result.IsUpdate = true;
                         result.InstalledVersion = msiInstalledVersion;
-                        result.Reason = $"MSI version outdated: {msiInstalledVersion} -> {catalogVersion}";
+                        result.Reason = $"{where}: registered version {msiInstalledVersion} is older than the catalog's {catalogVersion}";
                         result.ReasonCode = StatusReasonCode.VersionOutdated;
                         result.DetectionMethod = DetectionMethod.Msi;
                         return result;
@@ -656,7 +665,7 @@ public class StatusService
                                 result.Status = "pending";
                                 result.NeedsAction = true;
                                 result.IsUpdate = true;
-                                result.Reason = $"key_path file missing despite MSI registry hit: {installItem.KeyPath}";
+                                result.Reason = $"{where}: key_path {installItem.KeyPath} is missing although the MSI is registered";
                                 result.ReasonCode = StatusReasonCode.FileMissing;
                                 result.DetectionMethod = DetectionMethod.File;
                                 return result;
@@ -673,7 +682,7 @@ public class StatusService
                                     result.NeedsAction = true;
                                     result.IsUpdate = true;
                                     result.InstalledVersion = diskVersion;
-                                    result.Reason = $"key_path version mismatch: disk={diskVersion} catalog={catalogVersion} (ARP reported {msiInstalledVersion})";
+                                    result.Reason = $"{where}: key_path {installItem.KeyPath} is version {diskVersion}, catalog wants {catalogVersion} (ARP reports {msiInstalledVersion})";
                                     result.ReasonCode = StatusReasonCode.VersionOutdated;
                                     result.DetectionMethod = DetectionMethod.File;
                                     return result;
@@ -693,7 +702,7 @@ public class StatusService
                         ConsoleLogger.Warn($"MSIX install check missing identity_name item: {item.Name}");
                         result.Status = "error";
                         result.NeedsAction = true;
-                        result.Reason = $"MSIX install check missing identity_name";
+                        result.Reason = $"{where}: msix entry declares no identity_name, so it can never match";
                         result.ReasonCode = StatusReasonCode.CheckFailed;
                         result.DetectionMethod = DetectionMethod.Msix;
                         return result;
@@ -712,7 +721,7 @@ public class StatusService
                         result.Status = "pending";
                         result.NeedsAction = true;
                         result.IsUpdate = hasRegistryEntry;
-                        result.Reason = $"MSIX package not found for identity: {installItem.IdentityName}";
+                        result.Reason = $"{where}: no provisioned package with this identity";
                         // NotInstalled is the installer-type-neutral code for "package is absent".
                         // ProductCodeMissing is MSI-specific and would misclassify downstream.
                         result.ReasonCode = StatusReasonCode.NotInstalled;
@@ -730,7 +739,7 @@ public class StatusService
                             result.NeedsAction = true;
                             result.IsUpdate = true;
                             result.InstalledVersion = msixVersion;
-                            result.Reason = $"MSIX version outdated: {msixVersion} -> {msixCatalogVersion}";
+                            result.Reason = $"{where}: provisioned version {msixVersion} is older than the catalog's {msixCatalogVersion}";
                             result.ReasonCode = StatusReasonCode.VersionOutdated;
                             result.DetectionMethod = DetectionMethod.Msix;
                             return result;
@@ -748,7 +757,7 @@ public class StatusService
                     ConsoleLogger.Warn($"Installs entry for {item.Name} has no usable type or identity field — skipping (rawType: '{installItem.Type}')");
                     result.Status = "error";
                     result.NeedsAction = true;
-                    result.Reason = "Installs entry missing type and identity fields";
+                    result.Reason = $"{where}: entry declares neither a type nor any identity field (path/product_code/upgrade_code/identity_name)";
                     result.ReasonCode = StatusReasonCode.CheckFailed;
                     result.DetectionMethod = DetectionMethod.None;
                     return result;
@@ -1269,6 +1278,30 @@ if ($results.Count -gt 0) {{
         using var stream = File.OpenRead(filePath);
         var hash = md5.ComputeHash(stream);
         return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Names one installs entry the way an admin reads the pkgsinfo: its index, its
+    /// effective type, and the identity field the check actually used.
+    /// </summary>
+    private static string DescribeInstallsEntry(int index, InstallCheckItem entry)
+    {
+        var type = entry.EffectiveType();
+        var identity = type switch
+        {
+            "file" or "directory" => entry.Path,
+            "msi" => string.Join(" ", new[]
+            {
+                string.IsNullOrEmpty(entry.ProductCode) ? null : $"product_code={entry.ProductCode}",
+                string.IsNullOrEmpty(entry.UpgradeCode) ? null : $"upgrade_code={entry.UpgradeCode}",
+                string.IsNullOrEmpty(entry.DisplayName) ? null : $"display_name={entry.DisplayName}"
+            }.Where(part => part != null)),
+            "msix" or "appx" => entry.IdentityName,
+            _ => entry.Path
+        };
+
+        var head = $"installs[{index}] {(string.IsNullOrEmpty(type) ? "untyped" : type)}";
+        return string.IsNullOrWhiteSpace(identity) ? head : $"{head} {identity}";
     }
 
     private StatusCheckResult CheckRegistryStatus(CatalogItem item)
