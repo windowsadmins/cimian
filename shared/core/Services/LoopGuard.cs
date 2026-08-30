@@ -282,17 +282,28 @@ public class LoopGuard
     /// pkgsinfo by hand; the warning now carries the path, product code or script output
     /// that never converges.
     /// </summary>
-    private string BuildSuppressionMessage(string packageName, string version, PackageLoopState pkgState, TimeSpan remaining)
+    private static string BuildSuppressionMessage(string packageName, string version, PackageLoopState pkgState, TimeSpan remaining)
     {
         var shown = string.IsNullOrEmpty(version) ? pkgState.LastVersion : version;
         var name = string.IsNullOrEmpty(shown) ? packageName : $"{packageName} v{shown}";
+        var rule = pkgState.SuppressionReason ?? "repeated installs";
+        return $"Looping install detected: {name} — {rule}; paused for {FormatDuration(remaining)}";
+    }
 
-        var sb = new StringBuilder();
-        sb.Append($"LOOP SUPPRESSED: {name} — suppressed for {FormatDuration(remaining)}.");
-        sb.Append($" Loop rule: {pkgState.SuppressionReason ?? "unknown"}.");
-        sb.Append($" Needs install because: {DescribeTrigger(pkgState)}.");
-        sb.Append($" Fix that criterion in the pkgsinfo — any catalog change clears this fleet-wide — or locally: managedsoftwareupdate --clear-loop {packageName}");
-        return sb.ToString();
+    /// <summary>
+    /// The second half of a loop report: what the package's own checks keep finding, which
+    /// is the part an admin can act on. Kept separate from the suppression message so the
+    /// two can be surfaced as two warnings on the same item rather than one paragraph.
+    /// Null when the package has no loop history at all.
+    /// </summary>
+    public string? GetSuppressionCause(string packageName)
+    {
+        if (string.IsNullOrEmpty(packageName))
+            return null;
+
+        return _state.Packages.TryGetValue(packageName.ToLowerInvariant(), out var pkgState)
+            ? $"Needs install because {DescribeTrigger(pkgState)}"
+            : null;
     }
 
     /// <summary>
@@ -302,23 +313,26 @@ public class LoopGuard
     private static string DescribeTrigger(PackageLoopState pkgState)
     {
         if (pkgState.Trigger == null)
-            return "not recorded — the loop history predates trigger capture; it is recorded on the next evaluation";
+            return "the cause was not recorded yet — it is captured on the next check";
 
         var described = pkgState.Trigger.Describe();
+        var code = pkgState.Trigger.ReasonCode;
         var total = pkgState.TriggerCounts.Values.Sum();
 
+        // Machine-facing tags go at the end, in brackets, so the sentence itself stays
+        // readable: what was checked, what it found, then how consistent it has been.
         if (pkgState.TriggerCounts.Count == 1 && total >= 2)
-            return $"{described} (same on all {total} attempts — the detection criteria never match what the installer lays down)";
+            return $"{described} [{code}, unchanged over all {total} attempts]";
 
         if (pkgState.TriggerCounts.Count > 1)
         {
             var codes = pkgState.TriggerCounts
                 .OrderByDescending(kv => kv.Value)
                 .Select(kv => $"{kv.Key.Split('|')[0]} x{kv.Value}");
-            return $"{described} (most recent of {total} attempts: {string.Join(", ", codes)})";
+            return $"{described} [most recent of {total} attempts: {string.Join(", ", codes)}]";
         }
 
-        return described;
+        return string.IsNullOrEmpty(code) ? described : $"{described} [{code}]";
     }
 
     /// <summary>
@@ -480,14 +494,10 @@ public class LoopGuard
         while (pkgState.RecentTimestamps.Count > 20)
             pkgState.RecentTimestamps.RemoveAt(0);
 
-        // Check if this attempt triggers suppression
-        var (suppress, reason) = EvaluateSuppressionThresholds(key, pkgState, version);
-        if (suppress)
-        {
-            // Suppression will take effect on the NEXT run, not this one
-            // (current run already committed to installing)
-            pkgState.SuppressionReason = reason;
-        }
+        // Check if this attempt triggers suppression. Suppress() records the window and
+        // the rule that opened it; the operator-facing message is composed at report time
+        // from that rule plus the observed cause, so nothing is stored pre-formatted.
+        EvaluateSuppressionThresholds(key, pkgState, version);
 
         SaveState();
     }
@@ -609,7 +619,7 @@ public class LoopGuard
             return (false, "");
         }
 
-        return (true, $"PENDING RESTART: {packageName} v{pkgState.LastVersion} installed successfully but is finalized by a reboot — deferring reinstall until the machine restarts");
+        return (true, $"Pending restart: {packageName} v{pkgState.LastVersion} installed successfully and is finalized by a reboot — reinstall deferred until the machine restarts");
     }
 
     /// <summary>
@@ -627,8 +637,7 @@ public class LoopGuard
     {
         var hours = reprobeHours > 0 ? reprobeHours : 24;
         hours = Math.Min(hours, _maxSuppressionDays * 24);
-        var cause = trigger == null ? "" : $" [{trigger.Describe()}]";
-        var reason = $"installcheck did not converge: {packageName} v{version} still reports action needed immediately after a successful install{cause} — fix the pkgsinfo installcheck/installs criteria (re-probes in {hours}h; clears immediately on pkgsinfo change)";
+        var reason = "installcheck still reported action needed immediately after a successful install";
 
         if (_disabled || string.IsNullOrEmpty(packageName))
             return reason;
@@ -736,7 +745,7 @@ public class LoopGuard
         if (recentCount >= 3)
         {
             return Suppress(pkgState, TimeSpan.FromHours(12),
-                $"Rapid-fire loop: {recentCount} installs within 2 hours");
+                $"{recentCount} installs within 2 hours");
         }
 
         // Threshold 2: Same version reinstalled 3+ times across 3+ sessions
@@ -752,17 +761,17 @@ public class LoopGuard
             {
                 // Top tier — capped at 7 days (finite), then retries automatically
                 window = TimeSpan.FromDays(_maxSuppressionDays);
-                reason = $"Persistent loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)";
+                reason = $"installed {versionCount} times across {pkgState.SessionCount} sessions";
             }
             else if (versionCount >= 5)
             {
                 window = TimeSpan.FromHours(24);
-                reason = $"Escalated loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions (24h suppression)";
+                reason = $"installed {versionCount} times across {pkgState.SessionCount} sessions";
             }
             else
             {
                 window = TimeSpan.FromHours(6);
-                reason = $"Install loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions (6h suppression)";
+                reason = $"installed {versionCount} times across {pkgState.SessionCount} sessions";
             }
 
             return Suppress(pkgState, window, reason);
@@ -782,13 +791,13 @@ public class LoopGuard
         {
             // Top tier — capped at 7 days (finite), then retries automatically
             return Suppress(pkgState, TimeSpan.FromDays(_maxSuppressionDays),
-                $"Persistent loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)");
+                $"{pkgState.AttemptCount} installs across {pkgState.SessionCount} sessions");
         }
 
         if (loopAttempts >= 5 && pkgState.SessionCount >= 4)
         {
             return Suppress(pkgState, TimeSpan.FromHours(24),
-                $"Escalated loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions (24h suppression)");
+                $"{pkgState.AttemptCount} installs across {pkgState.SessionCount} sessions");
         }
 
         return (false, "");
@@ -824,7 +833,11 @@ public class LoopGuard
         pkgState.SuppressedUntil = DateTime.UtcNow + window;
         pkgState.SuppressionReason = reason;
         SaveState();
-        return (true, reason);
+
+        // The run that trips a loop reports it the same way as every run after it —
+        // otherwise the first (and most useful) warning is the only one that arrives
+        // without the package name or how long it is paused for.
+        return (true, BuildSuppressionMessage(pkgState.PackageName, pkgState.LastVersion ?? "", pkgState, window));
     }
 
     #endregion
@@ -1139,7 +1152,7 @@ public class LoopGuard
             lines.Add($"  Versions attempted: {string.Join(", ", pkgState.VersionAttempts.Select(v => $"{v.Key} ({v.Value}x)"))}");
         }
 
-        lines.Add($"  Needs install because: {DescribeTrigger(pkgState)}");
+        lines.Add($"  Needs install because {DescribeTrigger(pkgState)}");
         if (pkgState.TriggerLastSeen.HasValue)
             lines.Add($"  Trigger last seen: {pkgState.TriggerLastSeen.Value.ToString("g")}");
 
