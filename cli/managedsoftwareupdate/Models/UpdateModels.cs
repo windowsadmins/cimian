@@ -515,6 +515,17 @@ public class CatalogItem
     [YamlMember(Alias = "installs")]
     public List<InstallCheckItem> Installs { get; set; } = new();
 
+    /// <summary>
+    /// Content fingerprint of this catalog item, stamped by makecatalogs. Changes
+    /// whenever ANY field of the pkgsinfo that reaches the catalog changes, and is what
+    /// LoopGuard compares to decide that a looping package has been fixed upstream and
+    /// its suppression should be cleared. Absent on catalogs written by an older
+    /// makecatalogs — UpdateEngine.ComputeCatalogFingerprint then falls back to hashing
+    /// the install-behavior fields locally.
+    /// </summary>
+    [YamlMember(Alias = "loop_fingerprint")]
+    public string? LoopFingerprint { get; set; }
+
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0
         || Check.Registry.Name != null

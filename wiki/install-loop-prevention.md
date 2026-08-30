@@ -42,24 +42,49 @@ LoopGuard runs inside `UpdateEngine.IdentifyActions()` and actively blocks packa
 | 3+ installs within 2 hours (rapid-fire) | 12 hours |
 | 3+ installs of same version across 3+ sessions | 6 hours |
 | 5+ installs of same version across 5+ sessions | 24 hours |
-| 8+ installs of same version (any session count) | Indefinite — requires manual clear or version change |
+| 8+ installs of same version (any session count) | 7 days (the `LoopMaxTime` cap) |
 | 5+ total installs across 4+ sessions (any version) | 24 hours |
-| 8+ total installs across 5+ sessions (any version) | Indefinite — requires manual clear or version change |
+| 8+ total installs across 5+ sessions (any version) | 7 days (the `LoopMaxTime` cap) |
 
 #### Auto-Clear on Catalog Change
 
-When ANY install-behavior field changes in the pkgsinfo for a suppressed package, LoopGuard **automatically clears** the suppression and resets history. This covers:
+When the pkgsinfo behind a package changes, LoopGuard **clears that package's loop
+history** — the root cause may have been fixed. This is the central lever: publish the
+fix and the whole fleet starts installing again on its next run. Nobody has to reach
+individual machines with `--clear-loop`.
 
-- Version changes (e.g., `572.61` → `572.83`)
-- `installcheck_script` fixes (the most common loop fix)
-- `installs` array changes (different file paths, hashes, or version checks)
-- `check` info changes (registry path, file check)
-- Installer hash or URL changes (different binary)
-- Script changes (`install_script`, `postinstall_script`, `preinstall_script`)
+**How it works**: `makecatalogs` stamps each catalog item with a `loop_fingerprint` —
+a hash of that item's entire catalog content. The client stores the fingerprint of the
+item it last acted on and compares on every run. Because the hash covers the whole item,
+*any* field that reaches the catalog is covered: version, scripts, installer
+hash/location/type, `product_code`/`upgrade_code`, installer `switches`/`arguments`/
+`success_codes`, `installs`, `check`, `blocking_applications`, `installer_timeout`,
+`requires`, and anything added later. (A hand-picked field list used to miss most of
+those, so fixes to them left the package suppressed.) Editing only the description also
+clears — that errs toward retrying an install, which is the right side to err on.
 
-**How it works**: UpdateEngine computes a SHA256 fingerprint of all install-behavior fields in the catalog item. LoopGuard stores this fingerprint alongside the suppression state. On each run, if the fingerprint differs from the stored one, suppression is cleared — the pkgsinfo was modified and the root cause may be fixed.
+Two details worth knowing:
 
-This means you don't need to SSH into machines to run `--clear-loop` after fixing a pkgsinfo. Just update the catalog (change the version, fix the script, update the hash, etc.) and the next scheduled run will pick it up.
+- The check runs **whether or not the package is currently suppressed**, and performs
+  exactly the same reset as `--clear-loop` (counters, per-version counts, timestamps and
+  the processed-session set), so a fix is never judged on pre-fix history.
+- Catalogs written by a `makecatalogs` older than this feature carry no
+  `loop_fingerprint`. The client then falls back to hashing the install-behavior fields
+  it can see locally — narrower, but the old behavior, so nothing regresses while the
+  published `makecatalogs` is being rolled forward.
+
+The running Cimian agent version is folded into the comparison too: a client update can
+itself be the fix, so the first run after an update clears standing suppressions once.
+
+#### Expiry: retry, then escalate
+
+A suppression window is finite. When it expires, the counters that produced it are
+retired with it — otherwise the very next evaluation re-tripped the same thresholds on
+the same history and re-suppressed without the package ever being retried. A persistent
+`suppression_cycles` count survives that reset and floors the next window (one served
+cycle → at least 24 hours, two or more → the 7-day cap), so a genuinely-broken package
+converges on a few attempts a week and then goes quiet, while a fixed one starts from the
+bottom tier again (a catalog change or an explicit clear resets the cycles to zero).
 
 #### Bootstrap Exemption
 
@@ -111,7 +136,8 @@ The state file uses a nested structure (`CimianState`) to allow future extensibi
 This file tracks per-package:
 - Total attempt count and session count
 - Per-version attempt counts
-- Catalog fingerprint (SHA256 of install-behavior fields)
+- Catalog fingerprint (`loop_fingerprint` of the catalog item, folded with the agent version)
+- Suppression cycles served (the escalation floor for the next window)
 - Recent timestamps (for rapid-fire detection)
 - Suppression status and expiry time
 - Which event sessions have been processed (deduplication)
@@ -134,8 +160,8 @@ It builds a per-package history of install attempts, versions, and timestamps. T
 
 In `UpdateEngine.IdentifyActions()`, after `StatusService.CheckStatus()` determines a package needs action:
 
-1. LoopGuard checks if the package is currently suppressed
-2. If catalog fingerprint changed since suppression: **auto-clear** and allow install
+1. If the catalog fingerprint changed: **clear the loop history** and allow the install
+2. Otherwise, LoopGuard checks whether the package is currently suppressed
 3. If suppressed: logs a WARN, records `loop_suppressed` reason code, skips the package
 4. If not suppressed: package proceeds to install
 5. After install completes: `RecordAttempt()` logs the result + fingerprint for future detection
@@ -206,7 +232,8 @@ sudo .\managedsoftwareupdate.exe --clear-loop all
 In most cases, **you don't need to manually clear**. If you update the pkgsinfo (change the version, fix the installcheck_script, update the hash, modify the installs array, etc.), LoopGuard auto-clears when it sees the new catalog fingerprint.
 
 Manual clear is only needed when:
-- You fixed the issue without changing any fingerprinted field
+- The fix is outside the catalog entirely (machine state, an external dependency), so no
+  pkgsinfo field changed
 - You want to force a retry before the backoff expires
 
 Clearing without fixing the root cause will just trigger the loop again, and LoopGuard will re-suppress with the same or higher backoff.

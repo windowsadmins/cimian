@@ -173,6 +173,44 @@ public class CatalogBuilder
     }
 
     /// <summary>
+    /// Stamps every item with <c>loop_fingerprint</c> — a hash of the item's own catalog
+    /// content, and the fleet-wide lever for releasing LoopGuard suppression.
+    /// <para>
+    /// The client stores the fingerprint of the item it last installed and clears the
+    /// package's loop history the moment it sees a different one, so publishing a fixed
+    /// pkgsinfo is what gets a suppressed package installing again everywhere — nobody
+    /// has to run <c>--clear-loop</c> on individual machines.
+    /// </para>
+    /// <para>
+    /// Hashing the whole serialized item rather than a hand-picked field list is
+    /// deliberate: the previous client-side fingerprint covered version, scripts,
+    /// installer hash/location/type, installs[] and check, and therefore did NOT notice
+    /// fixes to product_code/upgrade_code, installer switches/arguments/success_codes,
+    /// blocking_applications, installer_timeout or requires — the exact fields our real
+    /// loop fixes touch. Anything makecatalogs carries into the catalog is covered here,
+    /// and stays covered as fields are added. The cost is that a description-only edit
+    /// also clears suppression; that errs toward retrying an install, which is the side
+    /// to err on.
+    /// </para>
+    /// <para>
+    /// Line endings are normalized first so the hash does not depend on whether the
+    /// pkgsinfo was last written on Windows or Linux.
+    /// </para>
+    /// </summary>
+    public void StampLoopFingerprints(List<PkgsInfo> items)
+    {
+        foreach (var pkg in items)
+        {
+            NormalizeLineEndings(pkg);
+
+            // Null it before hashing: the field is part of the serialized item, so
+            // including a previous value would make the hash depend on itself.
+            pkg.LoopFingerprint = null;
+            pkg.LoopFingerprint = LoopGuard.ComputeFingerprint(YamlUtils.SerializePkgInfo(pkg));
+        }
+    }
+
+    /// <summary>
     /// Builds catalog dictionaries from package info items
     /// Always includes "All" catalog containing all items
     /// </summary>
@@ -343,6 +381,11 @@ public class CatalogBuilder
             {
                 warnings = VerifyPayloads(repoPath, items, hashCheck);
             }
+
+            // Stamp per-item loop fingerprints before the items are fanned out into
+            // catalogs (the same instance appears in "All" and in each named catalog,
+            // so this has to happen once, up front).
+            StampLoopFingerprints(items);
 
             // Build catalogs
             var catalogs = BuildCatalogs(items, silent);
