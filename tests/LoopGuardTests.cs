@@ -202,7 +202,7 @@ public class LoopGuardTests : IDisposable
         guard.RecordAttempt("MixedPkg", "1.0.0", success: true);
         var (suppress2, reason) = guard.ShouldSuppress("MixedPkg", "1.0.0");
         suppress2.Should().BeTrue("loop guard must still catch real install loops");
-        reason.Should().Contain("LOOP SUPPRESSED");
+        reason.Should().Contain("Looping install detected");
     }
 
     [Fact]
@@ -236,8 +236,10 @@ public class LoopGuardTests : IDisposable
         // Should now be suppressed
         var (suppress, reason) = guard.ShouldSuppress("RapidPkg", "2.0.0");
         suppress.Should().BeTrue();
-        reason.Should().Contain("LOOP SUPPRESSED");
-        reason.Should().Contain("--clear-loop");
+        reason.Should().Contain("Looping install detected");
+        reason.Should().Contain("3 installs within 2 hours");
+        // The fix advice is not repeated on every warning any more.
+        reason.Should().NotContain("--clear-loop");
     }
 
     #endregion
@@ -256,7 +258,8 @@ public class LoopGuardTests : IDisposable
 
         var (suppress, reason) = guard.ShouldSuppress("EscPkg", "3.0.0");
         suppress.Should().BeTrue();
-        reason.Should().Contain("6h");
+        reason.Should().Contain("paused for 6h");
+        guard.GetPackageState("EscPkg")!.SuppressedUntil.Should().BeCloseTo(DateTime.UtcNow.AddHours(6), TimeSpan.FromMinutes(2));
     }
 
     [Fact]
@@ -269,7 +272,8 @@ public class LoopGuardTests : IDisposable
 
         var (suppress, reason) = guard.ShouldSuppress("EscPkg5", "3.0.0");
         suppress.Should().BeTrue();
-        reason.Should().Contain("24h");
+        reason.Should().Contain("paused for 1d");
+        guard.GetPackageState("EscPkg5")!.SuppressedUntil.Should().BeCloseTo(DateTime.UtcNow.AddHours(24), TimeSpan.FromMinutes(2));
     }
 
     [Fact]
@@ -284,8 +288,9 @@ public class LoopGuardTests : IDisposable
         // stranded by a transient failure retries automatically instead of being blacklisted.
         var (suppress, reason) = guard.ShouldSuppress("EscPkg8", "3.0.0");
         suppress.Should().BeTrue();
-        reason.Should().Contain("7-day");
+        reason.Should().Contain("paused for 7d");
         reason.Should().NotContain("indefinite");
+        guard.GetPackageState("EscPkg8")!.SuppressedUntil.Should().BeCloseTo(DateTime.UtcNow.AddDays(7), TimeSpan.FromMinutes(2));
     }
 
     #endregion
@@ -707,7 +712,7 @@ public class LoopGuardTests : IDisposable
         state.SuppressedUntil.Should().NotBeNull();
         // Rapid-fire alone is 12h; the served cycle floors it at 24h.
         state.SuppressedUntil!.Value.Should().BeAfter(DateTime.UtcNow.AddHours(23));
-        state.SuppressionReason.Should().Contain("escalated");
+        state.SuppressionReason.Should().Contain("installs");
 
         state.SuppressedUntil = DateTime.UtcNow.AddMinutes(-1);
         guard.ShouldSuppress("EscalatePkg", "1.0.0");
@@ -903,11 +908,11 @@ public class LoopGuardTests : IDisposable
     {
         var guard = CreateGuard();
         var reason = guard.MarkNonConverged("BadCheck", "1.0.0", "fp1", reprobeHours: 24);
-        reason.Should().Contain("did not converge");
+        reason.Should().Contain("installcheck still reported action needed");
 
         var (suppress, msg) = guard.ShouldSuppress("BadCheck", "1.0.0", "fp1");
         suppress.Should().BeTrue();
-        msg.Should().Contain("did not converge");
+        msg.Should().Contain("installcheck still reported action needed");
     }
 
     [Fact]
@@ -947,7 +952,7 @@ public class LoopGuardTests : IDisposable
 
         var (defer, reason) = guard.ShouldDeferForRestart("FirmwarePkg", "fp1");
         defer.Should().BeTrue();
-        reason.Should().Contain("PENDING RESTART");
+        reason.Should().Contain("Pending restart");
     }
 
     [Fact]
@@ -1031,14 +1036,19 @@ public class LoopGuardTests : IDisposable
         guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
 
         var (suppress, reason) = guard.ShouldSuppress("LoopPkg", "1.0.0", null, trigger);
+        var cause = guard.GetSuppressionCause("LoopPkg");
 
         suppress.Should().BeTrue();
-        reason.Should().Contain("Needs install because");
-        reason.Should().Contain(StatusReasonCode.FileMissing);
-        reason.Should().Contain("installs[0] file");
-        reason.Should().Contain("thing.exe");
-        reason.Should().Contain("same on all 3 attempts");
-        reason.Should().Contain("--clear-loop LoopPkg");
+
+        // Two messages: the loop, then the cause. Neither repeats the other.
+        reason.Should().Contain("Looping install detected: LoopPkg v1.0.0");
+        reason.Should().NotContain("Needs install because");
+
+        cause.Should().StartWith("Needs install because");
+        cause.Should().Contain(StatusReasonCode.FileMissing);
+        cause.Should().Contain("installs[0] file");
+        cause.Should().Contain("thing.exe");
+        cause.Should().Contain("unchanged over all 3 attempts");
     }
 
     [Fact]
@@ -1052,8 +1062,11 @@ public class LoopGuardTests : IDisposable
         var (_, reason) = guard.ShouldSuppress("LoopPkg", "2.5.0", null, trigger);
 
         reason.Should().Contain("LoopPkg v2.5.0");
-        reason.Should().Contain("Loop rule:");
-        reason.Should().MatchRegex("Rapid-fire|Install loop|Escalated|Persistent");
+        reason.Should().Contain("3 installs within 2 hours");
+        reason.Should().Contain("paused for");
+        // The rule speaks for itself — no "Loop rule:" label, no advice tail.
+        reason.Should().NotContain("Loop rule");
+        reason.Should().NotContain("managedsoftwareupdate");
     }
 
     [Fact]
@@ -1068,12 +1081,13 @@ public class LoopGuardTests : IDisposable
         guard.RecordAttempt("MixedPkg", "1.0.0", true, trigger: outdated);
         guard.RecordAttempt("MixedPkg", "1.0.0", true, trigger: outdated);
 
-        var (suppress, reason) = guard.ShouldSuppress("MixedPkg", "1.0.0", null, outdated);
+        var (suppress, _) = guard.ShouldSuppress("MixedPkg", "1.0.0", null, outdated);
+        var cause = guard.GetSuppressionCause("MixedPkg")!;
 
         suppress.Should().BeTrue();
-        reason.Should().Contain("most recent of 3 attempts");
-        reason.Should().Contain($"{StatusReasonCode.VersionOutdated} x2");
-        reason.Should().Contain($"{StatusReasonCode.FileMissing} x1");
+        cause.Should().Contain("most recent of 3 attempts");
+        cause.Should().Contain($"{StatusReasonCode.VersionOutdated} x2");
+        cause.Should().Contain($"{StatusReasonCode.FileMissing} x1");
     }
 
     [Fact]
@@ -1085,10 +1099,10 @@ public class LoopGuardTests : IDisposable
         for (var i = 0; i < 3; i++)
             guard.RecordAttempt("OldPkg", "1.0.0", true);
 
-        var (suppress, reason) = guard.ShouldSuppress("OldPkg", "1.0.0");
+        var (suppress, _) = guard.ShouldSuppress("OldPkg", "1.0.0");
 
         suppress.Should().BeTrue();
-        reason.Should().Contain("not recorded");
+        guard.GetSuppressionCause("OldPkg").Should().Contain("not recorded yet");
     }
 
     [Fact]
@@ -1101,10 +1115,10 @@ public class LoopGuardTests : IDisposable
 
         var nowOutdated = InstallTrigger.From(StatusReasonCode.VersionOutdated, DetectionMethod.File,
             "installs[0] file C:/Program Files/Thing/thing.exe: file version 1.0 is older than the catalog's 2.0")!;
-        var (suppress, reason) = guard.ShouldSuppress("LoopPkg", "1.0.0", null, nowOutdated);
+        var (suppress, _) = guard.ShouldSuppress("LoopPkg", "1.0.0", null, nowOutdated);
 
         suppress.Should().BeTrue();
-        reason.Should().Contain(StatusReasonCode.VersionOutdated);
+        guard.GetSuppressionCause("LoopPkg").Should().Contain(StatusReasonCode.VersionOutdated);
 
         // The refresh must not inflate the attempt evidence — it was never installed.
         var state = guard.GetPackageState("LoopPkg")!;
@@ -1136,12 +1150,12 @@ public class LoopGuardTests : IDisposable
 
         var reason = guard.MarkNonConverged("StuckPkg", "1.0.0", "fp", 24, trigger);
 
-        reason.Should().Contain("installcheck_script exited 0");
-        reason.Should().Contain("legacy key still present");
+        reason.Should().Contain("installcheck still reported action needed");
 
         var (suppress, message) = guard.ShouldSuppress("StuckPkg", "1.0.0", "fp");
         suppress.Should().BeTrue();
-        message.Should().Contain("legacy key still present");
+        message.Should().Contain("installcheck still reported action needed");
+        guard.GetSuppressionCause("StuckPkg").Should().Contain("legacy key still present");
     }
 
     [Fact]
@@ -1163,10 +1177,10 @@ public class LoopGuardTests : IDisposable
             guard.RecordAttempt("LoopPkg", "1.0.0", true, trigger: trigger);
 
         var reloaded = CreateGuard();
-        var (suppress, reason) = reloaded.ShouldSuppress("LoopPkg", "1.0.0");
+        var (suppress, _) = reloaded.ShouldSuppress("LoopPkg", "1.0.0");
 
         suppress.Should().BeTrue();
-        reason.Should().Contain("thing.exe");
+        reloaded.GetSuppressionCause("LoopPkg").Should().Contain("thing.exe");
     }
 
     [Fact]

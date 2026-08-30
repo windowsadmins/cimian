@@ -444,7 +444,7 @@ public class UpdateEngine : IDisposable
             // and in a sibling reports/loop_suppressed.json for dashboards.
             var loopSuppressedByName = loopSuppressed.ToDictionary(
                 x => x.Item.Name.ToLowerInvariant(),
-                x => (x.Reason, x.InstalledVersion, x.WasUpdate, x.PendingRestart));
+                x => (x.Reason, x.Cause, x.InstalledVersion, x.WasUpdate, x.PendingRestart));
 
             // AutoRemove: queue uninstall for packages installed by Cimian but no longer in any manifest
             if (_config.AutoRemove)
@@ -975,7 +975,7 @@ public class UpdateEngine : IDisposable
     }
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
-             List<(CatalogItem Item, string Reason, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
+             List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
                         ItemFilterService? itemFilterService = null)
     {
@@ -986,7 +986,7 @@ public class UpdateEngine : IDisposable
         // can stamp them as Warning instead of letting them fall through to "Installed".
         // PendingRestart entries are the benign flavor: a prior install just needs a
         // reboot to finalize — surfaced as Pending, not Warning.
-        var loopSuppressed = new List<(CatalogItem, string, string?, bool, bool)>();
+        var loopSuppressed = new List<(CatalogItem, string, string?, string?, bool, bool)>();
 
         var sysArch = StatusService.GetSystemArchitecture();
 
@@ -1135,7 +1135,7 @@ public class UpdateEngine : IDisposable
                                     Cimian.Core.Models.DetectionMethod.None,
                                     status.InstalledVersion,
                                     false);
-                                loopSuppressed.Add((catalogItem, deferReason, status.InstalledVersion, status.IsUpdate, true));
+                                loopSuppressed.Add((catalogItem, deferReason, null, status.InstalledVersion, status.IsUpdate, true));
                                 break; // Skip this item
                             }
 
@@ -1143,8 +1143,16 @@ public class UpdateEngine : IDisposable
                                 catalogItem.Name, catalogItem.Version, fingerprint, TriggerFrom(status));
                             if (suppress)
                             {
+                                // Two messages, not one paragraph: what the loop is, and
+                                // what the package's checks keep finding.
+                                var loopCause = _loopGuard.GetSuppressionCause(catalogItem.Name);
                                 ConsoleLogger.Warn(loopReason);
                                 _sessionLogger?.Log("WARN", loopReason);
+                                if (!string.IsNullOrEmpty(loopCause))
+                                {
+                                    ConsoleLogger.Warn(loopCause);
+                                    _sessionLogger?.Log("WARN", loopCause);
+                                }
                                 _sessionLogger?.LogStatusCheck(
                                     catalogItem.Name,
                                     catalogItem.Version,
@@ -1154,7 +1162,7 @@ public class UpdateEngine : IDisposable
                                     Cimian.Core.Models.DetectionMethod.None,
                                     status.InstalledVersion,
                                     false);
-                                loopSuppressed.Add((catalogItem, loopReason, status.InstalledVersion, status.IsUpdate, false));
+                                loopSuppressed.Add((catalogItem, loopReason, loopCause, status.InstalledVersion, status.IsUpdate, false));
                                 break; // Skip this item
                             }
                         }
@@ -1985,7 +1993,12 @@ public class UpdateEngine : IDisposable
             (convergenceWarning, convergencePendingRestart, convergenceTrigger) = VerifyConvergence(item);
         }
 
-        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow, warningMessage ?? convergenceWarning));
+        var convergenceCause = convergenceWarning != null && convergenceTrigger != null
+            ? $"Needs install because {convergenceTrigger.Describe()}"
+            : null;
+        outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow,
+            warningMessage ?? convergenceWarning,
+            warningMessage != null ? null : convergenceCause));
 
         if (success)
         {
@@ -2041,6 +2054,11 @@ public class UpdateEngine : IDisposable
             {
                 ConsoleLogger.Warn(convergenceWarning);
                 _sessionLogger?.Log("WARN", convergenceWarning);
+                if (convergenceCause != null)
+                {
+                    ConsoleLogger.Warn(convergenceCause);
+                    _sessionLogger?.Log("WARN", convergenceCause);
+                }
                 _loopGuard?.MarkNonConverged(item.Name, item.Version, ComputeCatalogFingerprint(item), _config.LoopReprobeHours, convergenceTrigger);
             }
 
@@ -2887,7 +2905,7 @@ public class UpdateEngine : IDisposable
         List<CatalogItem> toUninstall,
         Dictionary<string, CatalogItem> catalogMap,
         IReadOnlyDictionary<string, ItemOutcome> outcomesByName,
-        IReadOnlyDictionary<string, (string Reason, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> loopSuppressedByName)
+        IReadOnlyDictionary<string, (string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> loopSuppressedByName)
     {
         if (_sessionLogger == null) return;
 
@@ -2942,8 +2960,9 @@ public class UpdateEngine : IDisposable
                     ItemType = itemType,
                     DisplayName = displayName,
                     InstalledVersion = suppression.InstalledVersion,
-                    WarningMessage = suppression.PendingRestart ? null : suppression.Reason,
-                    StatusReason = suppression.Reason,
+                    WarningMessage = suppression.PendingRestart ? null : JoinWarnings(suppression.Reason, suppression.Cause),
+                    WarningMessages = suppression.PendingRestart ? null : WarningList(suppression.Reason, suppression.Cause),
+                    StatusReason = JoinWarnings(suppression.Reason, suppression.Cause),
                     StatusReasonCode = suppression.PendingRestart
                         ? Cimian.Core.Models.StatusReasonCode.PendingReboot
                         : Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
@@ -2982,7 +3001,8 @@ public class UpdateEngine : IDisposable
                 ItemType = itemType,
                 DisplayName = displayName,
                 ErrorMessage = hadOutcome && !outcome!.Success ? outcome.ErrorMessage : null,
-                WarningMessage = hasWarning ? outcome!.WarningMessage : null,
+                WarningMessage = hasWarning ? JoinWarnings(outcome!.WarningMessage!, outcome.WarningDetail) : null,
+                WarningMessages = hasWarning ? WarningList(outcome!.WarningMessage!, outcome.WarningDetail) : null,
                 ActionPerformed = hadOutcome ? outcome!.Action : null,
                 OutcomeTimestamp = hadOutcome ? outcome!.Timestamp : null
             });
@@ -3360,6 +3380,23 @@ public class UpdateEngine : IDisposable
     /// </summary>
     private readonly Dictionary<string, Cimian.Core.Models.InstallTrigger> _installTriggers = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// A warning that has a cause is two messages, not one paragraph. Consumers that read
+    /// a single string get them joined; consumers that can render a list get the parts.
+    /// </summary>
+    private static List<string>? WarningList(string message, string? detail)
+    {
+        if (string.IsNullOrEmpty(message))
+            return null;
+        var list = new List<string> { message };
+        if (!string.IsNullOrEmpty(detail))
+            list.Add(detail);
+        return list;
+    }
+
+    private static string JoinWarnings(string message, string? detail) =>
+        string.IsNullOrEmpty(detail) ? message : $"{message}{Environment.NewLine}{detail}";
+
     private static Cimian.Core.Models.InstallTrigger? TriggerFrom(StatusCheckResult status) =>
         Cimian.Core.Models.InstallTrigger.From(status.ReasonCode, status.DetectionMethod, status.Reason, status.InstalledVersion);
 
@@ -3401,7 +3438,8 @@ public class UpdateEngine : IDisposable
             if (RequiresRestart(item) || RequiresLogout(item))
                 return (null, true, trigger);
 
-            var warning = $"installcheck did not converge: {item.Name} v{item.Version} still reports action needed ({status.Reason}) immediately after a successful install — fix the pkgsinfo installcheck/installs criteria (re-probes in {(_config.LoopReprobeHours > 0 ? _config.LoopReprobeHours : 24)}h; clears immediately on pkgsinfo change)";
+            var hours = _config.LoopReprobeHours > 0 ? _config.LoopReprobeHours : 24;
+            var warning = $"Looping install detected: {item.Name} v{item.Version} — installcheck still reported action needed immediately after a successful install; paused for {hours}h";
             return (warning, false, trigger);
         }
         catch
