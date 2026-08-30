@@ -1083,6 +1083,12 @@ public class UpdateEngine : IDisposable
                     
                     if (status.NeedsAction)
                     {
+                        // Remember WHY this item needs to run. LoopGuard replays it in the
+                        // suppression warning, so a loop reports the failing criterion
+                        // (path, product code, script output) instead of only the counting
+                        // rule that tripped.
+                        RememberInstallTrigger(catalogItem.Name, status);
+
                         // --item targets specific packages by name; bypass LoopGuard for those
                         // (run-scoped only — persistent suppression state is left intact so
                         // future runs without --item still honor it).
@@ -1133,7 +1139,8 @@ public class UpdateEngine : IDisposable
                                 break; // Skip this item
                             }
 
-                            var (suppress, loopReason) = _loopGuard.ShouldSuppress(catalogItem.Name, catalogItem.Version, fingerprint);
+                            var (suppress, loopReason) = _loopGuard.ShouldSuppress(
+                                catalogItem.Name, catalogItem.Version, fingerprint, TriggerFrom(status));
                             if (suppress)
                             {
                                 ConsoleLogger.Warn(loopReason);
@@ -1972,9 +1979,10 @@ public class UpdateEngine : IDisposable
         // restart_action finalizes at reboot are the legitimate exception.
         string? convergenceWarning = null;
         var convergencePendingRestart = false;
+        Cimian.Core.Models.InstallTrigger? convergenceTrigger = null;
         if (success && warningMessage == null)
         {
-            (convergenceWarning, convergencePendingRestart) = VerifyConvergence(item);
+            (convergenceWarning, convergencePendingRestart, convergenceTrigger) = VerifyConvergence(item);
         }
 
         outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", success, success ? null : output, DateTime.UtcNow, warningMessage ?? convergenceWarning));
@@ -2020,7 +2028,8 @@ public class UpdateEngine : IDisposable
                 item.Version,
                 success: true,
                 ComputeCatalogFingerprint(item),
-                selfReportedWarning: warningMessage != null);
+                selfReportedWarning: warningMessage != null,
+                trigger: TakeInstallTrigger(item.Name));
 
             // Act on the convergence verdict from above.
             if (convergencePendingRestart)
@@ -2032,7 +2041,7 @@ public class UpdateEngine : IDisposable
             {
                 ConsoleLogger.Warn(convergenceWarning);
                 _sessionLogger?.Log("WARN", convergenceWarning);
-                _loopGuard?.MarkNonConverged(item.Name, item.Version, ComputeCatalogFingerprint(item), _config.LoopReprobeHours);
+                _loopGuard?.MarkNonConverged(item.Name, item.Version, ComputeCatalogFingerprint(item), _config.LoopReprobeHours, convergenceTrigger);
             }
 
             // Add to installed items
@@ -2059,7 +2068,8 @@ public class UpdateEngine : IDisposable
                 output);
 
             // Record failed install for loop guard tracking
-            _loopGuard?.RecordAttempt(item.Name, item.Version, success: false, ComputeCatalogFingerprint(item));
+            _loopGuard?.RecordAttempt(item.Name, item.Version, success: false, ComputeCatalogFingerprint(item),
+                trigger: TakeInstallTrigger(item.Name));
             return false;
         }
 
@@ -3341,7 +3351,34 @@ public class UpdateEngine : IDisposable
     /// Verification must never fail a completed install — any error here is
     /// swallowed and treated as converged.
     /// </summary>
-    private (string? Warning, bool PendingRestart) VerifyConvergence(CatalogItem item)
+    /// <summary>
+    /// The check that decided an item needs to run, keyed by item name, from the moment
+    /// the decision is made until the install records it. LoopGuard needs the cause at
+    /// RecordAttempt time, but only IdentifyActions holds the status result that produced
+    /// it — without this hand-off the loop warning can report that a package installed
+    /// three times and still not say what kept asking for it.
+    /// </summary>
+    private readonly Dictionary<string, Cimian.Core.Models.InstallTrigger> _installTriggers = new(StringComparer.OrdinalIgnoreCase);
+
+    private static Cimian.Core.Models.InstallTrigger? TriggerFrom(StatusCheckResult status) =>
+        Cimian.Core.Models.InstallTrigger.From(status.ReasonCode, status.DetectionMethod, status.Reason, status.InstalledVersion);
+
+    private void RememberInstallTrigger(string name, StatusCheckResult status)
+    {
+        var trigger = TriggerFrom(status);
+        if (trigger != null)
+            _installTriggers[name] = trigger;
+    }
+
+    /// <summary>Consumes the remembered trigger for an item, so a later run cannot inherit a stale cause.</summary>
+    private Cimian.Core.Models.InstallTrigger? TakeInstallTrigger(string name)
+    {
+        if (!_installTriggers.Remove(name, out var trigger))
+            return null;
+        return trigger;
+    }
+
+    private (string? Warning, bool PendingRestart, Cimian.Core.Models.InstallTrigger? Trigger) VerifyConvergence(CatalogItem item)
     {
         // OnDemand items never converge by design: CheckStatus reports them as
         // needing action on every call, before any installcheck runs, because
@@ -3351,23 +3388,25 @@ public class UpdateEngine : IDisposable
         // helper lights up as a broken pkgsinfo the moment it runs. There is
         // nothing to verify for them.
         if (item.OnDemand)
-            return (null, false);
+            return (null, false, null);
 
         try
         {
             var status = _statusService.CheckStatus(item, "install", _config.CachePath);
             if (!status.NeedsAction)
-                return (null, false);
+                return (null, false, null);
+
+            var trigger = TriggerFrom(status);
 
             if (RequiresRestart(item) || RequiresLogout(item))
-                return (null, true);
+                return (null, true, trigger);
 
             var warning = $"installcheck did not converge: {item.Name} v{item.Version} still reports action needed ({status.Reason}) immediately after a successful install — fix the pkgsinfo installcheck/installs criteria (re-probes in {(_config.LoopReprobeHours > 0 ? _config.LoopReprobeHours : 24)}h; clears immediately on pkgsinfo change)";
-            return (warning, false);
+            return (warning, false, trigger);
         }
         catch
         {
-            return (null, false);
+            return (null, false, null);
         }
     }
 

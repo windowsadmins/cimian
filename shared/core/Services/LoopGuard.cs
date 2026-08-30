@@ -151,8 +151,13 @@ public class LoopGuard
     /// If provided and different from the stored fingerprint, suppression is auto-cleared
     /// because the pkgsinfo was changed (version, installcheck_script, hash, installs, etc.).
     /// Falls back to version-only comparison if no fingerprint is provided.
+    ///
+    /// trigger: the status check that decided the package needs to run right now.
+    /// Recorded against the package and replayed in the suppression message, so the
+    /// warning names the criterion that never converges instead of only the counting
+    /// rule that tripped.
     /// </summary>
-    public (bool Suppress, string Reason) ShouldSuppress(string packageName, string version, string? catalogFingerprint = null)
+    public (bool Suppress, string Reason) ShouldSuppress(string packageName, string version, string? catalogFingerprint = null, InstallTrigger? trigger = null)
     {
         // Never suppress during bootstrap — first-run provisioning must complete
         if (_isBootstrap)
@@ -170,6 +175,12 @@ public class LoopGuard
         // Check explicit suppression state first (from previous runs)
         if (_state.Packages.TryGetValue(key, out var pkgState))
         {
+            // Refresh the observed cause before anything else. A suppressed package is
+            // never installed, so its trigger would otherwise freeze at whatever was
+            // true when the window opened — and an operator reading the warning a day
+            // later needs to know what the item still wants now.
+            NoteTrigger(pkgState, trigger, countIt: false);
+
             // Auto-clear: if the catalog fingerprint changed, the pkgsinfo was updated
             // and the root cause may be fixed. This is deliberately evaluated BEFORE the
             // suppression check and regardless of whether suppression is currently
@@ -209,7 +220,7 @@ public class LoopGuard
                 if (DateTime.UtcNow < pkgState.SuppressedUntil.Value)
                 {
                     var remaining = pkgState.SuppressedUntil.Value - DateTime.UtcNow;
-                    return (true, $"LOOP SUPPRESSED: {packageName} — suppressed for {FormatDuration(remaining)} ({pkgState.SuppressionReason}). Clear with: managedsoftwareupdate --clear-loop {packageName}");
+                    return (true, BuildSuppressionMessage(packageName, version, pkgState, remaining));
                 }
 
                 // Suppression expired. Retire the history that produced it as well as
@@ -231,6 +242,83 @@ public class LoopGuard
 
         // Analyze current history for new loop conditions
         return AnalyzeForLoop(key, packageName, version);
+    }
+
+    /// <summary>
+    /// Records the check that decided this package needs to run. Called on every
+    /// evaluation (so the reported cause stays current while suppressed) and on every
+    /// real attempt with <paramref name="countIt"/> set, which is what builds the
+    /// "same reason every time" evidence the warning reports.
+    /// </summary>
+    private static void NoteTrigger(PackageLoopState pkgState, InstallTrigger? trigger, bool countIt)
+    {
+        if (trigger == null)
+            return;
+
+        pkgState.Trigger = trigger;
+        pkgState.TriggerLastSeen = DateTime.UtcNow;
+
+        if (!countIt)
+            return;
+
+        var key = trigger.Key;
+        pkgState.TriggerCounts.TryGetValue(key, out var count);
+        if (count == 0 && pkgState.TriggerCounts.Count >= MaxTrackedTriggers)
+            return;
+        pkgState.TriggerCounts[key] = count + 1;
+    }
+
+    /// <summary>
+    /// Distinct triggers retained per package. Past a handful the item is not "stuck on
+    /// one criterion", which is the distinction the summary needs to draw.
+    /// </summary>
+    private const int MaxTrackedTriggers = 5;
+
+    /// <summary>
+    /// The operator-facing suppression warning. Reports three things in order: how long
+    /// the package is gagged, the counting rule that gagged it, and — the part that was
+    /// missing — the detection result that keeps deciding the package must run. Without
+    /// the last one every diagnosis started by finding the machine and re-reading the
+    /// pkgsinfo by hand; the warning now carries the path, product code or script output
+    /// that never converges.
+    /// </summary>
+    private string BuildSuppressionMessage(string packageName, string version, PackageLoopState pkgState, TimeSpan remaining)
+    {
+        var shown = string.IsNullOrEmpty(version) ? pkgState.LastVersion : version;
+        var name = string.IsNullOrEmpty(shown) ? packageName : $"{packageName} v{shown}";
+
+        var sb = new StringBuilder();
+        sb.Append($"LOOP SUPPRESSED: {name} — suppressed for {FormatDuration(remaining)}.");
+        sb.Append($" Loop rule: {pkgState.SuppressionReason ?? "unknown"}.");
+        sb.Append($" Needs install because: {DescribeTrigger(pkgState)}.");
+        sb.Append($" Fix that criterion in the pkgsinfo — any catalog change clears this fleet-wide — or locally: managedsoftwareupdate --clear-loop {packageName}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// One-line account of why the package keeps asking to install, with how consistent
+    /// that answer has been across attempts.
+    /// </summary>
+    private static string DescribeTrigger(PackageLoopState pkgState)
+    {
+        if (pkgState.Trigger == null)
+            return "not recorded — the loop history predates trigger capture; it is recorded on the next evaluation";
+
+        var described = pkgState.Trigger.Describe();
+        var total = pkgState.TriggerCounts.Values.Sum();
+
+        if (pkgState.TriggerCounts.Count == 1 && total >= 2)
+            return $"{described} (same on all {total} attempts — the detection criteria never match what the installer lays down)";
+
+        if (pkgState.TriggerCounts.Count > 1)
+        {
+            var codes = pkgState.TriggerCounts
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => $"{kv.Key.Split('|')[0]} x{kv.Value}");
+            return $"{described} (most recent of {total} attempts: {string.Join(", ", codes)})";
+        }
+
+        return described;
     }
 
     /// <summary>
@@ -290,6 +378,9 @@ public class LoopGuard
         pkgState.VersionAttempts.Clear();
         pkgState.RecentTimestamps.Clear();
         pkgState.ProcessedSessions.Clear();
+        pkgState.TriggerCounts.Clear();
+        pkgState.Trigger = null;
+        pkgState.TriggerLastSeen = null;
         pkgState.PendingRestartSince = null;
         pkgState.ClearedAt = DateTime.UtcNow;
         if (!string.IsNullOrEmpty(version))
@@ -333,7 +424,7 @@ public class LoopGuard
     /// marker) still accumulate and trip suppression as before.
     /// </para>
     /// </summary>
-    public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null, bool selfReportedWarning = false)
+    public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null, bool selfReportedWarning = false, InstallTrigger? trigger = null)
     {
         if (string.IsNullOrEmpty(packageName))
             return;
@@ -364,6 +455,7 @@ public class LoopGuard
 
         pkgState.AttemptCount++;
         pkgState.LastAttempt = DateTime.UtcNow;
+        NoteTrigger(pkgState, trigger, countIt: true);
         if (!string.IsNullOrEmpty(_currentSessionId) && !pkgState.ProcessedSessions.Contains(_currentSessionId))
         {
             pkgState.ProcessedSessions.Add(_currentSessionId);
@@ -531,11 +623,12 @@ public class LoopGuard
     /// any suppression, auto-clears the moment the pkgsinfo fingerprint changes.
     /// Returns the reason recorded, for surfacing on the session's outcome.
     /// </summary>
-    public string MarkNonConverged(string packageName, string version, string? catalogFingerprint, int reprobeHours = 24)
+    public string MarkNonConverged(string packageName, string version, string? catalogFingerprint, int reprobeHours = 24, InstallTrigger? trigger = null)
     {
         var hours = reprobeHours > 0 ? reprobeHours : 24;
         hours = Math.Min(hours, _maxSuppressionDays * 24);
-        var reason = $"installcheck did not converge: {packageName} v{version} still reports action needed immediately after a successful install — fix the pkgsinfo installcheck/installs criteria (re-probes in {hours}h; clears immediately on pkgsinfo change)";
+        var cause = trigger == null ? "" : $" [{trigger.Describe()}]";
+        var reason = $"installcheck did not converge: {packageName} v{version} still reports action needed immediately after a successful install{cause} — fix the pkgsinfo installcheck/installs criteria (re-probes in {hours}h; clears immediately on pkgsinfo change)";
 
         if (_disabled || string.IsNullOrEmpty(packageName))
             return reason;
@@ -550,6 +643,7 @@ public class LoopGuard
         pkgState.SuppressedUntil = DateTime.UtcNow.AddHours(hours);
         pkgState.SuppressionReason = reason;
         pkgState.LastVersion = version;
+        NoteTrigger(pkgState, trigger, countIt: false);
         if (!string.IsNullOrEmpty(catalogFingerprint))
             pkgState.CatalogFingerprint = catalogFingerprint;
         SaveState();
@@ -601,6 +695,8 @@ public class LoopGuard
                 Version         = pkgState.LastVersion ?? "",
                 Reason          = pkgState.SuppressionReason ?? "Unknown",
                 SuppressedUntil = until == DateTime.MaxValue ? null : until,
+                Trigger         = pkgState.Trigger,
+                TriggerSummary  = DescribeTrigger(pkgState),
                 ClearCommand    = $"managedsoftwareupdate --clear-loop {pkgState.PackageName}"
             });
         }
@@ -1043,6 +1139,10 @@ public class LoopGuard
             lines.Add($"  Versions attempted: {string.Join(", ", pkgState.VersionAttempts.Select(v => $"{v.Key} ({v.Value}x)"))}");
         }
 
+        lines.Add($"  Needs install because: {DescribeTrigger(pkgState)}");
+        if (pkgState.TriggerLastSeen.HasValue)
+            lines.Add($"  Trigger last seen: {pkgState.TriggerLastSeen.Value.ToString("g")}");
+
         var (hasCache, cachePath) = CheckCacheForPackage(packageName);
         if (hasCache)
         {
@@ -1199,6 +1299,33 @@ public class PackageLoopState
     [JsonPropertyName("pending_restart_since")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTime? PendingRestartSince { get; set; }
+
+    /// <summary>
+    /// The check that decided this package needed to run, as of the most recent
+    /// evaluation. This is the diagnosis: the counting rule says a loop exists, the
+    /// trigger says which installs entry, installcheck_script or product code never
+    /// converges. Refreshed on every attempt AND on every suppressed evaluation, so
+    /// the warning reports what the package still wants today rather than what it
+    /// wanted when the window opened.
+    /// </summary>
+    [JsonPropertyName("trigger")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public InstallTrigger? Trigger { get; set; }
+
+    /// <summary>When <see cref="Trigger"/> was last observed.</summary>
+    [JsonPropertyName("trigger_last_seen")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DateTime? TriggerLastSeen { get; set; }
+
+    /// <summary>
+    /// Distinct triggers seen across the attempts that built the current history,
+    /// keyed by <see cref="InstallTrigger.Key"/> and counted. One entry with a count
+    /// equal to the attempt count is a stuck detection criterion (the pkgsinfo is
+    /// wrong); several entries mean the machine keeps changing underneath the item.
+    /// Bounded — a package with more distinct triggers than this is already diagnosed.
+    /// </summary>
+    [JsonPropertyName("trigger_counts")]
+    public Dictionary<string, int> TriggerCounts { get; set; } = new(StringComparer.Ordinal);
 }
 
 #endregion
