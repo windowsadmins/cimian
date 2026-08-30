@@ -238,6 +238,21 @@ public class PkgsInfo
     public bool Recurring { get; set; }
 
     /// <summary>
+    /// Content fingerprint of this catalog item, stamped by makecatalogs (see
+    /// CatalogBuilder.StampLoopFingerprints). Hashes the whole serialized item, so ANY
+    /// pkgsinfo edit that reaches the catalog changes it.
+    /// <para>
+    /// The client's LoopGuard clears a package's loop suppression when this value
+    /// changes: publishing a fix is what gets a suppressed package installing again
+    /// fleet-wide, with no per-machine <c>--clear-loop</c>. Excluded from its own hash
+    /// (it is nulled before hashing), and ignored by older clients, which tolerate
+    /// unknown catalog keys.
+    /// </para>
+    /// </summary>
+    [YamlMember(Alias = "loop_fingerprint")]
+    public string? LoopFingerprint { get; set; }
+
+    /// <summary>
     /// Source file path (not serialized)
     /// </summary>
     [YamlIgnore]

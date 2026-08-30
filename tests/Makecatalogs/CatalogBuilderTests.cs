@@ -426,6 +426,117 @@ installer:
 
         Assert.DoesNotContain(_warnings, w => w.Contains("missing installer"));
     }
+
+    #region Loop Fingerprint
+
+    private static PkgsInfo SamplePkg() => new()
+    {
+        Name = "LoopPkg",
+        Version = "1.0.0",
+        Catalogs = new List<string> { "Production" },
+        Installer = new Installer
+        {
+            Location = "apps/LoopPkg-1.0.0.msi",
+            Hash = "abc123",
+            Type = "msi",
+            ProductCode = "{11111111-1111-1111-1111-111111111111}",
+            Switches = new List<string> { "/qn" }
+        }
+    };
+
+    [Fact]
+    public void StampLoopFingerprints_IsDeterministic()
+    {
+        var a = SamplePkg();
+        var b = SamplePkg();
+
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { a });
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { b });
+
+        Assert.False(string.IsNullOrEmpty(a.LoopFingerprint));
+        Assert.Equal(a.LoopFingerprint, b.LoopFingerprint);
+    }
+
+    [Fact]
+    public void StampLoopFingerprints_IsStableAcrossRestamping()
+    {
+        // The field is part of the serialized item, so it has to be excluded from its own
+        // hash — otherwise every makecatalogs run produced a different value and cleared
+        // loop suppression fleet-wide for every package, every time.
+        var pkg = SamplePkg();
+
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { pkg });
+        var first = pkg.LoopFingerprint;
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { pkg });
+
+        Assert.Equal(first, pkg.LoopFingerprint);
+    }
+
+    [Theory]
+    // The fields our real loop fixes touch. A hand-picked field list missed every one of
+    // these; hashing the whole item is what makes "publish the fix" the central clear.
+    [InlineData("product_code")]
+    [InlineData("switches")]
+    [InlineData("blocking_applications")]
+    [InlineData("installer_timeout")]
+    [InlineData("requires")]
+    [InlineData("version")]
+    [InlineData("postinstall_script")]
+    [InlineData("installs")]
+    public void StampLoopFingerprints_ChangesWhenAnyInstallBehaviorFieldChanges(string field)
+    {
+        var baseline = SamplePkg();
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { baseline });
+
+        var edited = SamplePkg();
+        switch (field)
+        {
+            case "product_code": edited.Installer!.ProductCode = "{22222222-2222-2222-2222-222222222222}"; break;
+            case "switches": edited.Installer!.Switches = new List<string> { "/qn", "/norestart" }; break;
+            case "blocking_applications": edited.BlockingApplications = new List<string> { "loop.exe" }; break;
+            case "installer_timeout": edited.InstallerTimeout = 3600; break;
+            case "requires": edited.Requires = new List<string> { "OtherPkg" }; break;
+            case "version": edited.Version = "1.0.1"; break;
+            case "postinstall_script": edited.PostinstallScript = "Write-Host fixed"; break;
+            case "installs": edited.Installs = new List<InstallItem> { new() { Type = "file", Path = "C:/app.exe" } }; break;
+        }
+
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { edited });
+
+        Assert.NotEqual(baseline.LoopFingerprint, edited.LoopFingerprint);
+    }
+
+    [Fact]
+    public void StampLoopFingerprints_IgnoresLineEndingStyle()
+    {
+        var lf = SamplePkg();
+        lf.PostinstallScript = "line one\nline two\n";
+        var crlf = SamplePkg();
+        crlf.PostinstallScript = "line one\r\nline two\r\n";
+
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { lf });
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { crlf });
+
+        Assert.Equal(lf.LoopFingerprint, crlf.LoopFingerprint);
+    }
+
+    [Fact]
+    public void Run_WritesLoopFingerprintIntoCatalogs()
+    {
+        CreatePkgInfo("LoopPkg.yaml",
+            "name: LoopPkg\n" +
+            "version: 1.0.0\n" +
+            "catalogs:\n" +
+            "  - Production\n");
+
+        var exitCode = _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        Assert.Equal(0, exitCode);
+        var catalog = File.ReadAllText(Path.Combine(_tempDir, "catalogs", "Production.yaml"));
+        Assert.Contains("loop_fingerprint:", catalog);
+    }
+
+    #endregion
 }
 
 /// <summary>
@@ -452,4 +563,5 @@ public class PkgsInfoTests
         Assert.Null(installer.Type);
         Assert.Null(installer.Size);
     }
+
 }

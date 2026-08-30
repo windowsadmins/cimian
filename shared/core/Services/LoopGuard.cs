@@ -18,10 +18,13 @@ namespace Cimian.Core.Services;
 /// items.json with loop warnings for dashboards/monitoring. LoopGuard is the ACTIVE layer
 /// that integrates into UpdateEngine.IdentifyActions() to actually suppress looping packages.
 ///
-/// Auto-clear: when ANY install-behavior field in the pkgsinfo changes (version,
-/// installcheck_script, installs array, hash, scripts, etc.), suppression is automatically
-/// cleared — the root cause may have been fixed. Change detection uses a SHA256 fingerprint
-/// of all install-behavior fields, computed by the caller and passed as catalogFingerprint.
+/// Auto-clear: when the pkgsinfo behind a package changes, its loop history is cleared —
+/// the root cause may have been fixed. This is the CENTRAL lever: makecatalogs stamps a
+/// loop_fingerprint over each catalog item's whole content, the caller passes it as
+/// catalogFingerprint, and publishing a fix therefore gets a suppressed package installing
+/// again across the whole fleet without touching a single machine. It is evaluated whether
+/// or not suppression is currently active, and performs exactly the same reset as an
+/// explicit --clear-loop, so a fix is never judged on pre-fix history.
 ///
 /// Backoff strategy (finite — never a permanent blacklist, so a transient failure
 /// like a download outage self-heals on retry instead of needing a manual clear):
@@ -30,11 +33,15 @@ namespace Cimian.Core.Services;
 ///   8+ installs → suppress 7 days (the cap), then retry automatically
 ///   3 installs within 2 hours (rapid-fire) → suppress 12 hours
 ///
-/// A genuinely-broken package therefore retries at most once a week and re-suppresses;
-/// one whose root cause was fixed (pkgsinfo change auto-clears immediately, or the
-/// underlying failure simply went away) installs cleanly on its next window. Legacy
-/// permanently-suppressed entries (DateTime.MaxValue, written before this cap) are
-/// migrated to a finite window (LoopMaxTime) anchored on their last attempt when first seen.
+/// When a window expires the accumulated counters are retired with it, so the package is
+/// genuinely retried instead of instantly re-tripping the same thresholds on the same
+/// history; a persistent SuppressionCycles count floors the next window (1 prior cycle →
+/// 24h, 2+ → the 7-day cap), so a genuinely-broken package converges on a few installs a
+/// week and then goes quiet. One whose root cause was fixed (pkgsinfo change auto-clears
+/// immediately and resets the cycles, or the underlying failure simply went away)
+/// installs cleanly on its next window. Legacy permanently-suppressed entries
+/// (DateTime.MaxValue, written before this cap) are migrated to a finite window
+/// (LoopMaxTime) anchored on their last attempt when first seen.
 ///
 /// State persisted to: %ProgramData%\ManagedInstalls\reports\state.json
 /// Clear with: managedsoftwareupdate --clear-loop (name or all)
@@ -111,15 +118,14 @@ public class LoopGuard
     }
 
     /// <summary>
-    /// Computes a SHA256 fingerprint from the install-behavior fields of a catalog item.
-    /// The caller builds the input string by concatenating all fields that affect whether
-    /// an install succeeds or loops. If ANY field changes, the fingerprint changes and
-    /// LoopGuard auto-clears suppression.
+    /// Computes a short SHA256 fingerprint of arbitrary catalog content. If the input
+    /// changes, the fingerprint changes and LoopGuard clears the package's loop history.
     ///
-    /// Recommended fields to include (pipe-delimited):
-    ///   version | installcheck_script | installs (JSON) | check (JSON) |
-    ///   installer hash | installer url | installer type |
-    ///   install_script | postinstall_script | preinstall_script
+    /// Two callers share this so both sides agree on the algorithm: makecatalogs hashes
+    /// each serialized catalog item into its loop_fingerprint field (the authoritative
+    /// value), and UpdateEngine folds that — or, for catalogs written before the field
+    /// existed, a concatenation of the item's install-behavior fields — together with the
+    /// running agent version.
     /// </summary>
     public static string ComputeFingerprint(string fieldsConcat)
     {
@@ -164,49 +170,30 @@ public class LoopGuard
         // Check explicit suppression state first (from previous runs)
         if (_state.Packages.TryGetValue(key, out var pkgState))
         {
+            // Auto-clear: if the catalog fingerprint changed, the pkgsinfo was updated
+            // and the root cause may be fixed. This is deliberately evaluated BEFORE the
+            // suppression check and regardless of whether suppression is currently
+            // active: a package that has accumulated loop history but has not tripped
+            // yet must also start clean, otherwise the first install after the fix is
+            // judged on pre-fix evidence and trips immediately.
+            if (DetectCatalogChange(pkgState, version, catalogFingerprint, out var changeDetail))
+            {
+                ResetLoopHistory(pkgState, version, catalogFingerprint);
+                SaveState();
+                return (false, $"Auto-cleared: {changeDetail}");
+            }
+
+            // First sighting of a fingerprint for a package whose state predates it:
+            // record it (no clear — we have nothing to compare against) so the NEXT
+            // catalog change is detected instead of falling back to version-only.
+            if (!string.IsNullOrEmpty(catalogFingerprint) && string.IsNullOrEmpty(pkgState.CatalogFingerprint))
+            {
+                pkgState.CatalogFingerprint = catalogFingerprint;
+                SaveState();
+            }
+
             if (pkgState.SuppressedUntil.HasValue)
             {
-                // Auto-clear: if the catalog fingerprint changed, ANY install-behavior
-                // field in the pkgsinfo was updated — root cause may be fixed.
-                // Falls back to version-only comparison if no fingerprint is available.
-                bool catalogChanged = false;
-                string changeDetail = "";
-
-                if (!string.IsNullOrEmpty(catalogFingerprint) && !string.IsNullOrEmpty(pkgState.CatalogFingerprint))
-                {
-                    // Fingerprint comparison — covers version, scripts, hash, installs, etc.
-                    if (!string.Equals(catalogFingerprint, pkgState.CatalogFingerprint, StringComparison.OrdinalIgnoreCase))
-                    {
-                        catalogChanged = true;
-                        changeDetail = !string.Equals(version, pkgState.LastVersion, StringComparison.OrdinalIgnoreCase)
-                            ? $"catalog changed (version {pkgState.LastVersion} → {version})"
-                            : $"catalog changed (pkgsinfo fields updated, same version {version})";
-                    }
-                }
-                else if (!string.IsNullOrEmpty(version) && !string.IsNullOrEmpty(pkgState.LastVersion) &&
-                         !string.Equals(version, pkgState.LastVersion, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Fallback: version-only comparison when fingerprint not available
-                    catalogChanged = true;
-                    changeDetail = $"catalog version changed from {pkgState.LastVersion} to {version}";
-                }
-
-                if (catalogChanged)
-                {
-                    pkgState.SuppressedUntil = null;
-                    pkgState.SuppressionReason = null;
-                    pkgState.AttemptCount = 0;
-                    pkgState.SessionCount = 0;
-                    pkgState.VersionAttempts.Clear();
-                    pkgState.RecentTimestamps.Clear();
-                    pkgState.PendingRestartSince = null;
-                    pkgState.ClearedAt = DateTime.UtcNow;
-                    pkgState.LastVersion = version;
-                    pkgState.CatalogFingerprint = catalogFingerprint;
-                    SaveState();
-                    return (false, $"Auto-cleared: {changeDetail}");
-                }
-
                 // Migrate any legacy permanent suppression (DateTime.MaxValue, written
                 // before the finite cap existed) to a concrete 7-day window anchored on
                 // the last real attempt. A package stranded permanently by a transient
@@ -225,15 +212,90 @@ public class LoopGuard
                     return (true, $"LOOP SUPPRESSED: {packageName} — suppressed for {FormatDuration(remaining)} ({pkgState.SuppressionReason}). Clear with: managedsoftwareupdate --clear-loop {packageName}");
                 }
 
-                // Suppression expired — clear it but keep history
-                pkgState.SuppressedUntil = null;
-                pkgState.SuppressionReason = null;
+                // Suppression expired. Retire the history that produced it as well as
+                // the window itself: the counters never decay, so leaving them intact
+                // meant the threshold pass below re-tripped on the same evidence and
+                // re-suppressed without the package ever being retried once — a permanent
+                // blacklist by the back door, and the opposite of the finite backoff
+                // documented above.
+                // SuppressionCycles survives the reset and floors the next window, so a
+                // genuinely-broken package still escalates to the 7-day cap.
+                pkgState.SuppressionCycles++;
+                var cycles = pkgState.SuppressionCycles;
+                ResetLoopHistory(pkgState, version, catalogFingerprint ?? pkgState.CatalogFingerprint);
+                pkgState.SuppressionCycles = cycles;
                 SaveState();
+                return (false, "");
             }
         }
 
         // Analyze current history for new loop conditions
         return AnalyzeForLoop(key, packageName, version);
+    }
+
+    /// <summary>
+    /// True when the catalog item backing this package has changed since the state was
+    /// written — the admin edited the pkgsinfo, so the root cause may be fixed.
+    /// Prefers the fingerprint (any install-behavior field) and falls back to a
+    /// version-only comparison when no fingerprint is available on either side.
+    /// </summary>
+    private static bool DetectCatalogChange(PackageLoopState pkgState, string version,
+                                            string? catalogFingerprint, out string changeDetail)
+    {
+        changeDetail = "";
+
+        if (!string.IsNullOrEmpty(catalogFingerprint) && !string.IsNullOrEmpty(pkgState.CatalogFingerprint))
+        {
+            if (string.Equals(catalogFingerprint, pkgState.CatalogFingerprint, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            changeDetail = !string.Equals(version, pkgState.LastVersion, StringComparison.OrdinalIgnoreCase)
+                ? $"catalog changed (version {pkgState.LastVersion} → {version})"
+                : $"catalog changed (pkgsinfo fields updated, same version {version})";
+            return true;
+        }
+
+        // Fallback: version-only comparison when no fingerprint is available
+        if (!string.IsNullOrEmpty(version) && !string.IsNullOrEmpty(pkgState.LastVersion) &&
+            !string.Equals(version, pkgState.LastVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            changeDetail = $"catalog version changed from {pkgState.LastVersion} to {version}";
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Retires a package's accumulated loop history: drops the suppression window, zeroes
+    /// every counter the thresholds read, and stamps the ClearedAt watermark so the next
+    /// run's events.jsonl rebuild does not put it all back.
+    /// <para>
+    /// ProcessedSessions is cleared with the rest — without it SessionCount is recomputed
+    /// from "sessions ever seen" by the rebuild and snaps straight back to 3+, so the
+    /// session gate on every threshold was already satisfied and the package re-suppressed
+    /// on ~3 fresh installs rather than 3 fresh sessions. This is the same reset
+    /// <see cref="ClearLoop"/> performs: a catalog-driven clear must be exactly as strong
+    /// as the local one, since it is the central lever for getting a fixed package moving
+    /// again fleet-wide.
+    /// </para>
+    /// </summary>
+    private static void ResetLoopHistory(PackageLoopState pkgState, string version, string? catalogFingerprint)
+    {
+        pkgState.SuppressedUntil = null;
+        pkgState.SuppressionReason = null;
+        pkgState.AttemptCount = 0;
+        pkgState.SessionCount = 0;
+        pkgState.SuppressionCycles = 0;
+        pkgState.VersionAttempts.Clear();
+        pkgState.RecentTimestamps.Clear();
+        pkgState.ProcessedSessions.Clear();
+        pkgState.PendingRestartSince = null;
+        pkgState.ClearedAt = DateTime.UtcNow;
+        if (!string.IsNullOrEmpty(version))
+            pkgState.LastVersion = version;
+        if (!string.IsNullOrEmpty(catalogFingerprint))
+            pkgState.CatalogFingerprint = catalogFingerprint;
     }
 
     /// <summary>
@@ -351,15 +413,7 @@ public class LoopGuard
         var key = packageName.ToLowerInvariant();
         if (_state.Packages.TryGetValue(key, out var pkgState))
         {
-            pkgState.SuppressedUntil = null;
-            pkgState.SuppressionReason = null;
-            pkgState.AttemptCount = 0;
-            pkgState.SessionCount = 0;
-            pkgState.VersionAttempts.Clear();
-            pkgState.RecentTimestamps.Clear();
-            pkgState.ProcessedSessions.Clear();
-            pkgState.PendingRestartSince = null;
-            pkgState.ClearedAt = DateTime.UtcNow;
+            ResetLoopHistory(pkgState, version: "", catalogFingerprint: null);
             SaveState();
             return true;
         }
@@ -585,12 +639,8 @@ public class LoopGuard
         var recentCount = pkgState.RecentTimestamps.Count(t => t >= twoHoursAgo);
         if (recentCount >= 3)
         {
-            var suppressUntil = DateTime.UtcNow.AddHours(12);
-            pkgState.SuppressedUntil = suppressUntil;
-            var reason = $"Rapid-fire loop: {recentCount} installs within 2 hours";
-            pkgState.SuppressionReason = reason;
-            SaveState();
-            return (true, reason);
+            return Suppress(pkgState, TimeSpan.FromHours(12),
+                $"Rapid-fire loop: {recentCount} installs within 2 hours");
         }
 
         // Threshold 2: Same version reinstalled 3+ times across 3+ sessions
@@ -599,30 +649,27 @@ public class LoopGuard
             versionCount >= 3 && pkgState.SessionCount >= 3)
         {
             // Escalating backoff
-            DateTime suppressUntil;
+            TimeSpan window;
             string reason;
 
             if (versionCount >= 8)
             {
                 // Top tier — capped at 7 days (finite), then retries automatically
-                suppressUntil = DateTime.UtcNow.AddDays(_maxSuppressionDays);
+                window = TimeSpan.FromDays(_maxSuppressionDays);
                 reason = $"Persistent loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)";
             }
             else if (versionCount >= 5)
             {
-                suppressUntil = DateTime.UtcNow.AddHours(24);
+                window = TimeSpan.FromHours(24);
                 reason = $"Escalated loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions (24h suppression)";
             }
             else
             {
-                suppressUntil = DateTime.UtcNow.AddHours(6);
+                window = TimeSpan.FromHours(6);
                 reason = $"Install loop: version {version} installed {versionCount} times across {pkgState.SessionCount} sessions (6h suppression)";
             }
 
-            pkgState.SuppressedUntil = suppressUntil;
-            pkgState.SuppressionReason = reason;
-            SaveState();
-            return (true, reason);
+            return Suppress(pkgState, window, reason);
         }
 
         // Threshold 3: High total attempt count across sessions (any version).
@@ -638,25 +685,50 @@ public class LoopGuard
         if (loopAttempts >= 8 && pkgState.SessionCount >= 5)
         {
             // Top tier — capped at 7 days (finite), then retries automatically
-            var suppressUntil = DateTime.UtcNow.AddDays(_maxSuppressionDays);
-            var reason = $"Persistent loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)";
-            pkgState.SuppressedUntil = suppressUntil;
-            pkgState.SuppressionReason = reason;
-            SaveState();
-            return (true, reason);
+            return Suppress(pkgState, TimeSpan.FromDays(_maxSuppressionDays),
+                $"Persistent loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions ({_maxSuppressionDays}-day suppression)");
         }
 
         if (loopAttempts >= 5 && pkgState.SessionCount >= 4)
         {
-            var suppressUntil = DateTime.UtcNow.AddHours(24);
-            var reason = $"Escalated loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions (24h suppression)";
-            pkgState.SuppressedUntil = suppressUntil;
-            pkgState.SuppressionReason = reason;
-            SaveState();
-            return (true, reason);
+            return Suppress(pkgState, TimeSpan.FromHours(24),
+                $"Escalated loop: {pkgState.AttemptCount} total installs across {pkgState.SessionCount} sessions (24h suppression)");
         }
 
         return (false, "");
+    }
+
+    /// <summary>
+    /// Opens a suppression window, applying the escalation floor from
+    /// <see cref="PackageLoopState.SuppressionCycles"/>.
+    /// <para>
+    /// The raw counters are retired when a window expires so the package actually gets
+    /// retried; the cycle count is what remembers that it has been here before. One
+    /// served window floors the next at 24h, two or more at the 7-day cap — so a
+    /// genuinely-broken package converges on "3 installs a week, then quiet" instead of
+    /// looping every 6 hours forever, while a fixed one (catalog change or explicit
+    /// clear, both of which zero the cycles) starts from the bottom tier again.
+    /// </para>
+    /// </summary>
+    private (bool Suppress, string Reason) Suppress(PackageLoopState pkgState, TimeSpan window, string reason)
+    {
+        var floor = pkgState.SuppressionCycles switch
+        {
+            <= 0 => TimeSpan.Zero,
+            1 => TimeSpan.FromHours(24),
+            _ => TimeSpan.FromDays(_maxSuppressionDays)
+        };
+
+        if (floor > window)
+        {
+            window = floor;
+            reason += $" — escalated to {FormatDuration(window)} after {pkgState.SuppressionCycles} prior suppression window(s)";
+        }
+
+        pkgState.SuppressedUntil = DateTime.UtcNow + window;
+        pkgState.SuppressionReason = reason;
+        SaveState();
+        return (true, reason);
     }
 
     #endregion
@@ -961,6 +1033,7 @@ public class LoopGuard
             $"  Attempts: {pkgState.AttemptCount} across {pkgState.SessionCount} sessions",
             $"  Last version: {pkgState.LastVersion ?? "(unknown)"}",
             $"  Catalog fingerprint: {pkgState.CatalogFingerprint ?? "(none)"}",
+            $"  Suppression cycles served: {pkgState.SuppressionCycles}",
             $"  Last attempt: {pkgState.LastAttempt?.ToString("g") ?? "never"}",
             $"  Last success: {pkgState.LastSuccess}"
         };
@@ -1094,6 +1167,17 @@ public class PackageLoopState
     /// </summary>
     [JsonPropertyName("processed_sessions")]
     public HashSet<string> ProcessedSessions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Number of suppression windows this package has already served and exhausted.
+    /// Expiring a window resets the raw counters (so the package genuinely retries
+    /// instead of re-tripping instantly on the same history), and this survives that
+    /// reset to keep the backoff escalating: 1 prior cycle floors the next window at
+    /// 24h, 2+ floors it at the 7-day cap. A catalog change or an explicit clear
+    /// resets it to zero — that is a fix, and a fixed package starts clean.
+    /// </summary>
+    [JsonPropertyName("suppression_cycles")]
+    public int SuppressionCycles { get; set; }
 
     /// <summary>
     /// Watermark stamped by ClearLoop(). Same contract as LoopGuardState.ClearedAt
