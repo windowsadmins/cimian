@@ -256,10 +256,9 @@ public class ItemsJsonFinalizationTests
             var entry = Assert.Single(report);
             Assert.Equal("WinAdminsAccount", entry.Name);
             Assert.Equal("1.0", entry.Version);
-            // Stored reason is the policy-level cause (LoopGuard composes the
-            // operator-facing "LOOP SUPPRESSED: <name> ..." string at ShouldSuppress
-            // time, not at storage time).
-            Assert.Contains("Rapid-fire", entry.Reason);
+            // Stored reason is the bare rule that opened the window; the operator-facing
+            // "Looping install detected: ..." message is composed at report time.
+            Assert.Contains("3 installs within 2 hours", entry.Reason);
             Assert.Equal("managedsoftwareupdate --clear-loop WinAdminsAccount", entry.ClearCommand);
         }
         finally

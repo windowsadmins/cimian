@@ -649,6 +649,16 @@ public class SessionPackageInfo
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? WarningMessage { get; set; }
 
+    /// <summary>
+    /// The same warning split into its parts, so a consumer can render them as separate
+    /// messages instead of one paragraph. A looping install produces two: what the loop
+    /// is, and what the package's own checks keep finding. <see cref="WarningMessage"/>
+    /// holds them joined, for consumers that expect a single string.
+    /// </summary>
+    [JsonPropertyName("warning_messages")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? WarningMessages { get; set; }
+
     #region Status Reason Tracking
 
     /// <summary>
@@ -710,7 +720,8 @@ public record ItemOutcome(
     bool Success,
     string? ErrorMessage,
     DateTime Timestamp,
-    string? WarningMessage = null);
+    string? WarningMessage = null,
+    string? WarningDetail = null);
 
 /// <summary>
 /// Reports a single loop-suppressed package for reports/loop_suppressed.json.
