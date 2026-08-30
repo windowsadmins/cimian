@@ -584,6 +584,140 @@ public class LoopGuardTests : IDisposable
         reason.Should().Contain("Auto-cleared");
     }
 
+    [Fact]
+    public void FingerprintChange_ClearsHistory_EvenWhenNotYetSuppressed()
+    {
+        // A package can carry loop history without being suppressed yet. If the pkgsinfo
+        // is fixed at that point, the history must go too — otherwise the first install
+        // after the fix is judged on pre-fix evidence and trips immediately.
+        var guard = CreateGuard();
+        var before = LoopGuard.ComputeFingerprint("1.0.0|old");
+        var after = LoopGuard.ComputeFingerprint("1.0.0|fixed");
+
+        guard.RecordAttempt("NotYetPkg", "1.0.0", true, before);
+        guard.RecordAttempt("NotYetPkg", "1.0.0", true, before);
+        guard.ShouldSuppress("NotYetPkg", "1.0.0", before).Suppress.Should().BeFalse();
+        guard.GetPackageState("NotYetPkg")!.AttemptCount.Should().Be(2);
+
+        var (suppress, reason) = guard.ShouldSuppress("NotYetPkg", "1.0.0", after);
+
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+        var state = guard.GetPackageState("NotYetPkg")!;
+        state.AttemptCount.Should().Be(0);
+        state.VersionAttempts.Should().BeEmpty();
+        state.CatalogFingerprint.Should().Be(after);
+    }
+
+    [Fact]
+    public void FingerprintChange_ClearsProcessedSessions()
+    {
+        // SessionCount is recomputed from ProcessedSessions by the events rebuild, so
+        // leaving the set behind made the session gate on every threshold permanently
+        // satisfied and the package re-suppressed on ~3 installs instead of 3 sessions.
+        var guard = CreateGuard();
+        var before = LoopGuard.ComputeFingerprint("1.0.0|old");
+        var after = LoopGuard.ComputeFingerprint("1.0.0|fixed");
+
+        foreach (var session in new[] { "0900", "1000", "1100" })
+        {
+            guard.SetCurrentSession(Path.Combine(_logsDir, "2026-01-01", session));
+            guard.RecordAttempt("SessPkg", "1.0.0", true, before);
+        }
+
+        guard.GetPackageState("SessPkg")!.ProcessedSessions.Should().HaveCount(3);
+
+        guard.ShouldSuppress("SessPkg", "1.0.0", after);
+
+        var state = guard.GetPackageState("SessPkg")!;
+        state.ProcessedSessions.Should().BeEmpty();
+        state.SessionCount.Should().Be(0);
+        state.ClearedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void FingerprintChange_ResetsSuppressionCycles()
+    {
+        // A fix starts the backoff over: the escalation floor earned by earlier windows
+        // must not keep a fixed package on a 24h/7d leash.
+        var guard = CreateGuard();
+        var before = LoopGuard.ComputeFingerprint("1.0.0|old");
+        var after = LoopGuard.ComputeFingerprint("1.0.0|fixed");
+
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("CyclePkg", "1.0.0", true, before);
+
+        var state = guard.GetPackageState("CyclePkg")!;
+        state.SuppressedUntil = DateTime.UtcNow.AddMinutes(-1);
+        guard.ShouldSuppress("CyclePkg", "1.0.0", before).Suppress.Should().BeFalse();
+        guard.GetPackageState("CyclePkg")!.SuppressionCycles.Should().Be(1);
+
+        guard.ShouldSuppress("CyclePkg", "1.0.0", after);
+
+        guard.GetPackageState("CyclePkg")!.SuppressionCycles.Should().Be(0);
+    }
+
+    #endregion
+
+    #region Suppression Expiry
+
+    [Fact]
+    public void ExpiredSuppression_RetriesInsteadOfReSuppressingOnTheSameHistory()
+    {
+        // The counters never decay, so an expired window used to fall straight back into
+        // the thresholds it was created by and re-suppress without a single retry — a
+        // permanent blacklist by the back door.
+        var guard = CreateGuard();
+
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("ExpirePkg", "1.0.0", true);
+
+        var state = guard.GetPackageState("ExpirePkg")!;
+        state.SuppressedUntil.Should().NotBeNull();
+        state.SuppressedUntil = DateTime.UtcNow.AddMinutes(-1);
+
+        guard.ShouldSuppress("ExpirePkg", "1.0.0").Suppress.Should().BeFalse();
+
+        // ...and still not suppressed on the next look: the history went with the window.
+        guard.ShouldSuppress("ExpirePkg", "1.0.0").Suppress.Should().BeFalse();
+        var cleared = guard.GetPackageState("ExpirePkg")!;
+        cleared.AttemptCount.Should().Be(0);
+        cleared.RecentTimestamps.Should().BeEmpty();
+        cleared.SuppressionCycles.Should().Be(1);
+    }
+
+    [Fact]
+    public void ExpiredSuppression_EscalatesTheNextWindow()
+    {
+        // Retrying after every window must not mean looping every 12 hours forever: a
+        // served cycle floors the next window at 24h, two or more at the 7-day cap.
+        var guard = CreateGuard();
+
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("EscalatePkg", "1.0.0", true);
+        guard.GetPackageState("EscalatePkg")!.SuppressedUntil = DateTime.UtcNow.AddMinutes(-1);
+        guard.ShouldSuppress("EscalatePkg", "1.0.0");
+
+        // Still broken — it loops again on the fresh history.
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("EscalatePkg", "1.0.0", true);
+
+        var state = guard.GetPackageState("EscalatePkg")!;
+        state.SuppressedUntil.Should().NotBeNull();
+        // Rapid-fire alone is 12h; the served cycle floors it at 24h.
+        state.SuppressedUntil!.Value.Should().BeAfter(DateTime.UtcNow.AddHours(23));
+        state.SuppressionReason.Should().Contain("escalated");
+
+        state.SuppressedUntil = DateTime.UtcNow.AddMinutes(-1);
+        guard.ShouldSuppress("EscalatePkg", "1.0.0");
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("EscalatePkg", "1.0.0", true);
+
+        // Second served cycle — floored at the 7-day cap.
+        guard.GetPackageState("EscalatePkg")!.SuppressedUntil!.Value
+            .Should().BeAfter(DateTime.UtcNow.AddDays(6));
+    }
+
     #endregion
 
     #region Cache Analysis
