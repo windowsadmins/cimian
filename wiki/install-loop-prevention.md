@@ -46,6 +46,31 @@ LoopGuard runs inside `UpdateEngine.IdentifyActions()` and actively blocks packa
 | 5+ total installs across 4+ sessions (any version) | 24 hours |
 | 8+ total installs across 5+ sessions (any version) | 7 days (the `LoopMaxTime` cap) |
 
+#### What the suppression warning tells you
+
+Every suppression warning reports the cause, not just the count. The counting rule
+("3 installs within 2 hours") establishes that a loop exists; the trigger says which
+detection criterion keeps deciding the package must run, which is the thing an admin
+actually has to fix:
+
+```
+LOOP SUPPRESSED: FortiClient v7.4.3.4799 — suppressed for 15h 1m. Loop rule: Rapid-fire loop: 3 installs within 2 hours. Needs install because: version_outdated via installs_array — installs[0] file C:\Program Files\Fortinet\FortiClient\FortiClient.exe: file version 7.4.3.1790 is older than the catalog's 7.4.3.4799 (same on all 3 attempts — the detection criteria never match what the installer lays down). Fix that criterion in the pkgsinfo — any catalog change clears this fleet-wide — or locally: managedsoftwareupdate --clear-loop FortiClient
+```
+
+The trigger is the `StatusService` result that scheduled the install: its reason code,
+the check that produced it (`installs_array`, `script`, `msi`, `registry`, …) and the
+detail, which names the specific `installs` entry by index and identity field, the
+`installcheck_script` output, or the product code that missed. "Same on all N attempts"
+means the criterion is stuck — the pkgsinfo is describing something the installer does
+not produce. Several different triggers across attempts means the machine is changing
+underneath the item instead.
+
+It is refreshed on every run, including runs where the package stayed suppressed and was
+never installed, so the warning reports what the item wants **now** rather than what it
+wanted when the window opened. The same trigger is written to
+`reports/loop_suppressed.json` and printed by `--loop-status`. State written by a client
+older than this reports `not recorded` until the next evaluation.
+
 #### Auto-Clear on Catalog Change
 
 When the pkgsinfo behind a package changes, LoopGuard **clears that package's loop
@@ -182,6 +207,8 @@ NvidiaGeforce:
   Last attempt: 2/25/2026 4:00 AM
   Last success: True
   Versions attempted: 572.61 (8x)
+  Needs install because: hash_mismatch via installs_array — installs[0] file C:\Windows\System32\nvapi64.dll: hash mismatch — expected 4f2a…, found 9c81… (same on all 8 attempts — the detection criteria never match what the installer lays down)
+  Trigger last seen: 2/25/2026 4:00 AM
   Cache: HIT — C:\ProgramData\ManagedInstalls\Cache\NvidiaGeforce\dbInstaller.exe
   Diagnosis: Loop is install/status-check issue, not download (cached installer exists)
   Suppressed until: indefinite
