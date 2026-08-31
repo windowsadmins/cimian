@@ -55,6 +55,7 @@ public class FileWatcherService : BackgroundService
                 if (!_isPaused)
                 {
                     CheckBootstrapFiles(stoppingToken);
+                    ApplyStagedSelfUpdateIfIdle();
                 }
                 
                 await Task.Delay(PollInterval, stoppingToken);
@@ -72,6 +73,73 @@ public class FileWatcherService : BackgroundService
         }
 
         _logger.LogInformation("CimianWatcher file monitoring service stopped");
+    }
+
+    /// <summary>
+    /// Applies a self-update that an earlier run staged, without waiting for a
+    /// service restart or for a flag-file-triggered run.
+    ///
+    /// The routine hourly run is a scheduled task that invokes
+    /// managedsoftwareupdate.exe directly, so it never passes through
+    /// RunBootstrapUpdateAsync and the post-run check that lives there. A staged
+    /// update therefore sat on disk until the machine rebooted or the nightly
+    /// bootstrap fired, which put up to a day between publishing a client and
+    /// the fleet running it.
+    ///
+    /// The installer stops this service and replaces managedsoftwareupdate.exe,
+    /// so it must never start while a run is in flight - that truncates the
+    /// session mid-install. Hence both guards: the flag we set for our own
+    /// triggered runs, and a process check that also covers runs launched by the
+    /// scheduled task or by hand.
+    /// </summary>
+    private void ApplyStagedSelfUpdateIfIdle()
+    {
+        if (!SelfUpdateService.IsSelfUpdatePending())
+            return;
+
+        if (Interlocked.CompareExchange(ref _updateRunning, 1, 0) != 0)
+        {
+            _logger.LogDebug("Self-update staged, but a triggered update is running - deferring");
+            return;
+        }
+
+        try
+        {
+            if (IsManagedSoftwareUpdateRunning())
+            {
+                _logger.LogDebug(
+                    "Self-update staged, but managedsoftwareupdate is running - deferring");
+                return;
+            }
+
+            _logger.LogInformation("Self-update staged by an earlier run - applying now");
+            CheckAndPerformSelfUpdate();
+        }
+        finally
+        {
+            // Not reached on the success path: CheckAndPerformSelfUpdate exits
+            // the process once the detached installer is running.
+            Interlocked.Exchange(ref _updateRunning, 0);
+        }
+    }
+
+    /// <summary>
+    /// True when any managedsoftwareupdate process is running, including one this
+    /// service did not launch.
+    /// </summary>
+    private bool IsManagedSoftwareUpdateRunning()
+    {
+        try
+        {
+            return Process.GetProcessesByName("managedsoftwareupdate").Length > 0;
+        }
+        catch (Exception ex)
+        {
+            // An unreadable process list counts as busy: deferring costs one poll
+            // interval, guessing wrong truncates an install session.
+            _logger.LogDebug(ex, "Could not enumerate processes - assuming a run is active");
+            return true;
+        }
     }
 
     private void CheckBootstrapFiles(CancellationToken cancellationToken)
