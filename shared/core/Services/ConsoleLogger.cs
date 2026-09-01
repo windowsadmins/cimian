@@ -4,8 +4,11 @@ namespace Cimian.Core.Services;
 
 /// <summary>
 /// Centralized console logging with verbosity control and clean output.
-/// No timestamps, no log level prefixes - just clean colored messages.
-/// Colors indicate the log level visually.
+/// On a terminal: no timestamps, no log level prefixes - just clean colored messages,
+/// where colors indicate the log level visually. When stdout (or stderr) is redirected
+/// there is no terminal to read the colors and no clock to relate lines to, so each line
+/// is prefixed with the same "[yyyy-MM-dd HH:mm:ss] LEVEL " stamp the log files use and
+/// a captured transcript lines up with run.log.
 /// 
 /// - verbose 1+ (-v): info, majorStatus, minorStatus, warning, error
 /// - verbose 2+ (-vv): detail messages  
@@ -60,6 +63,42 @@ public static class ConsoleLogger
     }
 
     /// <summary>
+    /// Overrides the redirection check for both stdout and stderr. Tests set it so the
+    /// prefixed and unprefixed paths can each be exercised regardless of how the test
+    /// host wires the console; null means ask the console.
+    /// </summary>
+    internal static bool? OutputRedirectedOverride { get; set; }
+
+    private static bool OutputRedirected => OutputRedirectedOverride ?? Console.IsOutputRedirected;
+    private static bool ErrorRedirected  => OutputRedirectedOverride ?? Console.IsErrorRedirected;
+
+    private static void WriteOut(string level, string text)
+        => Write(Console.Out, OutputRedirected, level, text);
+
+    private static void WriteErr(string level, string text)
+        => Write(Console.Error, ErrorRedirected, level, text);
+
+    /// <summary>
+    /// Writes <paramref name="text"/> as-is on a terminal, or one stamped line per line
+    /// of it when the stream is redirected. The stamp matches <see cref="SessionLogger.Log"/>
+    /// so a captured stdout and the file log read the same way.
+    /// </summary>
+    private static void Write(System.IO.TextWriter writer, bool redirected, string level, string text)
+    {
+        if (!redirected)
+        {
+            writer.WriteLine(text);
+            return;
+        }
+
+        var stamp = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {level,-5} ";
+        foreach (var line in text.Split('\n'))
+        {
+            writer.WriteLine(stamp + line.TrimEnd('\r'));
+        }
+    }
+
+    /// <summary>
     /// Write a message to the session logger if attached.
     /// Strips ANSI color codes and Unicode box-drawing characters before writing to log files.
     /// </summary>
@@ -79,7 +118,7 @@ public static class ConsoleLogger
     /// </summary>
     public static void Log(string message = "")
     {
-        Console.WriteLine(message);
+        WriteOut("INFO", message);
         LogToSession("INFO", message);
     }
 
@@ -90,7 +129,7 @@ public static class ConsoleLogger
     {
         if (Verbosity >= 1)
         {
-            Console.WriteLine(message);
+            WriteOut("INFO", message);
         }
         LogToSession("INFO", message);
     }
@@ -102,7 +141,7 @@ public static class ConsoleLogger
     {
         if (Verbosity >= 2)
         {
-            Console.WriteLine($"{ColorCyan}    {message}{ColorReset}");
+            WriteOut("DEBUG", $"{ColorCyan}    {message}{ColorReset}");
         }
         LogToSession("DEBUG", message);
     }
@@ -114,7 +153,7 @@ public static class ConsoleLogger
     {
         if (Verbosity >= 3)
         {
-            Console.WriteLine($"{ColorCyan}    {message}{ColorReset}");
+            WriteOut("DEBUG", $"{ColorCyan}    {message}{ColorReset}");
         }
         LogToSession("DEBUG", message);
     }
@@ -131,7 +170,7 @@ public static class ConsoleLogger
     {
         if (Verbosity >= 4)
         {
-            Console.WriteLine($"{ColorCyan}    {message}{ColorReset}");
+            WriteOut("TRACE", $"{ColorCyan}    {message}{ColorReset}");
         }
         LogToSession("TRACE", message);
     }
@@ -146,7 +185,7 @@ public static class ConsoleLogger
     /// </summary>
     public static void Success(string message)
     {
-        Console.WriteLine($"{ColorGreen}{message}{ColorReset}");
+        WriteOut("INFO", $"{ColorGreen}{message}{ColorReset}");
         LogToSession("INFO", message);
     }
 
@@ -155,7 +194,7 @@ public static class ConsoleLogger
     /// </summary>
     public static void Warn(string message)
     {
-        Console.WriteLine($"{ColorYellow}{message}{ColorReset}");
+        WriteOut("WARN", $"{ColorYellow}{message}{ColorReset}");
         LogToSession("WARN", message);
     }
 
@@ -164,7 +203,7 @@ public static class ConsoleLogger
     /// </summary>
     public static void Error(string message)
     {
-        Console.Error.WriteLine($"{ColorRed}{message}{ColorReset}");
+        WriteErr("ERROR", $"{ColorRed}{message}{ColorReset}");
         LogToSession("ERROR", message);
     }
 
@@ -174,7 +213,7 @@ public static class ConsoleLogger
     public static void Indented(string message, int level = 1)
     {
         var indent = new string('\t', level);
-        Console.WriteLine($"{indent}{message}");
+        WriteOut("INFO", $"{indent}{message}");
     }
 
     /// <summary>
@@ -182,7 +221,7 @@ public static class ConsoleLogger
     /// </summary>
     public static void Item(string message)
     {
-        Console.WriteLine($"* {message}");
+        WriteOut("INFO", $"* {message}");
     }
 
     /// <summary>
@@ -190,6 +229,6 @@ public static class ConsoleLogger
     /// </summary>
     public static void SubItem(string message)
     {
-        Console.WriteLine($"** {message}");
+        WriteOut("INFO", $"** {message}");
     }
 }

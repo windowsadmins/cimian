@@ -21,10 +21,9 @@ public class DataExporter
     private List<SessionPackageInfo> _currentSessionPackagesInfo = new();
     private List<string> _currentSessionPackages = new();
 
-    // DataExporter writes to ManagedInstalls\Logs (capital L) — distinct from
-    // SessionLogger's lowercase 'logs'. Preserved as-is for compatibility with
-    // existing on-disk layouts and external log shippers.
-    private static readonly string DefaultBaseDir = Path.Combine(CimianPaths.ManagedInstallsRoot, "Logs");
+    // Reads the session tree SessionLogger writes (logs\YYYY-MM-DD\HHMM\), so the
+    // root is resolved through the same definition rather than spelled again here.
+    private static readonly string DefaultBaseDir = CimianPaths.LogsDir;
     private static readonly string ReportsDir   = CimianPaths.ReportsDir;
     private static readonly string ManifestsDir = CimianPaths.ManifestsDir;
     private static readonly string CatalogsDir  = CimianPaths.CatalogsDir;
