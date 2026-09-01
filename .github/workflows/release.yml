@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - '[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9].[0-9][0-9][0-9][0-9]'
 
 permissions:
   contents: write
@@ -31,7 +31,7 @@ jobs:
       # No NuGet caching — see ci.yml for rationale.
       - name: Build (unsigned)
         shell: pwsh
-        run: .\build.ps1 -NoSign
+        run: .\build.ps1 -NoSign -ReleaseVersion '${{ github.ref_name }}'
 
       - name: Capture build info
         id: version
@@ -43,6 +43,10 @@ jobs:
             $datestamp = $Matches[1]
           } else {
             throw "Could not parse datestamp version from $($msi.Name)"
+          }
+          $tag = '${{ github.ref_name }}'
+          if ($datestamp -ne $tag) {
+            throw "Release tag $tag does not match produced build version $datestamp"
           }
           $dotnetVersion = (dotnet --version).Trim()
           $osCaption = (Get-CimInstance Win32_OperatingSystem).Caption.Trim()
