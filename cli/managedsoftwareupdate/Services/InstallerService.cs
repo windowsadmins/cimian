@@ -986,6 +986,13 @@ public class InstallerService
                 {
                     output += $"\nMSI_EXIT={finalCode}";
                 }
+                var diagnostics = ExtractMsiFailureDiagnostics(logPath);
+                if (diagnostics.Count > 0)
+                {
+                    output += "\n--- failure diagnostics from MSI log ---\n";
+                    output += string.Join(Environment.NewLine, diagnostics);
+                }
+                output += $"\nFull MSI log: {logPath}";
                 return (false, output);
             }
             // The retry loop above always either returns or continues — the
@@ -999,6 +1006,64 @@ public class InstallerService
         {
             _msiexecMutex.Release();
         }
+    }
+
+    /// <summary>
+    /// Pulls a bounded, actionable excerpt from a verbose Windows Installer log.
+    /// The full log remains on disk; this excerpt is returned with the item failure
+    /// so telemetry consumers do not have to reduce every MSI failure to exit 1603.
+    /// </summary>
+    internal static IReadOnlyList<string> ExtractMsiFailureDiagnostics(string logPath)
+    {
+        var diagnostics = new List<string>();
+        const int maxLines = 40;
+
+        try
+        {
+            if (!File.Exists(logPath))
+            {
+                return diagnostics;
+            }
+
+            using var stream = new FileStream(
+                logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+
+            string? lastActionStart = null;
+            string? line;
+            while ((line = reader.ReadLine()) != null && diagnostics.Count < maxLines)
+            {
+                if (line.Contains("Action start", StringComparison.OrdinalIgnoreCase))
+                {
+                    lastActionStart = line;
+                    continue;
+                }
+
+                if (line.Contains("CimianPreinstall", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("CimianPostinstall", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("CimianUninstall", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("pending Windows reboot", StringComparison.OrdinalIgnoreCase))
+                {
+                    diagnostics.Add(line.Trim());
+                    continue;
+                }
+
+                if (line.Contains("Return value 3", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (lastActionStart != null)
+                    {
+                        diagnostics.Add(lastActionStart.Trim());
+                    }
+                    diagnostics.Add(line.Trim());
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Debug($"Could not extract MSI failure diagnostics: {ex.Message}");
+        }
+
+        return diagnostics;
     }
 
     /// <summary>
