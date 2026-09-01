@@ -66,6 +66,10 @@
 .PARAMETER Architecture
     Target architecture (x64, arm64, or both). Default: both
 
+.PARAMETER ReleaseVersion
+    Pin the build to a YYYY.MM.DD.HHMM release identity. Release automation uses
+    this so the Git tag, GitHub release, artifacts, and client version all agree.
+
 .EXAMPLE
     .\build.ps1
     # Full build with auto-signing (binaries + MSI + NUPKG)
@@ -138,7 +142,9 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [ValidateSet('x64', 'arm64', 'both')]
-    [string]$Architecture = 'both'
+    [string]$Architecture = 'both',
+    [ValidatePattern('^\d{4}\.\d{2}\.\d{2}\.\d{4}$')]
+    [string]$ReleaseVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -543,7 +549,29 @@ function Invoke-SignNuget {
 #region Version Functions
 
 function Get-BuildVersion {
-    $currentTime = Get-Date
+    param([string]$PinnedVersion = '')
+
+    if ($PinnedVersion) {
+        if ($PinnedVersion -notmatch '^(?<year>\d{4})\.(?<month>\d{2})\.(?<day>\d{2})\.(?<hour>\d{2})(?<minute>\d{2})$') {
+            throw "ReleaseVersion must use YYYY.MM.DD.HHMM: $PinnedVersion"
+        }
+        try {
+            $currentTime = [datetime]::new(
+                [int]$Matches.year,
+                [int]$Matches.month,
+                [int]$Matches.day,
+                [int]$Matches.hour,
+                [int]$Matches.minute,
+                0)
+        }
+        catch {
+            throw "ReleaseVersion is not a valid calendar timestamp: $PinnedVersion"
+        }
+    }
+    else {
+        $currentTime = Get-Date
+    }
+
     $fullVersion = $currentTime.ToString("yyyy.MM.dd.HHmm")
     $semanticVersion = "{0}.{1}.{2}.{3}" -f ($currentTime.Year - 2000), $currentTime.Month, $currentTime.Day, $currentTime.ToString("HHmm")
     
@@ -1587,7 +1615,7 @@ function Show-BuildSummary {
 
 try {
     $startTime = Get-Date
-    $version = Get-BuildVersion
+    $version = Get-BuildVersion -PinnedVersion $ReleaseVersion
     
     Write-Host ""
     Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
