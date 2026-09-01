@@ -79,6 +79,29 @@ public class InstallerServiceTests
     #region Install Method Tests
 
     [Fact]
+    public void ExtractMsiFailureDiagnostics_ReturnsActionableBoundedExcerpt()
+    {
+        var logPath = Path.Combine(_testDir, "failed-msi.log");
+        File.WriteAllLines(logPath,
+        [
+            "Action start 10:00:00: InstallFinalize.",
+            "CimianPostinstall | configuring package",
+            "Product: Test -- Error 1720. CimianPostinstall script exited 1",
+            "Action ended 10:00:01: InstallFinalize. Return value 3.",
+            "unrelated verbose line"
+        ]);
+
+        var diagnostics = InstallerService.ExtractMsiFailureDiagnostics(logPath);
+
+        Assert.Contains("CimianPostinstall | configuring package", diagnostics);
+        Assert.Contains(diagnostics, line => line.Contains("Error 1720", StringComparison.Ordinal));
+        Assert.Contains("Action start 10:00:00: InstallFinalize.", diagnostics);
+        Assert.Contains(diagnostics, line => line.Contains("Return value 3", StringComparison.Ordinal));
+        Assert.DoesNotContain("unrelated verbose line", diagnostics);
+        Assert.True(diagnostics.Count <= 40);
+    }
+
+    [Fact]
     public async Task InstallAsync_ScriptOnlyItem_Succeeds()
     {
         var item = new CatalogItem
