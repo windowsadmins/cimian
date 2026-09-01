@@ -219,6 +219,23 @@ if ($value -gt 5) {
         Assert.Contains("Quick script", output);
     }
 
+    [Fact]
+    public async Task ExecuteScriptWithDetailsAsync_CancellationTerminatesHungScript()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        var result = await _service.ExecuteScriptWithDetailsAsync(
+            "while ($true) { Start-Sleep -Milliseconds 100 }",
+            cts.Token);
+
+        stopwatch.Stop();
+        Assert.False(result.Success);
+        Assert.Equal(ScriptService.TimeoutExitCode, result.ExitCode);
+        Assert.Contains("timed out", result.Output, StringComparison.OrdinalIgnoreCase);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5));
+    }
+
     #endregion
 
     #region ExecuteScriptWithDetailsAsync - CIMIAN-WARNING marker tests

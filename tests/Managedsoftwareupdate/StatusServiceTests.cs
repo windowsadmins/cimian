@@ -58,6 +58,26 @@ public class StatusServiceTests
 
     #endregion
 
+    [Fact]
+    public void CheckStatus_TimedOutInstallcheck_ReturnsDetectionErrorWithoutInstall()
+    {
+        var service = new StatusService(TimeSpan.FromMilliseconds(250));
+        var item = new CatalogItem
+        {
+            Name = "HungDetection",
+            Version = "1.0.0",
+            InstallcheckScript = "while ($true) { Start-Sleep -Milliseconds 100 }"
+        };
+
+        var result = service.CheckStatus(item, "install", _testDir);
+
+        Assert.Equal("error", result.Status);
+        Assert.False(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.ScriptError, result.ReasonCode);
+        Assert.Contains("timed out", result.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(item.Name, result.Reason);
+    }
+
     #region Static Method Tests
 
     [Fact]
