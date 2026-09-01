@@ -20,6 +20,13 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 public class StatusService
 {
     private static readonly string BootstrapFlagFile = CimianPaths.BootstrapFlagFile;
+    private static readonly TimeSpan DefaultInstallcheckTimeout = TimeSpan.FromMinutes(2);
+    private readonly TimeSpan _installcheckTimeout;
+
+    public StatusService(TimeSpan? installcheckTimeout = null)
+    {
+        _installcheckTimeout = installcheckTimeout ?? DefaultInstallcheckTimeout;
+    }
 
     /// <summary>
     /// Checks if the item is the Cimian/CimianTools self-update package
@@ -311,9 +318,28 @@ public class StatusService
         try
         {
             var scriptService = new ScriptService();
-            var (success, output) = scriptService.ExecuteScriptAsync(item.InstallcheckScript!).Result;
+            using var timeout = new CancellationTokenSource(_installcheckTimeout);
+            var scriptResult = scriptService
+                .ExecuteScriptWithDetailsAsync(item.InstallcheckScript!, timeout.Token)
+                .GetAwaiter()
+                .GetResult();
+            var success = scriptResult.Success;
+            var output = scriptResult.Output;
 
             ConsoleLogger.Debug($"InstallCheckScript output stdout: {output?.Trim()} stderr:  error: <nil>");
+
+            if (scriptResult.ExitCode == ScriptService.TimeoutExitCode)
+            {
+                var timeoutSeconds = Math.Ceiling(_installcheckTimeout.TotalSeconds);
+                var reason = $"installcheck_script timed out after {timeoutSeconds:0} seconds for {item.Name}";
+                ConsoleLogger.Error(reason);
+                result.Status = "error";
+                result.NeedsAction = false;
+                result.Reason = reason;
+                result.ReasonCode = StatusReasonCode.ScriptError;
+                result.Error = new TimeoutException(reason);
+                return result;
+            }
 
             // Go behavior: exit code 0 = needs install, exit code 1 = does not need install
             if (success) // exit 0

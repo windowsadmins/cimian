@@ -19,6 +19,8 @@ public record ScriptResult(bool Success, int ExitCode, string Output, string? Wa
 /// </summary>
 public class ScriptService
 {
+    public const int TimeoutExitCode = -2;
+
     // Postinstall scripts may emit a line of the form:
     //   CIMIAN-WARNING: <message>
     // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage,
@@ -208,7 +210,37 @@ public class ScriptService
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.WaitForExitAsync(cancellationToken);
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync(CancellationToken.None);
+                    }
+                }
+                catch (Exception killException)
+                {
+                    errors.AppendLine($"Failed to terminate timed-out script process: {killException.Message}");
+                }
+
+                var timedOutOutput = output.ToString();
+                if (errors.Length > 0)
+                {
+                    timedOutOutput += Environment.NewLine + errors;
+                }
+
+                return new ScriptResult(
+                    Success: false,
+                    ExitCode: TimeoutExitCode,
+                    Output: $"Script execution timed out.{Environment.NewLine}{timedOutOutput}".Trim(),
+                    WarningMessage: null);
+            }
 
             var combinedOutput = output.ToString();
             if (errors.Length > 0)
