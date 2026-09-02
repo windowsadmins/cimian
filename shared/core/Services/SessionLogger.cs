@@ -136,6 +136,11 @@ public class SessionLogger : IDisposable
         // Write initial session.json
         WriteSessionFile();
 
+        // A previous run that was killed mid-session left its session.json at
+        // "running" forever. Close those out now that we are the live process,
+        // so a truncated run is reportable instead of invisible.
+        ReapOrphanedSessions();
+
         return _sessionId;
     }
 
@@ -359,6 +364,170 @@ public class SessionLogger : IDisposable
 
         // Cleanup
         CloseLogFiles();
+    }
+
+    /// <summary>
+    /// Closes out session.json files left at "running" by a previous run that never
+    /// reached EndSession.
+    /// </summary>
+    /// <remarks>
+    /// A session that is killed mid-run -- the process dies, the machine reboots, a
+    /// scheduled task is torn down -- leaves session.json saying "running" with an
+    /// empty summary, and because GenerateReports() only runs from EndSession, the
+    /// reports directory keeps advertising the last session that DID finish. The run
+    /// is then invisible: the fleet view shows an older, healthy, completed session
+    /// while every install in the truncated one silently never happened. Detection
+    /// still reports the package as needed on the next run, so what surfaces is a
+    /// loop warning blaming the pkginfo criteria -- which sends anyone reading it to
+    /// the wrong place entirely.
+    ///
+    /// Marking the corpse "aborted" and naming the last thing it was doing is the
+    /// difference between "this host is fine" and "this host has not completed a run
+    /// in days".
+    ///
+    /// Only sessions that cannot still be alive are touched: a session whose recorded
+    /// process id belongs to a live process started no later than the session itself
+    /// is left alone, so a genuinely concurrent run is never clobbered.
+    /// </remarks>
+    private void ReapOrphanedSessions()
+    {
+        foreach (var recovered in ReapAbandonedSessions(EnumerateAllSessionDirs().Take(50), _sessionDir, _sessionId))
+        {
+            Log("WARN", "Recovered abandoned session " + recovered);
+        }
+    }
+
+    /// <summary>
+    /// Rewrites every abandoned "running" session.json under <paramref name="sessionDirs"/>
+    /// as "aborted" and returns a description of each one recovered.
+    /// </summary>
+    internal static List<string> ReapAbandonedSessions(IEnumerable<string> sessionDirs, string currentSessionDir, string currentSessionId)
+    {
+        var recovered = new List<string>();
+        try
+        {
+            foreach (var dir in sessionDirs)
+            {
+                if (!string.IsNullOrEmpty(currentSessionDir) &&
+                    string.Equals(Path.GetFullPath(dir), Path.GetFullPath(currentSessionDir), StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var sessionPath = Path.Combine(dir, "session.json");
+                if (!File.Exists(sessionPath))
+                    continue;
+
+                SessionData? session;
+                try
+                {
+                    session = JsonSerializer.Deserialize<SessionData>(File.ReadAllText(sessionPath), JsonOptions);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (session == null || !string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!DateTime.TryParse(session.StartTime, out var startedAt))
+                    startedAt = Directory.GetCreationTime(dir);
+
+                if (IsSessionProcessStillAlive(session, startedAt))
+                    continue;
+
+                // The last event the session managed to write is the truest end time
+                // available, and the item it names is where the run actually stopped.
+                var lastEvent = ReadLastEvent(Path.Combine(dir, "events.jsonl"));
+                var endedAt = lastEvent.Timestamp ?? File.GetLastWriteTime(sessionPath);
+                if (endedAt < startedAt)
+                    endedAt = startedAt;
+
+                var reason = string.IsNullOrEmpty(lastEvent.Item)
+                    ? "session ended without reaching EndSession"
+                    : "session ended without reaching EndSession while processing " + lastEvent.Item;
+
+                session.Status = "aborted";
+                session.EndTime = endedAt.ToString("o");
+                session.DurationSeconds = (long)(endedAt - startedAt).TotalSeconds;
+                session.Environment ??= new Dictionary<string, object>();
+                session.Environment["aborted_reason"] = reason;
+                session.Environment["aborted_detected_by"] = currentSessionId;
+
+                try
+                {
+                    File.WriteAllText(sessionPath, JsonSerializer.Serialize(session, JsonOptions));
+                    recovered.Add(session.SessionId + " - marked aborted (" + reason + ")");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("[ERROR] Failed to mark session " + session.SessionId + " aborted: " + ex.Message);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Housekeeping must never stop a run.
+            Console.Error.WriteLine("[ERROR] Failed to reap abandoned sessions: " + ex.Message);
+        }
+
+        return recovered;
+    }
+
+    /// <summary>
+    /// True when the session's recorded process id still belongs to a process that
+    /// could plausibly be that session, so it must not be reaped.
+    /// </summary>
+    private static bool IsSessionProcessStillAlive(SessionData session, DateTime sessionStart)
+    {
+        if (session.Environment == null || !session.Environment.TryGetValue("process_id", out var raw) || raw == null)
+            return false;
+
+        if (!int.TryParse(raw.ToString(), out var pid) || pid <= 0)
+            return false;
+
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(pid);
+            // Process ids are recycled. A process that started AFTER the session did
+            // is a different one wearing the same number.
+            return process.StartTime <= sessionStart.AddSeconds(1);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the timestamp and package name of the last event a session wrote.
+    /// </summary>
+    private static (DateTime? Timestamp, string? Item) ReadLastEvent(string eventsPath)
+    {
+        if (!File.Exists(eventsPath))
+            return (null, null);
+
+        try
+        {
+            string? lastLine = null;
+            foreach (var line in File.ReadLines(eventsPath))
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                    lastLine = line;
+            }
+
+            if (lastLine == null)
+                return (null, null);
+
+            var evt = JsonSerializer.Deserialize<LogEvent>(lastLine, JsonLinesOptions);
+            if (evt == null)
+                return (null, null);
+
+            return (evt.Timestamp == default ? (DateTime?)null : evt.Timestamp, evt.PackageName);
+        }
+        catch
+        {
+            return (null, null);
+        }
     }
 
     /// <summary>
