@@ -81,7 +81,9 @@ public static class ConsoleLogger
     /// <summary>
     /// Writes <paramref name="text"/> as-is on a terminal, or one stamped line per line
     /// of it when the stream is redirected. The stamp matches <see cref="SessionLogger.Log"/>
-    /// so a captured stdout and the file log read the same way.
+    /// and the decoration is stripped the same way, so a captured stdout and the file log
+    /// read the same way. Nothing on the far end of a redirect renders an escape sequence,
+    /// so leaving the colours in would only put control bytes in the transcript.
     /// </summary>
     private static void Write(System.IO.TextWriter writer, bool redirected, string level, string text)
     {
@@ -92,10 +94,21 @@ public static class ConsoleLogger
         }
 
         var stamp = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {level,-5} ";
-        foreach (var line in text.Split('\n'))
+        foreach (var line in StripDecoration(text).Split('\n'))
         {
             writer.WriteLine(stamp + line.TrimEnd('\r'));
         }
+    }
+
+    /// <summary>
+    /// Removes ANSI colour sequences and replaces box-drawing and symbol characters with
+    /// ASCII, so a line reads the same in a file as it does on a terminal.
+    /// </summary>
+    private static string StripDecoration(string message)
+    {
+        var clean = System.Text.RegularExpressions.Regex.Replace(message, @"\x1b\[[0-9;]*m", "");
+        return clean.Replace("├", "+").Replace("└", "+").Replace("─", "-").Replace("│", "|")
+                    .Replace("→", "->").Replace("✓", "[OK]").Replace("✗", "[FAIL]");
     }
 
     /// <summary>
@@ -105,12 +118,7 @@ public static class ConsoleLogger
     private static void LogToSession(string level, string message)
     {
         if (_sessionLogger == null) return;
-        // Strip ANSI escape sequences for clean log file output
-        var clean = System.Text.RegularExpressions.Regex.Replace(message, @"\x1b\[[0-9;]*m", "");
-        // Replace Unicode box-drawing and symbol characters with ASCII equivalents for log compatibility
-        clean = clean.Replace("├", "+").Replace("└", "+").Replace("─", "-").Replace("│", "|")
-                      .Replace("→", "->").Replace("✓", "[OK]").Replace("✗", "[FAIL]");
-        _sessionLogger.Log(level, clean);
+        _sessionLogger.Log(level, StripDecoration(message));
     }
 
     /// <summary>
