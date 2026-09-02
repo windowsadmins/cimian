@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace Cimian.Core;
 
 /// <summary>
@@ -89,4 +91,63 @@ public static class CimianPaths
     public static readonly string CimiStatusExe            = Path.Combine(CimianInstallDir, "cimistatus.exe");
     public static readonly string PreflightScriptInstall   = Path.Combine(CimianInstallDir, "preflight.ps1");
     public static readonly string PostflightScriptInstall  = Path.Combine(CimianInstallDir, "postflight.ps1");
+
+    /// <summary>
+    /// Directories under <see cref="ManagedInstallsRoot"/> whose names are part of the
+    /// cross-platform convention and must be exactly lowercase on disk.
+    /// </summary>
+    public static readonly string[] ConventionDirs =
+    {
+        LogsDir, ReportsDir, CatalogsDir, IconsDir, ManifestsDir, ConditionsDir, FactsDir
+    };
+
+    /// <summary>
+    /// Renames a directory that exists with the wrong casing to the name this class
+    /// defines, and returns true when it moved one.
+    /// </summary>
+    /// <remarks>
+    /// Changing the path string in this class did not rename anything already on disk:
+    /// NTFS is case-insensitive, so a machine that had <c>ManagedInstalls\Logs</c> before the
+    /// convention landed keeps that name for ever and reports it upward, while every path
+    /// built here happily resolves onto it. Nothing is broken on the endpoint — both spellings
+    /// are the same directory — but the reported path is wrong, and a case-sensitive reader
+    /// (a log shipper, a mirror on another filesystem) sees two names for one thing.
+    ///
+    /// The rename goes via a temporary name because a direct case-only Move is a no-op on a
+    /// case-insensitive volume. Everything is best effort: this runs at the start of every
+    /// session, and a directory that cannot be renamed — held open by another process, denied,
+    /// or already correct — must never stop a run.
+    /// </remarks>
+    public static bool NormalizeDirectoryCasing(string desiredPath)
+    {
+        try
+        {
+            var parent = Path.GetDirectoryName(desiredPath);
+            var wanted = Path.GetFileName(desiredPath);
+            if (string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(wanted) || !Directory.Exists(parent))
+                return false;
+
+            var matches = Directory.GetDirectories(parent)
+                .Where(d => string.Equals(Path.GetFileName(d), wanted, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            // Exactly one entry is the normal case. Zero means nothing to do; more than one
+            // means a case-sensitive volume holds both spellings as separate directories, and
+            // merging them is a data decision this must not take on its own.
+            if (matches.Count != 1) return false;
+
+            var actual = Path.GetFileName(matches[0]);
+            if (string.Equals(actual, wanted, StringComparison.Ordinal)) return false;
+
+            var staging = Path.Combine(parent, $"{wanted}.casing-{Guid.NewGuid():N}");
+            Directory.Move(matches[0], staging);
+            Directory.Move(staging, desiredPath);
+            return true;
+        }
+        catch
+        {
+            // Cosmetic correction; never worth failing a run over.
+            return false;
+        }
+    }
 }
