@@ -224,6 +224,15 @@ public class ConfigurationService
     /// </summary>
     public void EnsureDirectoriesExist(CimianConfig config)
     {
+        // Before creating anything: a device provisioned before the lowercase convention
+        // still has ManagedInstalls\Logs, and every path built from CimianPaths resolves
+        // onto it because NTFS is case-insensitive. Renaming it here means the reported
+        // path matches the convention from the next session on. Best effort by design.
+        foreach (var conventionDir in CimianPaths.ConventionDirs)
+        {
+            CimianPaths.NormalizeDirectoryCasing(conventionDir);
+        }
+
         var directories = new[]
         {
             config.CachePath,
