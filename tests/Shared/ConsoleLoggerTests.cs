@@ -55,12 +55,26 @@ public class ConsoleLoggerTests : IDisposable
         var outLines = Lines(_stdout);
         Assert.Equal(3, outLines.Length);
         Assert.Matches(Stamp + "INFO  plain$", outLines[0]);
-        Assert.Matches(Stamp + "WARN  .*careful", outLines[1]);
-        Assert.Matches(Stamp + "DEBUG .*fine print", outLines[2]);
+        Assert.Matches(Stamp + "WARN  careful$", outLines[1]);
+        Assert.Matches(Stamp + "DEBUG     fine print$", outLines[2]);
 
         var errLines = Lines(_stderr);
         Assert.Single(errLines);
-        Assert.Matches(Stamp + "ERROR .*broken", errLines[0]);
+        Assert.Matches(Stamp + "ERROR broken$", errLines[0]);
+
+        // No control bytes reach the transcript: colours are meaningless once captured.
+        Assert.DoesNotContain('\u001b', _stdout.ToString());
+        Assert.DoesNotContain('\u001b', _stderr.ToString());
+    }
+
+    [Fact]
+    public void RedirectedOutputReplacesBoxDrawingWithAscii()
+    {
+        ConsoleLogger.OutputRedirectedOverride = true;
+
+        ConsoleLogger.Log("└─ ✓ done → next");
+
+        Assert.Matches(Stamp + @"INFO  \+- \[OK\] done -> next$", Lines(_stdout)[0]);
     }
 
     [Fact]
