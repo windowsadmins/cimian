@@ -867,15 +867,11 @@ public class UpdateEngine : IDisposable
                 await CleanUpSelfServeUninstallsAsync(uninstallOutcomes);
             }
 
-            // Combine install + uninstall outcomes keyed by lower-invariant name so
-            // CollectSessionItems can stamp each manifest item with its real result.
-            var outcomesByName = new Dictionary<string, ItemOutcome>(StringComparer.OrdinalIgnoreCase);
-            foreach (var o in installOutcomes) outcomesByName[o.Name.ToLowerInvariant()] = o;
-            foreach (var o in uninstallOutcomes) outcomesByName[o.Name.ToLowerInvariant()] = o;
-
-            // Run postflight unless skipped
-            if (!skipPostflight && !_config.NoPostflight)
+            // Runs the postflight script once the session's reports are on disk, so
+            // whatever it hands to the reporting client is this session's state.
+            async Task RunPostflightAfterReportsAsync()
             {
+                if (skipPostflight || _config.NoPostflight) return;
                 LogInfo("----------------------------------------------------------------------");
                 LogInfo("POSTFLIGHT EXECUTION");
                 LogInfo("----------------------------------------------------------------------");
@@ -887,6 +883,25 @@ public class UpdateEngine : IDisposable
                     _sessionLogger?.Log("WARN", $"Postflight script failed: {postflightOutput}");
                 }
             }
+
+            // Combine install + uninstall outcomes keyed by lower-invariant name so
+            // CollectSessionItems can stamp each manifest item with its real result.
+            var outcomesByName = new Dictionary<string, ItemOutcome>(StringComparer.OrdinalIgnoreCase);
+            foreach (var o in installOutcomes) outcomesByName[o.Name.ToLowerInvariant()] = o;
+            foreach (var o in uninstallOutcomes) outcomesByName[o.Name.ToLowerInvariant()] = o;
+
+            // Postflight deliberately does NOT run here. It used to, and postflight's
+            // whole job is to hand this session's results to the reporting client -
+            // but the results do not exist yet at this point. CollectSessionItems and
+            // EndSessionWithSummary below are what write items.json, sessions.json and
+            // events.json, so a postflight fired here collected the PREVIOUS session
+            // every time. Measured on a render node: postflight ran at 07:45:29 and
+            // items.json was not rewritten until 07:46:16, 47 seconds later, every
+            // hour, for as long as the two have been scheduled together. The fleet
+            // report was permanently one session behind the machine while last_seen
+            // looked current, which is why devices showed failures they had already
+            // recovered from. It now runs after the reports are on disk - see
+            // RunPostflightAsync calls below.
 
             // Clear bootstrap mode if successful
             if (_isBootstrap && installSuccess && uninstallSuccess)
@@ -915,7 +930,11 @@ public class UpdateEngine : IDisposable
 
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
-                
+
+                // Reports are written; now hand them over. Before any restart, which
+                // would otherwise kill the handover.
+                await RunPostflightAfterReportsAsync();
+
                 // Handle restart_action: restart takes precedence over logout (Munki parity)
                 if (_restartNeeded)
                 {
@@ -942,6 +961,9 @@ public class UpdateEngine : IDisposable
 
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
+
+                // A partial failure is exactly the session a fleet report most needs.
+                await RunPostflightAfterReportsAsync();
 
                 // Even on partial failure, honor restart/logout if any successful item required it
                 if (_restartNeeded)
