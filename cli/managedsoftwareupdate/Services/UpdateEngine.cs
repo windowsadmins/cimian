@@ -872,6 +872,10 @@ public class UpdateEngine : IDisposable
             async Task RunPostflightAfterReportsAsync()
             {
                 if (skipPostflight || _config.NoPostflight) return;
+                // Must be called BEFORE EndSessionWithSummary. EndSession closes the
+                // session log files, and a postflight run after that is invisible -
+                // which is exactly how the first attempt at this fix shipped a client
+                // where postflight silently never ran at all.
                 LogInfo("----------------------------------------------------------------------");
                 LogInfo("POSTFLIGHT EXECUTION");
                 LogInfo("----------------------------------------------------------------------");
@@ -928,12 +932,15 @@ public class UpdateEngine : IDisposable
                 // Write InstallInfo.yaml for MSC GUI (post-install: actions completed)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName.Values);
 
+                // Put the reports on disk first, then hand them over, then end the
+                // session. Postflight's whole purpose is to give the reporting client
+                // this session's results, so it has to run after the reports exist -
+                // and before EndSession, which closes the log files.
+                _sessionLogger?.GenerateReportsNow();
+                await RunPostflightAfterReportsAsync();
+
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     toInstall.Count + toUpdate.Count + toUninstall.Count, 0, manifestItems);
-
-                // Reports are written; now hand them over. Before any restart, which
-                // would otherwise kill the handover.
-                await RunPostflightAfterReportsAsync();
 
                 // Handle restart_action: restart takes precedence over logout (Munki parity)
                 if (_restartNeeded)
@@ -959,11 +966,12 @@ public class UpdateEngine : IDisposable
                 // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
                 WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName.Values);
 
+                // A partial failure is exactly the session a fleet report most needs.
+                _sessionLogger?.GenerateReportsNow();
+                await RunPostflightAfterReportsAsync();
+
                 EndSessionWithSummary("partial_failure", toInstall.Count, toUpdate.Count, toUninstall.Count,
                     successCount, failCount, manifestItems);
-
-                // A partial failure is exactly the session a fleet report most needs.
-                await RunPostflightAfterReportsAsync();
 
                 // Even on partial failure, honor restart/logout if any successful item required it
                 if (_restartNeeded)
