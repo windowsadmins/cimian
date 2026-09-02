@@ -792,6 +792,23 @@ public static class SessionItemStatusResolver
             return "Removed";
         return "Installed";
     }
+
+    /// <summary>
+    /// The status for an item that was deferred this run rather than acted on.
+    /// </summary>
+    /// <remarks>
+    /// Deferral removes the item from the action lists, so it reaches Resolve with no
+    /// outcome and no pending flag and falls through to the "Installed" default. That
+    /// reported a package the status check had just found missing as installed - the
+    /// failure was silent and it applied to every install_window item on a machine that
+    /// checked in outside its window. A deferred item is pending, by definition.
+    /// </remarks>
+    public static string ResolveDeferred(string kind) => kind switch
+    {
+        "update"    => "Pending Update",
+        "uninstall" => "Pending Removal",
+        _           => "Pending Install"
+    };
 }
 
 /// <summary>

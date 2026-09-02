@@ -625,6 +625,9 @@ public class UpdateEngine : IDisposable
                             $"Outside install window {item.InstallWindow}",
                             Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow,
                             Cimian.Core.Models.DetectionMethod.None, null, false);
+                        RecordDeferral(item, list, toInstall, toUpdate,
+                            $"Outside install window {item.InstallWindow}",
+                            Cimian.Core.Models.StatusReasonCode.DeferredInstallWindow);
                         deferredItems.Add(item);
                         list.RemoveAt(i);
                     }
@@ -658,6 +661,9 @@ public class UpdateEngine : IDisposable
                             $"Blocking applications running: {runningList}",
                             Cimian.Core.Models.StatusReasonCode.BlockingApps,
                             Cimian.Core.Models.DetectionMethod.None, null, true);
+                        RecordDeferral(item, list, toInstall, toUpdate,
+                            $"Blocking applications running: {runningList}",
+                            Cimian.Core.Models.StatusReasonCode.BlockingApps);
                         blockedItems.Add(item);
                         list.RemoveAt(i);
                     }
@@ -704,6 +710,9 @@ public class UpdateEngine : IDisposable
                                 deferReason,
                                 Cimian.Core.Models.StatusReasonCode.DeferredUserActive,
                                 Cimian.Core.Models.DetectionMethod.None, null, true);
+                            RecordDeferral(item, list, toInstall, toUpdate,
+                                deferReason,
+                                Cimian.Core.Models.StatusReasonCode.DeferredUserActive);
                             deferredForUser.Add(item);
                             list.RemoveAt(i);
                         }
@@ -732,6 +741,8 @@ public class UpdateEngine : IDisposable
                             deferReason,
                             Cimian.Core.Models.StatusReasonCode.DeferredUserActive,
                             Cimian.Core.Models.DetectionMethod.None, null, true);
+                        _deferredByName[item.Name] = ("uninstall", deferReason,
+                            Cimian.Core.Models.StatusReasonCode.DeferredUserActive);
                         deferredForUser.Add(item);
                         toUninstall.RemoveAt(i);
                     }
@@ -2898,6 +2909,40 @@ public class UpdateEngine : IDisposable
     /// Go parity: main.go lines 3308-3430 where SessionPackageInfo is collected for each manifest item.
     /// Excludes MDM profiles/apps (managed externally) - those are filtered by SessionLogger.
     /// </summary>
+    /// <summary>
+    /// Items pulled out of the action lists this run because they were deferred:
+    /// name -> the kind of action that was deferred, and why.
+    /// </summary>
+    /// <remarks>
+    /// Deferral removes the item from toInstall/toUpdate/toUninstall, which used to
+    /// erase every trace of it from the reported status. CollectSessionItems then saw
+    /// no outcome and no pending flag and fell through to the resolver's "Installed"
+    /// default, so a package the status check had just declared missing was reported
+    /// to the fleet as installed. Every install_window package on a machine that
+    /// checks in during the day was affected. Keep the deferral so the reported
+    /// status can stay truthful.
+    /// </remarks>
+    private readonly Dictionary<string, (string Kind, string Reason, string ReasonCode)> _deferredByName = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Remembers that <paramref name="item"/> was deferred out of <paramref name="list"/>,
+    /// so the reported status can say "Pending" with a reason instead of defaulting to
+    /// "Installed".
+    /// </summary>
+    private void RecordDeferral(
+        CatalogItem item,
+        List<CatalogItem> list,
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        string reason,
+        string reasonCode)
+    {
+        var kind = ReferenceEquals(list, toInstall) ? "install"
+                 : ReferenceEquals(list, toUpdate) ? "update"
+                 : "uninstall";
+        _deferredByName[item.Name] = (kind, reason, reasonCode);
+    }
+
     private void CollectSessionItems(
         List<ManifestItem> manifestItems,
         List<CatalogItem> toInstall,
@@ -2970,6 +3015,29 @@ public class UpdateEngine : IDisposable
                     // Mark as touched this run so DataExporter stamps last_seen_in_session.
                     // Distinct from install/update/remove so consumers can filter on it.
                     ActionPerformed = suppression.PendingRestart ? "restart_deferred" : "loop_suppressed",
+                    OutcomeTimestamp = DateTime.UtcNow
+                });
+                continue;
+            }
+
+            // An item deferred this run was removed from the action lists, so without
+            // this it would reach the resolver with no outcome and no pending flag and
+            // be reported as "Installed" - the exact opposite of the truth for an
+            // install_window package that is not on the machine yet.
+            if (_deferredByName.TryGetValue(mi.Name, out var deferral)
+                && !outcomesByName.ContainsKey(key))
+            {
+                items.Add(new SessionPackageInfo
+                {
+                    Name = mi.Name,
+                    Version = version,
+                    Status = SessionItemStatusResolver.ResolveDeferred(deferral.Kind),
+                    ItemType = itemType,
+                    DisplayName = displayName,
+                    StatusReason = deferral.Reason,
+                    StatusReasonCode = deferral.ReasonCode,
+                    DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
+                    ActionPerformed = "deferred",
                     OutcomeTimestamp = DateTime.UtcNow
                 });
                 continue;
