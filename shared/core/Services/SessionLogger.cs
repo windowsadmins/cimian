@@ -1031,6 +1031,29 @@ public class SessionLogger : IDisposable
     /// <summary>
     /// Generates report files for external tools
     /// </summary>
+    /// <summary>
+    /// Writes the report files (items.json, sessions.json, events.json) without ending
+    /// the session.
+    /// </summary>
+    /// <remarks>
+    /// EndSession generates the reports and then closes the log files. Anything that
+    /// needs the reports on disk AND needs the session log still open - postflight,
+    /// which hands the reports to the reporting client and whose success or failure is
+    /// worth recording - cannot use EndSession for that. Callers generate here, do the
+    /// work, then end the session.
+    /// </remarks>
+    public void GenerateReportsNow()
+    {
+        try
+        {
+            GenerateReports();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] Failed to generate reports: {ex.Message}");
+        }
+    }
+
     private void GenerateReports()
     {
         try
