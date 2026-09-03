@@ -99,9 +99,16 @@ public class CatalogBuilder
                 {
                     warnings.Add($"{pkg.FilePath} has missing installer => {relativePath}");
                 }
-                else if (hashCheck)
+                else
                 {
-                    // Hash and size validation when --hash_check is enabled
+                    // Size is checked on every run; hashing only under --hash_check.
+                    // They used to share the flag, which meant neither ran in practice:
+                    // the publishing pipeline does not pass it, because hashing every
+                    // payload means re-reading multi-gigabyte packages on each publish.
+                    // Reading a file's length costs a stat call, so there is no reason
+                    // for it to sit behind the expensive check -- and a wrong size is
+                    // exactly what went unnoticed for months, because the one detector
+                    // for it never ran.
                     var fullPath = Path.Combine(repoPath, relativePath.Replace('/', '\\'));
                     if (File.Exists(fullPath))
                     {
@@ -110,7 +117,7 @@ public class CatalogBuilder
                         {
                             warnings.Add($"{pkg.FilePath} installer size mismatch: expected {pkg.Installer.Size}, actual {fileInfo.Length}");
                         }
-                        if (!string.IsNullOrEmpty(pkg.Installer.Hash))
+                        if (hashCheck && !string.IsNullOrEmpty(pkg.Installer.Hash))
                         {
                             var actualHash = ComputeMd5Hash(fullPath);
                             if (!string.Equals(actualHash, pkg.Installer.Hash, StringComparison.OrdinalIgnoreCase))
@@ -139,8 +146,6 @@ public class CatalogBuilder
                         continue;
                     }
 
-                    if (!hashCheck) continue;
-
                     var fullPath = Path.Combine(repoPath, relativePath.Replace('/', '\\'));
                     if (!File.Exists(fullPath)) continue;
 
@@ -149,7 +154,7 @@ public class CatalogBuilder
                     {
                         warnings.Add($"{pkg.FilePath} uninstaller size mismatch: expected {uninst.Size}, actual {fileInfo.Length}");
                     }
-                    if (!string.IsNullOrEmpty(uninst.Hash))
+                    if (hashCheck && !string.IsNullOrEmpty(uninst.Hash))
                     {
                         var actualHash = ComputeMd5Hash(fullPath);
                         if (!string.Equals(actualHash, uninst.Hash, StringComparison.OrdinalIgnoreCase))
