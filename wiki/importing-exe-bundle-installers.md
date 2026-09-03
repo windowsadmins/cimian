@@ -1,64 +1,71 @@
-# Importing .exe Bundle Installers (WiX Burn, InstallShield, NSIS)
+# Importing EXE Bundle Installers
 
-Most enterprise Windows installers ship as a single `.exe` that internally chains one or more `.msi` payloads plus prerequisite installers (VC++ Redist, .NET, etc.). The most common form is a **WiX Burn bundle**, but the same pattern applies to InstallShield setup launchers and NSIS-wrapped MSI installers.
+Many enterprise Windows installers ship as a single `.exe` that internally chains one or more MSI
+payloads plus prerequisites. The most common form is a WiX Burn bundle; InstallShield setup
+launchers and NSIS-wrapped MSI installers behave similarly. These are awkward because the bundle
+registers several Add/Remove Programs entries — or none — so the obvious detection choice is
+usually the wrong one. This page walks through importing one, using a fictional
+**Example Vendor Suite 3.2.1** as the worked example.
 
-This guide walks through the right way to write a pkgsinfo for one — using the **Trotec Ruby Bundle 2.11.1.64391** import as a worked example — and covers the install-loop pitfall that bit us in production.
+## The short version
 
-## TL;DR
+1. Install the bundle once on a scratch machine, then read the Windows uninstall registry to find
+   the **main MSI's ProductCode**.
+2. Put the `.exe` in the `installer:` block with the vendor's silent switches.
+3. Put that ProductCode in `installs:` as a `type: msi` entry. That, not the bundle, is what
+   Cimian uses to decide whether the product is present.
+4. **Do not** add a `type: file` entry pointing at a component executable unless you can guarantee
+   its `FileVersion` matches the bundle version. It usually does not, and the mismatch causes an
+   endless reinstall loop.
 
-1. **Install the bundle once on your workstation**, then mine the Windows uninstall registry to find the main MSI's `ProductCode`.
-2. Put the `.exe` bundle in `installer:` with the silent switches (`/install /quiet /norestart` for Burn; vendor-specific for other wrappers).
-3. Put the main MSI's `ProductCode` in `installs:` with `type: msi` — this is what Cimian uses to decide "is it installed?"
-4. **Do not** add a `type: file` installs entry pointing at a component .exe unless you can guarantee its `FileVersion` matches the bundle version. They usually don't — and the mismatch causes an infinite reinstall loop.
+## 1. Identify the wrapper
 
-## Step-by-step: Trotec Ruby case study
-
-### 1. Identify the wrapper type
+WiX Burn bundles embed a `WixBurn` marker near the start of the PE image. Read the first few
+kilobytes and look for it:
 
 ```powershell
-# Quick WiX Burn detection — Burn bundles embed the literal "WixBurn" marker in the PE
-$bytes = [System.IO.File]::ReadAllBytes("C:\path\to\installer.exe")[0..4095]
-if ([System.Text.Encoding]::ASCII.GetString($bytes) -match "WixBurn|Burn|Bundle") {
-    "Burn bundle"
-}
+$bytes = [System.IO.File]::ReadAllBytes('C:\staging\ExampleVendorSuite-3.2.1.exe')[0..4095]
+if ([System.Text.Encoding]::ASCII.GetString($bytes) -match 'WixBurn|Burn|Bundle') { 'Burn bundle' }
 ```
 
-Burn bundles always accept this silent switch set:
+Another quick tell: if `/?` opens a graphical window rather than printing help to the console, it
+is almost certainly a Burn bundle.
+
+Burn bundles accept a fixed switch set:
 
 | Switch | Purpose |
 |---|---|
-| `/install` | install (default action) |
+| `/install` | install (the default action) |
 | `/uninstall` | uninstall |
 | `/repair` | repair |
 | `/quiet` | no UI, no prompts |
 | `/passive` | progress UI only |
 | `/norestart` | suppress reboot |
-| `/log <path>` | write log |
-| `/layout <path>` | extract payloads only (no install) |
+| `/log <path>` | write a log |
+| `/layout <path>` | extract payloads without installing |
 
-If `/?` opens a GUI (rather than printing help to a console), you are almost certainly looking at a Burn bundle.
+InstallShield and NSIS wrappers use different switches — commonly `/s /v"/qn"` and `/S`
+respectively — and you have to determine them per vendor. Cimian does not guess for you at install
+time; whatever you put in `installer.switches` is what runs.
 
-### 2. Install it once locally to harvest the detection key
+## 2. Install it once and harvest the detection key
+
+Snapshot the machine first so you can see what appeared:
 
 ```powershell
-# Snapshot first so you can diff afterwards
 $dirs = @('C:\Program Files','C:\Program Files (x86)','C:\ProgramData')
-$snap = foreach ($d in $dirs) { Get-ChildItem $d -Directory -EA 0 | Select -Expand FullName }
-$snap | Out-File "$env:TEMP\before.txt"
-
-# Silent install with a Burn log for forensics
-sudo "C:\path\to\installer.exe" /install /quiet /norestart /log "$env:TEMP\install.log"
+$before = foreach ($d in $dirs) { Get-ChildItem $d -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName }
+$before | Out-File "$env:TEMP\before.txt"
 ```
 
-When the install finishes, look at the Burn log — it records the bundle ID and every child MSI's ProductCode:
+Then run the bundle silently from an elevated console, keeping a log:
 
-```
-i370: Session begin, registration key: SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{dfd070dc-23b6-4e0d-a413-5cbc33cb40ac}
-i305: Verified acquired payload: Trotec.Ruby.Main.Installer.msi at path: ...,
-       moving to: C:\ProgramData\Package Cache\{05D3C784-482A-4324-A386-10001F5FC6E9}v2.11.1.64391\Trotec.Ruby.Main.Installer.msi
+```powershell
+& 'C:\staging\ExampleVendorSuite-3.2.1.exe' /install /quiet /norestart /log "$env:TEMP\bundle-install.log"
 ```
 
-Or query the live registry once it's installed:
+A Burn log records the bundle's own registration key and every child MSI it acquires and caches,
+which is often the fastest route to the ProductCode. Failing that, read the live registry:
 
 ```powershell
 $paths = @(
@@ -66,52 +73,56 @@ $paths = @(
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
 )
 foreach ($p in $paths) {
-    Get-ChildItem $p -EA 0 | ForEach-Object {
-        $r = Get-ItemProperty $_.PSPath -EA 0
-        if ($r.DisplayName -match 'YourAppName') {
-            "Key: $($_.PSChildName)"
-            "  DisplayName    : $($r.DisplayName)"
-            "  DisplayVersion : $($r.DisplayVersion)"
-            "  UninstallString: $($r.UninstallString)"
+    Get-ChildItem $p -ErrorAction SilentlyContinue | ForEach-Object {
+        $r = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        if ($r.DisplayName -like '*Example Vendor*') {
+            [pscustomobject]@{
+                Key             = $_.PSChildName
+                DisplayName     = $r.DisplayName
+                DisplayVersion  = $r.DisplayVersion
+                UninstallString = $r.UninstallString
+            }
         }
     }
 }
 ```
 
-For Trotec Ruby, this revealed **two** uninstall entries:
+For a bundle this typically returns **two** entries:
 
 | Key | DisplayName | DisplayVersion | What it is |
 |---|---|---|---|
-| `{dfd070dc-23b6-4e0d-a413-5cbc33cb40ac}` | Trotec Ruby Bundle | 2.11.1.64391 | The Burn bundle wrapper (uninstall calls the .exe) |
-| `{05D3C784-482A-4324-A386-10001F5FC6E9}` | Trotec Ruby | 2.11.1.64391 | The main MSI inside (uninstall calls `msiexec /I{guid}`) |
+| `{6F0A1D3E-...}` | Example Vendor Suite Bundle | 3.2.1 | the Burn wrapper; its uninstall string runs the `.exe` |
+| `{9D3F1A77-...}` | Example Vendor Suite | 3.2.1 | the main MSI inside; its uninstall string is `msiexec /I{...}` |
 
-The **main MSI's ProductCode** is what you want — it represents the actual application install state, not the bundle wrapper. If the user uninstalls just the app via Add/Remove Programs, the MSI entry vanishes but the bundle entry might linger; tracking the MSI gives you accurate state.
+**Use the main MSI's ProductCode.** It represents the application's actual install state. If a
+user removes the app through Add/Remove Programs, the MSI entry disappears while the bundle entry
+can linger, so tracking the MSI gives you accurate state and tracking the bundle does not.
 
-### 3. Write the pkginfo
+Some bundles register nothing at all, or register only the wrapper. Section 6 covers that case.
+
+## 3. Write the pkgsinfo
 
 ```yaml
-name: TrotecRuby
-display_name: Trotec Ruby
-version: 2.11.1.64391
+name: ExampleVendorSuite
+display_name: Example Vendor Suite
+version: 3.2.1
 catalogs:
 - Production
-category: Modeling
+category: Design
 description: |
-  Trotec Ruby is the design and production software for Trotec laser engraving and cutting systems.
-developer: Trotec Laser GmbH
+  Example Vendor Suite is the authoring and production application for Example Vendor hardware.
+developer: Example Vendor Ltd
 installer:
   type: exe
-  location: /apps/modeling/TrotecRuby-x64-2.11.1.64391.exe
-  hash: df1b792a...
-  size: 1121089
+  location: apps/example-vendor/ExampleVendorSuite-3.2.1.exe
   switches:
-  - /install
-  - /quiet
-  - /norestart
+  - install
+  - quiet
+  - norestart
 installs:
 - type: msi
-  product_code: '{05D3C784-482A-4324-A386-10001F5FC6E9}'
-  version: 2.11.1.64391
+  product_code: '{9D3F1A77-4C22-4B0E-B6D1-3E7F2A9C1140}'
+  version: 3.2.1
 minimum_os_version: 10.0.19041
 supported_architectures:
 - x64
@@ -119,120 +130,159 @@ unattended_install: true
 unattended_uninstall: true
 ```
 
-Two separate concerns:
+`installer.switches` are written Windows-style; a leading `/` is added if you omit it, so `install`
+and `/install` are equivalent. `installer.location` is relative to `pkgs/` in the repository.
 
-| Block | Purpose |
+The two blocks answer two different questions, and conflating them is the root of most bundle
+problems:
+
+| Block | Answers |
 |---|---|
-| `installer.type: exe` + switches | **How to install** — runs the Burn bundle .exe |
-| `installs: type: msi product_code: …` | **How to detect installed** — Cimian queries Windows Installer for that GUID |
+| `installer.type: exe` plus switches | **how to install** — run the bundle |
+| `installs:` with `type: msi` and `product_code` | **how to tell whether it is installed** — query Windows Installer for that GUID |
 
-### 4. Verify against `StatusService`
+If you import with [cimiimport](cimiimport), it fills in `installer.hash` and `installer.size` for
+you and can emit a starting `installs` array; review that array before publishing, because for a
+bundle it will often propose file entries you do not want.
 
-The detection path is `packages/CimianTools/cli/managedsoftwareupdate/Services/StatusService.cs`:
+## 4. How detection then behaves
 
-- `CheckStatus` reaches **Priority 2** (`installs` array present) and calls `CheckInstallsArray`.
-- For the `type: msi` entry, line 525 calls `CheckMsiWithUpgradeCode(productCode, upgradeCode, catalogVersion, name)`.
-- If the MSI is not registered → returns `Reason="MSI product not installed", ReasonCode=ProductCodeMissing, NeedsAction=true` → Cimian schedules the install.
-- If the MSI is registered at matching version → returns `Status=installed, NeedsAction=false` → skip.
+With an `installs` array present, the client evaluates that array and nothing below it in the
+detection cascade. For the `msi` entry it looks up the ProductCode in both the 64-bit and 32-bit
+views of the Windows uninstall registry and reads `DisplayVersion`.
 
-If `CheckMsiWithUpgradeCode` returns "not found", Cimian also tries a **display_name fallback** (line 530-551) — it walks Add/Remove Programs looking for a `DisplayName` matching `display_name` from the pkginfo. This catches auto-updating apps (Chrome, etc.) whose ProductCode rotates per version.
+- Not registered → the item needs installing.
+- Registered at a version older than the pkgsinfo `version` → the item needs updating.
+- Registered at the pkgsinfo version or newer → nothing to do.
 
-### 5. UpgradeCode is optional
+**Any one failing entry short-circuits the whole item to "needs action".** That is why a spurious
+extra entry is so damaging — see section 5.
 
-Some MSIs declare an `UpgradeCode`, some don't. The Trotec main MSI does not (the Burn bundle handles upgrades centrally). Omit `upgrade_code:` if you cannot find it — the ProductCode alone is sufficient for detection.
+Two narrow display-name fallbacks exist for products whose Windows Installer registration is
+unreliable:
 
-To find the UpgradeCode when one exists:
+- When an `installs` entry declares **neither** `product_code` nor `upgrade_code`, the client
+  searches Add/Remove Programs by the item's `display_name`, falling back to `name`.
+- When the **entry itself** carries a `display_name`, an Add/Remove Programs hit on that name
+  counts as installed. This is opt-in per entry and exists for wrapper MSIs that drop their
+  Windows Installer registration after an in-app self-update.
 
-```powershell
-Get-CimInstance Win32_Product -Filter "IdentifyingNumber='{05D3C784-482A-4324-A386-10001F5FC6E9}'" |
-    Select-Object Name, Version, IdentifyingNumber, Vendor, PackageCode
-# Win32_Product does not expose UpgradeCode directly — use registry reverse-lookup
-# under HKLM\SOFTWARE\Classes\Installer\UpgradeCodes\<packed-guid> with packed product code as a value name.
-```
+Neither fallback applies when the entry declares a ProductCode or UpgradeCode. **Declared codes are
+authoritative** and fuzzy matching is deliberately disabled in their presence, so a stale GUID
+fails rather than being papered over by a name match. Name matching is also one-directional — a
+registry `DisplayName` that contains your search string counts, but not the reverse — so
+`Example Vendor Suite Reader` will never be mistaken for `Example Vendor Suite`.
 
-## The pitfall: do not use `type: file` for bundle components
+## 5. Do not use `type: file` for bundle components
 
-It is tempting to add a second installs entry like this for "belt and suspenders":
+It is tempting to add a second entry for belt and braces:
 
 ```yaml
 installs:
 - type: msi
-  product_code: '{05D3C784-...}'
-  version: 2.11.1.64391
+  product_code: '{9D3F1A77-4C22-4B0E-B6D1-3E7F2A9C1140}'
+  version: 3.2.1
 - type: file
-  path: 'C:\Program Files (x86)\Trotec\Ruby\Manager\Ruby.Manager.exe'  # DO NOT DO THIS
+  path: 'C:\Program Files\Example Vendor\Suite\SuiteManager.exe'
+  version: 3.2.1
 ```
 
-**This causes an infinite reinstall loop.**
+**This causes an endless reinstall loop.** Component executables inside a bundle are built
+independently and stamped with their own internal `FileVersion`, which is almost never the
+marketing version on the bundle. If `SuiteManager.exe` reports `3.2.0.9910`, the check compares
+the pkgsinfo version `3.2.1` against it, finds the catalog newer, and reports the item as outdated
+— every run, forever, on a machine where the product is perfectly current. [Install loop
+prevention](Install-Loop-Prevention) will eventually suppress it, but suppression is a gag, not a
+fix, and the item shows as broken until you correct the pkgsinfo.
 
-Why: `Ruby.Manager.exe` is one of ~12 component executables built independently inside the Trotec product. Its `FileVersion` (from the PE header) is `2.11.0.63389` — the internal component version — **not** the bundle version `2.11.1.64391` declared by the marketing release.
+Ranked fixes:
 
-Trace through `StatusService.cs:447-471`:
+1. **Use the MSI ProductCode alone.** The registry `DisplayVersion` matches the bundle version, so
+   the comparison is correct. Drop the file entry. This is the right answer.
+2. **Provide a hash** on the file entry. When the hash matches, it is authoritative and the version
+   mismatch becomes informational. But hashes break on every patch, so this trades one maintenance
+   burden for another.
+3. **Pin the file entry's `version:` to the component's real `FileVersion`.** It works, but the
+   pkgsinfo now carries a version that does not describe what was shipped, and it has to be
+   re-derived on every release.
 
-1. `expectedVersion = item.Version` → `2.11.1.64391`
-2. `GetFileVersion(Ruby.Manager.exe)` → `2.11.0.63389`
-3. `CompareVersions("2.11.1.64391", "2.11.0.63389")` → `1` (expected > installed)
-4. No `md5checksum` → `hashVerificationPassed = false`
-5. Returns `NeedsAction=true, Reason="Version outdated: 2.11.0.63389 -> 2.11.1.64391"`
+## 6. When the bundle registers nothing usable
 
-Every run, every hour, forever — until **LoopGuard** (see [install-loop-prevention.md](install-loop-prevention.md)) suppresses it 6-24 hours later.
+Some wrappers leave no MSI registration at all, or leave only a wrapper entry whose
+`DisplayVersion` never changes. In that case, in order of preference:
 
-**Fixes ranked best to worst:**
+- **A stable file whose `FileVersion` genuinely tracks the release.** Check it on two consecutive
+  releases before trusting it.
 
-1. **Use MSI ProductCode alone.** The MSI's `DisplayVersion` in the registry matches the bundle version, so version comparison works correctly. Drop the file entry.
-2. **Provide an exact `md5checksum`** alongside the file path. When hash matches, `StatusService.cs:456` accepts the install regardless of file version. But hashes are fragile — they break on minor patches.
-3. **Pin the file entry's `version:` to the actual `FileVersion`** the component reports (`2.11.0.63389` in our case). Works but makes the pkginfo lie about what version the install actually is.
+  ```yaml
+  installs:
+  - type: file
+    path: 'C:\Program Files\Example Vendor\Suite\Suite.exe'
+    version: 3.2.1
+  ```
 
-Just use MSI ProductCode. It is right.
+- **A file plus a hash**, when the file has no usable version metadata. A file with neither a
+  version nor a hash can never be confirmed and the item reports as outdated forever.
+- **An `installcheck_script`**, when the truth lives somewhere only a script can read. Remember
+  that exit 0 means "install needed" — see [Scripts In pkgsinfo](Scripts-In-pkgsinfo).
 
-## Decision tree: which installs type to use
+If the product does declare an UpgradeCode, it is worth adding: an UpgradeCode is stable across
+versions where a ProductCode usually is not. Look it up under
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UpgradeCodes`, whose subkey names are
+packed GUIDs carrying the ProductCodes as value names. `Win32_Product` does not expose it, and
+querying `Win32_Product` at all is best avoided — it reconfigures every installed MSI as a side
+effect.
+
+## Choosing an installs entry type
 
 ```
-Is the install registered in Windows Installer (has an MSI ProductCode)?
-├── Yes → type: msi, product_code: '{GUID}', version: <catalog_version>
-│         Add display_name: at the top of the pkginfo too — Cimian uses it
-│         as a fallback when ProductCode rotation makes the GUID unreliable.
-│
-└── No  → Is there a single, stable file whose FileVersion matches the catalog version exactly?
-          ├── Yes → type: file, path: '<full path>', version: <catalog_version>
-          ├── No, but you can fingerprint it → type: file with md5checksum
-          └── No → type: registry (custom HKLM check) OR write an installcheck_script
+Is the product registered with Windows Installer (does it have an MSI ProductCode)?
+├── Yes -> type: msi with product_code (add upgrade_code when one exists)
+└── No  -> Is there one stable file whose FileVersion tracks the release?
+           ├── Yes -> type: file with path and version
+           ├── No, but it can be fingerprinted -> type: file with path and a hash
+           └── No -> installcheck_script
 ```
 
-When in doubt, **prefer `type: msi` over `type: file`**. MSI ProductCodes are authoritative and rotate cleanly across versions; file versions are at the mercy of however the vendor's build pipeline stamps them.
+When in doubt, prefer `type: msi` over `type: file`. ProductCodes are authoritative and rotate
+cleanly across versions; file versions are at the mercy of however the vendor's build pipeline
+stamps them.
 
-## Mirror to all repos
+## 7. Removal
 
-After importing, the pkginfo and rebuilt catalog must reach every client. The Cimian repo lives in three places:
+An item with `installer.type: exe` is removable by default: with no `uninstaller:` block declared,
+the client resolves the product's own uninstaller from the Windows uninstall registry, preferring
+`QuietUninstallString`, and infers a silent switch when the string is not already quiet. For a
+Burn bundle that means it invokes the bundle's own uninstall path.
 
-| Location | Purpose | Sync method |
-|---|---|---|
-| local repo (`deployment/`) | Source of truth for editing | git push |
-| On-prem origin (`$REPO_ORIGIN_USER@$REPO_ORIGIN_HOST:/Users/Shared/Cimian/deployment/`) | On-campus HTTP origin (`http://$REPO_ORIGIN_HOST/deployment`) | `scp` after `makecatalogs` |
-| Azure blob (`$AZURE_STORAGE_ACCOUNT/repo/deployment/`) | Off-campus origin via FrontDoor | `az storage blob upload` |
+The inferred switch is a guess. When you know the vendor's switches, declare them:
 
-A typical post-import sync:
-
-```powershell
-sudo makecatalogs
-scp deployment/pkgsinfo/apps/modeling/MyApp-*.yaml $REPO_ORIGIN_USER@$REPO_ORIGIN_HOST:/Users/Shared/Cimian/deployment/pkgsinfo/apps/modeling/
-scp deployment/catalogs/Production.yaml deployment/catalogs/All.yaml $REPO_ORIGIN_USER@$REPO_ORIGIN_HOST:/Users/Shared/Cimian/deployment/catalogs/
-az storage blob upload --account-name $AZURE_STORAGE_ACCOUNT --container-name repo `
-  --name "deployment/pkgs/apps/modeling/MyApp-1.0.exe" `
-  --file "deployment/pkgs/apps/modeling/MyApp-1.0.exe" --auth-mode login --overwrite
-az storage blob upload --account-name $AZURE_STORAGE_ACCOUNT --container-name repo `
-  --name "deployment/pkgsinfo/apps/modeling/MyApp-1.0.yaml" `
-  --file "deployment/pkgsinfo/apps/modeling/MyApp-1.0.yaml" --auth-mode login --overwrite
-az storage blob upload --account-name $AZURE_STORAGE_ACCOUNT --container-name repo `
-  --name "deployment/catalogs/Production.yaml" `
-  --file "deployment/catalogs/Production.yaml" --auth-mode login --overwrite
+```yaml
+uninstaller:
+- type: exe
+  command: 'C:\ProgramData\Package Cache\{6F0A1D3E-1B44-4E7C-9C0A-2D5E8F3B1A66}\ExampleVendorSuite-3.2.1.exe'
+  switches:
+  - uninstall
+  - quiet
+  - norestart
 ```
 
-The pipeline (`pipelines/cimian-bootstrap-mgmt.yml`) is taking over these sync responsibilities — see `docs/bootstrap-mgmt-pipeline-migration.md`.
+Note that a Burn bundle's cached uninstaller path contains the bundle's own version, so it changes
+on every release. See [Uninstalling Software](Uninstalling-Software) for the full mechanism.
 
-## Related docs
+## 8. Publishing
 
-- [How Cimian decides what needs to be installed](how-cimian-decides-what-needs-to-be-installed.md) — full priority chain
-- [Install loop prevention](install-loop-prevention.md) — LoopGuard backoff thresholds
-- [MSI ProductID handling](MSI-ProductID-Fix.md) — keeping ProductCode stable across builds
-- [Status classification implementation](status-classification-implementation.md) — what each `ReasonCode` means
+Rebuild the catalogs with [makecatalogs](makecatalogs) and publish the pkgsinfo, the payload and
+the rebuilt catalogs to the repository your clients read. How that publication happens depends on
+how your repository is hosted and served — see [The Cimian Repository](The-Cimian-Repository).
+
+## See also
+
+- [How Cimian Decides What Needs To Be Installed](How-Cimian-Decides-What-Needs-To-Be-Installed)
+- [Installs Arrays](Installs-Arrays)
+- [Installer Types](Installer-Types)
+- [Scripts In pkgsinfo](Scripts-In-pkgsinfo)
+- [Uninstalling Software](Uninstalling-Software)
+- [Install Loop Prevention](Install-Loop-Prevention)
+- [cimiimport](cimiimport)
+- [The Cimian Repository](The-Cimian-Repository)
