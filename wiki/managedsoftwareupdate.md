@@ -13,7 +13,7 @@ hourly scheduled task or by [cimiwatcher](cimiwatcher) rather than by hand.
 
 ```
 managedsoftwareupdate [-a|--auto] [-c|--checkonly] [-i|--installonly] [-b|--bootstrap]
-                      [-m|--manifest <name>] [--local-only-manifest <path>] [--item <name>]
+                      [-m|--manifest <name>] [--local-only-manifest <path>] [--item <name>...]
                       [--config <path>] [--show-config] [--show-status] [--status-port <n>]
                       [--no-preflight] [--no-postflight] [--preflight-only] [--postflight-only]
                       [--set-bootstrap-mode] [--clear-bootstrap-mode]
@@ -71,7 +71,7 @@ every install and uninstall in a session succeeded.
 | `--clear-bootstrap-mode` | — | — | off | Delete the bootstrap flag file, then exit. |
 | `--manifest` | `-m` | manifest name | none | Process only the named server manifest. |
 | `--local-only-manifest` | — | file path | none | Use a local manifest file instead of the server manifest. |
-| `--item` | — | item name | none | Process only the named item. Repeat the flag for several items. |
+| `--item` | — | one or more item names | none | Process only the named items. Pass every name after a single flag; the flag is not repeatable. |
 | `--config` | — | file path | `C:\ProgramData\ManagedInstalls\Config.yaml` | Read configuration from a different file. |
 | `--show-config` | — | — | off | Print the effective configuration and exit. |
 | `--show-status` | — | — | off | Report progress to a GUI status listener over loopback TCP. |
@@ -94,10 +94,10 @@ every install and uninstall in a session succeeded.
 | `--quiet` | `-q` | — | off | **Parsed and ignored.** The value is never read; output is unchanged. |
 | `--version` | `-V` | — | off | Print the version and exit — but only when it is the sole argument. Combined with any other flag it is ignored and a normal run proceeds. |
 
-`--item` is repeatable. Pass the flag once per item:
+`--item` takes several names after one flag. Repeating the flag fails with `Option 'item' is defined multiple times` and exits 1:
 
 ```
-managedsoftwareupdate --auto --item "Example App" --item "Another App"
+managedsoftwareupdate --auto --item "Example App" "Another App"
 ```
 
 ### Verbosity
