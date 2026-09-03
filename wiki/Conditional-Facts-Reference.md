@@ -27,8 +27,8 @@ is then empty or zero.
 | `domain` | string | `contoso` | `Win32_ComputerSystem.Domain`. On a device that is not directory-joined this holds the workgroup name. |
 | `username` | string | `svc-install` | The account the client is running as, not the interactive user. |
 | `machine_type` | string | `desktop` | One of `laptop`, `desktop`, `virtual`, `server`. Virtualisation is detected from the system manufacturer and model; laptop and server from the chassis type, with the presence of a battery as a secondary laptop indicator. |
-| `machine_model` | string | `OptiPlex 7090` | `Win32_ComputerSystem.Model`. On some vendors this is a product code rather than a readable name — see `model_version`. |
-| `model_version` | string | `ThinkCentre M75q Gen 2` | `Win32_ComputerSystemProduct.Version`. Empty on vendors that do not populate it. |
+| `machine_model` | string | `Example Desktop 7090` | `Win32_ComputerSystem.Model`. On some vendors this is a product code rather than a readable name — see `model_version`. |
+| `model_version` | string | `Example Mini Desktop Gen 2` | `Win32_ComputerSystemProduct.Version`. Empty on vendors that do not populate it. |
 | `joined_type` | string | `hybrid` | One of `workgroup`, `domain`, `entra`, `hybrid`. Derived from `Win32_ComputerSystem` combined with the cloud domain-join registry state. |
 | `battery_state` | string | `connected` | One of `connected`, `disconnected`, `unknown`, from `Win32_Battery`. |
 | `date` | string | `2026-01-15` | Today's date in `yyyy-MM-dd`, in the device's **local** time. |

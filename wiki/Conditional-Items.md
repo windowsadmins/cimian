@@ -79,7 +79,7 @@ names are case-insensitive too.
 Values may be single-quoted, double-quoted, or bare. **Quote any value containing a space,
 a dot, a hyphen, a backslash or an asterisk.** Bare values are read as runs of letters,
 digits and underscores only; every other character is discarded, so an unquoted
-`machine_model == Example OptiPlex 7090` silently compares against `Example` alone.
+`machine_model == Example Desktop 7090` silently compares against `Example` alone.
 
 ## Operators
 
