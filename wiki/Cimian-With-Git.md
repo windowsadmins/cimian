@@ -35,15 +35,17 @@ uploaded to the web server when a package is imported, and pruned with
 The cost is real and worth stating plainly:
 
 - A fresh clone is not a working repo. It has metadata describing payloads it does not have.
-- `makecatalogs` warns for every item whose payload it cannot find, and its `--hash_check` size
-  and hash validation cannot run at all. In an automated job you end up passing
-  `--skip_payload_check`, which silences the one check that catches a pkgsinfo pointing at a
-  payload that was never uploaded.
+- `makecatalogs` warns for every item whose payload it cannot find, and the `--hash_check` size
+  comparison cannot run at all. In an automated job you end up passing `--skip_payload_check`,
+  which silences the one check that catches a pkgsinfo pointing at a payload that was never
+  uploaded.
 - Nothing then verifies that the payload a catalog references actually exists until a client
   tries to download it and fails.
 
-If your payloads are small and few, tracking them — with git-lfs or without — buys back that
-verification. Most repos are not in that position.
+If your payloads are small and few, tracking them — with git-lfs or without — buys back the
+existence check and the size check. It does not buy back a hash check: `--hash_check` computes
+MD5 while `installer.hash` holds a SHA-256 digest, so it reports a mismatch for every item
+regardless.
 
 ### Catalogs
 
