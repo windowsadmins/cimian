@@ -560,6 +560,7 @@ public class DataExporter
             if (!string.IsNullOrEmpty(pkg.WarningMessage))
             {
                 record.LastWarning = pkg.WarningMessage;
+                record.WarningMessages = pkg.WarningMessages;
                 record.WarningCount = 1;
             }
 
@@ -568,6 +569,17 @@ public class DataExporter
                 var (loopDetected, loopDetails) = DetectInstallLoopEnhanced(record.RecentAttempts, pkg.Name);
                 record.InstallLoopDetected = loopDetected;
                 record.LoopDetails = loopDetails;
+            }
+
+            // A suppressed item is the one case where the loop is certain and the event
+            // history cannot show it: LoopGuard's whole job is to stop the reinstall, so
+            // the item records no attempt, RecentAttempts stays empty, and the derivation
+            // above never runs. install_loop_detected was therefore false for every
+            // genuinely-looping package on the fleet while being true only for packages
+            // the guard had not caught yet — exactly backwards. Trust the guard's verdict.
+            if (pkg.StatusReasonCode == Models.StatusReasonCode.LoopSuppressed)
+            {
+                record.InstallLoopDetected = true;
             }
 
             records.Add(record);

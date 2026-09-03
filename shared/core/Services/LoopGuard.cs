@@ -245,6 +245,52 @@ public class LoopGuard
     }
 
     /// <summary>
+    /// Records that a package's own checks now report nothing to do. Convergence is the
+    /// definition of a fixed package, so any loop history and any open suppression window
+    /// are retired here.
+    /// <para>
+    /// Without this, LoopGuard only ever hears about a package while it still needs
+    /// action: <see cref="ShouldSuppress"/> is reached from the engine only when the
+    /// status check says NeedsAction. The moment a looping package starts converging —
+    /// the pkgsinfo was fixed, the installer finally took, the machine changed — the
+    /// guard is never consulted for it again, so its window, its (possibly absent)
+    /// trigger and its counters freeze exactly as they were and keep being reported as a
+    /// live loop for as long as the window runs. Measured on a lab fleet: healthy
+    /// packages whose installcheck reported "no action needed" on the same run were still
+    /// listed in loop_suppressed.json, and legacy indefinite entries for packages that
+    /// had converged months earlier never reached the MaxValue migration below at all.
+    /// </para>
+    /// <para>
+    /// This is deliberately stronger than letting the window expire: an expiry costs the
+    /// package a full LoopMaxTime of being reported broken and, via
+    /// <see cref="PackageLoopState.SuppressionCycles"/>, floors its next window. A package
+    /// that converged is not owed either.
+    /// </para>
+    /// </summary>
+    public void NoteConverged(string packageName, string? catalogFingerprint = null)
+    {
+        if (_disabled || string.IsNullOrEmpty(packageName))
+            return;
+
+        var key = packageName.ToLowerInvariant();
+        if (!_state.Packages.TryGetValue(key, out var pkgState))
+            return;
+
+        // Nothing accumulated: leave the entry untouched rather than rewriting state
+        // (and the state file) on every converged item of every run.
+        if (pkgState.SuppressedUntil == null
+            && pkgState.AttemptCount == 0
+            && pkgState.SuppressionCycles == 0
+            && pkgState.PendingRestartSince == null)
+        {
+            return;
+        }
+
+        ResetLoopHistory(pkgState, version: "", catalogFingerprint: catalogFingerprint ?? pkgState.CatalogFingerprint);
+        SaveState();
+    }
+
+    /// <summary>
     /// Records the check that decided this package needs to run. Called on every
     /// evaluation (so the reported cause stays current while suppressed) and on every
     /// real attempt with <paramref name="countIt"/> set, which is what builds the
@@ -438,9 +484,18 @@ public class LoopGuard
     /// marker) still accumulate and trip suppression as before.
     /// </para>
     /// </summary>
-    public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null, bool selfReportedWarning = false, InstallTrigger? trigger = null)
+    public void RecordAttempt(string packageName, string version, bool success, string? catalogFingerprint = null, bool selfReportedWarning = false, InstallTrigger? trigger = null, bool loopExempt = false)
     {
         if (string.IsNullOrEmpty(packageName))
+            return;
+
+        // OnDemand and recurring items re-install every run by design, so the engine
+        // never asks ShouldSuppress about them. Counting their attempts anyway wrote a
+        // suppression window that nothing would ever enforce — invisible in behaviour,
+        // but reported in loop_suppressed.json as a live loop. On a lab fleet this was
+        // 11 of 76 active "loops", every one of them a provisioning helper doing exactly
+        // what OnDemand means.
+        if (loopExempt)
             return;
 
         // Globally disabled by config (LoopGuardEnabled: false): don't accumulate any
@@ -1010,6 +1065,31 @@ public class LoopGuard
 
     #region State Persistence
 
+    /// <summary>
+    /// Replaces any legacy permanent suppression (DateTime.MaxValue, written before the
+    /// finite cap existed) with a concrete window anchored on the package's last real
+    /// attempt.
+    /// <para>
+    /// <see cref="ShouldSuppress"/> performs the same migration, but only for packages it
+    /// is actually asked about — and a package is only asked about while its status check
+    /// still reports NeedsAction. An item that converged, or that was dropped from the
+    /// manifest, is never evaluated again, so its MaxValue entry was unreachable by that
+    /// path and stayed permanent forever. Doing it at load covers every entry in the file
+    /// exactly once per run, whatever the manifest happens to contain today.
+    /// </para>
+    /// </summary>
+    private LoopGuardState CapIndefiniteWindows(LoopGuardState state)
+    {
+        foreach (var (_, pkgState) in state.Packages)
+        {
+            if (pkgState.SuppressedUntil == DateTime.MaxValue)
+            {
+                pkgState.SuppressedUntil = pkgState.LastAttempt.GetValueOrDefault().AddDays(_maxSuppressionDays);
+            }
+        }
+        return state;
+    }
+
     private LoopGuardState LoadState()
     {
         var path = EffectiveStatePath;
@@ -1022,12 +1102,12 @@ public class LoopGuard
                 // Try reading as the new CimianState wrapper first
                 var wrapper = JsonSerializer.Deserialize<CimianState>(json, JsonOptions);
                 if (wrapper?.LoopGuard != null)
-                    return wrapper.LoopGuard;
+                    return CapIndefiniteWindows(wrapper.LoopGuard);
 
                 // Fall back to reading as bare LoopGuardState (legacy state.json or test)
                 var state = JsonSerializer.Deserialize<LoopGuardState>(json, JsonOptions);
                 if (state != null && state.Packages.Count > 0)
-                    return state;
+                    return CapIndefiniteWindows(state);
             }
 
             // Migrate from legacy loop_state.json if it exists

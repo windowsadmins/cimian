@@ -1121,7 +1121,17 @@ public class UpdateEngine : IDisposable
                         status.DetectionMethod,
                         status.InstalledVersion,
                         status.NeedsAction);
-                    
+
+                    if (!status.NeedsAction)
+                    {
+                        // The item's own checks are satisfied: whatever a previous run was
+                        // looping on is resolved. Retire the loop history now rather than
+                        // waiting out the window — a converged package is a fixed package,
+                        // and a window left open keeps it reported as broken (and floors
+                        // its next window) for up to LoopMaxTime after the fact.
+                        _loopGuard?.NoteConverged(catalogItem.Name, ComputeCatalogFingerprint(catalogItem));
+                    }
+
                     if (status.NeedsAction)
                     {
                         // Remember WHY this item needs to run. LoopGuard replays it in the
@@ -2083,7 +2093,8 @@ public class UpdateEngine : IDisposable
                 success: true,
                 ComputeCatalogFingerprint(item),
                 selfReportedWarning: warningMessage != null,
-                trigger: TakeInstallTrigger(item.Name));
+                trigger: TakeInstallTrigger(item.Name),
+                loopExempt: item.OnDemand || item.Recurring);
 
             // Act on the convergence verdict from above.
             if (convergencePendingRestart)
@@ -2128,7 +2139,8 @@ public class UpdateEngine : IDisposable
 
             // Record failed install for loop guard tracking
             _loopGuard?.RecordAttempt(item.Name, item.Version, success: false, ComputeCatalogFingerprint(item),
-                trigger: TakeInstallTrigger(item.Name));
+                trigger: TakeInstallTrigger(item.Name),
+                loopExempt: item.OnDemand || item.Recurring);
             return false;
         }
 
@@ -3103,6 +3115,36 @@ public class UpdateEngine : IDisposable
                 WarningMessages = hasWarning ? WarningList(outcome!.WarningMessage!, outcome.WarningDetail) : null,
                 ActionPerformed = hadOutcome ? outcome!.Action : null,
                 OutcomeTimestamp = hadOutcome ? outcome!.Timestamp : null
+            });
+        }
+
+        // Dependencies are resolved into the install plan but are not manifest entries, so
+        // the loop above never reaches them. A suppressed dependency was therefore absent
+        // from items.json entirely — not merely unflagged — which is why several packages
+        // sitting in an open suppression window showed up nowhere in the item report.
+        foreach (var (key, suppression) in loopSuppressedByName)
+        {
+            if (!seen.Add(key))
+                continue;
+
+            catalogMap.TryGetValue(key, out var suppressedCat);
+            items.Add(new SessionPackageInfo
+            {
+                Name = suppressedCat?.Name ?? key,
+                Version = suppressedCat?.Version ?? "",
+                Status = suppression.PendingRestart ? "Pending" : "Warning",
+                ItemType = "managed_installs",
+                DisplayName = string.IsNullOrEmpty(suppressedCat?.DisplayName) ? (suppressedCat?.Name ?? key) : suppressedCat!.DisplayName,
+                InstalledVersion = suppression.InstalledVersion,
+                WarningMessage = suppression.PendingRestart ? null : JoinWarnings(suppression.Reason, suppression.Cause),
+                WarningMessages = suppression.PendingRestart ? null : WarningList(suppression.Reason, suppression.Cause),
+                StatusReason = JoinWarnings(suppression.Reason, suppression.Cause),
+                StatusReasonCode = suppression.PendingRestart
+                    ? Cimian.Core.Models.StatusReasonCode.PendingReboot
+                    : Cimian.Core.Models.StatusReasonCode.LoopSuppressed,
+                DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
+                ActionPerformed = suppression.PendingRestart ? "restart_deferred" : "loop_suppressed",
+                OutcomeTimestamp = DateTime.UtcNow
             });
         }
 
