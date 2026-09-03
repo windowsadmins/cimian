@@ -38,6 +38,97 @@ public class LoopGuardTests : IDisposable
         return new LoopGuard(_statePath, _logsDir, isBootstrap, _cacheDir, disabled);
     }
 
+    #region Stale suppression
+
+    [Fact]
+    public void NoteConverged_ClearsSuppressionAndHistory()
+    {
+        var guard = CreateGuard();
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.ShouldSuppress("LoopPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        // The package's own checks now report nothing to do.
+        guard.NoteConverged("LoopPkg");
+
+        guard.ShouldSuppress("LoopPkg", "1.0.0").Suppress.Should().BeFalse();
+        guard.GetSuppressedReport().Should().BeEmpty();
+        guard.GetPackageState("LoopPkg")!.AttemptCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void NoteConverged_DoesNotFloorTheNextWindow()
+    {
+        var guard = CreateGuard();
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.RecordAttempt("LoopPkg", "1.0.0", true);
+        guard.ShouldSuppress("LoopPkg", "1.0.0").Suppress.Should().BeTrue();
+
+        guard.NoteConverged("LoopPkg");
+
+        // Convergence is a fix, not a served sentence: it must not leave an escalation
+        // behind that lengthens the window if the package ever loops again.
+        guard.GetPackageState("LoopPkg")!.SuppressionCycles.Should().Be(0);
+    }
+
+    [Fact]
+    public void NoteConverged_UnknownOrCleanPackage_IsANoOp()
+    {
+        var guard = CreateGuard();
+        guard.NoteConverged("NeverSeen");
+        guard.GetPackageState("NeverSeen").Should().BeNull();
+    }
+
+    [Fact]
+    public void LoadState_MigratesIndefiniteWindowWithoutBeingEvaluated()
+    {
+        // A package suppressed indefinitely by an older client, which has since converged
+        // or left the manifest — so ShouldSuppress is never called for it again and its
+        // own migration path is unreachable.
+        var json = JsonSerializer.Serialize(new
+        {
+            loop_guard = new
+            {
+                packages = new Dictionary<string, object>
+                {
+                    ["stuckpkg"] = new
+                    {
+                        package_name = "StuckPkg",
+                        attempt_count = 400,
+                        session_count = 37,
+                        last_attempt = DateTime.UtcNow.AddDays(-90),
+                        suppressed_until = DateTime.MaxValue,
+                        suppression_reason = "Persistent loop"
+                    }
+                }
+            }
+        });
+        File.WriteAllText(_statePath, json);
+
+        var guard = CreateGuard();
+
+        var state = guard.GetPackageState("StuckPkg");
+        state.Should().NotBeNull();
+        state!.SuppressedUntil.Should().NotBe(DateTime.MaxValue);
+        // Anchored on the last attempt 90 days ago, so the window is already spent.
+        guard.GetSuppressedReport().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RecordAttempt_LoopExempt_AccumulatesNothing()
+    {
+        var guard = CreateGuard();
+        for (var i = 0; i < 5; i++)
+            guard.RecordAttempt("OnDemandPkg", "1.0.0", true, loopExempt: true);
+
+        guard.GetPackageState("OnDemandPkg").Should().BeNull();
+        guard.GetSuppressedReport().Should().BeEmpty();
+    }
+
+    #endregion
+
     #region Basic Behavior
 
     [Fact]
