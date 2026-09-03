@@ -214,7 +214,12 @@ exits 0 instead.
 
 Missing payloads are warnings, not failures: `<file> has missing installer => pkgs/<location>`.
 `--skip_payload_check` suppresses the check entirely, and `--hash_check` extends it to compare
-recorded sizes and hashes.
+the recorded `installer.size` and `installer.hash` against the file on disk.
+
+`--hash_check` is not usable as a correctness check today. It computes MD5, while
+`installer.hash` holds the SHA-256 digest the client verifies against, so it reports
+`installer hash mismatch` for every item that records a hash. The size comparison in the same
+pass is sound; the hash comparison is not.
 
 `makecatalogs` does **not** validate anything else. A pkgsinfo with no `name`, no `version`, a
 misspelled key, a malformed `installs` entry or a nonsense architecture string parses fine and
