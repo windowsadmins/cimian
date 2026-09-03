@@ -441,6 +441,16 @@ public class ItemRecord
     [JsonPropertyName("total_sessions")]
     public int TotalSessions { get; set; }
 
+    /// <summary>
+    /// The warning split into its parts, mirroring
+    /// <see cref="SessionPackageInfo.WarningMessages"/>. A looping install produces two:
+    /// what the loop is, and what the package's own checks keep finding.
+    /// <see cref="LastWarning"/> holds them joined, for consumers expecting one string.
+    /// </summary>
+    [JsonPropertyName("warning_messages")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? WarningMessages { get; set; }
+
     // Enhanced install loop detection
     [JsonPropertyName("install_loop_detected")]
     public bool InstallLoopDetected { get; set; }
