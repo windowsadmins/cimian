@@ -21,7 +21,7 @@ makecatalogs [--repo_path <path>] [--skip_payload_check] [--hash_check]
 |---|---|---|---|
 | `--repo_path` | `-repo_path`, `-r` | from config | Path to the repo. |
 | `--skip_payload_check` | `-s` | off | Do not check that installer and uninstaller files exist. |
-| `--hash_check` | — | off | Also compare each payload's size and MD5 hash against the pkgsinfo. Slow on a large repo. |
+| `--hash_check` | — | off | Also compare each payload's MD5 hash against the pkgsinfo. Slow on a large repo. Size is checked without it. |
 | `--silent` | `-q` | off | Suppress the per-item and per-catalog progress lines. Warnings and errors still print. |
 | `--tolerate_parse_errors` | — | off | Write catalogs and exit 0 even when some pkgsinfo failed to parse. |
 | `-V` | — | — | Print the version and exit. |
@@ -90,15 +90,21 @@ work. The comparison is case-insensitive.
 Uninstaller entries with no `location` are skipped deliberately — an MSIX or APPX
 uninstaller is identified by `identity_name` and has no file in the repo.
 
-### Hash and size checks
+### Size and hash checks
 
-`--hash_check` adds, for each payload that does exist:
+Size is checked on every run. For each payload that exists, the file's length is
+compared with `installer.size` / `uninstaller[].size`, producing
+`installer size mismatch: expected …, actual …`. Reading a file's length is a
+stat call, so this costs nothing measurable even on a large repository.
 
-- a size comparison against `installer.size` / `uninstaller[].size`
-- an MD5 comparison against `installer.hash` / `uninstaller[].hash`
+`--hash_check` adds a digest comparison against `installer.hash` /
+`uninstaller[].hash`, producing `installer hash mismatch: expected …, actual …`.
+This reads every payload in full, so it is slow on a large repository and is off
+by default.
 
-producing `installer size mismatch: expected …, actual …` or
-`installer hash mismatch: expected …, actual …`.
+Note that the digest `--hash_check` computes is MD5, while `installer.hash` holds
+the SHA-256 the client verifies on download. Every hashed item therefore reports
+a mismatch, and the flag currently finds nothing real.
 
 ### What these checks do *not* do
 
@@ -282,7 +288,7 @@ where the file sits on disk.
 - Payload, hash and size failures do not affect the exit code, so an automated
   run passes with missing installers.
 - Unknown keys are dropped without a warning.
-- `--hash_check` computes MD5 over every payload in the repo; on a large repo
+- `--hash_check` reads every payload in the repo in full; on a large repo
   this reads the whole `pkgs\` tree.
 - There is no `--version` long option, only `-V`.
 
