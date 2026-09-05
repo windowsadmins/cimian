@@ -224,14 +224,15 @@ exits 0.
   `Rebuilding catalogs at <path>...` followed by
   `Catalog rebuild would be performed here...`. No catalog is written. Run
   [makecatalogs](makecatalogs) yourself.
-- **YAML pkgsinfo files are read shallowly.** Only `name`, `version` and
-  `installer.location` are extracted. Consequences:
+- **Parsed pkgsinfo fields are not all used.** The analyzer reads the
+  uninstaller payload path, `requires` and `update_for`, but the cleanup pass
+  never consults them. Consequences:
   - Uninstaller payloads are not registered as referenced, so a standalone
     uninstaller file in `pkgs\` is reported as orphaned and is deleted on a
     `--remove` run.
-  - `requires` is not read, so the `(REQUIRED by another pkginfo item)`
-    protection does not apply; a dependency is protected only by the `--keep`
-    window or by an explicitly versioned manifest entry.
+  - The `(REQUIRED by another pkginfo item)` protection does not apply; a
+    dependency is protected only by the `--keep` window or by an explicitly
+    versioned manifest entry.
   - Grouping is by package name alone. Two items with the same `name` but
     different `catalogs` or `supported_architectures` share one `--keep` window.
 - **Orphan matching compares path strings literally.** The `installer.location`
