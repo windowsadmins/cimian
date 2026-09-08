@@ -501,6 +501,50 @@ public class SessionLogger : IDisposable
     /// <summary>
     /// Returns the timestamp and package name of the last event a session wrote.
     /// </summary>
+    /// <summary>
+    /// Reads a JSON Lines file that another writer may still hold open.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="File.ReadLines(string)"/> opens with <see cref="FileShare.Read"/>, which
+    /// the OS refuses while any other handle has the file open for writing. The current
+    /// session's events.jsonl is exactly that file: <c>_eventsFile</c> keeps it open until
+    /// EndSession, and the reports are generated before then. The open threw a sharing
+    /// violation, the per-file catch swallowed it, and events.json was written without
+    /// the session that was writing it - so a run's own install events never appeared in
+    /// the report it handed to postflight, only in the next run's. Opening with
+    /// <see cref="FileShare.ReadWrite"/> reads the file as it stands; AutoFlush on the
+    /// writer means every completed line is already on disk.
+    /// </remarks>
+    /// <summary>
+    /// Parses JSON Lines events, dropping any line that does not parse.
+    /// </summary>
+    /// <remarks>
+    /// The current session's events.jsonl is read while it is still being written, so
+    /// its final line can be torn. One bad line must cost that line, not the session.
+    /// </remarks>
+    internal static IEnumerable<LogEvent> ParseEventLines(IEnumerable<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            LogEvent? evt;
+            try { evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions); }
+            catch { continue; }
+            if (evt != null)
+                yield return evt;
+        }
+    }
+
+    internal static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+            yield return line;
+    }
+
     private static (DateTime? Timestamp, string? Item) ReadLastEvent(string eventsPath)
     {
         if (!File.Exists(eventsPath))
@@ -508,17 +552,13 @@ public class SessionLogger : IDisposable
 
         try
         {
-            string? lastLine = null;
-            foreach (var line in File.ReadLines(eventsPath))
-            {
-                if (!string.IsNullOrWhiteSpace(line))
-                    lastLine = line;
-            }
+            // The last line that parses, not the last line: a session killed mid-write
+            // can end on a torn line, and the reaper's reason is better with the item
+            // before it than with nothing.
+            LogEvent? evt = null;
+            foreach (var parsed in ParseEventLines(ReadLinesShared(eventsPath)))
+                evt = parsed;
 
-            if (lastLine == null)
-                return (null, null);
-
-            var evt = JsonSerializer.Deserialize<LogEvent>(lastLine, JsonLinesOptions);
             if (evt == null)
                 return (null, null);
 
@@ -1168,19 +1208,19 @@ public class SessionLogger : IDisposable
             var eventsPath = Path.Combine(dir, "events.jsonl");
             if (File.Exists(eventsPath))
             {
-                try
+                // One bad line drops that line, not the session. The current session's
+                // file is read while it is still being written, so its final line can
+                // be torn; a catch around the whole loop would throw away every event
+                // of the run that matters most because of the one that is incomplete.
+                IEnumerable<string> lines;
+                try { lines = ReadLinesShared(eventsPath).ToList(); }
+                catch { continue; }
+
+                foreach (var evt in ParseEventLines(lines))
                 {
-                    foreach (var line in File.ReadLines(eventsPath))
-                    {
-                        if (!string.IsNullOrWhiteSpace(line))
-                        {
-                            var evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions);
-                            if (evt != null && evt.Timestamp >= cutoff)
-                                allEvents.Add(evt);
-                        }
-                    }
+                    if (evt.Timestamp >= cutoff)
+                        allEvents.Add(evt);
                 }
-                catch { /* Skip invalid event files */ }
             }
         }
 
