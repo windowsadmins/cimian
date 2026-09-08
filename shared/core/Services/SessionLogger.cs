@@ -501,6 +501,29 @@ public class SessionLogger : IDisposable
     /// <summary>
     /// Returns the timestamp and package name of the last event a session wrote.
     /// </summary>
+    /// <summary>
+    /// Reads a JSON Lines file that another writer may still hold open.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="File.ReadLines(string)"/> opens with <see cref="FileShare.Read"/>, which
+    /// the OS refuses while any other handle has the file open for writing. The current
+    /// session's events.jsonl is exactly that file: <c>_eventsFile</c> keeps it open until
+    /// EndSession, and the reports are generated before then. The open threw a sharing
+    /// violation, the per-file catch swallowed it, and events.json was written without
+    /// the session that was writing it - so a run's own install events never appeared in
+    /// the report it handed to postflight, only in the next run's. Opening with
+    /// <see cref="FileShare.ReadWrite"/> reads the file as it stands; AutoFlush on the
+    /// writer means every completed line is already on disk.
+    /// </remarks>
+    internal static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+            yield return line;
+    }
+
     private static (DateTime? Timestamp, string? Item) ReadLastEvent(string eventsPath)
     {
         if (!File.Exists(eventsPath))
@@ -509,7 +532,7 @@ public class SessionLogger : IDisposable
         try
         {
             string? lastLine = null;
-            foreach (var line in File.ReadLines(eventsPath))
+            foreach (var line in ReadLinesShared(eventsPath))
             {
                 if (!string.IsNullOrWhiteSpace(line))
                     lastLine = line;
@@ -1170,7 +1193,7 @@ public class SessionLogger : IDisposable
             {
                 try
                 {
-                    foreach (var line in File.ReadLines(eventsPath))
+                    foreach (var line in ReadLinesShared(eventsPath))
                     {
                         if (!string.IsNullOrWhiteSpace(line))
                         {
