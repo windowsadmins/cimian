@@ -81,6 +81,21 @@ public class LiveSessionEventsTests : IDisposable
     }
 
     [Fact]
+    public void ATornFinalLine_CostsThatLineNotTheSession()
+    {
+        // The file is read while it is still being written, so the last line can be
+        // incomplete. The two good events must survive it.
+        var path = OpenLiveEventsFile(out var writer);
+        using (writer)
+        {
+            writer.Write("{\"event_type\":\"install\",\"package_name\":\"Rhi");
+            var events = SessionLogger.ParseEventLines(SessionLogger.ReadLinesShared(path)).ToList();
+            Assert.Equal(2, events.Count);
+            Assert.All(events, e => Assert.Equal("Rhino", e.PackageName));
+        }
+    }
+
+    [Fact]
     public void ReadLinesShared_StillReadsAClosedFile()
     {
         var path = OpenLiveEventsFile(out var writer);

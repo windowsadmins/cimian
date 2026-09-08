@@ -515,6 +515,27 @@ public class SessionLogger : IDisposable
     /// <see cref="FileShare.ReadWrite"/> reads the file as it stands; AutoFlush on the
     /// writer means every completed line is already on disk.
     /// </remarks>
+    /// <summary>
+    /// Parses JSON Lines events, dropping any line that does not parse.
+    /// </summary>
+    /// <remarks>
+    /// The current session's events.jsonl is read while it is still being written, so
+    /// its final line can be torn. One bad line must cost that line, not the session.
+    /// </remarks>
+    internal static IEnumerable<LogEvent> ParseEventLines(IEnumerable<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            LogEvent? evt;
+            try { evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions); }
+            catch { continue; }
+            if (evt != null)
+                yield return evt;
+        }
+    }
+
     internal static IEnumerable<string> ReadLinesShared(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -531,17 +552,13 @@ public class SessionLogger : IDisposable
 
         try
         {
-            string? lastLine = null;
-            foreach (var line in ReadLinesShared(eventsPath))
-            {
-                if (!string.IsNullOrWhiteSpace(line))
-                    lastLine = line;
-            }
+            // The last line that parses, not the last line: a session killed mid-write
+            // can end on a torn line, and the reaper's reason is better with the item
+            // before it than with nothing.
+            LogEvent? evt = null;
+            foreach (var parsed in ParseEventLines(ReadLinesShared(eventsPath)))
+                evt = parsed;
 
-            if (lastLine == null)
-                return (null, null);
-
-            var evt = JsonSerializer.Deserialize<LogEvent>(lastLine, JsonLinesOptions);
             if (evt == null)
                 return (null, null);
 
@@ -1191,19 +1208,19 @@ public class SessionLogger : IDisposable
             var eventsPath = Path.Combine(dir, "events.jsonl");
             if (File.Exists(eventsPath))
             {
-                try
+                // One bad line drops that line, not the session. The current session's
+                // file is read while it is still being written, so its final line can
+                // be torn; a catch around the whole loop would throw away every event
+                // of the run that matters most because of the one that is incomplete.
+                IEnumerable<string> lines;
+                try { lines = ReadLinesShared(eventsPath).ToList(); }
+                catch { continue; }
+
+                foreach (var evt in ParseEventLines(lines))
                 {
-                    foreach (var line in ReadLinesShared(eventsPath))
-                    {
-                        if (!string.IsNullOrWhiteSpace(line))
-                        {
-                            var evt = JsonSerializer.Deserialize<LogEvent>(line, JsonLinesOptions);
-                            if (evt != null && evt.Timestamp >= cutoff)
-                                allEvents.Add(evt);
-                        }
-                    }
+                    if (evt.Timestamp >= cutoff)
+                        allEvents.Add(evt);
                 }
-                catch { /* Skip invalid event files */ }
             }
         }
 
