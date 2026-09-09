@@ -1122,6 +1122,10 @@ public class UpdateEngine : IDisposable
                         status.InstalledVersion,
                         status.NeedsAction);
 
+                    // Keep what detection found. This is the only point in the run that
+                    // holds it, and the session report is built long after the check.
+                    RememberInstalledVersion(catalogItem.Name, status);
+
                     if (!status.NeedsAction)
                     {
                         // The item's own checks are satisfied: whatever a previous run was
@@ -1274,6 +1278,8 @@ public class UpdateEngine : IDisposable
                             catalogItem.Name, catalogItem.Version, optStatus.Status,
                             optStatus.Reason, optStatus.ReasonCode, optStatus.DetectionMethod,
                             optStatus.InstalledVersion, optStatus.NeedsAction);
+
+                        RememberInstalledVersion(catalogItem.Name, optStatus);
 
                         if (optStatus.NeedsAction)
                         {
@@ -1599,6 +1605,9 @@ public class UpdateEngine : IDisposable
             var status = _statusService.CheckStatus(depItem, "install", _config.CachePath);
 
             LogInfo($"Dependency {depItem.Name} v{depItem.Version}: needsAction={status.NeedsAction} ({status.Reason})");
+
+            // Dependencies reach items.json too, so their detection result matters here.
+            RememberInstalledVersion(depItem.Name, status);
 
             if (!existingNames.Contains(depKey))
             {
@@ -3046,7 +3055,7 @@ public class UpdateEngine : IDisposable
                     Status = suppression.PendingRestart ? "Pending" : "Warning",
                     ItemType = itemType,
                     DisplayName = displayName,
-                    InstalledVersion = suppression.InstalledVersion,
+                    InstalledVersion = suppression.InstalledVersion ?? ResolveInstalledVersion(mi.Name, null, version),
                     WarningMessage = suppression.PendingRestart ? null : JoinWarnings(suppression.Reason, suppression.Cause),
                     WarningMessages = suppression.PendingRestart ? null : WarningList(suppression.Reason, suppression.Cause),
                     StatusReason = JoinWarnings(suppression.Reason, suppression.Cause),
@@ -3076,6 +3085,7 @@ public class UpdateEngine : IDisposable
                     Status = SessionItemStatusResolver.ResolveDeferred(deferral.Kind),
                     ItemType = itemType,
                     DisplayName = displayName,
+                    InstalledVersion = ResolveInstalledVersion(mi.Name, null, version),
                     StatusReason = deferral.Reason,
                     StatusReasonCode = deferral.ReasonCode,
                     DetectionMethod = Cimian.Core.Models.DetectionMethod.None,
@@ -3110,6 +3120,7 @@ public class UpdateEngine : IDisposable
                 Status = effectiveStatus,
                 ItemType = itemType,
                 DisplayName = displayName,
+                InstalledVersion = ResolveInstalledVersion(mi.Name, hadOutcome ? outcome : null, version),
                 ErrorMessage = hadOutcome && !outcome!.Success ? outcome.ErrorMessage : null,
                 WarningMessage = hasWarning ? JoinWarnings(outcome!.WarningMessage!, outcome.WarningDetail) : null,
                 WarningMessages = hasWarning ? WarningList(outcome!.WarningMessage!, outcome.WarningDetail) : null,
@@ -3135,7 +3146,7 @@ public class UpdateEngine : IDisposable
                 Status = suppression.PendingRestart ? "Pending" : "Warning",
                 ItemType = "managed_installs",
                 DisplayName = string.IsNullOrEmpty(suppressedCat?.DisplayName) ? (suppressedCat?.Name ?? key) : suppressedCat!.DisplayName,
-                InstalledVersion = suppression.InstalledVersion,
+                InstalledVersion = suppression.InstalledVersion ?? ResolveInstalledVersion(suppressedCat?.Name ?? key, null, suppressedCat?.Version ?? ""),
                 WarningMessage = suppression.PendingRestart ? null : JoinWarnings(suppression.Reason, suppression.Cause),
                 WarningMessages = suppression.PendingRestart ? null : WarningList(suppression.Reason, suppression.Cause),
                 StatusReason = JoinWarnings(suppression.Reason, suppression.Cause),
@@ -3519,6 +3530,45 @@ public class UpdateEngine : IDisposable
     /// three times and still not say what kept asking for it.
     /// </summary>
     private readonly Dictionary<string, Cimian.Core.Models.InstallTrigger> _installTriggers = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// What each item's own detection actually found on disk, keyed by item name, so the
+    /// session report can state the installed version rather than only the catalog target.
+    /// StatusService resolves this during every status check and it was being discarded
+    /// the moment the check returned, which left installed_version absent from items.json
+    /// for every item and made "is this version really on the machine" unanswerable
+    /// downstream.
+    /// </summary>
+    private readonly Dictionary<string, string> _installedVersions = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Records what a status check found installed. Empty results are not recorded, so a
+    /// later check that resolves a version cannot be overwritten by an earlier blank one.
+    /// </summary>
+    private void RememberInstalledVersion(string name, StatusCheckResult status)
+    {
+        if (!string.IsNullOrWhiteSpace(status.InstalledVersion))
+            _installedVersions[name] = status.InstalledVersion!.Trim();
+    }
+
+    /// <summary>
+    /// The installed version to report for an item. A run that successfully installed or
+    /// updated the item supersedes whatever the pre-install check saw, because that check
+    /// ran before the install; anything else falls back to what detection found.
+    /// </summary>
+    private string? ResolveInstalledVersion(string name, ItemOutcome? outcome, string catalogVersion)
+    {
+        if (outcome is { Success: true }
+            && !string.IsNullOrEmpty(outcome.Action)
+            && outcome.Action.ToLowerInvariant() is "install" or "update")
+        {
+            var installed = !string.IsNullOrEmpty(outcome.Version) ? outcome.Version : catalogVersion;
+            if (!string.IsNullOrWhiteSpace(installed))
+                return installed.Trim();
+        }
+
+        return _installedVersions.TryGetValue(name, out var known) ? known : null;
+    }
 
     /// <summary>
     /// A warning that has a cause is two messages, not one paragraph. Consumers that read
