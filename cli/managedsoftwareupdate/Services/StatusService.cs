@@ -162,6 +162,13 @@ public class StatusService
                 result.Reason = "Installs array verification passed";
                 result.ReasonCode = StatusReasonCode.FileMatch;
                 result.DetectionMethod = DetectionMethod.InstallsArray;
+
+                // Carry over what the walk actually found on disk. Only the failure path
+                // returned installsResult, so on success every version it had resolved —
+                // including the MSI/ARP one — was discarded with the object. That is why
+                // packages verified through their installs array reported no version at
+                // all while the check that proved they were installed had just read one.
+                NoteInstalledVersion(result, installsResult.InstalledVersion);
                 ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                 return result;
             }
@@ -517,9 +524,16 @@ public class StatusService
                         // Check version - use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
                         // Go parity: When hash verification passed, version mismatches are informational only (hash is authoritative)
                         var expectedVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
+
+                        // Read the version whether or not the catalog gives us something to
+                        // compare against. It was previously resolved only as an input to the
+                        // comparison and then dropped, so a file-detected package reported no
+                        // version at all — which is most of the catalog.
+                        var fileVersion = GetFileVersion(installItem.Path);
+                        NoteInstalledVersion(result, fileVersion);
+
                         if (!string.IsNullOrEmpty(expectedVersion))
                         {
-                            var fileVersion = GetFileVersion(installItem.Path);
                             if (!string.IsNullOrEmpty(fileVersion))
                             {
                                 var comparison = CatalogService.CompareVersions(expectedVersion, fileVersion);
@@ -772,6 +786,7 @@ public class StatusService
                         }
                     }
 
+                    NoteInstalledVersion(result, msixVersion);
                     ConsoleLogger.Info($"MSIX verification passed item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
                     result.InstalledVersion = msixVersion;
                     break;
@@ -1645,6 +1660,23 @@ if ($results.Count -gt 0) {{
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Records what a check found installed, first non-empty reading wins.
+    ///
+    /// <para>
+    /// Purely an observation: it never influences <see cref="StatusCheckResult.NeedsAction"/>
+    /// or any version comparison. A pkgsinfo with several installs entries is describing one
+    /// package, so the first entry that yields a version is the one that names it; letting a
+    /// later versionless entry (a marker file, a directory) overwrite it would report the
+    /// package as versionless despite having just resolved one.
+    /// </para>
+    /// </summary>
+    private static void NoteInstalledVersion(StatusCheckResult result, string? found)
+    {
+        if (!string.IsNullOrWhiteSpace(found) && string.IsNullOrWhiteSpace(result.InstalledVersion))
+            result.InstalledVersion = found!.Trim();
     }
 
     private static string? GetFileVersion(string path)

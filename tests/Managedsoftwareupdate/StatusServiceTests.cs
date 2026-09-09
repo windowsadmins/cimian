@@ -58,6 +58,116 @@ public class StatusServiceTests
 
     #endregion
 
+    #region installed_version resolution
+
+    /// <summary>
+    /// A real Windows binary with genuine version metadata. Using a system file keeps the
+    /// test honest — FileVersionInfo against a hand-made temp file returns nothing, which
+    /// would pass a broken implementation.
+    /// </summary>
+    private static string VersionedSystemFile =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "kernel32.dll");
+
+    /// <summary>
+    /// The regression: the installs-array walk resolved a version, and CheckStatus threw
+    /// it away on the success path by returning a fresh result rather than the walk's.
+    /// Only the failure path carried it, so a package that verified cleanly reported no
+    /// version at all — while the very check that proved it was installed had just read one.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_InstallsArrayPasses_StillReportsTheInstalledVersion()
+    {
+        var item = new CatalogItem
+        {
+            Name = "VersionedFilePackage",
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = VersionedSystemFile }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.False(string.IsNullOrWhiteSpace(result.InstalledVersion));
+    }
+
+    /// <summary>
+    /// Reading the version must stay an observation. A file that exists satisfies the check
+    /// regardless of what its metadata says, so recording the version cannot flip the
+    /// install decision — that would change what the fleet installs.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_ReadingTheVersionDoesNotChangeTheInstallDecision()
+    {
+        var item = new CatalogItem
+        {
+            Name = "NoExpectedVersionPackage",
+            Version = "",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = VersionedSystemFile }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.Equal("installed", result.Status);
+    }
+
+    /// <summary>
+    /// A missing file is still pending. The version work must not mask a real failure.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_MissingFile_IsStillPendingAndReportsNoVersion()
+    {
+        var item = new CatalogItem
+        {
+            Name = "AbsentPackage",
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = Path.Combine(_testDir, "does-not-exist.exe") }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.True(result.NeedsAction);
+        Assert.True(string.IsNullOrWhiteSpace(result.InstalledVersion));
+    }
+
+    /// <summary>
+    /// One package, several installs entries. The entry that yields a version names the
+    /// package; a later versionless marker file must not erase it.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_AVersionlessLaterEntryDoesNotEraseTheVersion()
+    {
+        var marker = Path.Combine(_testDir, "marker.txt");
+        File.WriteAllText(marker, "installed");
+
+        var item = new CatalogItem
+        {
+            Name = "MultiEntryPackage",
+            Version = "",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = VersionedSystemFile },
+                new() { Type = "file", Path = marker }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.False(string.IsNullOrWhiteSpace(result.InstalledVersion));
+    }
+
+    #endregion
+
     [Fact]
     public void CheckStatus_TimedOutInstallcheck_ReturnsDetectionErrorWithoutInstall()
     {
