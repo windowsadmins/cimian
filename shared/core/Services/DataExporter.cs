@@ -1193,6 +1193,17 @@ public class DataExporter
                     (eventData.TryGetValue("version",         out var v)  ? v.GetString()  : "");
                 var error = eventData.TryGetValue("error", out var e) ? e.GetString() : "";
 
+                // Status-check and install events both carry what detection found. Keep the
+                // most recent non-empty one so the historical report can state the installed
+                // version, not just the catalog target.
+                if (eventData.TryGetValue("installed_version", out var iv)
+                    && iv.ValueKind == JsonValueKind.String)
+                {
+                    var detected = iv.GetString();
+                    if (!string.IsNullOrWhiteSpace(detected))
+                        stats.InstalledVersion = detected.Trim();
+                }
+
                 // Update statistics
                 switch (action?.ToLowerInvariant())
                 {
