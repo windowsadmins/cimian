@@ -1777,7 +1777,6 @@ try {{
     /// Both steps are required in practice — removing only the provisioned entry
     /// leaves the app fully functional for currently-registered users, which is
     /// surprising and inconsistent with what an admin expects from "uninstall".
-    /// This is the same pattern Gorilla's MSIX PR uses.
     ///
     /// PackageFullName is read from HKLM\SOFTWARE\ManagedInstalls\&lt;Name&gt; (written
     /// at install time by RegisterInstallation). Falls back to runtime discovery
