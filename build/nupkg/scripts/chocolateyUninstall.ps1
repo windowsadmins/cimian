@@ -129,7 +129,9 @@ function Remove-FromPath {
         $currentPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::Machine)
         
         if ($currentPath) {
-            $pathEntries = $currentPath -split ';' | Where-Object { $_ -ne $InstallDir -and $_ -ne "" }
+            # Trailing-slash tolerant, or an entry written as "...\Cimian\" survives
+            # the uninstall and is then invisible to every later install.
+            $pathEntries = $currentPath -split ';' | Where-Object { $_.Trim() -and ($_.Trim().TrimEnd([char]92) -ine $InstallDir.TrimEnd([char]92)) }
             $newPath = $pathEntries -join ';'
             
             if ($newPath -ne $currentPath) {

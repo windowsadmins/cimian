@@ -74,7 +74,9 @@ try {
 try {
     $currentPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::Machine)
     if ($currentPath) {
-        $entries = $currentPath -split ';' | Where-Object { $_ -and ($_ -ne $InstallDir) }
+        # Trailing-slash tolerant, or an entry written as "...\Cimian\" survives
+        # the uninstall and is then invisible to every later install.
+        $entries = $currentPath -split ';' | Where-Object { $_.Trim() -and ($_.Trim().TrimEnd([char]92) -ine $InstallDir.TrimEnd([char]92)) }
         $newPath = ($entries -join ';')
         if ($newPath -ne $currentPath) {
             [Environment]::SetEnvironmentVariable("PATH", $newPath, [EnvironmentVariableTarget]::Machine)
