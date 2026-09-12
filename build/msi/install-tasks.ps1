@@ -34,14 +34,47 @@ try {
 
 try {
     # First, remove any existing Cimian tasks to prevent duplicates
+    #
+    # Bounded, because this runs inside the MSI. Get-ScheduledTask talks to the
+    # Task Scheduler service, and on a machine whose scheduler has degraded it
+    # never returns. Unbounded here that stalls the install itself rather than
+    # just the cleanup, and an install that never finishes leaves the payload
+    # half replaced.
+    #
+    # Giving up is the right answer: a duplicate task is cosmetic, and
+    # Register-ScheduledTask below replaces one of the same name anyway.
     Write-Host "Removing any existing Cimian tasks..."
-    Get-ScheduledTask | Where-Object {
-        $_.TaskName -like "*Cimian*" -or
-        $_.Description -like "*Cimian*" -or
-        $_.TaskName -like "*Automatic Software Update*"
-    } | ForEach-Object {
-        Write-Host "  Removing existing task: $($_.TaskName)"
-        Unregister-ScheduledTask -TaskName $_.TaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+    $existingJob = Start-Job -ScriptBlock {
+        Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
+            $_.TaskName -like "*Cimian*" -or
+            $_.Description -like "*Cimian*" -or
+            $_.TaskName -like "*Automatic Software Update*"
+        } | Select-Object -ExpandProperty TaskName
+    }
+
+    $existingTasks = @()
+    if (Wait-Job -Job $existingJob -Timeout 20) {
+        $existingTasks = @(Receive-Job -Job $existingJob -ErrorAction SilentlyContinue)
+    }
+    else {
+        Write-Host "  Task Scheduler did not answer within 20s; skipping duplicate cleanup and continuing."
+        Stop-Job -Job $existingJob -ErrorAction SilentlyContinue
+    }
+    Remove-Job -Job $existingJob -Force -ErrorAction SilentlyContinue
+
+    foreach ($taskName in $existingTasks) {
+        if (-not $taskName) { continue }
+
+        Write-Host "  Removing existing task: $taskName"
+        $removeJob = Start-Job -ScriptBlock {
+            Unregister-ScheduledTask -TaskName $using:taskName -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        if (-not (Wait-Job -Job $removeJob -Timeout 20)) {
+            Write-Host "    Task Scheduler did not answer within 20s removing '$taskName'; continuing."
+            Stop-Job -Job $removeJob -ErrorAction SilentlyContinue
+        }
+        Remove-Job -Job $removeJob -Force -ErrorAction SilentlyContinue
     }
 
     $managedSoftwareUpdateExe = Join-Path $InstallPath "managedsoftwareupdate.exe"
