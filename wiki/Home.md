@@ -1,50 +1,133 @@
-# Cimian Documentation Wiki
+# Cimian
 
-Cimian is an enterprise Windows software deployment system modeled on [Munki](https://github.com/munki/munki). It runs the same detect/download/install loop Mac admins already know, uses the same repo layout (`pkgsinfo/ catalogs/ manifests/`), and speaks a pkginfo schema that is Munki-compatible where Windows realities allow.
+Cimian is an open-source software deployment system for Windows, heavily inspired by
+[Munki](https://github.com/munki/munki). You describe the software your machines should
+have in plain YAML, serve that description and the installers from any static web
+server, and a client agent on each machine makes the machine match. There is no push
+infrastructure and no database — the repository is files, and the machines pull.
 
-## Start here
+New here? Read [Overview](Overview) for the model, then [Getting Started](Getting-Started)
+to put one package on one machine. If you already run Munki,
+[Cimian for Munki Admins](Cimian-for-Munki-Admins) is the fastest route in.
 
-- [Cimian and Munki: a comparison for Mac admins](cimian-munki-comparison.md) - if you already know Munki, start here
-- [Project structure](PROJECT_STRUCTURE.md) - repository layout and component map
-- [How Cimian decides what needs to be installed](how-cimian-decides-what-needs-to-be-installed.md) - the detection pipeline explained
+## Introduction
 
-## Package authoring
+| Page | |
+|---|---|
+| [Overview](Overview) | What Cimian is and how the pieces fit together |
+| [Getting Started](Getting-Started) | From nothing to one machine installing one package |
+| [Demonstration Setup](Demonstration-Setup) | Stand up a throwaway repo and client to try it |
+| [Cimian for Munki Admins](Cimian-for-Munki-Admins) | Concept and tool mapping, and where the two differ |
+| [Glossary](Glossary) | Every term the rest of the wiki uses |
+| [Frequently Asked Questions](Frequently-Asked-Questions) | Short answers, honestly given |
 
-- [Conditional items guide](conditional-items-guide.md) - NSPredicate-style conditions on manifests and pkgsinfo
-- [Uninstall scripts supported](cimian-uninstall-scripts-supported.md) - full matrix of uninstall method types
-- [`uninstallable` key usage](uninstallable-key-usage.md) - explicit vs auto-determined uninstallability
-- [Importing EXE bundle installers](importing-exe-bundle-installers.md) - WiX Burn bundles and ProductCode strategies
-- [Chocolatey shim prevention](chocolatey-shim-prevention.md) - stopping Chocolatey from creating shim exes
-- [Managed profiles and apps guide](managed-profiles-apps-guide.md) - managed_profiles and managed_apps in pkginfo/manifest
-- [PowerShell execution policy bypass](powershell-execution-policy-bypass.md) - how Cimian runs pkginfo scripts
+## Installing and updating Cimian
 
-## Client runtime and services
+| Page | |
+|---|---|
+| [Installing Cimian](Installing-Cimian) | Artifacts, what the MSI does, silent install, fleet deployment |
+| [Removing Cimian](Removing-Cimian) | Uninstalling cleanly, and what is left behind |
+| [Deploying Cimian With Intune](Deploying-Cimian-With-Intune) | Win32 app packaging and detection |
+| [Bootstrapping With Cimian](Bootstrapping-With-Cimian) | Zero-touch first-boot provisioning |
+| [Updating Cimian](Updating-Cimian) | How the client updates itself |
 
-- [Bootstrap system](bootstrap-system-analysis-with-cimianwatcher.md) - zero-touch provisioning architecture
-- [CimianWatcher comprehensive guide](cimianwatcher-comprehensive-guide.md) - the watcher service, testing, and overview
-- [CimianWatcher dual-mode guide](cimianwatcher-dual-mode-guide.md) - GUI vs headless trigger modes
-- [CimianWatcher enterprise deployment](cimianwatcher-enterprise-deployment.md) - MSI custom actions and scale scenarios
-- [Install loop prevention](install-loop-prevention.md) - LoopGuard and exponential backoff
-- [Self-update management](self-update-management.md) - operator-facing self-update controls
-- [Self-update detection logic](self-update-detection-logic.md) - which packages trigger a self-update
-- [Self-update mechanism analysis](cimian-selfupdate-mechanism-analysis.md) - internal mechanism reference
+## Command-line tools
 
-## Logging, status, and diagnostics
+[Command-Line Tools](Command-Line-Tools) is the index. One page per binary:
 
-- [Cimian logging system](cimian-logging-system.md) - JSON-structured per-session log format
-- [Error reporting guide](cimian-error-reporting-guide.md) - what errors get surfaced, where, and how
-- [ReportMate status specification](cimian-reportmate-status-specification.md) - contract for the ReportMate integration
-- [CimianStatus UI](cimianstatus-ui-modernization.md) - WPF status app design spec
-- [Item source traceability](item-source-traceability.md) - which manifest or condition caused each action
-- [cimitrigger troubleshooting](cimitrigger-troubleshooting.md) - manual trigger utility diagnostics
-- [Privilege elevation troubleshooting](privilege-elevation-troubleshooting.md) - UAC and service account issues
+| Client | Repository |
+|---|---|
+| [managedsoftwareupdate](managedsoftwareupdate) | [cimiimport](cimiimport) |
+| [cimitrigger](cimitrigger) | [cimipkg](cimipkg) |
+| [cimiwatcher](cimiwatcher) | [makepkginfo](makepkginfo) |
+| [cimistatus](cimistatus) | [makecatalogs](makecatalogs) |
+| | [manifestutil](manifestutil) |
+| | [repoclean](repoclean) |
 
-## Integrations and enterprise
+## Managed Software Center
 
-- [CSP OMA-URI configuration](csp-oma-uri-configuration.md) - Intune CSP-based config delivery
-- [`repoclean` tool](REPOCLEAN_TOOL.md) - repository pruning (keep N versions, remove orphans)
-- [Cimian vs Munki: feature gap analysis](cimian-munki-gap-analysis.md) - engineering parity ledger
+| Page | |
+|---|---|
+| [Managed Software Center](Managed-Software-Center) | The end-user self-service application |
+| [Optional Installs And Self Service](Optional-Installs-And-Self-Service) | Letting users choose their own software |
+| [Featured Items](Featured-Items) | Promoting items in the interface |
+| [Product Icons And Screenshots](Product-Icons-And-Screenshots) | Making items look right |
 
----
+## Client configuration
 
-*Source for this wiki lives alongside the codebase at `packages/CimianTools/wiki/`. Issues and corrections welcome.*
+| Page | |
+|---|---|
+| [Client Configuration](Client-Configuration) | Every preference key, and the policy override |
+| [How Cimian Runs](How-Cimian-Runs) | Scheduled tasks, the watcher, run modes, running now |
+| [Client Identifier Resolution](Client-Identifier-Resolution) | How a client finds its own manifest |
+| [Configuring Clients With Intune](Configuring-Clients-With-Intune) | What an MDM can and cannot deliver |
+
+## The repository
+
+| Page | |
+|---|---|
+| [The Cimian Repository](The-Cimian-Repository) | Layout, serving it, creating one |
+| [Using Catalogs](Using-Catalogs) | What catalogs are and how clients search them |
+| [Promoting Between Catalogs](Promoting-Between-Catalogs) | Testing to production, safely |
+| [Securing The Repository](Securing-The-Repository) | Authentication, TLS and client certificates |
+| [Cimian With Git](Cimian-With-Git) | Keeping the repository in version control |
+
+## Manifests
+
+| Page | |
+|---|---|
+| [Manifests](Manifests) | The key reference and a recommended layout |
+| [Conditional Items](Conditional-Items) | Targeting a subset of machines |
+| [Conditional Facts Reference](Conditional-Facts-Reference) | Every fact a condition can test |
+
+## pkgsinfo
+
+| Page | |
+|---|---|
+| [Introduction To pkgsinfo Files](Introduction-To-pkgsinfo-Files) | What a pkgsinfo is |
+| [Supported pkgsinfo Keys](Supported-pkgsinfo-Keys) | The complete key reference |
+| [Installer Types](Installer-Types) | MSI, MSIX, EXE, PowerShell, nupkg, copy, nopkg |
+| [How Cimian Decides What Needs To Be Installed](How-Cimian-Decides-What-Needs-To-Be-Installed) | The detection cascade |
+| [Installs Arrays](Installs-Arrays) | Declaring what "installed" means |
+| [Version Comparisons](Version-Comparisons) | How version strings are ordered |
+| [Scripts In pkgsinfo](Scripts-In-pkgsinfo) | Every script hook and its exit-code contract |
+| [Uninstalling Software](Uninstalling-Software) | Making an item removable, and removing it |
+| [Blocking Applications](Blocking-Applications) | Deferring an install while an application is open |
+| [Dependencies And Update Chains](Dependencies-And-Update-Chains) | `requires` and `update_for` |
+| [Importing EXE Bundle Installers](Importing-EXE-Bundle-Installers) | Awkward bundles that register oddly |
+
+## Common operations
+
+| Page | |
+|---|---|
+| [Installing Software](Installing-Software) | The end-to-end walkthrough |
+| [Promoting Between Catalogs](Promoting-Between-Catalogs) | Moving an item through your rings |
+| [On Demand Items](On-Demand-Items) | Run-now items that never stay installed |
+
+## Advanced
+
+| Page | |
+|---|---|
+| [Preflight And Postflight Scripts](Preflight-And-Postflight-Scripts) | Client-side hooks around a run |
+| [Install Loop Prevention](Install-Loop-Prevention) | LoopGuard, and diagnosing a looping package |
+| [Force Installs And Deadlines](Force-Installs-And-Deadlines) | `force_install_after_date` |
+| [The Download Cache](The-Download-Cache) | Reuse, retention, and keeping it from filling the disk |
+| [Managed Profiles And Managed Apps](Managed-Profiles-And-Managed-Apps) | What these keys do and do not do |
+
+## Operations and troubleshooting
+
+| Page | |
+|---|---|
+| [Troubleshooting](Troubleshooting) | Symptom-first diagnosis |
+| [Logging](Logging) | What the client writes, and where |
+| [Item Status Reference](Item-Status-Reference) | Every status an item can carry |
+| [Reporting Data Contract](Reporting-Data-Contract) | The machine-readable output |
+
+## Developing Cimian
+
+| Page | |
+|---|---|
+| [Architecture](Architecture) | How the source is organised |
+| [Building Cimian](Building-Cimian) | Building and testing from source |
+| [Release Process](Release-Process) | Tagging, CI, and what CI does not do |
+| [Contributing](Contributing) | Issues, branches, pull requests |
