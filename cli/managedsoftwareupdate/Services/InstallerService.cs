@@ -1489,7 +1489,13 @@ try {{
     {
         if (string.IsNullOrWhiteSpace(item.InstallScript))
         {
-            ConsoleLogger.Warn($"nopkg item '{item.Name}' has no install_script defined");
+            // A nopkg item is allowed to do all of its work in preinstall_script or
+            // postinstall_script, which run around this call, so a missing
+            // install_script is only worth a warning when the item has no script
+            // at all. Warning otherwise put a false WARN in every session that
+            // installed such an item, burying the warnings that matter.
+            if (string.IsNullOrWhiteSpace(item.PreinstallScript) && string.IsNullOrWhiteSpace(item.PostinstallScript))
+                ConsoleLogger.Warn($"nopkg item '{item.Name}' has no install_script, preinstall_script or postinstall_script defined");
             return (true, "No install_script defined; nothing to run");
         }
 
