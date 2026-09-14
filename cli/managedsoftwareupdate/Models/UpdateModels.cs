@@ -442,6 +442,9 @@ public class CatalogItem
     [YamlMember(Alias = "installcheck_script")]
     public string? InstallcheckScript { get; set; }
 
+    [YamlMember(Alias = "uninstallcheck_script")]
+    public string? UninstallcheckScript { get; set; }
+
     [YamlMember(Alias = "install_script")]
     public string? InstallScript { get; set; }
 
