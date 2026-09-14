@@ -188,6 +188,77 @@ public class StatusServiceTests
         Assert.Contains(item.Name, result.Reason);
     }
 
+    [Fact]
+    public void CheckUninstallStatus_AbsentItem_SkipsRemoval()
+    {
+        var item = new CatalogItem
+        {
+            Name = "AlreadyRemovedPackage",
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = Path.Combine(_testDir, "does-not-exist.exe") }
+            }
+        };
+
+        var result = _service.CheckUninstallStatus(item, _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.NotInstalled, result.ReasonCode);
+    }
+
+    [Fact]
+    public void CheckUninstallStatus_PresentItem_NeedsRemoval()
+    {
+        var item = new CatalogItem
+        {
+            Name = "PresentPackage",
+            Version = "",
+            Installs = new List<InstallCheckItem> { new() { Type = "file", Path = VersionedSystemFile } }
+        };
+
+        var result = _service.CheckUninstallStatus(item, _testDir);
+
+        Assert.True(result.NeedsAction);
+    }
+
+    [Theory]
+    [InlineData("exit 0", true)]
+    [InlineData("exit 1", false)]
+    public void CheckUninstallStatus_UninstallcheckScript_Decides(string script, bool needsRemoval)
+    {
+        var marker = Path.Combine(_testDir, "present.txt");
+        File.WriteAllText(marker, "installed");
+        var item = new CatalogItem
+        {
+            Name = "ScriptedRemoval",
+            Version = "1.0.0",
+            UninstallcheckScript = script,
+            Installs = new List<InstallCheckItem> { new() { Type = "file", Path = marker } }
+        };
+
+        var result = _service.CheckUninstallStatus(item, _testDir);
+
+        Assert.Equal(needsRemoval, result.NeedsAction);
+    }
+
+    [Fact]
+    public void CheckUninstallStatus_TimedOutUninstallcheck_SkipsRemoval()
+    {
+        var service = new StatusService(TimeSpan.FromMilliseconds(250));
+        var item = new CatalogItem
+        {
+            Name = "HungRemovalCheck",
+            Version = "1.0.0",
+            UninstallcheckScript = "while ($true) { Start-Sleep -Milliseconds 100 }"
+        };
+
+        var result = service.CheckUninstallStatus(item, _testDir);
+
+        Assert.Equal("error", result.Status);
+        Assert.False(result.NeedsAction);
+    }
+
     #region Static Method Tests
 
     [Fact]

@@ -1303,7 +1303,19 @@ public class UpdateEngine : IDisposable
                 case "uninstall":
                     if (catalogItem.IsUninstallable())
                     {
-                        toUninstall.Add(catalogItem);
+                        // Check before removing: an item that is already gone would
+                        // otherwise run its uninstaller and postuninstall_script every run.
+                        var removalStatus = _statusService.CheckUninstallStatus(catalogItem, _config.CachePath);
+                        ConsoleLogger.Detail($"    CheckUninstallStatus for {item.Name}: NeedsAction={removalStatus.NeedsAction}, Status={removalStatus.Status}, Reason={removalStatus.Reason}");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name, catalogItem.Version, removalStatus.Status,
+                            removalStatus.Reason, removalStatus.ReasonCode, removalStatus.DetectionMethod,
+                            removalStatus.InstalledVersion, removalStatus.NeedsAction);
+
+                        if (removalStatus.NeedsAction)
+                        {
+                            toUninstall.Add(catalogItem);
+                        }
                     }
                     break;
 

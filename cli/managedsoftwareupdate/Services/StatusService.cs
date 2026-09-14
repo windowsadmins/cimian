@@ -314,6 +314,112 @@ public class StatusService
     /// Checks the installcheck_script - if exit code 0, install is needed; if exit code 1, install is not needed
     /// This is Go parity behavior
     /// </summary>
+    /// <summary>
+    /// Decides whether a managed_uninstalls item still needs removing. Removal is only
+    /// needed while the item is present, so an item that is already gone is checked and
+    /// skipped instead of running its uninstaller and postuninstall_script every session.
+    /// uninstallcheck_script decides when the pkgsinfo declares one (exit 0 = removal
+    /// needed, non-zero = skip); otherwise the install detection decides. A detection
+    /// error skips removal: uninstalling on a guess is worse than trying again next run.
+    /// </summary>
+    public StatusCheckResult CheckUninstallStatus(CatalogItem item, string cachePath)
+    {
+        if (!string.IsNullOrEmpty(item.UninstallcheckScript))
+        {
+            ConsoleLogger.Info($"Checking removal status via uninstallcheck_script item: {item.Name}");
+            return CheckUninstallcheckScript(item);
+        }
+
+        var installStatus = CheckStatus(item, "install", cachePath);
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = installStatus.DetectionMethod,
+            InstalledVersion = installStatus.InstalledVersion,
+            TargetVersion = item.Version
+        };
+
+        if (installStatus.Status == "error")
+        {
+            result.Status = "error";
+            result.NeedsAction = false;
+            result.Reason = $"Removal skipped, install detection failed: {installStatus.Reason}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
+            result.Error = installStatus.Error;
+        }
+        else if (installStatus.NeedsAction)
+        {
+            result.Status = "removed";
+            result.NeedsAction = false;
+            result.Reason = "Not installed, nothing to remove";
+            result.ReasonCode = StatusReasonCode.NotInstalled;
+        }
+        else
+        {
+            result.Status = "pending";
+            result.NeedsAction = true;
+            result.Reason = "Installed, removal needed";
+            result.ReasonCode = installStatus.ReasonCode;
+        }
+
+        return result;
+    }
+
+    private StatusCheckResult CheckUninstallcheckScript(CatalogItem item)
+    {
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Script,
+            TargetVersion = item.Version
+        };
+
+        try
+        {
+            var scriptService = new ScriptService();
+            using var timeout = new CancellationTokenSource(_installcheckTimeout);
+            var scriptResult = scriptService
+                .ExecuteScriptWithDetailsAsync(item.UninstallcheckScript!, timeout.Token)
+                .GetAwaiter()
+                .GetResult();
+            var scriptSaid = string.IsNullOrWhiteSpace(scriptResult.Output) ? "no output" : scriptResult.Output.Trim();
+
+            if (scriptResult.ExitCode == ScriptService.TimeoutExitCode)
+            {
+                var timeoutSeconds = Math.Ceiling(_installcheckTimeout.TotalSeconds);
+                var reason = $"uninstallcheck_script timed out after {timeoutSeconds:0} seconds for {item.Name}";
+                ConsoleLogger.Error(reason);
+                result.Status = "error";
+                result.NeedsAction = false;
+                result.Reason = reason;
+                result.ReasonCode = StatusReasonCode.ScriptError;
+                result.Error = new TimeoutException(reason);
+            }
+            else if (scriptResult.Success)
+            {
+                result.Status = "pending";
+                result.NeedsAction = true;
+                result.Reason = $"uninstallcheck_script exited 0, which means removal needed (script output: {scriptSaid})";
+                result.ReasonCode = StatusReasonCode.ScriptConfirmed;
+            }
+            else
+            {
+                result.Status = "removed";
+                result.NeedsAction = false;
+                result.Reason = $"uninstallcheck_script returned non-zero (no removal needed, script output: {scriptSaid})";
+                result.ReasonCode = StatusReasonCode.NotInstalled;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Status = "error";
+            result.NeedsAction = false;
+            result.Reason = $"uninstallcheck_script failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
+            result.Error = ex;
+        }
+
+        return result;
+    }
+
     private StatusCheckResult CheckInstallcheckScript(CatalogItem item)
     {
         var result = new StatusCheckResult
