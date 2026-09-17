@@ -15,6 +15,18 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 public static class CimianHttpClientFactory
 {
     /// <summary>
+    /// Key storage flags for PKCS#12 material used with HttpClientHandler client auth.
+    /// EphemeralKeySet must not be used on Windows: Schannel cannot marshal in-memory
+    /// private keys to LSASS, so TLS client auth fails even when HasPrivateKey is true.
+    /// See https://github.com/dotnet/runtime/issues/23749 and
+    /// https://learn.microsoft.com/en-us/dotnet/core/extensions/sslstream-troubleshooting#handshake-failed-with-ephemeral-keys
+    /// </summary>
+    private static X509KeyStorageFlags ClientCertificateKeyStorageFlags =>
+        OperatingSystem.IsWindows()
+            ? X509KeyStorageFlags.UserKeySet
+            : X509KeyStorageFlags.EphemeralKeySet;
+
+    /// <summary>
     /// Creates an HttpClient configured with authentication and optional client certificates.
     /// Auth priority: DPAPI registry → Bearer token → Basic auth.
     /// </summary>
@@ -104,7 +116,7 @@ public static class CimianHttpClientFactory
                 return X509CertificateLoader.LoadPkcs12FromFile(
                     config.ClientCertificatePath,
                     config.ClientCertificatePassword,
-                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+                    ClientCertificateKeyStorageFlags);
             }
             catch (Exception ex)
             {
@@ -221,8 +233,8 @@ public static class CimianHttpClientFactory
 
             // On Windows, re-export to PFX so the private key is usable with SslStream
             var exported = cert.Export(X509ContentType.Pfx);
-            return X509CertificateLoader.LoadPkcs12(exported, null,
-                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+            return X509CertificateLoader.LoadPkcs12(
+                exported, null, ClientCertificateKeyStorageFlags);
         }
         catch (Exception ex)
         {
