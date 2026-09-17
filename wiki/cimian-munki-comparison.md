@@ -61,7 +61,7 @@ This is the section worth reading slowly. Everything above just works. Everythin
 
 ### Config is YAML, not plist
 
-`C:\ProgramData\ManagedInstalls\Config.yaml` replaces `ManagedInstalls.plist`. The keys are the same - `SoftwareRepoURL`, `ClientIdentifier`, `Catalogs`, and so on - but the file is YAML with the same case-sensitivity rules Munki applies. You can also override values via the registry at `HKLM\SOFTWARE\Cimian\Config` or via Intune CSP, which is handy for MDM-managed config that does not require writing a file.
+`C:\ProgramData\ManagedInstalls\Config.yaml` replaces `ManagedInstalls.plist`. The keys are the same - `SoftwareRepoURL`, `ClientIdentifier`, `Catalogs`, and so on - but the file is YAML with the same case-sensitivity rules Munki applies. Fleet-wide overrides also come from `HKLM\SOFTWARE\Policies\Cimian` (Intune Policy CSP / ADMX) and win over YAML for the supported keys — including mTLS settings such as `UseClientCertificate` and `ClientCertificateThumbprint`.
 
 ### Logs are JSON-structured per-session directories
 
