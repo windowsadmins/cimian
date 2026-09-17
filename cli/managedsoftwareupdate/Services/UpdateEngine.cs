@@ -569,6 +569,10 @@ public class UpdateEngine : IDisposable
                     }),
                 cancellationToken);
 
+            // MSC branding / preferences from client_resources/{ClientIdentifier}.zip
+            // (fallback site_default.zip). Cosmetic — same failure semantics as icons.
+            await new ClientResourcesSyncService(_config).SyncAsync(cancellationToken);
+
             // Exit if check-only mode
             if (_checkOnly)
             {
