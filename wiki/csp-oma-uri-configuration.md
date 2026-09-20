@@ -1,57 +1,67 @@
 # Cimian CSP OMA-URI Configuration Guide
 
-> **Status note (verified 2026-05-29):** The current `ConfigurationService` in
-> `cli/managedsoftwareupdate/Services/ConfigurationService.cs` loads
-> configuration exclusively from the YAML file at
-> `C:\ProgramData\ManagedInstalls\Config.yaml`. When that file is missing it
-> falls back to a hard-coded default object, **not** to registry/CSP values.
-> The CSP/OMA-URI registry fallback described in this document is a
-> deployment pattern and design target rather than a feature implemented in
-> source today. The registry path and OMA-URI examples below are guidance
-> for how policy could be pre-staged via Intune/GPO so that an external
-> tool (or a future Cimian release) can materialize Config.yaml from it.
+> **Status note (verified 2026-09-17):** `ConfigurationService` loads
+> `C:\ProgramData\ManagedInstalls\Config.yaml`, then applies overrides from
+> `HKLM\SOFTWARE\Policies\Cimian` (ADMX / Policy CSP). Policy wins over YAML
+> for the keys listed below. Values not present in the Policies hive leave
+> the YAML (or default) value unchanged. Missing `Config.yaml` still falls
+> back to built-in defaults, then the same policy overlay.
 
 ## Overview
 
-Cimian's primary configuration source is `Config.yaml`. This guide describes
-how to express the same settings via CSP OMA-URI policies so that Intune,
-Group Policy, or another management tool can deliver them to a device. A
-common pattern is to apply registry values via CSP, then have a provisioning
-script write `Config.yaml` from those values before `managedsoftwareupdate`
-runs for the first time.
+Cimian's primary configuration source is `Config.yaml`. Fleet-wide settings
+can also ship via Intune/GPO Policy CSP writing to
+`HKLM\SOFTWARE\Policies\Cimian`. For SSL client certificates, the usual
+split is:
+
+1. An MDM **certificate-install** CSP places the leaf in `LocalMachine\My`
+2. Cimian policy sets `UseClientCertificate` + `ClientCertificateThumbprint`
+
+File-based paths (`ClientCertificatePath` / `ClientKeyPath`) remain
+supported when you prefer a PFX/PEM on disk.
 
 ## Configuration Priority (as implemented today)
 
-1. **Primary (and only) source read by managedsoftwareupdate**:
-   `C:\ProgramData\ManagedInstalls\Config.yaml` (YAML file)
-2. **If the file is missing**: built-in defaults are used (placeholder
-   `SoftwareRepoURL`, machine name as `ClientIdentifier`, `Production`
-   catalog). The process does **not** read the registry today.
+1. **Base config**: `C:\ProgramData\ManagedInstalls\Config.yaml` (or built-in
+   defaults when the file is missing)
+2. **Policy overlay** (wins when the value is present):
+   `HKLM\SOFTWARE\Policies\Cimian`
 
-## Intended CSP-staging Flow
+## Policy keys read by managedsoftwareupdate
 
-When a CSP-driven deployment is used:
-
-1. CSP OMA-URI policy writes values under `HKLM\SOFTWARE\Cimian\Config` (or a
-   Policies hive) at device enrollment time.
-2. A provisioning step (Intune Win32 app, custom script, or bootstrap task)
-   reads those registry values and writes `Config.yaml`.
-3. `managedsoftwareupdate` then loads `Config.yaml` normally.
+| Name | Notes |
+|---|---|
+| `SoftwareRepoURL` | REG_SZ |
+| `ClientIdentifier` | REG_SZ |
+| `InstallerTimeout` | REG_DWORD or numeric string; applied when ≥ 60 |
+| `CacheRetentionDays` | REG_DWORD or numeric string; applied when ≥ 0 |
+| `UseClientCertificate` | REG_DWORD 0/1 or string `true`/`false`/`0`/`1` |
+| `UseClientCertificateCNAsClientIdentifier` | same boolean encodings |
+| `ClientCertificateThumbprint` | REG_SZ; trimmed |
+| `ClientCertificatePath` | REG_SZ |
+| `ClientKeyPath` | REG_SZ |
+| `ClientCertificatePassword` | REG_SZ (empty string clears) |
+| `SoftwareRepoCACertificate` | REG_SZ |
 
 ## CSP Registry Path
 
-Cimian reads CSP configuration from this registry location:
+Cimian reads policy overrides from:
 
 ```
-HKEY_LOCAL_MACHINE\SOFTWARE\Cimian\Config
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
 ```
+
+> Older drafts mentioned `HKLM\SOFTWARE\Cimian\Config`. That path is **not**
+> read for config overrides. Use the Policies hive above.
 
 ## Supported Configuration Values
 
 The names below mirror the fields on the `CimianConfig` model
 (`cli/managedsoftwareupdate/Models/UpdateModels.cs`) — i.e. the keys that
-appear in `Config.yaml`. A provisioning script that materializes
-`Config.yaml` from CSP-applied registry values should use these names.
+appear in `Config.yaml`. Prefer writing them under
+`HKLM\SOFTWARE\Policies\Cimian` so `managedsoftwareupdate` applies them
+directly. A provisioning script that materializes `Config.yaml` from
+registry values can use the same names.
 
 ### String Values
 | Name | Reg type | Description | Example |
@@ -128,6 +138,24 @@ Data type: String
 Value: https://cimian.yourcompany.com
 ```
 
+#### Optional: Client certificate thumbprint (mTLS)
+```
+Name: Cimian Client Certificate Thumbprint
+Description: SHA-1 thumbprint of the leaf in LocalMachine\My used for repo mTLS
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/Software/Cimian/Config/ClientCertificateThumbprint
+Data type: String
+Value: A9D2AC8463746C2EC10CF2318B351ACBE9913E85
+```
+
+#### Optional: Enable client certificate auth
+```
+Name: Cimian Use Client Certificate
+Description: Enable SSL client certificate authentication for SoftwareRepoURL
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/Software/Cimian/Config/UseClientCertificate
+Data type: Integer
+Value: 1
+```
+
 #### Optional: Default Catalog
 ```
 Name: Cimian Default Catalog
@@ -172,20 +200,25 @@ Value: production,testing,development
 #### Example Registry Preferences
 
 ```
-Key: HKEY_LOCAL_MACHINE\SOFTWARE\Cimian\Config
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
 Value: SoftwareRepoURL
 Type: REG_SZ
 Data: https://cimian.yourcompany.com
 
-Key: HKEY_LOCAL_MACHINE\SOFTWARE\Cimian\Config
-Value: DefaultCatalog
-Type: REG_SZ
-Data: production
-
-Key: HKEY_LOCAL_MACHINE\SOFTWARE\Cimian\Config
-Value: Debug
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: UseClientCertificate
 Type: REG_DWORD
 Data: 1
+
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: ClientCertificateThumbprint
+Type: REG_SZ
+Data: A9D2AC8463746C2EC10CF2318B351ACBE9913E85
+
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: InstallerTimeout
+Type: REG_DWORD
+Data: 900
 ```
 
 ## PowerShell DSC Configuration
@@ -195,26 +228,26 @@ Configuration CimianCSPConfiguration {
     Import-DscResource -ModuleName PSDesiredStateConfiguration
     
     Registry CimianSoftwareRepoURL {
-        Key       = "HKLM:\SOFTWARE\Cimian\Config"
+        Key       = "HKLM:\SOFTWARE\Policies\Cimian"
         ValueName = "SoftwareRepoURL"
         ValueData = "https://cimian.yourcompany.com"
         ValueType = "String"
         Ensure    = "Present"
     }
     
-    Registry CimianDefaultCatalog {
-        Key       = "HKLM:\SOFTWARE\Cimian\Config"
-        ValueName = "DefaultCatalog"
-        ValueData = "production"
-        ValueType = "String"
+    Registry CimianUseClientCertificate {
+        Key       = "HKLM:\SOFTWARE\Policies\Cimian"
+        ValueName = "UseClientCertificate"
+        ValueData = 1
+        ValueType = "Dword"
         Ensure    = "Present"
     }
     
-    Registry CimianDebugMode {
-        Key       = "HKLM:\SOFTWARE\Cimian\Config"
-        ValueName = "Debug"
-        ValueData = 1
-        ValueType = "Dword"
+    Registry CimianClientCertificateThumbprint {
+        Key       = "HKLM:\SOFTWARE\Policies\Cimian"
+        ValueName = "ClientCertificateThumbprint"
+        ValueData = "A9D2AC8463746C2EC10CF2318B351ACBE9913E85"
+        ValueType = "String"
         Ensure    = "Present"
     }
 }
@@ -224,11 +257,11 @@ Configuration CimianCSPConfiguration {
 
 ### Verify Registry Settings
 ```powershell
-# Check if CSP settings exist
-Get-ItemProperty -Path "HKLM:\SOFTWARE\Cimian\Config" -ErrorAction SilentlyContinue
+# Check if policy settings exist
+Get-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Cimian" -ErrorAction SilentlyContinue
 
-# List all CSP values
-Get-Item -Path "HKLM:\SOFTWARE\Cimian\Config" | Select-Object -ExpandProperty Property
+# List all policy values
+Get-Item -Path "HKLM:\SOFTWARE\Policies\Cimian" | Select-Object -ExpandProperty Property
 ```
 
 ### Inspect Effective Configuration
@@ -241,34 +274,30 @@ managedsoftwareupdate.exe --show-config -v
 
 Without `Config.yaml`, `ConfigurationService.LoadConfig` returns hard-coded
 defaults (placeholder `SoftwareRepoURL`, machine name as
-`ClientIdentifier`, `Production` catalog). Policy-applied registry values
-are **not** read in the current implementation, so this is only a useful
-test if you have a provisioning step that materializes `Config.yaml` from
-the registry beforehand.
+`ClientIdentifier`, `Production` catalog), then applies any values present
+under `HKLM\SOFTWARE\Policies\Cimian`. Policy-only mTLS setup therefore
+works even when the YAML file is absent, as long as the Policies hive is
+populated.
 
 ## Deployment Scenarios
 
 ### Scenario 1: New Device Provisioning
-1. **Intune** applies CSP OMA-URI policies during device enrollment, writing
-   the desired settings into `HKLM\SOFTWARE\Cimian\Config`.
-2. **A provisioning script** (run before the Cimian MSI or as part of it)
-   reads those registry values and writes `Config.yaml`.
-3. **Cimian MSI** is deployed via Intune Win32 app.
-4. **First `managedsoftwareupdate` run** loads `Config.yaml` normally.
+1. **Intune** applies Policy CSP values under `HKLM\SOFTWARE\Policies\Cimian`
+   (repo URL, mTLS thumbprint, etc.) and a separate certificate-install
+   profile that places the client leaf in `LocalMachine\My`.
+2. **Cimian MSI** is deployed via Intune Win32 app (or Fleet).
+3. **First `managedsoftwareupdate` run** loads `Config.yaml` if present,
+   then applies policy overrides — including client-certificate settings.
 
 ### Scenario 2: Existing Device Migration
-1. `Config.yaml` remains the configuration source read by Cimian.
-2. CSP policies can be applied as a compliance/auditing signal — but on
-   their own they do not change Cimian's runtime behavior today.
-3. If `Config.yaml` is deleted, defaults take over until a provisioning
-   step regenerates the file.
+1. `Config.yaml` remains a valid configuration source.
+2. CSP/policy values for the keys listed above override YAML when present.
+3. If `Config.yaml` is deleted, defaults take over, then policy overlay.
 
 ### Scenario 3: Zero-Touch Deployment
-1. **Autopilot** enrolls the device and applies CSP policies.
-2. A bootstrap step (CimianWatcher, Win32 app, or custom script)
-   materializes `Config.yaml` from the policy-applied registry values.
-3. Cimian is deployed during ESP and immediately uses the generated
-   `Config.yaml`.
+1. **Autopilot** enrolls the device and applies Policy CSP + cert install.
+2. Cimian is deployed during ESP and uses policy overrides immediately
+   (YAML optional for host-local settings).
 
 ## Troubleshooting
 
@@ -298,10 +327,9 @@ Run with verbose output to inspect the loaded configuration:
 managedsoftwareupdate.exe --show-config -v
 ```
 
-`--show-config` prints the effective `CimianConfig` field values. Cimian
-itself does **not** currently log "CSP fallback" messages — if `Config.yaml`
-is missing, defaults are used silently. To confirm policy-applied registry
-values, inspect `HKLM\SOFTWARE\Cimian\Config` with `reg query` or
+`--show-config` prints the effective `CimianConfig` field values after
+YAML load and policy overlay. To confirm policy-applied registry values,
+inspect `HKLM\SOFTWARE\Policies\Cimian` with `reg query` or
 `Get-ItemProperty`.
 
 ## PowerShell Execution Policy Bypass

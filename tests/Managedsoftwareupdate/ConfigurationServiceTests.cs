@@ -289,4 +289,89 @@ Catalogs:
     }
 
     #endregion
+
+    #region ApplyPolicyOverrides Tests
+
+    [Fact]
+    public void ApplyPolicyOverrides_ClientCertificateFields_OverrideYamlValues()
+    {
+        var config = new CimianConfig
+        {
+            SoftwareRepoURL = "https://yaml.example.com",
+            UseClientCertificate = false,
+            ClientCertificateThumbprint = "YAMLTHUMB",
+            ClientCertificatePath = @"C:\yaml\client.pfx",
+            ClientKeyPath = @"C:\yaml\client.key",
+            ClientCertificatePassword = "yaml-secret",
+            SoftwareRepoCACertificate = @"C:\yaml\ca.pem",
+            UseClientCertificateCNAsClientIdentifier = false
+        };
+
+        var policy = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SoftwareRepoURL"] = "https://policy.example.com",
+            ["UseClientCertificate"] = 1,
+            ["ClientCertificateThumbprint"] = " A9D2AC8463746C2EC10CF2318B351ACBE9913E85 ",
+            ["ClientCertificatePath"] = @"C:\ProgramData\ManagedInstalls\certs\client.pfx",
+            ["ClientKeyPath"] = @"C:\ProgramData\ManagedInstalls\certs\client.key",
+            ["ClientCertificatePassword"] = "policy-secret",
+            ["SoftwareRepoCACertificate"] = @"C:\ProgramData\ManagedInstalls\certs\ca.pem",
+            ["UseClientCertificateCNAsClientIdentifier"] = "true"
+        };
+
+        var result = ConfigurationService.ApplyPolicyOverrides(config, name =>
+            policy.TryGetValue(name, out var value) ? value : null);
+
+        Assert.Equal("https://policy.example.com", result.SoftwareRepoURL);
+        Assert.True(result.UseClientCertificate);
+        Assert.Equal("A9D2AC8463746C2EC10CF2318B351ACBE9913E85", result.ClientCertificateThumbprint);
+        Assert.Equal(@"C:\ProgramData\ManagedInstalls\certs\client.pfx", result.ClientCertificatePath);
+        Assert.Equal(@"C:\ProgramData\ManagedInstalls\certs\client.key", result.ClientKeyPath);
+        Assert.Equal("policy-secret", result.ClientCertificatePassword);
+        Assert.Equal(@"C:\ProgramData\ManagedInstalls\certs\ca.pem", result.SoftwareRepoCACertificate);
+        Assert.True(result.UseClientCertificateCNAsClientIdentifier);
+    }
+
+    [Fact]
+    public void ApplyPolicyOverrides_AbsentClientCertificateKeys_LeavesYamlValues()
+    {
+        var config = new CimianConfig
+        {
+            UseClientCertificate = true,
+            ClientCertificateThumbprint = "KEEPME",
+            ClientCertificatePath = @"C:\keep\client.pem",
+            UseClientCertificateCNAsClientIdentifier = true
+        };
+
+        var result = ConfigurationService.ApplyPolicyOverrides(config, _ => null);
+
+        Assert.True(result.UseClientCertificate);
+        Assert.Equal("KEEPME", result.ClientCertificateThumbprint);
+        Assert.Equal(@"C:\keep\client.pem", result.ClientCertificatePath);
+        Assert.True(result.UseClientCertificateCNAsClientIdentifier);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(0, false)]
+    [InlineData("true", true)]
+    [InlineData("FALSE", false)]
+    [InlineData("1", true)]
+    [InlineData("0", false)]
+    public void TryReadPolicyBool_AcceptsDwordAndStringEncodings(object raw, bool expected)
+    {
+        Assert.True(ConfigurationService.TryReadPolicyBool(raw, out var value));
+        Assert.Equal(expected, value);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("maybe")]
+    [InlineData(2.5)]
+    public void TryReadPolicyBool_RejectsUnrecognizedValues(object? raw)
+    {
+        Assert.False(ConfigurationService.TryReadPolicyBool(raw, out _));
+    }
+
+    #endregion
 }

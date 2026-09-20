@@ -54,50 +54,127 @@ public class ConfigurationService
                 return config;
             }
 
-            if (key.GetValue("SoftwareRepoURL") is string repoUrl && !string.IsNullOrWhiteSpace(repoUrl))
-            {
-                config.SoftwareRepoURL = repoUrl.Trim();
-            }
-
-            if (key.GetValue("ClientIdentifier") is string clientId && !string.IsNullOrWhiteSpace(clientId))
-            {
-                config.ClientIdentifier = clientId.Trim();
-            }
-
-            // ADMX decimal elements arrive as REG_DWORD; the Policy CSP has also
-            // been observed delivering numerics as strings, so accept both.
-            var timeoutRaw = key.GetValue("InstallerTimeout");
-            var timeout = timeoutRaw switch
-            {
-                int i => i,
-                string s when int.TryParse(s, out var parsed) => parsed,
-                _ => 0
-            };
-            if (timeout >= 60)
-            {
-                config.InstallerTimeout = timeout;
-            }
-
-            // Cache retention is the only lever against superseded multi-gigabyte
-            // payloads filling small system drives; let policy set it fleet-wide.
-            var retentionRaw = key.GetValue("CacheRetentionDays");
-            var retention = retentionRaw switch
-            {
-                int i => i,
-                string s when int.TryParse(s, out var parsed) => parsed,
-                _ => int.MinValue
-            };
-            if (retention != int.MinValue && retention >= 0)
-            {
-                config.CacheRetentionDays = retention;
-            }
+            return ApplyPolicyOverrides(config, name => key.GetValue(name));
         }
         catch (Exception ex)
         {
             ConsoleLogger.Debug($"Policy override read failed (using Config.yaml values): {ex.Message}");
+            return config;
+        }
+    }
+
+    /// <summary>
+    /// Applies MDM policy values onto <paramref name="config"/>.
+    /// Internal so unit tests can supply a fake registry without writing HKLM.
+    /// </summary>
+    internal static CimianConfig ApplyPolicyOverrides(CimianConfig config, Func<string, object?> getValue)
+    {
+        if (getValue("SoftwareRepoURL") is string repoUrl && !string.IsNullOrWhiteSpace(repoUrl))
+        {
+            config.SoftwareRepoURL = repoUrl.Trim();
+        }
+
+        if (getValue("ClientIdentifier") is string clientId && !string.IsNullOrWhiteSpace(clientId))
+        {
+            config.ClientIdentifier = clientId.Trim();
+        }
+
+        // ADMX decimal elements arrive as REG_DWORD; the Policy CSP has also
+        // been observed delivering numerics as strings, so accept both.
+        var timeoutRaw = getValue("InstallerTimeout");
+        var timeout = timeoutRaw switch
+        {
+            int i => i,
+            string s when int.TryParse(s, out var parsed) => parsed,
+            _ => 0
+        };
+        if (timeout >= 60)
+        {
+            config.InstallerTimeout = timeout;
+        }
+
+        // Cache retention is the only lever against superseded multi-gigabyte
+        // payloads filling small system drives; let policy set it fleet-wide.
+        var retentionRaw = getValue("CacheRetentionDays");
+        var retention = retentionRaw switch
+        {
+            int i => i,
+            string s when int.TryParse(s, out var parsed) => parsed,
+            _ => int.MinValue
+        };
+        if (retention != int.MinValue && retention >= 0)
+        {
+            config.CacheRetentionDays = retention;
+        }
+
+        // SSL client certificate auth — typically pair ClientCertificateThumbprint
+        // with a separate MDM cert-install CSP that places the leaf in LocalMachine\My.
+        if (TryReadPolicyBool(getValue("UseClientCertificate"), out var useClientCert))
+        {
+            config.UseClientCertificate = useClientCert;
+        }
+
+        if (TryReadPolicyBool(getValue("UseClientCertificateCNAsClientIdentifier"), out var useCertCn))
+        {
+            config.UseClientCertificateCNAsClientIdentifier = useCertCn;
+        }
+
+        if (getValue("ClientCertificateThumbprint") is string thumbprint &&
+            !string.IsNullOrWhiteSpace(thumbprint))
+        {
+            config.ClientCertificateThumbprint = thumbprint.Trim();
+        }
+
+        if (getValue("ClientCertificatePath") is string certPath &&
+            !string.IsNullOrWhiteSpace(certPath))
+        {
+            config.ClientCertificatePath = certPath.Trim();
+        }
+
+        if (getValue("ClientKeyPath") is string keyPath && !string.IsNullOrWhiteSpace(keyPath))
+        {
+            config.ClientKeyPath = keyPath.Trim();
+        }
+
+        if (getValue("ClientCertificatePassword") is string certPassword)
+        {
+            // Allow empty string to clear a passworded PFX via policy.
+            config.ClientCertificatePassword = certPassword;
+        }
+
+        if (getValue("SoftwareRepoCACertificate") is string caPath &&
+            !string.IsNullOrWhiteSpace(caPath))
+        {
+            config.SoftwareRepoCACertificate = caPath.Trim();
         }
 
         return config;
+    }
+
+    /// <summary>
+    /// Accepts ADMX/Policy CSP boolean encodings: REG_DWORD 0/1 or string
+    /// true/false/1/0 (case-insensitive).
+    /// </summary>
+    internal static bool TryReadPolicyBool(object? raw, out bool value)
+    {
+        switch (raw)
+        {
+            case int i:
+                value = i != 0;
+                return true;
+            case string s when bool.TryParse(s, out var parsed):
+                value = parsed;
+                return true;
+            case string s when s == "1":
+                value = true;
+                return true;
+            case string s when s == "0":
+                value = false;
+                return true;
+            default:
+                value = false;
+                return false;
+        }
     }
 
     /// <summary>
