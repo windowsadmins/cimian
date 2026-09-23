@@ -15,21 +15,49 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 public static class CimianHttpClientFactory
 {
     /// <summary>
+    /// Key storage flags for PKCS#12 material used with HttpClientHandler client auth.
+    /// EphemeralKeySet must not be used on Windows: Schannel cannot marshal in-memory
+    /// private keys to LSASS, so TLS client auth fails even when HasPrivateKey is true.
+    /// MachineKeySet keeps that key in the machine store, which is the right container
+    /// for a process running as SYSTEM. PersistKeySet is intentionally omitted: the key
+    /// is temporary and is deleted when the owning certificate is disposed.
+    /// See https://github.com/dotnet/runtime/issues/23749 and
+    /// https://learn.microsoft.com/en-us/dotnet/core/extensions/sslstream-troubleshooting#handshake-failed-with-ephemeral-keys
+    /// </summary>
+    private static X509KeyStorageFlags ClientCertificateKeyStorageFlags =>
+        OperatingSystem.IsWindows()
+            ? X509KeyStorageFlags.MachineKeySet
+            : X509KeyStorageFlags.EphemeralKeySet;
+
+    /// <summary>
+    /// File-imported certificate plus whether this process created its private key.
+    /// Store certificates stay owned by the certificate store.
+    /// </summary>
+    private readonly record struct LoadedClientCertificate(X509Certificate2 Certificate, bool DisposeWithClient);
+
+    /// <summary>
     /// Creates an HttpClient configured with authentication and optional client certificates.
     /// Auth priority: DPAPI registry → Bearer token → Basic auth.
+    /// Disposing the returned client also disposes a file-imported client certificate,
+    /// which deletes its temporary key file.
     /// </summary>
     public static HttpClient CreateHttpClient(CimianConfig config, TimeSpan? timeout = null)
     {
-        var handler = new HttpClientHandler();
+        ArgumentNullException.ThrowIfNull(config);
+
+        var innerHandler = new HttpClientHandler();
+        X509Certificate2? ownedCertificate = null;
 
         // SSL client certificate support
         if (config.UseClientCertificate)
         {
-            var cert = LoadClientCertificate(config);
-            if (cert != null)
+            var loaded = LoadClientCertificate(config);
+            if (loaded is not null)
             {
-                handler.ClientCertificates.Add(cert);
-                ConsoleLogger.Detail($"    SSL client certificate loaded: {cert.Subject}");
+                innerHandler.ClientCertificates.Add(loaded.Value.Certificate);
+                ConsoleLogger.Detail($"    SSL client certificate loaded: {loaded.Value.Certificate.Subject}");
+                if (loaded.Value.DisposeWithClient)
+                    ownedCertificate = loaded.Value.Certificate;
             }
         }
 
@@ -39,12 +67,14 @@ public static class CimianHttpClientFactory
             var validator = CreateCustomCaValidator(config.SoftwareRepoCACertificate);
             if (validator != null)
             {
-                handler.ServerCertificateCustomValidationCallback = validator;
+                innerHandler.ServerCertificateCustomValidationCallback = validator;
                 ConsoleLogger.Detail($"    Custom CA certificate loaded: {config.SoftwareRepoCACertificate}");
             }
         }
 
-        var client = new HttpClient(handler)
+        // Dispose the inner handler first so Schannel drops the cert, then delete the temp key.
+        var handler = new OwnedCertificateHandler(innerHandler, ownedCertificate);
+        var client = new HttpClient(handler, disposeHandler: true)
         {
             Timeout = timeout ?? TimeSpan.FromSeconds(60)
         };
@@ -79,7 +109,7 @@ public static class CimianHttpClientFactory
     /// PEM format uses separate cert + key files (Munki-compatible).
     /// PFX format uses a single file with optional password.
     /// </summary>
-    private static X509Certificate2? LoadClientCertificate(CimianConfig config)
+    private static LoadedClientCertificate? LoadClientCertificate(CimianConfig config)
     {
         // Option 1: Certificate file on disk (PEM or PFX)
         if (!string.IsNullOrEmpty(config.ClientCertificatePath))
@@ -95,16 +125,20 @@ public static class CimianHttpClientFactory
             // PEM format — separate cert and key files (Munki-style)
             if (ext is ".pem" or ".crt" or ".cer")
             {
-                return LoadPemCertificate(config);
+                var pemCert = LoadPemCertificate(config);
+                return pemCert is null
+                    ? null
+                    : new LoadedClientCertificate(pemCert, DisposeWithClient: true);
             }
 
-            // PFX/P12 format — cert and key in one file
+            // PFX/P12 format — cert and key in one file. This import owns a temporary key.
             try
             {
-                return X509CertificateLoader.LoadPkcs12FromFile(
+                var pfxCert = X509CertificateLoader.LoadPkcs12FromFile(
                     config.ClientCertificatePath,
                     config.ClientCertificatePassword,
-                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+                    ClientCertificateKeyStorageFlags);
+                return new LoadedClientCertificate(pfxCert, DisposeWithClient: true);
             }
             catch (Exception ex)
             {
@@ -131,7 +165,8 @@ public static class CimianHttpClientFactory
                     if (certs.Count > 0)
                     {
                         ConsoleLogger.Detail($"    Found client certificate in {location}\\My store");
-                        return certs[0];
+                        // The store owns this key. Disposing the cert must not delete it.
+                        return new LoadedClientCertificate(certs[0], DisposeWithClient: false);
                     }
                 }
                 catch (Exception ex)
@@ -217,12 +252,13 @@ public static class CimianHttpClientFactory
         {
             var certPem = File.ReadAllText(config.ClientCertificatePath!);
             var keyPem = File.ReadAllText(config.ClientKeyPath);
-            var cert = X509Certificate2.CreateFromPem(certPem, keyPem);
+            using var cert = X509Certificate2.CreateFromPem(certPem, keyPem);
 
-            // On Windows, re-export to PFX so the private key is usable with SslStream
+            // On Windows, re-export to PFX so the private key is usable with SslStream.
+            // The PEM object is ephemeral; the imported copy owns the temporary key file.
             var exported = cert.Export(X509ContentType.Pfx);
-            return X509CertificateLoader.LoadPkcs12(exported, null,
-                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+            return X509CertificateLoader.LoadPkcs12(
+                exported, null, ClientCertificateKeyStorageFlags);
         }
         catch (Exception ex)
         {
@@ -250,22 +286,49 @@ public static class CimianHttpClientFactory
             }
             else if (!string.IsNullOrEmpty(config.ClientCertificateThumbprint))
             {
-                cert = LoadClientCertificate(config);
+                cert = LoadClientCertificate(config)?.Certificate;
             }
+
+            if (cert == null)
+                return null;
+
+            var cn = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
+            if (string.IsNullOrEmpty(cn))
+                return null;
+
+            // Sanitize for use as URL path segment (manifest name)
+            return Uri.EscapeDataString(cn);
         }
         catch
         {
             return null;
         }
+        finally
+        {
+            cert?.Dispose();
+        }
+    }
 
-        if (cert == null)
-            return null;
+    /// <summary>
+    /// Disposes a file-imported client certificate after the inner HTTP handler releases it.
+    /// That disposal deletes the temporary private-key file created for the handshake.
+    /// </summary>
+    private sealed class OwnedCertificateHandler : DelegatingHandler
+    {
+        private readonly X509Certificate2? _ownedCertificate;
 
-        var cn = cert.GetNameInfo(X509NameType.SimpleName, forIssuer: false);
-        if (string.IsNullOrEmpty(cn))
-            return null;
+        public OwnedCertificateHandler(HttpMessageHandler innerHandler, X509Certificate2? ownedCertificate)
+            : base(innerHandler)
+        {
+            ArgumentNullException.ThrowIfNull(innerHandler);
+            _ownedCertificate = ownedCertificate;
+        }
 
-        // Sanitize for use as URL path segment (manifest name)
-        return Uri.EscapeDataString(cn);
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing)
+                _ownedCertificate?.Dispose();
+        }
     }
 }

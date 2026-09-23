@@ -217,8 +217,8 @@ public class Program
                 config.LogLevel = "DEBUG";
             }
 
-            // Create and run update engine
-            var engine = new UpdateEngine(config);
+            // Create and run update engine. Dispose releases file-imported client cert keys.
+            using var engine = new UpdateEngine(config);
 
             var result = await engine.RunAsync(
                 checkOnly: options.CheckOnly,
@@ -346,7 +346,7 @@ public class Program
     {
         var configService = new ConfigurationService();
         var config = configService.LoadConfig();
-        var downloadService = new DownloadService(config);
+        using var downloadService = new DownloadService(config);
 
         var (fileCount, totalSize, corruptCount) = downloadService.GetCacheStatus();
 
@@ -422,7 +422,7 @@ public class Program
 
         var configService = new ConfigurationService();
         var config = configService.LoadConfig();
-        var downloadService = new DownloadService(config);
+        using var downloadService = new DownloadService(config);
 
         downloadService.ValidateAndCleanCache();
 
