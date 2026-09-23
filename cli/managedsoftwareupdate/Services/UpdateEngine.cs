@@ -377,10 +377,21 @@ public class UpdateEngine : IDisposable
                     _config.LogLevel = "DEBUG";
                 }
                 
-                // Recreate services with updated config
-                _manifestService = new ManifestService(_config);
-                _catalogService = new CatalogService(_config);
-                _downloadService = new DownloadService(_config);
+                // Preflight may have changed the repo URL or client cert. Build the
+                // replacements first so a failed reload leaves the current clients
+                // in place, then dispose the previous ones to delete their temp keys.
+                var manifestService = new ManifestService(_config);
+                var catalogService = new CatalogService(_config);
+                var downloadService = new DownloadService(_config);
+                var previousManifest = _manifestService;
+                var previousCatalog = _catalogService;
+                var previousDownload = _downloadService;
+                _manifestService = manifestService;
+                _catalogService = catalogService;
+                _downloadService = downloadService;
+                previousManifest.Dispose();
+                previousCatalog.Dispose();
+                previousDownload.Dispose();
                 _installerService = new InstallerService(_config);
                 _installerService.SetSessionLogger(_sessionLogger);
             }
@@ -559,15 +570,18 @@ public class UpdateEngine : IDisposable
             // instead of generated solid-color fallbacks. Cosmetic: conditional
             // requests keep steady-state cost at one 304 per icon, and any
             // failure is logged and swallowed without affecting the run.
-            await new IconSyncService(_config).SyncAsync(
-                manifestItems
-                    .Where(mi => !string.IsNullOrEmpty(mi.Name))
-                    .Select(mi =>
-                    {
-                        catalogMap.TryGetValue(mi.Name.ToLowerInvariant(), out var cat);
-                        return (mi.Name, cat);
-                    }),
-                cancellationToken);
+            using (var iconSync = new IconSyncService(_config))
+            {
+                await iconSync.SyncAsync(
+                    manifestItems
+                        .Where(mi => !string.IsNullOrEmpty(mi.Name))
+                        .Select(mi =>
+                        {
+                            catalogMap.TryGetValue(mi.Name.ToLowerInvariant(), out var cat);
+                            return (mi.Name, cat);
+                        }),
+                    cancellationToken);
+            }
 
             // Exit if check-only mode
             if (_checkOnly)
@@ -3769,6 +3783,9 @@ public class UpdateEngine : IDisposable
 
         _statusReporter?.Dispose();
         _sessionLogger?.Dispose();
+        _manifestService.Dispose();
+        _catalogService.Dispose();
+        _downloadService.Dispose();
 
         GC.SuppressFinalize(this);
     }
