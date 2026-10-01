@@ -1378,8 +1378,7 @@ public class UpdateEngine : IDisposable
                     // Manifest default_installs only seed SelfServe; they do not force
                     // install. After InstallInfoAnalyzer seed + SelfServe, the winning
                     // action is SelfServe "install". A leftover Action=default
-                    // (missing optional_installs, or local-only manifest without seed)
-                    // is intentionally skipped.
+                    // (already offered, SkipSelfService, or seed skipped) is a no-op.
                     ConsoleLogger.Detail($"    Skipping default_installs marker item: {item.Name} (installs only via SelfServe seed)");
                     break;
 
