@@ -76,9 +76,11 @@ public class ManifestService
         }
 
         // SelfServe merge and default_installs seed run in InstallInfoAnalyzer after
-        // optional_installs exist (Munki updatecheck/core.py order). Returning raw
-        // section memberships — including both update and optional for the same
-        // name — is intentional.
+        // optional_installs exist (Munki updatecheck/core.py order). The one-time
+        // default_installs seed semantics match #188; this PR relocates that work
+        // out of ManifestService into the analyzer. Returning raw section
+        // memberships — including both update and optional for the same name —
+        // is intentional.
         return items;
     }
 

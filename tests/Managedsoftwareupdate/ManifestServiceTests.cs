@@ -99,7 +99,7 @@ public class ManifestServiceTests
     {
         var service = CreateService();
 
-        // default_installs is "install once, don't re-enforce". An explicit
+        // default_installs is a one-time SelfServe seed. An explicit
         // managed_install for the same name must take over so the item stays
         // enforced if removed.
         var items = new List<ManifestItem>

@@ -27,8 +27,14 @@ public sealed class AnalysisResult
 /// Builds <see cref="InstallInfoFile"/> using Munki's updatecheck pass model:
 /// managed_installs → managed_uninstalls → managed_updates → optional_installs →
 /// featured validation → default_installs seed → SelfServe (filtered to available
-/// optionals) → will_be_* overlays. Uses an already_processed-style ledger so
-/// managed_updates and optional_installs stay orthogonal.
+/// optionals, plus default_installs-seeded names) → will_be_* overlays. Uses an
+/// already_processed-style ledger so managed_updates and optional_installs stay
+/// orthogonal.
+///
+/// The one-time <c>default_installs</c> SelfServe seed (Munki 6.1
+/// <c>process_default_installs</c>) lives here — same semantics as the earlier
+/// ManifestService-based fix in windowsadmins/cimian#188, relocated into this
+/// analyzer so seed + SelfServe run after optional_installs exist.
 /// </summary>
 public sealed class InstallInfoAnalyzer
 {
@@ -114,20 +120,20 @@ public sealed class InstallInfoAnalyzer
             }
         }
 
-        // --- default_installs: seed SelfServe once (Munki 6.1) ---
-        // Collect default markers from the raw list and seed SelfServe before merge.
-        var defaultNames = items
-            .Where(i => IsAction(i, "default"))
-            .Select(i => i.Name)
-            .Where(n => !string.IsNullOrWhiteSpace(n))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (defaultNames.Count > 0 && !_config.SkipSelfService)
+        // --- default_installs: one-time SelfServe seed (Munki 6.1 / #188) ---
+        // Must run before SelfServe processing so newly seeded managed_installs
+        // promote in this same run. Tracking list is SelfServe default_installs
+        // (not merely managed_installs) so user removal sticks across runs.
+        if (!_config.SkipSelfService &&
+            items.Any(i => IsAction(i, "default")))
         {
-            await SeedDefaultInstallsAsync(defaultNames).ConfigureAwait(false);
+            await SeedDefaultInstallsAsync(items).ConfigureAwait(false);
         }
 
-        // --- SelfServe: only after optional list exists; filter to available optionals ---
+        // --- SelfServe: only after optional list exists; filter to available
+        // optionals, and also honor default_installs-seeded managed_installs
+        // even when the title is not in optional_installs (Munki still seeds;
+        // Cimian promotes those SelfServe installs without an optional gate).
         if (!_config.SkipSelfService)
         {
             await ProcessSelfServeAsync(catalogMap, info, toInstall, toUpdate, toUninstall, effectiveItems, cancellationToken)
@@ -136,6 +142,14 @@ public sealed class InstallInfoAnalyzer
 
         // --- Overlay will_be_* on optional rows (Munki core.py) ---
         OverlayWillBeFlags(info);
+
+        // Leftover Action=default markers (already seeded, or seed skipped):
+        // keep for StaleUsage / session reporting. They do not queue installs.
+        foreach (var mi in items.Where(i => IsAction(i, "default")))
+        {
+            if (!effectiveItems.Any(e => NameEquals(e.Name, mi.Name)))
+                effectiveItems.Add(mi);
+        }
 
         // Profiles / apps: keep as effective items for session reporting without InstallInfo rows yet
         foreach (var mi in items.Where(i => IsAction(i, "profile") || IsAction(i, "app")))
@@ -514,29 +528,92 @@ public sealed class InstallInfoAnalyzer
         }
     }
 
-    private async Task SeedDefaultInstallsAsync(List<string> defaultNames)
+    /// <summary>
+    /// One-time SelfServe seed for manifest <c>default_installs</c> (Munki 6.1 parity:
+    /// <c>process_default_installs</c>). Names not yet recorded under SelfServe
+    /// <c>default_installs</c> are appended there and to <c>managed_installs</c>.
+    /// Subsequent runs see the SelfServe record and do not re-seed, so a user who
+    /// removes the item in MSC keeps it removed.
+    ///
+    /// Semantics match windowsadmins/cimian#188; this PR relocates the seed into
+    /// the InstallInfo analyzer pass order (after optional_installs).
+    /// </summary>
+    private async Task SeedDefaultInstallsAsync(IReadOnlyList<ManifestItem> items)
     {
+        SelfServiceManifestService svc;
+        SelfServiceManifest selfServe;
         try
         {
-            var svc = new SelfServiceManifestService();
-            var selfServe = await svc.LoadAsync().ConfigureAwait(false);
-            var changed = false;
-            foreach (var name in defaultNames)
-            {
-                if (selfServe.ManagedInstalls.Any(x => NameEquals(x, name)) ||
-                    selfServe.ManagedUninstalls.Any(x => NameEquals(x, name)))
-                    continue;
-                selfServe.ManagedInstalls.Add(name);
-                changed = true;
-                ConsoleLogger.Debug($"SelfServe: seeded default_installs item: {name}");
-            }
-            if (changed)
-                await svc.SaveAsync(selfServe).ConfigureAwait(false);
+            svc = new SelfServiceManifestService();
+            selfServe = await svc.LoadAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            ConsoleLogger.Warn($"Failed to seed default_installs into SelfServeManifest: {ex.Message}");
+            ConsoleLogger.Warn($"Failed to load SelfServeManifest for default_installs seed: {ex.Message}");
+            return;
         }
+
+        if (!SeedDefaultInstallsInto(items, selfServe, out var seeded))
+            return;
+
+        try
+        {
+            await svc.SaveAsync(selfServe).ConfigureAwait(false);
+            ConsoleLogger.Info($"    Seeded {seeded.Count} default_installs into SelfServeManifest: [{string.Join(", ", seeded)}]");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to save SelfServeManifest after default_installs seed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Pure seed logic matching Munki <c>process_default_installs</c>. Mutates
+    /// <paramref name="selfServe"/> in place. Returns true when the SelfServe
+    /// manifest changed and should be persisted.
+    /// </summary>
+    internal static bool SeedDefaultInstallsInto(
+        IReadOnlyList<ManifestItem> items,
+        SelfServiceManifest selfServe,
+        out List<string> seededNames)
+    {
+        seededNames = new List<string>();
+        selfServe.DefaultInstalls ??= [];
+        selfServe.ManagedInstalls ??= [];
+
+        var alreadyOffered = new HashSet<string>(
+            selfServe.DefaultInstalls.Where(n => !string.IsNullOrWhiteSpace(n)),
+            StringComparer.OrdinalIgnoreCase);
+
+        var changed = false;
+
+        foreach (var item in items)
+        {
+            if (!IsAction(item, "default"))
+                continue;
+
+            var name = item.Name;
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            // Munki: if item not in SelfServe default_installs, append it and
+            // also append to managed_installs when missing. Does not consult
+            // optional_installs and does not touch managed_uninstalls.
+            if (alreadyOffered.Contains(name))
+                continue;
+
+            selfServe.DefaultInstalls.Add(name);
+            alreadyOffered.Add(name);
+
+            if (!selfServe.ManagedInstalls.Any(x => NameEquals(x, name)))
+                selfServe.ManagedInstalls.Add(name);
+
+            seededNames.Add(name);
+            changed = true;
+            ConsoleLogger.Debug($"SelfServe: seeded default_installs item: {name}");
+        }
+
+        return changed;
     }
 
     private async Task ProcessSelfServeAsync(
@@ -567,34 +644,45 @@ public sealed class InstallInfoAnalyzer
                 .Select(o => o.Name),
             StringComparer.OrdinalIgnoreCase);
 
+        // default_installs-seeded names may install via SelfServe managed_installs
+        // even when not listed in optional_installs (Munki seeds without that gate;
+        // #188 promoted Action=default the same way).
+        var defaultSeeded = new HashSet<string>(
+            (selfServe.DefaultInstalls ?? []).Where(n => !string.IsNullOrWhiteSpace(n)),
+            StringComparer.OrdinalIgnoreCase);
+
         ConsoleLogger.Info("**Processing self-serve choices**");
 
         var installRequests = selfServe.ManagedInstalls
-            .Where(n => !string.IsNullOrWhiteSpace(n) && availableOptionals.Contains(n))
+            .Where(n => !string.IsNullOrWhiteSpace(n) &&
+                        (availableOptionals.Contains(n) || defaultSeeded.Contains(n)))
             .ToList();
 
         foreach (var name in installRequests)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // Skip if admin already mandated install
+            // Skip if admin already mandated install / uninstall
             if (AlreadyProcessed(name, info, "processed_installs", "processed_uninstalls"))
                 continue;
 
+            var fromOptional = availableOptionals.Contains(name);
             var mi = new ManifestItem
             {
                 Name = name,
                 Action = "install",
                 SourceManifest = "SelfServeManifest",
                 IsSelfServe = true,
-                PromotedFromOptional = true
+                PromotedFromOptional = fromOptional
             };
             ProcessInstall(mi, catalogMap, info, toInstall, toUpdate, effectiveItems,
-                isManagedUpdate: false, isOptionalInstall: true);
+                isManagedUpdate: false, isOptionalInstall: fromOptional);
         }
 
         foreach (var name in selfServe.ManagedUninstalls.Where(n => !string.IsNullOrWhiteSpace(n)))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // Admin managed_installs wins; leftover default / optional / update do not
+            // block SelfServe uninstall (#188 IsPresenceMandating parity).
             if (AlreadyProcessed(name, info, "processed_installs"))
             {
                 ConsoleLogger.Info($"SelfServe: ignoring uninstall request for {name}; admin policy requires install");
