@@ -1693,6 +1693,10 @@ public class UpdateEngine : IDisposable
     {
         LogInfo($"Installing/updating {items.Count} items with dependency processing...");
 
+        // A requirement must be installed before the item that requires it, but
+        // the list arrives as installs then updates, in manifest and discovery order.
+        items = CatalogService.OrderByRequires(items, _catalogMap);
+
         var outcomes = new List<ItemOutcome>();
         var successCount = 0;
         var failCount = 0;
@@ -1745,6 +1749,8 @@ public class UpdateEngine : IDisposable
         // Start with items that are already confirmed installed (from status checks)
         var installedItems = new List<string>();
         var scheduledItems = items.Select(i => i.Name).ToList();
+        // Items that failed in this run, so that what requires them is not attempted
+        var failedItems = new List<string>();
         var itemIndex = 0;
 
         // Process each item with full dependency handling
@@ -1781,6 +1787,20 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
+            // A scheduled requirement counts as satisfied in CheckDependencies(),
+            // so one that already failed has to be caught here.
+            var failedRequirement = CatalogService.FindFailedRequirement(item, failedItems);
+            if (failedRequirement != null)
+            {
+                var skipReason = $"Required dependency failed to install: {failedRequirement}";
+                ConsoleLogger.Error($"Skipping {item.Name}: {skipReason}");
+                _sessionLogger?.Log("ERROR", $"Skipping {item.Name}: {skipReason}");
+                ReportItemStatus(item.Name, "failed", skipReason);
+                failedItems.Add(item.Name);
+                failCount++;
+                continue;
+            }
+
             var success = await ProcessInstallWithDependenciesAsync(
                 item.Name,
                 installedItems,
@@ -1801,6 +1821,7 @@ public class UpdateEngine : IDisposable
             else
             {
                 failCount++;
+                failedItems.Add(item.Name);
             }
         }
 
