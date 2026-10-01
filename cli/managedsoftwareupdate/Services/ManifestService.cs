@@ -75,12 +75,10 @@ public class ManifestService
             items.AddRange(conditionalResults);
         }
 
-        // PASS 3: Merge user-driven self-service requests (Munki parity: pkg/selfservice).
-        // The GUI writes SelfServeManifest.yaml when a user clicks Install/Remove on an
-        // optional item; without this merge MSU sees the item only as `optional` and
-        // never queues an action.
-        await MergeSelfServeManifestAsync(items);
-
+        // SelfServe merge and default_installs seed run in InstallInfoAnalyzer after
+        // optional_installs exist (Munki updatecheck/core.py order). Returning raw
+        // section memberships — including both update and optional for the same
+        // name — is intentional.
         return items;
     }
 
@@ -927,98 +925,16 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Deduplicates manifest items by name. When the same name appears with
-    /// different actions across the manifest tree, the strongest action wins
-    /// regardless of encounter order, so an item listed in both
-    /// managed_installs and optional_installs is treated as a managed install.
-    ///
-    /// Action precedence (highest to lowest):
-    ///   install &gt; uninstall &gt; update &gt; default &gt; optional &gt; profile/app
-    /// (profile and app share the same rank.)
-    ///
-    /// Within the same action, the highest version wins; otherwise the first
-    /// occurrence's position is preserved.
+    /// Deduplicates manifest items. Same-action collisions keep the highest version.
+    /// True presence conflicts (install/uninstall) win over optional/update.
+    /// <c>managed_updates</c> and <c>optional_installs</c> for the same name both
+    /// survive — Munki treats those lists as orthogonal (patch-if-present + Self Service).
+    /// Prefer <see cref="InstallInfoAnalyzer.DeduplicatePreservingOrthogonalLists"/>;
+    /// this method delegates there so existing callers pick up the new semantics.
     /// </summary>
     public List<ManifestItem> DeduplicateItems(List<ManifestItem> items)
-    {
-        var dedup = new Dictionary<string, ManifestItem>(StringComparer.OrdinalIgnoreCase);
-        var orderedKeys = new List<string>();
+        => InstallInfoAnalyzer.DeduplicatePreservingOrthogonalLists(items);
 
-        foreach (var item in items)
-        {
-            if (string.IsNullOrEmpty(item.Name))
-                continue;
-
-            var key = item.Name.ToLowerInvariant();
-
-            if (dedup.TryGetValue(key, out var existing))
-            {
-                var existingRank = ActionPrecedence(existing.Action);
-                var incomingRank = ActionPrecedence(item.Action);
-
-                if (incomingRank > existingRank)
-                {
-                    // Stronger action supersedes (e.g. install supersedes optional)
-                    dedup[key] = item;
-                }
-                else if (incomingRank == existingRank && IsOlderVersion(existing.Version, item.Version))
-                {
-                    // Same action, prefer the newer version
-                    dedup[key] = item;
-                }
-                // Otherwise keep the existing entry
-            }
-            else
-            {
-                orderedKeys.Add(key);
-                dedup[key] = item;
-            }
-        }
-
-        var result = new List<ManifestItem>();
-        foreach (var key in orderedKeys)
-        {
-            result.Add(dedup[key]);
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Ranks manifest actions by precedence so that stronger directives win
-    /// when the same item name appears with conflicting actions across
-    /// included manifests. Higher number = stronger directive.
-    /// </summary>
-    private static int ActionPrecedence(string? action) => action?.ToLowerInvariant() switch
-    {
-        "install" => 6,
-        "uninstall" => 5,
-        "update" => 4,
-        "default" => 3,
-        "optional" => 2,
-        "profile" => 1,
-        "app" => 1,
-        _ => 0,
-    };
-
-    /// <summary>
-    /// Compare versions to determine if v1 is older than v2.
-    /// Go parity: pkg/status.IsOlderVersion
-    /// </summary>
-    private static bool IsOlderVersion(string? v1, string? v2)
-    {
-        if (string.IsNullOrEmpty(v1)) return true;
-        if (string.IsNullOrEmpty(v2)) return false;
-        
-        // Try to parse as Version objects first
-        if (Version.TryParse(v1.Replace("-", "."), out var ver1) && 
-            Version.TryParse(v2.Replace("-", "."), out var ver2))
-        {
-            return ver1 < ver2;
-        }
-
-        // Fall back to string comparison
-        return string.Compare(v1, v2, StringComparison.OrdinalIgnoreCase) < 0;
-    }
 }
 
 /// <summary>

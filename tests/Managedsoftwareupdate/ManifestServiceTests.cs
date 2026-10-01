@@ -116,12 +116,12 @@ public class ManifestServiceTests
     }
 
     [Fact]
-    public void DeduplicateItems_DefaultSupersedesOptional()
+    public void DeduplicateItems_DefaultAndOptional_BothSurvive()
     {
         var service = CreateService();
 
-        // default_installs is installed automatically; optional_installs is
-        // opt-in. If both are listed, default wins.
+        // default_installs seeds SelfServe; optional_installs feeds Self Service.
+        // Munki keeps both listings — they are not a presence conflict.
         var items = new List<ManifestItem>
         {
             new() { Name = "Editor", Action = "optional", SourceManifest = "Staff" },
@@ -130,9 +130,9 @@ public class ManifestServiceTests
 
         var result = service.DeduplicateItems(items);
 
-        var entry = Assert.Single(result);
-        Assert.Equal("default", entry.Action);
-        Assert.Equal("Provisioning", entry.SourceManifest);
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, i => i.Action == "default" && i.SourceManifest == "Provisioning");
+        Assert.Contains(result, i => i.Action == "optional" && i.SourceManifest == "Staff");
     }
 
     [Fact]

@@ -52,6 +52,7 @@ public class UpdateEngine : IDisposable
 
     // Store for managed items tracking (for status table)
     private List<ManifestItem> _allManifestItems = new();
+    private InstallInfoFile? _currentInstallInfo;
     private Dictionary<string, CatalogItem> _catalogMap = new();
 
     public UpdateEngine(CimianConfig config)
@@ -408,7 +409,7 @@ public class UpdateEngine : IDisposable
                 manifestItems = await _manifestService.GetManifestItemsAsync();
             }
 
-            // Go parity: pkg/status.DeduplicateManifestItems - deduplicate before processing
+            // Orthogonal-preserving dedupe (update + optional both survive)
             var rawCount = manifestItems.Count;
             manifestItems = _manifestService.DeduplicateItems(manifestItems);
             if (manifestItems.Count < rawCount)
@@ -417,7 +418,6 @@ public class UpdateEngine : IDisposable
             }
 
             LogInfo($"Retrieved {manifestItems.Count} manifest items");
-            _allManifestItems = manifestItems;
 
             // Download and load catalogs
             LogInfo("----------------------------------------------------------------------");
@@ -433,11 +433,28 @@ public class UpdateEngine : IDisposable
             ReportDetail("Validating cache...");
             _downloadService.ValidateAndCleanCache();
 
-            // Identify actions needed
+            // Munki-aligned InstallInfo analysis (pass order + already_processed ledger)
             LogInfo("----------------------------------------------------------------------");
             LogInfo("STATUS CHECKING");
             LogInfo("----------------------------------------------------------------------");
-            var (toInstall, toUpdate, toUninstall, loopSuppressed) = IdentifyActions(manifestItems, catalogMap, itemFilterService);
+            var analyzer = new InstallInfoAnalyzer(_config, _statusService, _downloadService);
+            var analysis = await analyzer.AnalyzeAsync(
+                manifestItems,
+                catalogMap,
+                _manifestService.FeaturedItems,
+                cancellationToken);
+            var toInstall = analysis.ToInstall;
+            var toUpdate = analysis.ToUpdate;
+            var toUninstall = analysis.ToUninstall;
+            manifestItems = analysis.ManifestItems;
+            _allManifestItems = manifestItems;
+            _currentInstallInfo = analysis.InstallInfo;
+
+            // LoopGuard: post-filter pending install/update queues (same rules as
+            // the former IdentifyActions path). Analyzer decides membership;
+            // LoopGuard decides whether a looping package may run this session.
+            var loopSuppressed = ApplyLoopGuardToPendingQueues(
+                toInstall, toUpdate, itemFilterService);
 
             // Dictionary of items LoopGuard refused this run, keyed by lower-invariant
             // name. Surfaces in items.json as Warning + last_warning + status_reason_code,
@@ -587,8 +604,8 @@ public class UpdateEngine : IDisposable
                     new Dictionary<string, ItemOutcome>(),
                     loopSuppressedByName);
 
-                // Write InstallInfo.yaml for MSC GUI
-                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap);
+                // Write InstallInfo.yaml for MSC GUI (from Munki-style analyzer)
+                PersistInstallInfo(_currentInstallInfo, outcomes: null);
 
                 // End session for check-only
                 EndSessionWithSummary("completed", toInstall.Count, toUpdate.Count, toUninstall.Count, 0, 0, manifestItems);
@@ -930,7 +947,7 @@ public class UpdateEngine : IDisposable
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: actions completed)
-                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName.Values);
+                PersistInstallInfo(_currentInstallInfo, outcomesByName.Values);
 
                 // Put the reports on disk first, then hand them over, then end the
                 // session. Postflight's whole purpose is to give the reporting client
@@ -964,7 +981,7 @@ public class UpdateEngine : IDisposable
                 CollectSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName);
 
                 // Write InstallInfo.yaml for MSC GUI (post-install: reflects final state)
-                WriteInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName.Values);
+                PersistInstallInfo(_currentInstallInfo, outcomesByName.Values);
 
                 // A partial failure is exactly the session a fleet report most needs.
                 _sessionLogger?.GenerateReportsNow();
@@ -1013,6 +1030,126 @@ public class UpdateEngine : IDisposable
             _statusReporter?.Dispose();
             _sessionLogger?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Applies LoopGuard / pending-reboot deferral to the analyzer's pending
+    /// install and update queues. Mutates the lists in place and returns the
+    /// suppressed/deferred set for session reporting. Also notes convergence
+    /// for processed names that did not produce pending work.
+    /// </summary>
+    private List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)>
+        ApplyLoopGuardToPendingQueues(
+            List<CatalogItem> toInstall,
+            List<CatalogItem> toUpdate,
+            ItemFilterService itemFilterService)
+    {
+        var loopSuppressed = new List<(CatalogItem, string, string?, string?, bool, bool)>();
+
+        var pendingNames = new HashSet<string>(
+            toInstall.Concat(toUpdate).Select(c => c.Name),
+            StringComparer.OrdinalIgnoreCase);
+
+        // Retire loop history for items the analyzer decided need no action.
+        if (_loopGuard != null && _currentInstallInfo != null && _catalogMap != null)
+        {
+            foreach (var name in _currentInstallInfo.ProcessedInstalls
+                         .Concat(_currentInstallInfo.ManagedUpdates)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (pendingNames.Contains(name)) continue;
+                if (!_catalogMap.TryGetValue(name.ToLowerInvariant(), out var cat)) continue;
+                var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
+                RememberInstalledVersion(cat.Name, status);
+                if (!status.NeedsAction)
+                    _loopGuard.NoteConverged(cat.Name, ComputeCatalogFingerprint(cat));
+            }
+        }
+
+        void FilterQueue(List<CatalogItem> queue)
+        {
+            for (var i = queue.Count - 1; i >= 0; i--)
+            {
+                var catalogItem = queue[i];
+                var status = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
+                RememberInstalledVersion(catalogItem.Name, status);
+                RememberInstallTrigger(catalogItem.Name, status);
+
+                var bypassLoopGuard = catalogItem.OnDemand
+                    || catalogItem.Recurring
+                    || (itemFilterService.HasFilter
+                        && itemFilterService.Items.Contains(catalogItem.Name));
+
+                if (bypassLoopGuard)
+                {
+                    var bypassReason = catalogItem.OnDemand ? "OnDemand"
+                        : catalogItem.Recurring ? "recurring" : "--item";
+                    var msg = $"{bypassReason}: bypassing LoopGuard for '{catalogItem.Name}'";
+                    ConsoleLogger.Info(msg);
+                    _sessionLogger?.Log("INFO", msg);
+                    continue;
+                }
+
+                if (_loopGuard == null) continue;
+
+                var fingerprint = ComputeCatalogFingerprint(catalogItem);
+                var (defer, deferReason) = _loopGuard.ShouldDeferForRestart(catalogItem.Name, fingerprint);
+                if (defer)
+                {
+                    ConsoleLogger.Info(deferReason);
+                    _sessionLogger?.Log("INFO", deferReason);
+                    _sessionLogger?.LogStatusCheck(
+                        catalogItem.Name,
+                        catalogItem.Version,
+                        "deferred",
+                        deferReason,
+                        StatusReasonCode.PendingReboot,
+                        DetectionMethod.None,
+                        status.InstalledVersion,
+                        false);
+                    loopSuppressed.Add((catalogItem, deferReason, null, status.InstalledVersion, status.IsUpdate, true));
+                    queue.RemoveAt(i);
+                    RemovePendingInstallInfo(catalogItem.Name);
+                    continue;
+                }
+
+                var (suppress, loopReason) = _loopGuard.ShouldSuppress(
+                    catalogItem.Name, catalogItem.Version, fingerprint, TriggerFrom(status));
+                if (!suppress) continue;
+
+                var loopCause = _loopGuard.GetSuppressionCause(catalogItem.Name);
+                ConsoleLogger.Warn(loopReason);
+                _sessionLogger?.Log("WARN", loopReason);
+                if (!string.IsNullOrEmpty(loopCause))
+                {
+                    ConsoleLogger.Warn(loopCause);
+                    _sessionLogger?.Log("WARN", loopCause);
+                }
+                _sessionLogger?.LogStatusCheck(
+                    catalogItem.Name,
+                    catalogItem.Version,
+                    "suppressed",
+                    loopReason,
+                    StatusReasonCode.LoopSuppressed,
+                    DetectionMethod.None,
+                    status.InstalledVersion,
+                    false);
+                loopSuppressed.Add((catalogItem, loopReason, loopCause, status.InstalledVersion, status.IsUpdate, false));
+                queue.RemoveAt(i);
+                RemovePendingInstallInfo(catalogItem.Name);
+            }
+        }
+
+        FilterQueue(toInstall);
+        FilterQueue(toUpdate);
+        return loopSuppressed;
+    }
+
+    private void RemovePendingInstallInfo(string name)
+    {
+        if (_currentInstallInfo == null) return;
+        _currentInstallInfo.ManagedInstalls.RemoveAll(m =>
+            string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
@@ -3221,10 +3358,49 @@ public class UpdateEngine : IDisposable
     #region InstallInfo.yaml
 
     /// <summary>
+    /// Persists InstallInfo produced by <see cref="InstallInfoAnalyzer"/>, optionally
+    /// attaching this session's failure records as problem_items for MSC.
+    /// </summary>
+    private void PersistInstallInfo(InstallInfoFile? info, IEnumerable<ItemOutcome>? outcomes)
+    {
+        try
+        {
+            info ??= new InstallInfoFile { LastCheck = DateTime.Now };
+            info.LastCheck = DateTime.Now;
+
+            if (outcomes != null)
+            {
+                info.ProblemItems = [];
+                foreach (var o in outcomes.Where(o => !o.Success))
+                {
+                    info.ProblemItems.Add(new InstallInfoProblem
+                    {
+                        Name = o.Name,
+                        Version = o.Version,
+                        ErrorMessage = SummarizeFailure(o.ErrorMessage) ?? $"{o.Action} failed",
+                        Note = o.ErrorMessage
+                    });
+                }
+            }
+
+            var yaml = YamlUtils.SerializeInstallInfo(info);
+            var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
+            File.WriteAllText(path, yaml);
+            LogInfo($"Wrote InstallInfo.yaml ({info.OptionalInstalls.Count} optional, {info.ManagedInstalls.Count} pending installs, {info.ManagedUpdates.Count} managed updates)");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to write InstallInfo.yaml: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Writes InstallInfo.yaml to ManagedInstallDir
     /// the single source of truth for the MSC GUI.
     /// enriches each item with full catalog metadata and
     /// computed status for the GUI to deserialize and render.
+    /// Legacy Action-switch writer — kept for IdentifyActions-based tests;
+    /// production path uses <see cref="PersistInstallInfo"/>.
     /// </summary>
     private void WriteInstallInfo(
         List<ManifestItem> manifestItems,

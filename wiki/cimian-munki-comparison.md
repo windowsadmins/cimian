@@ -55,6 +55,8 @@ Same semantics as Munki. If you are reusing `installcheck_script` bodies from a 
 
 **Self-service is real.** `cimistatus.exe` and the WinUI 3 `ManagedSoftwareCenter` together fill the role of Managed Software Center: browsing optional installs, initiating on-demand installs, viewing install history, seeing upcoming force-install deadlines. Text search, category filters, aggressive notification mode (the Windows equivalent of Munki's "nag" behavior), toast notifications, and screenshot carousels for optional items are all there.
 
+**`optional_installs` and `managed_updates` are orthogonal — same as Munki.** Listing a title in both sections is intentional: `managed_updates` means "patch if already present," and `optional_installs` means "offer in Self Service." Cimian's update-check builds `InstallInfo.yaml` with a Munki-style pass order (`managed_installs` → uninstalls → updates → optionals → featured validation → `default_installs` SelfServe seed → SelfServe choices filtered to available optionals → `will_be_*` overlays). An `already_processed`-style ledger keeps updates from wiping optionals, which is what feeds MSC's Software tab. Presence conflicts still collapse the usual way: `managed_installs` and `managed_uninstalls` win over optional/update for the same name.
+
 ## Windows quirks that actually diverge
 
 This is the section worth reading slowly. Everything above just works. Everything below is where your Mac instincts will mislead you.
