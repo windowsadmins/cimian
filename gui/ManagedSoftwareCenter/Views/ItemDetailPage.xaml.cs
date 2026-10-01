@@ -104,18 +104,31 @@ public partial class ItemDetailPage : Page
         InfoCategoryText.Text = item.Category ?? "";
         InfoSizeText.Text = FormatFileSize(item.InstallerSize);
         
-        // Installed version — always show; use InstalledVersion if available, fall back to Version
-        var installedVer = !string.IsNullOrEmpty(item.InstalledVersion) ? item.InstalledVersion : item.Version;
-        InstalledVersionText.Text = installedVer ?? "";
-        
-        // Available update — only show when there's a newer catalog version
-        bool hasUpdate = !string.IsNullOrEmpty(item.InstalledVersion) && 
-             !string.IsNullOrEmpty(item.Version) && 
-             !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase);
-        if (hasUpdate)
+        // Installed version — only when detection found a version on disk.
+        // Never fall back to the catalog Version: that made uninstalled optional
+        // items (e.g. Box Drive) look installed with the catalog version string.
+        if (!string.IsNullOrEmpty(item.InstalledVersion))
+        {
+            InstalledVersionPanel.Visibility = Visibility.Visible;
+            InstalledVersionText.Text = item.InstalledVersion;
+        }
+        else
+        {
+            InstalledVersionPanel.Visibility = Visibility.Collapsed;
+            InstalledVersionText.Text = "";
+        }
+
+        // Available update — prefer the authoritative NeedsUpdate flag from
+        // managedsoftwareupdate; fall back to a string compare when that flag
+        // is unset but both version strings are present and differ.
+        bool hasUpdate = item.NeedsUpdate
+            || (!string.IsNullOrEmpty(item.InstalledVersion)
+                && !string.IsNullOrEmpty(item.Version)
+                && !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase));
+        if (hasUpdate && !string.IsNullOrEmpty(item.Version))
         {
             InfoVersionPanel.Visibility = Visibility.Visible;
-            InfoVersionText.Text = item.Version ?? "";
+            InfoVersionText.Text = item.Version;
         }
         else
         {
