@@ -1015,7 +1015,22 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
+    // managed_updates items the status check found absent this run. managed_updates
+    // means "patch if present", so these are neither installed nor used as seeds of
+    // the dependency walk.
+    private readonly HashSet<string> _absentManagedUpdates = new(StringComparer.OrdinalIgnoreCase);
+
+    internal IReadOnlyCollection<string> ManagedUpdatesSkippedAbsent => _absentManagedUpdates;
+
+    /// <summary>
+    /// Whether a status check found the item on the machine. An item that needs action
+    /// is present when the check saw an installed version, or classified the action as
+    /// an update (something is there, or Cimian has a record of installing it).
+    /// </summary>
+    internal static bool IsPresentForUpdate(Cimian.CLI.managedsoftwareupdate.Models.StatusCheckResult status) =>
+        status.IsUpdate || !string.IsNullOrEmpty(status.InstalledVersion);
+
+    internal (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
                         ItemFilterService? itemFilterService = null)
@@ -1110,7 +1125,29 @@ public class UpdateEngine : IDisposable
                     // Go treats both install and update actions the same - calls CheckStatus
                     var status = _statusService.CheckStatus(catalogItem, item.Action.ToLowerInvariant(), _config.CachePath);
                     ConsoleLogger.Detail($"    CheckStatus for {item.Name}: NeedsAction={status.NeedsAction}, IsUpdate={status.IsUpdate}, Status={status.Status}, Reason={status.Reason}, ReasonCode={status.ReasonCode}");
-                    
+
+                    // managed_updates only patches what is already there. An item listed
+                    // only under it (an entry also under managed_installs deduplicates to
+                    // "install") is left alone on a machine that does not have it.
+                    if (status.NeedsAction
+                        && item.Action.Equals("update", StringComparison.OrdinalIgnoreCase)
+                        && !IsPresentForUpdate(status))
+                    {
+                        var absentReason = $"listed under managed_updates only and not installed ({status.Reason})";
+                        ConsoleLogger.Info($"Skipping {item.Name}: {absentReason}");
+                        _sessionLogger?.LogStatusCheck(
+                            catalogItem.Name,
+                            catalogItem.Version,
+                            "skipped",
+                            absentReason,
+                            Cimian.Core.Models.StatusReasonCode.NotInstalled,
+                            status.DetectionMethod,
+                            null,
+                            false);
+                        _absentManagedUpdates.Add(catalogItem.Name);
+                        break;
+                    }
+
                     // Log status check event with full reason tracking
                     _sessionLogger?.LogStatusCheck(
                         catalogItem.Name,
@@ -1549,7 +1586,7 @@ public class UpdateEngine : IDisposable
     /// The closure walk lives in <see cref="CatalogService.BuildDependencyClosure"/>;
     /// this method does the I/O (status check, manifest mutation).
     /// </remarks>
-    private void ResolveDependencies(
+    internal void ResolveDependencies(
         List<ManifestItem> manifestItems,
         Dictionary<string, CatalogItem> catalogMap,
         List<CatalogItem> itemsToProcess,
@@ -1587,6 +1624,9 @@ public class UpdateEngine : IDisposable
         // one — re-introducing the very sweep the IdentifyActions filter skips.
         var seedNames = manifestItems
             .Where(m => m.Action?.ToLowerInvariant() == "install" || m.Action?.ToLowerInvariant() == "update")
+            // A managed_updates item that is not installed was skipped, so nothing
+            // is installed on its behalf either.
+            .Where(m => !_absentManagedUpdates.Contains(m.Name))
             .Where(m => itemFilterService?.HasFilter != true || itemFilterService.Items.Contains(m.Name))
             .Select(m => m.Name)
             .ToList();
