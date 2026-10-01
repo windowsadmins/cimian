@@ -99,7 +99,7 @@ public class ManifestServiceTests
     {
         var service = CreateService();
 
-        // default_installs is "install once, don't re-enforce". An explicit
+        // default_installs is a one-time SelfServe seed. An explicit
         // managed_install for the same name must take over so the item stays
         // enforced if removed.
         var items = new List<ManifestItem>
@@ -120,8 +120,9 @@ public class ManifestServiceTests
     {
         var service = CreateService();
 
-        // default_installs is installed automatically; optional_installs is
-        // opt-in. If both are listed, default wins.
+        // default_installs seeds SelfServe on first encounter; optional_installs is
+        // opt-in. If both are listed, default wins the dedupe until SelfServe
+        // promotes the optional entry to install.
         var items = new List<ManifestItem>
         {
             new() { Name = "Editor", Action = "optional", SourceManifest = "Staff" },
