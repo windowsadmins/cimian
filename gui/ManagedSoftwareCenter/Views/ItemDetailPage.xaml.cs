@@ -104,13 +104,20 @@ public partial class ItemDetailPage : Page
         InfoCategoryText.Text = item.Category ?? "";
         InfoSizeText.Text = FormatFileSize(item.InstallerSize);
         
-        // Installed version — only when detection found a version on disk.
-        // Never fall back to the catalog Version: that made uninstalled optional
-        // items (e.g. Box Drive) look installed with the catalog version string.
+        // Primary version row: show the catalog version for titles that are not
+        // installed, but label it "Available Version" — never "Installed Version".
+        // When detection found a version on disk, label it "Installed Version".
         if (!string.IsNullOrEmpty(item.InstalledVersion))
         {
             InstalledVersionPanel.Visibility = Visibility.Visible;
+            InstalledVersionLabel.Text = "Installed Version";
             InstalledVersionText.Text = item.InstalledVersion;
+        }
+        else if (!string.IsNullOrEmpty(item.Version))
+        {
+            InstalledVersionPanel.Visibility = Visibility.Visible;
+            InstalledVersionLabel.Text = "Available Version";
+            InstalledVersionText.Text = item.Version;
         }
         else
         {
@@ -118,13 +125,12 @@ public partial class ItemDetailPage : Page
             InstalledVersionText.Text = "";
         }
 
-        // Available update — prefer the authoritative NeedsUpdate flag from
-        // managedsoftwareupdate; fall back to a string compare when that flag
-        // is unset but both version strings are present and differ.
-        bool hasUpdate = item.NeedsUpdate
-            || (!string.IsNullOrEmpty(item.InstalledVersion)
-                && !string.IsNullOrEmpty(item.Version)
-                && !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase));
+        // Available Update — only when something is already installed and a newer
+        // catalog version is offered. Prefer NeedsUpdate from managedsoftwareupdate.
+        bool hasUpdate = !string.IsNullOrEmpty(item.InstalledVersion)
+            && (item.NeedsUpdate
+                || (!string.IsNullOrEmpty(item.Version)
+                    && !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase)));
         if (hasUpdate && !string.IsNullOrEmpty(item.Version))
         {
             InfoVersionPanel.Visibility = Visibility.Visible;
