@@ -1015,7 +1015,7 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    private (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
+    internal (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
                         ItemFilterService? itemFilterService = null)
@@ -1236,68 +1236,9 @@ public class UpdateEngine : IDisposable
                     break;
 
                 case "optional":
-                    // Optional items are normally user-selected via the GUI.
-                    // But if force_install_after_date has passed, enforce installation.
-                    if (catalogItem.ForceInstallAfterDate != null && DateTime.Now >= catalogItem.ForceInstallAfterDate.Value)
-                    {
-                        // Gate forced-optional installs on OS-version and agent-version eligibility.
-                        if (!IsEligibleForOsVersion(catalogItem, out var optOsReason, out var optOsReasonCode))
-                        {
-                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optOsReason}");
-                            _sessionLogger?.LogStatusCheck(
-                                catalogItem.Name,
-                                catalogItem.Version,
-                                "skipped",
-                                optOsReason,
-                                optOsReasonCode,
-                                DetectionMethod.None,
-                                null,
-                                false);
-                            break;
-                        }
-
-                        if (!IsEligibleForAgentVersion(catalogItem, out var optAgentReason, out var optAgentCode))
-                        {
-                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optAgentReason}");
-                            _sessionLogger?.LogStatusCheck(
-                                catalogItem.Name,
-                                catalogItem.Version,
-                                "skipped",
-                                optAgentReason,
-                                optAgentCode,
-                                DetectionMethod.None,
-                                null,
-                                false);
-                            break;
-                        }
-
-                        var optStatus = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
-                        ConsoleLogger.Detail($"    CheckStatus for {item.Name} (forced deadline): NeedsAction={optStatus.NeedsAction}, Status={optStatus.Status}");
-
-                        _sessionLogger?.LogStatusCheck(
-                            catalogItem.Name, catalogItem.Version, optStatus.Status,
-                            optStatus.Reason, optStatus.ReasonCode, optStatus.DetectionMethod,
-                            optStatus.InstalledVersion, optStatus.NeedsAction);
-
-                        RememberInstalledVersion(catalogItem.Name, optStatus);
-
-                        if (optStatus.NeedsAction)
-                        {
-                            ConsoleLogger.Info($"    -> force_install_after_date {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed, forcing install of optional item {item.Name}");
-                            _sessionLogger?.Log("INFO", $"Forcing install of optional item {item.Name}: deadline {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
-                            _sessionLogger?.LogStatusCheck(
-                                catalogItem.Name, catalogItem.Version, "pending",
-                                $"force_install_after_date {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed",
-                                Cimian.Core.Models.StatusReasonCode.ForceInstallDeadline,
-                                Cimian.Core.Models.DetectionMethod.None,
-                                optStatus.InstalledVersion, true);
-
-                            if (optStatus.IsUpdate)
-                                toUpdate.Add(catalogItem);
-                            else
-                                toInstall.Add(catalogItem);
-                        }
-                    }
+                    // Munki parity: force_install_after_date does not apply to a title that is
+                    // only in optional_installs. The user must opt in (SelfServe promotes the
+                    // action to install) before a deadline can queue or banner the item.
                     break;
 
                 case "uninstall":
@@ -3445,7 +3386,7 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    private static InstallInfoItem BuildInstallInfoItem(string name, CatalogItem? cat)
+    internal static InstallInfoItem BuildInstallInfoItem(string name, CatalogItem? cat)
     {
         var item = new InstallInfoItem
         {
@@ -3470,9 +3411,13 @@ public class UpdateEngine : IDisposable
     /// overrides the natural status while a user-requested action is pending, so
     /// the software list reflects the in-flight state instead of a stale snapshot.
     /// </summary>
-    private InstallInfoItem BuildOptionalInstallRecord(string name, CatalogItem? cat, string? pendingStatus)
+    internal InstallInfoItem BuildOptionalInstallRecord(string name, CatalogItem? cat, string? pendingStatus)
     {
         var optItem = BuildInstallInfoItem(name, cat);
+        // Optional Software-tab rows must not carry a force deadline. Munki only
+        // shows force_install_after_date on managed_installs pending items; a
+        // catalog stamp alone must not banner Self Service titles.
+        optItem.ForceInstallAfterDate = null;
         if (cat != null)
         {
             var status = _statusService.CheckStatus(cat, "install", _config.CachePath);
