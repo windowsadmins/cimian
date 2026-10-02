@@ -95,10 +95,13 @@ public partial class ItemDetailPage : Page
         DisplayNameText.Text = item.DisplayName ?? "";
         DeveloperText.Text = item.Developer ?? "";
         DeveloperText.Visibility = string.IsNullOrEmpty(item.Developer) ? Visibility.Collapsed : Visibility.Visible;
-        VersionText.Text = item.Version ?? "";
-        SizeText.Text = FormatFileSize(item.InstallerSize);
-        CategoryText.Text = item.Category ?? "";
-        DescriptionText.Text = item.Description ?? "";
+
+        // Description belongs in the banner only (no separate "Description" heading)
+        var description = item.Description ?? "";
+        BannerDescriptionText.Text = description;
+        BannerDescriptionText.Visibility = string.IsNullOrWhiteSpace(description)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         
         // Info section
         InfoCategoryText.Text = item.Category ?? "";

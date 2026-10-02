@@ -37,9 +37,9 @@
                 Margin="16,0,0,0"/>
         </Grid>
 
-        <!-- Main Content -->
-        <ScrollViewer Grid.Row="1" Padding="24,0,24,24">
-            <Grid MaxWidth="900" HorizontalAlignment="Left">
+        <!-- Main Content: full-width like Munki MSC detail (no half-page max-width) -->
+        <ScrollViewer Grid.Row="1" Padding="24,0,24,24" HorizontalScrollBarVisibility="Disabled">
+            <Grid HorizontalAlignment="Stretch">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
@@ -48,10 +48,10 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Hero Section: Icon + Title + Action -->
-                <Grid Grid.Row="0" Margin="0,0,0,24">
+                <!-- Banner: Icon | Title+developer | Install always far right -->
+                <Grid x:Name="HeroSection" Grid.Row="0" Margin="0,0,0,24">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="96"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
@@ -59,54 +59,43 @@
                     <!-- Icon -->
                     <Border 
                         Grid.Column="0" 
-                        Width="80" Height="80" 
+                        Width="96" Height="96" 
                         CornerRadius="16"
+                        VerticalAlignment="Top"
                         Background="{ThemeResource AccentFillColorDefaultBrush}">
                         <Image 
                             Source="{Binding Item.IconImage}"
-                            Width="80" Height="80"
+                            Width="96" Height="96"
                             Stretch="UniformToFill"/>
                     </Border>
 
-                    <!-- Title & Meta -->
-                    <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                    <!-- Title, developer, description in banner (no separate "Description" heading — like Munki) -->
+                    <StackPanel Grid.Column="1" Margin="20,0,24,0" VerticalAlignment="Center">
                         <TextBlock 
                             x:Name="DisplayNameText"
-                            Style="{StaticResource TitleTextBlockStyle}"/>
+                            Style="{StaticResource TitleTextBlockStyle}"
+                            TextWrapping="Wrap"/>
                         <TextBlock 
                             x:Name="DeveloperText"
                             Style="{StaticResource BodyTextBlockStyle}"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <FontIcon Glyph="&#xE7C3;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                <TextBlock 
-                                    x:Name="VersionText"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Margin="4,0,0,0"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
-                                <FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                <TextBlock 
-                                    x:Name="SizeText"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Margin="4,0,0,0"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="16,0,0,0">
-                                <FontIcon Glyph="&#xE8EC;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                <TextBlock 
-                                    x:Name="CategoryText"
-                                    Style="{StaticResource CaptionTextBlockStyle}"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Margin="4,0,0,0"/>
-                            </StackPanel>
-                        </StackPanel>
+                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                            TextWrapping="Wrap"
+                            Margin="0,4,0,0"/>
+                        <TextBlock 
+                            x:Name="BannerDescriptionText"
+                            Style="{StaticResource BodyTextBlockStyle}"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            TextWrapping="Wrap"
+                            Margin="0,8,0,0"
+                            Visibility="Collapsed"/>
                     </StackPanel>
 
-                    <!-- Action Buttons -->
-                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                    <!-- Install / Remove / Cancel — always pinned to the far right of the banner -->
+                    <StackPanel 
+                        x:Name="ActionPanel"
+                        Grid.Column="2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center">
                         <!-- Install / Update Button -->
                         <Button
                             x:Name="InstallButton"
@@ -169,7 +158,7 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Description -->
+                <!-- Alerts only (description lives in the banner, like Munki) -->
                 <StackPanel Grid.Row="1" Margin="0,0,0,24">
                     <!-- Deadline Warning -->
                     <Border 
@@ -227,16 +216,6 @@
                                 TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
-
-                    <TextBlock 
-                        Text="Description" 
-                        Style="{StaticResource SubtitleTextBlockStyle}"
-                        Margin="0,0,0,8"/>
-                    <TextBlock 
-                        x:Name="DescriptionText"
-                        Style="{StaticResource BodyTextBlockStyle}"
-                        TextWrapping="Wrap"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                 </StackPanel>
 
                 <!-- What's New -->
@@ -295,66 +274,107 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Additional Information -->
+                <!-- Information: 1 → 2 → 3 columns as the window grows (Munki-style) -->
                 <StackPanel Grid.Row="4" Margin="0,0,0,24">
                     <TextBlock 
                         Text="Information" 
                         Style="{StaticResource SubtitleTextBlockStyle}"
                         Margin="0,0,0,8"/>
-                    <Grid>
+                    <Grid x:Name="InfoGrid">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="InfoColumnStates">
+                                <!-- Default: single column (narrow) -->
+                                <VisualState x:Name="InfoNarrow"/>
+                                <VisualState x:Name="InfoMedium">
+                                    <VisualState.StateTriggers>
+                                        <AdaptiveTrigger MinWindowWidth="900"/>
+                                    </VisualState.StateTriggers>
+                                    <VisualState.Setters>
+                                        <Setter Target="InfoCol1.Width" Value="*"/>
+                                        <Setter Target="InfoCol2.Width" Value="0"/>
+                                        <!-- Two columns: label pairs side by side -->
+                                        <Setter Target="DeveloperPanel.(Grid.Row)" Value="0"/>
+                                        <Setter Target="DeveloperPanel.(Grid.Column)" Value="0"/>
+                                        <Setter Target="InfoSizePanel.(Grid.Row)" Value="0"/>
+                                        <Setter Target="InfoSizePanel.(Grid.Column)" Value="1"/>
+                                        <Setter Target="InstalledVersionPanel.(Grid.Row)" Value="1"/>
+                                        <Setter Target="InstalledVersionPanel.(Grid.Column)" Value="0"/>
+                                        <Setter Target="InfoCategoryPanel.(Grid.Row)" Value="1"/>
+                                        <Setter Target="InfoCategoryPanel.(Grid.Column)" Value="1"/>
+                                        <Setter Target="InfoVersionPanel.(Grid.Row)" Value="2"/>
+                                        <Setter Target="InfoVersionPanel.(Grid.Column)" Value="0"/>
+                                        <Setter Target="RestartPanel.(Grid.Row)" Value="2"/>
+                                        <Setter Target="RestartPanel.(Grid.Column)" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="InfoWide">
+                                    <VisualState.StateTriggers>
+                                        <AdaptiveTrigger MinWindowWidth="1200"/>
+                                    </VisualState.StateTriggers>
+                                    <VisualState.Setters>
+                                        <Setter Target="InfoCol1.Width" Value="*"/>
+                                        <Setter Target="InfoCol2.Width" Value="*"/>
+                                        <!-- Col0: Developer, Installed -->
+                                        <Setter Target="DeveloperPanel.(Grid.Row)" Value="0"/>
+                                        <Setter Target="DeveloperPanel.(Grid.Column)" Value="0"/>
+                                        <Setter Target="InstalledVersionPanel.(Grid.Row)" Value="1"/>
+                                        <Setter Target="InstalledVersionPanel.(Grid.Column)" Value="0"/>
+                                        <!-- Col1: Size, Available update -->
+                                        <Setter Target="InfoSizePanel.(Grid.Row)" Value="0"/>
+                                        <Setter Target="InfoSizePanel.(Grid.Column)" Value="1"/>
+                                        <Setter Target="InfoVersionPanel.(Grid.Row)" Value="1"/>
+                                        <Setter Target="InfoVersionPanel.(Grid.Column)" Value="1"/>
+                                        <!-- Col2: Category, Restart -->
+                                        <Setter Target="InfoCategoryPanel.(Grid.Row)" Value="0"/>
+                                        <Setter Target="InfoCategoryPanel.(Grid.Column)" Value="2"/>
+                                        <Setter Target="RestartPanel.(Grid.Row)" Value="1"/>
+                                        <Setter Target="RestartPanel.(Grid.Column)" Value="2"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition x:Name="InfoCol0" Width="*"/>
+                            <ColumnDefinition x:Name="InfoCol1" Width="0"/>
+                            <ColumnDefinition x:Name="InfoCol2" Width="0"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Version -->
-                        <StackPanel x:Name="InfoVersionPanel" Grid.Row="0" Grid.Column="0" Margin="0,0,0,12" Visibility="Collapsed">
-                            <TextBlock Text="Available Update" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock x:Name="InfoVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        <!-- Default narrow order: stacked single column -->
+                        <StackPanel x:Name="DeveloperPanel" Grid.Row="0" Grid.Column="0" Margin="0,0,16,16" Visibility="Collapsed">
+                            <TextBlock Text="Developer" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoDeveloperText" Style="{StaticResource BodyTextBlockStyle}" TextWrapping="Wrap"/>
                         </StackPanel>
 
-                        <!-- Category -->
-                        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,0,12">
-                            <TextBlock Text="Category" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock x:Name="InfoCategoryText" Style="{StaticResource BodyTextBlockStyle}"/>
-                        </StackPanel>
-
-                        <!-- Installed Version -->
-                        <StackPanel 
-                            x:Name="InstalledVersionPanel"
-                            Grid.Row="1" Grid.Column="0" 
-                            Margin="0,0,0,12">
+                        <StackPanel x:Name="InstalledVersionPanel" Grid.Row="1" Grid.Column="0" Margin="0,0,16,16">
                             <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InstalledVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
-                        <!-- Size -->
-                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,12">
+                        <StackPanel x:Name="InfoVersionPanel" Grid.Row="2" Grid.Column="0" Margin="0,0,16,16" Visibility="Collapsed">
+                            <TextBlock Text="Available Update" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="InfoSizePanel" Grid.Row="3" Grid.Column="0" Margin="0,0,16,16">
                             <TextBlock Text="Download Size" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoSizeText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
-                        <!-- Developer -->
-                        <StackPanel 
-                            x:Name="DeveloperPanel"
-                            Grid.Row="2" Grid.Column="0" 
-                            Margin="0,0,0,12"
-                            Visibility="Collapsed">
-                            <TextBlock Text="Developer" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBlock x:Name="InfoDeveloperText" Style="{StaticResource BodyTextBlockStyle}"/>
+                        <StackPanel x:Name="InfoCategoryPanel" Grid.Row="4" Grid.Column="0" Margin="0,0,16,16">
+                            <TextBlock Text="Category" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="InfoCategoryText" Style="{StaticResource BodyTextBlockStyle}" TextWrapping="Wrap"/>
                         </StackPanel>
 
-                        <!-- Restart Required -->
-                        <StackPanel 
-                            x:Name="RestartPanel"
-                            Grid.Row="2" Grid.Column="1" 
-                            Margin="0,0,0,12"
-                            Visibility="Collapsed">
+                        <StackPanel x:Name="RestartPanel" Grid.Row="5" Grid.Column="0" Margin="0,0,16,16" Visibility="Collapsed">
                             <TextBlock Text="Restart Required" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <StackPanel Orientation="Horizontal">
                                 <FontIcon Glyph="&#xE777;" FontSize="14" Foreground="{ThemeResource SystemFillColorCautionBrush}"/>
