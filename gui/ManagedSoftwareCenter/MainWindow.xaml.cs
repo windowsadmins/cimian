@@ -24,7 +24,7 @@ public partial class MainWindow : Window
 {
     public ShellViewModel ViewModel { get; }
 
-    // Populated from preferences.yaml help_url when it is a valid http(s) absolute URI.
+    // Populated from preferences.yaml help_url / Policies\Cimian HelpURL when valid http(s).
     private Uri? _helpUri;
 
     public MainWindow()
@@ -197,7 +197,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Shows the Help footer item when preferences.yaml defines a valid http(s) help_url
+    /// Shows the Help footer item when help_url / policy HelpURL is a valid http(s) URL
     /// (Munki HelpURL parity). Invalid or missing values leave Help hidden.
     /// </summary>
     private void ApplyHelpConfiguration()
@@ -215,7 +215,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Accepts only absolute http/https URLs so help_url cannot launch arbitrary schemes.
+    /// Accepts only absolute http/https URLs so HelpURL cannot launch arbitrary schemes.
     /// </summary>
     internal static bool TryCreateHelpUri(string? helpUrl, out Uri? uri)
     {
