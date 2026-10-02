@@ -106,25 +106,43 @@ public partial class ItemDetailPage : Page
         // Info section
         InfoCategoryText.Text = item.Category ?? "";
         InfoSizeText.Text = FormatFileSize(item.InstallerSize);
-        
-        // Installed version — always show; use InstalledVersion if available, fall back to Version
-        var installedVer = !string.IsNullOrEmpty(item.InstalledVersion) ? item.InstalledVersion : item.Version;
-        InstalledVersionText.Text = installedVer ?? "";
-        
-        // Available update — only show when there's a newer catalog version
-        bool hasUpdate = !string.IsNullOrEmpty(item.InstalledVersion) && 
-             !string.IsNullOrEmpty(item.Version) && 
-             !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase);
-        if (hasUpdate)
+
+        // Primary version row: catalog version when not installed is "Available Version",
+        // never "Installed Version". Detected on-disk version keeps "Installed Version".
+        if (!string.IsNullOrEmpty(item.InstalledVersion))
+        {
+            InstalledVersionPanel.Visibility = Visibility.Visible;
+            InstalledVersionLabel.Text = "Installed Version";
+            InstalledVersionText.Text = item.InstalledVersion;
+        }
+        else if (!string.IsNullOrEmpty(item.Version))
+        {
+            InstalledVersionPanel.Visibility = Visibility.Visible;
+            InstalledVersionLabel.Text = "Available Version";
+            InstalledVersionText.Text = item.Version;
+        }
+        else
+        {
+            InstalledVersionPanel.Visibility = Visibility.Collapsed;
+            InstalledVersionText.Text = "";
+        }
+
+        // Available Update — only when something is already installed and a newer
+        // catalog version is offered. Prefer NeedsUpdate from managedsoftwareupdate.
+        bool hasUpdate = !string.IsNullOrEmpty(item.InstalledVersion)
+            && (item.NeedsUpdate
+                || (!string.IsNullOrEmpty(item.Version)
+                    && !string.Equals(item.InstalledVersion, item.Version, StringComparison.OrdinalIgnoreCase)));
+        if (hasUpdate && !string.IsNullOrEmpty(item.Version))
         {
             InfoVersionPanel.Visibility = Visibility.Visible;
-            InfoVersionText.Text = item.Version ?? "";
+            InfoVersionText.Text = item.Version;
         }
         else
         {
             InfoVersionPanel.Visibility = Visibility.Collapsed;
         }
-        
+
         // Developer
         if (!string.IsNullOrEmpty(item.Developer))
         {
@@ -135,10 +153,14 @@ public partial class ItemDetailPage : Page
         {
             DeveloperPanel.Visibility = Visibility.Collapsed;
         }
-        
+
         // Restart required
         RestartPanel.Visibility = item.RestartRequired ? Visibility.Visible : Visibility.Collapsed;
-        
+
+        // Pack visible Information fields so collapsed panels (Available Update, etc.)
+        // do not leave empty cells in the multi-column grid.
+        RelayoutInfoGrid();
+
         // Deadline warning
         if (item.HasDeadline && item.DeadlineText != null)
         {
@@ -195,6 +217,58 @@ public partial class ItemDetailPage : Page
         CancelButton.Visibility = ViewModel.ShowCancelButton ? Visibility.Visible : Visibility.Collapsed;
         StatusBadge.Visibility = ViewModel.ShowStatusBadge ? Visibility.Visible : Visibility.Collapsed;
         StatusText.Text = ViewModel.StatusText;
+    }
+
+    private void OnInfoGridSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // Column count depends on width; re-pack when the window crosses breakpoints.
+        RelayoutInfoGrid();
+    }
+
+    /// <summary>
+    /// Packs only visible Information panels into 1/2/3 columns based on grid width.
+    /// Fixed AdaptiveTrigger cell assignments left holes when Available Update (or other
+    /// optional rows) were collapsed; walking visible children in order fills gaps.
+    /// </summary>
+    private void RelayoutInfoGrid()
+    {
+        if (InfoGrid == null) return;
+
+        // Prefer the grid's laid-out width; fall back to the page width before first layout.
+        var width = InfoGrid.ActualWidth;
+        if (width <= 0)
+            width = ActualWidth;
+
+        var columns = width >= 1200 ? 3 : width >= 900 ? 2 : 1;
+
+        InfoCol1.Width = columns >= 2
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(0);
+        InfoCol2.Width = columns >= 3
+            ? new GridLength(1, GridUnitType.Star)
+            : new GridLength(0);
+
+        // Packing order matches the Information section reading order.
+        UIElement[] panels =
+        [
+            DeveloperPanel,
+            InstalledVersionPanel,
+            InfoVersionPanel,
+            InfoSizePanel,
+            InfoCategoryPanel,
+            RestartPanel
+        ];
+
+        var index = 0;
+        foreach (var panel in panels)
+        {
+            if (panel.Visibility != Visibility.Visible)
+                continue;
+
+            Grid.SetRow(panel, index / columns);
+            Grid.SetColumn(panel, index % columns);
+            index++;
+        }
     }
 
     /// <summary>

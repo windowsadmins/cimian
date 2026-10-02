@@ -274,66 +274,15 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Information: 1 → 2 → 3 columns as the window grows (Munki-style) -->
-                <StackPanel Grid.Row="4" Margin="0,0,0,24">
+                <!-- Information: visible fields pack into 1 → 2 → 3 columns as the window grows.
+                     Positions are assigned in code so collapsed fields (e.g. Available Update)
+                     do not leave empty grid cells. -->
+                    <StackPanel Grid.Row="4" Margin="0,0,0,24">
                     <TextBlock 
                         Text="Information" 
                         Style="{StaticResource SubtitleTextBlockStyle}"
                         Margin="0,0,0,8"/>
-                    <Grid x:Name="InfoGrid">
-                        <VisualStateManager.VisualStateGroups>
-                            <VisualStateGroup x:Name="InfoColumnStates">
-                                <!-- Default: single column (narrow) -->
-                                <VisualState x:Name="InfoNarrow"/>
-                                <VisualState x:Name="InfoMedium">
-                                    <VisualState.StateTriggers>
-                                        <AdaptiveTrigger MinWindowWidth="900"/>
-                                    </VisualState.StateTriggers>
-                                    <VisualState.Setters>
-                                        <Setter Target="InfoCol1.Width" Value="*"/>
-                                        <Setter Target="InfoCol2.Width" Value="0"/>
-                                        <!-- Two columns: label pairs side by side -->
-                                        <Setter Target="DeveloperPanel.(Grid.Row)" Value="0"/>
-                                        <Setter Target="DeveloperPanel.(Grid.Column)" Value="0"/>
-                                        <Setter Target="InfoSizePanel.(Grid.Row)" Value="0"/>
-                                        <Setter Target="InfoSizePanel.(Grid.Column)" Value="1"/>
-                                        <Setter Target="InstalledVersionPanel.(Grid.Row)" Value="1"/>
-                                        <Setter Target="InstalledVersionPanel.(Grid.Column)" Value="0"/>
-                                        <Setter Target="InfoCategoryPanel.(Grid.Row)" Value="1"/>
-                                        <Setter Target="InfoCategoryPanel.(Grid.Column)" Value="1"/>
-                                        <Setter Target="InfoVersionPanel.(Grid.Row)" Value="2"/>
-                                        <Setter Target="InfoVersionPanel.(Grid.Column)" Value="0"/>
-                                        <Setter Target="RestartPanel.(Grid.Row)" Value="2"/>
-                                        <Setter Target="RestartPanel.(Grid.Column)" Value="1"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                                <VisualState x:Name="InfoWide">
-                                    <VisualState.StateTriggers>
-                                        <AdaptiveTrigger MinWindowWidth="1200"/>
-                                    </VisualState.StateTriggers>
-                                    <VisualState.Setters>
-                                        <Setter Target="InfoCol1.Width" Value="*"/>
-                                        <Setter Target="InfoCol2.Width" Value="*"/>
-                                        <!-- Col0: Developer, Installed -->
-                                        <Setter Target="DeveloperPanel.(Grid.Row)" Value="0"/>
-                                        <Setter Target="DeveloperPanel.(Grid.Column)" Value="0"/>
-                                        <Setter Target="InstalledVersionPanel.(Grid.Row)" Value="1"/>
-                                        <Setter Target="InstalledVersionPanel.(Grid.Column)" Value="0"/>
-                                        <!-- Col1: Size, Available update -->
-                                        <Setter Target="InfoSizePanel.(Grid.Row)" Value="0"/>
-                                        <Setter Target="InfoSizePanel.(Grid.Column)" Value="1"/>
-                                        <Setter Target="InfoVersionPanel.(Grid.Row)" Value="1"/>
-                                        <Setter Target="InfoVersionPanel.(Grid.Column)" Value="1"/>
-                                        <!-- Col2: Category, Restart -->
-                                        <Setter Target="InfoCategoryPanel.(Grid.Row)" Value="0"/>
-                                        <Setter Target="InfoCategoryPanel.(Grid.Column)" Value="2"/>
-                                        <Setter Target="RestartPanel.(Grid.Row)" Value="1"/>
-                                        <Setter Target="RestartPanel.(Grid.Column)" Value="2"/>
-                                    </VisualState.Setters>
-                                </VisualState>
-                            </VisualStateGroup>
-                        </VisualStateManager.VisualStateGroups>
-
+                    <Grid x:Name="InfoGrid" SizeChanged="OnInfoGridSizeChanged">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition x:Name="InfoCol0" Width="*"/>
                             <ColumnDefinition x:Name="InfoCol1" Width="0"/>
@@ -348,14 +297,14 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Default narrow order: stacked single column -->
+                        <!-- Order is the packing order used by RelayoutInfoGrid -->
                         <StackPanel x:Name="DeveloperPanel" Grid.Row="0" Grid.Column="0" Margin="0,0,16,16" Visibility="Collapsed">
                             <TextBlock Text="Developer" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InfoDeveloperText" Style="{StaticResource BodyTextBlockStyle}" TextWrapping="Wrap"/>
                         </StackPanel>
 
-                        <StackPanel x:Name="InstalledVersionPanel" Grid.Row="1" Grid.Column="0" Margin="0,0,16,16">
-                            <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <StackPanel x:Name="InstalledVersionPanel" Grid.Row="1" Grid.Column="0" Margin="0,0,16,16" Visibility="Collapsed">
+                            <TextBlock x:Name="InstalledVersionLabel" Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InstalledVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
