@@ -1,6 +1,7 @@
 // PreferencesService.cs - Reads MSC preferences from preferences.yaml
 
 using System.IO;
+using Cimian.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -18,6 +19,12 @@ public class PreferencesService : IPreferencesService
     public string? HelpUrl { get; private set; }
     public List<string>? SidebarItems { get; private set; }
 
+    /// <summary>
+    /// Category name → Segoe MDL2 glyph, resolved from preferences.yaml category_icons.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> CategoryIconGlyphs { get; private set; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
     public PreferencesService()
     {
         _deserializer = new DeserializerBuilder()
@@ -30,39 +37,48 @@ public class PreferencesService : IPreferencesService
 
     public async Task ReloadAsync()
     {
+        AggressiveNotificationDays = 14;
+        HelpUrl = null;
+        SidebarItems = null;
+        CategoryIconGlyphs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         try
         {
-            if (!File.Exists(PreferencesPath)) return;
-
-            var content = await File.ReadAllTextAsync(PreferencesPath);
-            var prefs = _deserializer.Deserialize<MscPreferences>(content);
-            if (prefs == null) return;
-
-            if (prefs.AggressiveNotificationDays > 0)
-                AggressiveNotificationDays = prefs.AggressiveNotificationDays;
-
-            HelpUrl = prefs.HelpUrl;
-
-            // Validate sidebar items — only allow known page tags
-            if (prefs.SidebarItems is { Count: > 0 })
+            if (File.Exists(PreferencesPath))
             {
-                var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                    { "software", "categories", "myitems", "updates" };
-                var valid = prefs.SidebarItems
-                    .Where(s => allowed.Contains(s))
-                    .Select(s => s.ToLowerInvariant())
-                    .ToList();
-                SidebarItems = valid.Count > 0 ? valid : null;
-            }
-            else
-            {
-                SidebarItems = null;
+                var content = await File.ReadAllTextAsync(PreferencesPath);
+                var prefs = _deserializer.Deserialize<MscPreferences>(content);
+                if (prefs != null)
+                {
+                    if (prefs.AggressiveNotificationDays > 0)
+                        AggressiveNotificationDays = prefs.AggressiveNotificationDays;
+
+                    HelpUrl = prefs.HelpUrl;
+
+                    // Validate sidebar items — only allow known page tags
+                    if (prefs.SidebarItems is { Count: > 0 })
+                    {
+                        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                            { "software", "categories", "myitems", "updates" };
+                        var valid = prefs.SidebarItems
+                            .Where(s => allowed.Contains(s))
+                            .Select(s => s.ToLowerInvariant())
+                            .ToList();
+                        SidebarItems = valid.Count > 0 ? valid : null;
+                    }
+
+                    // Resolve category_icons specs → glyphs (built-in key, hex, or raw glyph).
+                    CategoryIconGlyphs = MscCategoryIconResolver.BuildOverrideGlyphs(prefs.CategoryIcons);
+                }
             }
         }
         catch
         {
             // Use defaults if preferences can't be read
         }
+
+        // Push overrides into the shared glyph lookup used by Software/Categories pages.
+        MscCategoryIconResolver.ConfigureOverrides(CategoryIconGlyphs);
     }
 
     private class MscPreferences
@@ -75,5 +91,11 @@ public class PreferencesService : IPreferencesService
 
         [YamlMember(Alias = "sidebar_items")]
         public List<string>? SidebarItems { get; set; }
+
+        /// <summary>
+        /// Map of category name → icon spec (built-in key, hex codepoint, or glyph).
+        /// </summary>
+        [YamlMember(Alias = "category_icons")]
+        public Dictionary<string, string>? CategoryIcons { get; set; }
     }
 }

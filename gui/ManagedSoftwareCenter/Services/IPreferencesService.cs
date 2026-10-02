@@ -24,6 +24,12 @@ public interface IPreferencesService
     List<string>? SidebarItems { get; }
 
     /// <summary>
+    /// Resolved category name → Segoe MDL2 glyph overrides from preferences.yaml
+    /// <c>category_icons</c> (empty when unset).
+    /// </summary>
+    IReadOnlyDictionary<string, string> CategoryIconGlyphs { get; }
+
+    /// <summary>
     /// Reload preferences from disk
     /// </summary>
     Task ReloadAsync();
