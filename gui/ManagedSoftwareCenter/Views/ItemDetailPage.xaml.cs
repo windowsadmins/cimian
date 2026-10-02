@@ -249,7 +249,8 @@ public partial class ItemDetailPage : Page
             : new GridLength(0);
 
         // Packing order matches the Information section reading order.
-        UIElement[] panels =
+        // FrameworkElement (not UIElement): WinUI Grid.SetRow/SetColumn require it.
+        FrameworkElement[] panels =
         [
             DeveloperPanel,
             InstalledVersionPanel,
