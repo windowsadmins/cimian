@@ -113,11 +113,13 @@
                             <Image x:Name="BannerImage3" Stretch="UniformToFill" Opacity="0" />
                         </Grid>
                         
-                        <!-- Banner content overlay -->
-                        <StackPanel VerticalAlignment="Center" 
+                        <!-- Banner content overlay (text from branding.yaml / CSP BannerTitle) -->
+                        <StackPanel x:Name="HeroTitlePanel"
+                                    VerticalAlignment="Center" 
                                     HorizontalAlignment="Left"
                                     Margin="40,0,0,0">
-                            <TextBlock Text="Managed Software Center" 
+                            <TextBlock x:Name="HeroTitleText"
+                                       Text="Managed Software Center" 
                                        FontSize="36" 
                                        FontWeight="SemiBold"
                                        Foreground="White" />

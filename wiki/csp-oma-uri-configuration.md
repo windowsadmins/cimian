@@ -155,6 +155,54 @@ Data type: String
 Value: production,testing,development
 ```
 
+## Managed Software Center branding (GUI)
+
+The MSC WinUI app reads branding from
+`C:\ProgramData\ManagedInstalls\client_resources\branding.yaml` and applies a
+policy override for the Software-page hero heading from the **Policies** hive
+(same path agent policy uses today):
+
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+```
+
+| YAML (`branding.yaml`) | Registry (REG_SZ) | Effect |
+|---|---|---|
+| `app_title` | *(not policy-backed)* | Window / title-bar name; also feeds the hero title when `banner_title` is unset |
+| `banner_title` | `BannerTitle` | Software hero overlay text. **Policy wins over YAML.** Empty string hides the overlay. |
+
+Hero title precedence:
+
+1. Explicit `banner_title` / `BannerTitle` (including blank → hide)
+2. Else non-empty `app_title`
+3. Else `"Managed Software Center"`
+
+### Example: hide the hero text via policy
+
+```
+Name: Cimian MSC Banner Title
+Description: Override or blank the Software page hero heading
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/BannerTitle
+Data type: String
+Value: (empty string to hide, or custom text such as "Unchained Software")
+```
+
+Registry preference equivalent:
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: BannerTitle
+Type: REG_SZ
+Data:   (empty = hide overlay)
+```
+
+> **Note:** Presence of the `BannerTitle` value name matters. An empty REG_SZ is
+> a deliberate hide; omitting the value leaves YAML / `app_title` / default in
+> effect. The OMA-URI path above assumes an ADMX-ingested **CimianPrefs**
+> Policy CSP category (same delivery model as agent keys under
+> `SOFTWARE\Policies\Cimian`). Custom OMA-URIs that write that hive directly
+> also work.
+
 ## Group Policy Deployment
 
 ### Using Administrative Templates
