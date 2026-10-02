@@ -110,4 +110,27 @@ public class MscCategoryIconResolverTests
             MscCategoryIconResolver.ConfigureOverrides(null);
         }
     }
+
+    [Fact]
+    public void BuildOverrideGlyphsFromPolicyLines_ParsesEqualsAndColon()
+    {
+        var overrides = MscCategoryIconResolver.BuildOverrideGlyphsFromPolicyLines(
+        [
+            "PDF Tools=utilities",
+            "browsers: gaming",
+            "bad-line-without-sep",
+            " =skipped",
+        ]);
+
+        Assert.Equal("\uE90F", overrides["PDF Tools"]);
+        Assert.Equal("\uE7FC", overrides["browsers"]);
+        Assert.Equal(2, overrides.Count);
+    }
+
+    [Fact]
+    public void BuildOverrideGlyphsFromPolicyLines_EmptyInput_ReturnsEmptyMap()
+    {
+        var overrides = MscCategoryIconResolver.BuildOverrideGlyphsFromPolicyLines([]);
+        Assert.Empty(overrides);
+    }
 }

@@ -175,6 +175,41 @@ public static class MscCategoryIconResolver
     }
 
     /// <summary>
+    /// Parses CSP / GPO <c>CategoryIcons</c> REG_MULTI_SZ lines into a category→glyph map.
+    /// Each line is <c>CategoryName=iconSpec</c> or <c>CategoryName: iconSpec</c>.
+    /// Invalid lines are skipped.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> BuildOverrideGlyphsFromPolicyLines(
+        IEnumerable<string>? lines)
+    {
+        var specs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (lines == null)
+            return BuildOverrideGlyphs(specs);
+
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            var trimmed = line.Trim();
+            var sep = trimmed.IndexOf('=');
+            if (sep < 0)
+                sep = trimmed.IndexOf(':');
+            if (sep <= 0 || sep >= trimmed.Length - 1)
+                continue;
+
+            var category = trimmed[..sep].Trim();
+            var iconSpec = trimmed[(sep + 1)..].Trim();
+            if (category.Length == 0 || iconSpec.Length == 0)
+                continue;
+
+            specs[category] = iconSpec;
+        }
+
+        return BuildOverrideGlyphs(specs);
+    }
+
+    /// <summary>
     /// Parses one icon spec into a glyph string.
     /// </summary>
     public static bool TryParseIconSpec(string? spec, out string glyph)
