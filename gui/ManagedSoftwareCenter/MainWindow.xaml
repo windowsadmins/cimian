@@ -5,7 +5,9 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Managed Software Center">
 
-    <Grid x:Name="RootGrid">
+    <!-- PlacementMode=Hidden: keep global Ctrl+R/F5/etc. without WinUI auto-tooltips
+         on the full-window root. Explicit tips live on LastChecked / Check Again. -->
+    <Grid x:Name="RootGrid" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -96,7 +98,8 @@
                 <StackPanel x:Name="PaneFooterContent" Margin="12,8">
                     <TextBlock x:Name="LastCheckedText"
                                FontSize="12"
-                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}" />
+                               Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
+                               ToolTipService.ToolTip="Check for updates (Ctrl+R)" />
                 </StackPanel>
             </NavigationView.PaneFooter>
 
