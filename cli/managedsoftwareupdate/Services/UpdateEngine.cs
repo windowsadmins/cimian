@@ -1731,6 +1731,16 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
+            // A present managed_updates item whose status check failed is left alone
+            // here too. Munki 7's installedState reads the failed check as installed
+            // whenever the item is processed, as a dependency as well, so nothing is
+            // installed for it. It stays reported with the check's error.
+            if (_brokenCheckManagedUpdates.ContainsKey(depItem.Name))
+            {
+                LogInfo($"Skipping dependency {depItem.Name}: listed under managed_updates and installed, but its status check failed");
+                continue;
+            }
+
             var status = _statusService.CheckStatus(depItem, "install", _config.CachePath);
 
             LogInfo($"Dependency {depItem.Name} v{depItem.Version}: needsAction={status.NeedsAction} ({status.Reason})");
