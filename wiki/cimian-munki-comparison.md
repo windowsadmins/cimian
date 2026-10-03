@@ -55,7 +55,7 @@ Same semantics as Munki. If you are reusing `installcheck_script` bodies from a 
 
 **Self-service is real.** `cimistatus.exe` and the WinUI 3 `ManagedSoftwareCenter` together fill the role of Managed Software Center: browsing optional installs, initiating on-demand installs, viewing install history, seeing upcoming force-install deadlines. Text search, category filters, aggressive notification mode (the Windows equivalent of Munki's "nag" behavior), toast notifications, and screenshot carousels for optional items are all there.
 
-**`force_install_after_date` on optional_installs matches Munki.** A deadline stamped in pkginfo does not force-install a title that is only listed under `optional_installs`, and the Software-tab detail page does not show a "must be installed by" banner for that title. The deadline applies once the user opts in (SelfServe promotes the item to a managed install) or the title is otherwise on a managed install/update queue.
+**`force_install_after_date` on optional_installs matches Munki.** A deadline stamped in pkginfo does not force-install a title that is only listed under `optional_installs`, and the Software-tab detail page does not show a "must be installed by" banner for that title. When the user requests the title in Self Service, the deadline still is not enforced until some version of it is installed; after that it applies to updates as usual. A title on a managed install or update queue keeps its deadline. This follows Munki 7's `processInstall` in `updatecheck/analyze.swift`.
 
 ## Windows quirks that actually diverge
 

@@ -613,7 +613,7 @@ public class UpdateEngine : IDisposable
                     if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
                     {
                         // Deadline override: force_install_after_date takes priority over install_window
-                        if (item.ForceInstallAfterDate != null && now >= item.ForceInstallAfterDate.Value)
+                        if (ForceDeadlineOverridesInstallWindow(item, now))
                         {
                             LogInfo($"Installing {item.Name} v{item.Version} despite install_window {item.InstallWindow}: force_install_after_date {item.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
                             _sessionLogger?.LogStatusCheck(
@@ -1062,6 +1062,31 @@ public class UpdateEngine : IDisposable
             Cimian.Core.Models.StatusReasonCode.NotInstalled, false);
     }
 
+    // Self Service requests for optional items with no version installed yet. As in
+    // Munki 7 (analyze.swift processInstall with isOptionalInstall), the deadline is
+    // not enforced for them: it neither overrides install_window nor goes into their
+    // InstallInfo.yaml record. Once some version is installed it applies as usual.
+    private readonly HashSet<string> _deadlineWaivedOptionalInstalls = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the item's force_install_after_date has passed and is enforced, so it is
+    /// installed even outside its install_window.
+    /// </summary>
+    internal bool ForceDeadlineOverridesInstallWindow(CatalogItem item, DateTime now) =>
+        item.ForceInstallAfterDate != null
+        && now >= item.ForceInstallAfterDate.Value
+        && !_deadlineWaivedOptionalInstalls.Contains(item.Name);
+
+    /// <summary>
+    /// Whether force_install_after_date is left unenforced for a manifest item: a Self
+    /// Service request for an optional item with no version installed. Presence is
+    /// Munki 7's someVersionInstalled.
+    /// </summary>
+    private bool IsDeadlineWaived(ManifestItem item, CatalogItem catalogItem, StatusCheckResult status) =>
+        item.PromotedFromOptional
+        && catalogItem.ForceInstallAfterDate != null
+        && !_statusService.SomeVersionInstalled(catalogItem, status).Installed;
+
     internal (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
@@ -1323,6 +1348,12 @@ public class UpdateEngine : IDisposable
                                 loopSuppressed.Add((catalogItem, loopReason, loopCause, status.InstalledVersion, status.IsUpdate, false));
                                 break; // Skip this item
                             }
+                        }
+
+                        if (IsDeadlineWaived(item, catalogItem, status))
+                        {
+                            _deadlineWaivedOptionalInstalls.Add(catalogItem.Name);
+                            ConsoleLogger.Detail($"    force_install_after_date not enforced for {item.Name}: optional install requested in Self Service, no version installed yet");
                         }
 
                         if (status.IsUpdate)
@@ -3412,6 +3443,10 @@ public class UpdateEngine : IDisposable
                             item.NeedsUpdate = isUpdate;
                             item.InstalledVersion = installCheck?.InstalledVersion;
                             item.Installed = !string.IsNullOrEmpty(installCheck?.InstalledVersion);
+                            // Checked here rather than read from IdentifyActions: an --item run
+                            // still writes a record for a queued request outside the filter.
+                            if (cat != null && installCheck != null && IsDeadlineWaived(mi, cat, installCheck))
+                                item.ForceInstallAfterDate = null;
                             info.ManagedInstalls.Add(item);
                         }
                         // Else: already installed and up-to-date. No pending record is written;

@@ -50,6 +50,32 @@ public class OptionalForceInstallDeadlineTests : IDisposable
         }
     };
 
+    /// <summary>Catalog item whose installs file exists with another hash: installed, out of date.</summary>
+    private CatalogItem OutdatedWithPastDeadline(string name)
+    {
+        var path = Path.Combine(_testDir, name + ".bin");
+        File.WriteAllText(path, "old build");
+        return new CatalogItem
+        {
+            Name = name,
+            Version = "2.0.0",
+            ForceInstallAfterDate = DateTime.Now.AddDays(-1),
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = path, Md5Checksum = "00000000000000000000000000000000" }
+            }
+        };
+    }
+
+    private static ManifestItem SelfServeRequest(string name) => new()
+    {
+        Name = name,
+        Action = "install",
+        SourceManifest = "SelfServeManifest",
+        IsSelfServe = true,
+        PromotedFromOptional = true
+    };
+
     private static Dictionary<string, CatalogItem> Catalog(params CatalogItem[] items) =>
         items.ToDictionary(i => i.Name.ToLowerInvariant());
 
@@ -117,5 +143,59 @@ public class OptionalForceInstallDeadlineTests : IDisposable
 
         Assert.Single(toInstall, item);
         Assert.Empty(toUpdate);
+    }
+
+    [Fact]
+    public void SelfServePromotedOptional_NotInstalled_DeadlineDoesNotOverrideInstallWindow()
+    {
+        var item = AbsentWithPastDeadline(Unique("selfservewindow"));
+        var manifest = new List<ManifestItem> { SelfServeRequest(item.Name) };
+
+        var (toInstall, _, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Single(toInstall, item);
+        Assert.False(_engine.ForceDeadlineOverridesInstallWindow(item, DateTime.Now));
+    }
+
+    [Fact]
+    public void SelfServePromotedOptional_NotInstalled_InstallInfoOmitsDeadline()
+    {
+        var item = AbsentWithPastDeadline(Unique("selfserveinfo"));
+        var manifest = new List<ManifestItem> { SelfServeRequest(item.Name) };
+        var catalog = Catalog(item);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        var pending = Assert.Single(info.ManagedInstalls);
+        Assert.Equal(item.Name, pending.Name);
+        Assert.Null(pending.ForceInstallAfterDate);
+    }
+
+    [Fact]
+    public void SelfServePromotedOptional_InstalledAndOutOfDate_KeepsDeadline()
+    {
+        var item = OutdatedWithPastDeadline(Unique("selfserveoutdated"));
+        var manifest = new List<ManifestItem> { SelfServeRequest(item.Name) };
+        var catalog = Catalog(item);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        Assert.Single(toUpdate, item);
+        Assert.True(_engine.ForceDeadlineOverridesInstallWindow(item, DateTime.Now));
+        var pending = Assert.Single(info.ManagedInstalls);
+        Assert.Equal(item.ForceInstallAfterDate, pending.ForceInstallAfterDate);
+    }
+
+    [Fact]
+    public void ManagedInstall_NotInstalled_DeadlineStillOverridesInstallWindow()
+    {
+        var item = AbsentWithPastDeadline(Unique("managedwindow"));
+        var manifest = new List<ManifestItem> { Entry(item.Name, "install") };
+
+        _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.True(_engine.ForceDeadlineOverridesInstallWindow(item, DateTime.Now));
     }
 }
