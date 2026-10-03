@@ -212,7 +212,7 @@ public class ManagedUpdatesPresenceTests : IDisposable
         };
     }
 
-    // --- Presence follows Munki's some_version_installed ---------------------------
+    // --- Presence follows Munki 7's someVersionInstalled -----------------------------
 
     [Fact]
     public void ManagedUpdateOnly_OnDemand_IsLeftAlone()
@@ -307,8 +307,8 @@ public class ManagedUpdatesPresenceTests : IDisposable
     public void ManagedUpdateOnly_RealInstallerWithNothingToDetect_IsLeftAlone()
     {
         // No installs, no receipts, no check.*, no ManagedInstalls entry. Munki's
-        // rule 6 calls this installed, and Munki then installs nothing because its
-        // installed_state agrees. Cimian's status check calls it not installed, so
+        // someVersionInstalled calls this installed, and Munki then installs nothing
+        // because its installedState agrees. Cimian's status check calls it not installed, so
         // presence has to say absent for the same net result.
         var item = new CatalogItem
         {
@@ -450,6 +450,24 @@ public class ManagedUpdatesPresenceTests : IDisposable
         };
 
         Assert.True(Presence().SomeVersionInstalled(item, prior).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_VersionScriptPrintsAVersion_IsInstalled_EvenWithAnInstallsEntryMissing()
+    {
+        var item = AbsentItem(Unique("vscript"));
+        item.VersionScript = "Write-Output '1.0.0'";
+
+        Assert.True(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_VersionScriptPrintsNothing_IsNotInstalled_EvenWithEveryInstallsEntryPresent()
+    {
+        var item = OutdatedItem(Unique("vscript"));
+        item.VersionScript = "exit 0";
+
+        Assert.False(Presence().SomeVersionInstalled(item).Installed);
     }
 
     [Fact]

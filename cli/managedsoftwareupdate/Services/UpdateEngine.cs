@@ -1033,7 +1033,7 @@ public class UpdateEngine : IDisposable
     internal IReadOnlyDictionary<string, (string Reason, string ReasonCode)> ManagedUpdatesSkipReasons => _absentManagedUpdates;
 
     // managed_updates items that are present but whose status check failed this run,
-    // with the check's reason and reason code. Munki's installed_state reads a failed
+    // with the check's reason and reason code. Munki's installedState reads a failed
     // installcheck_script as installed, so it queues nothing for such an item; these
     // are likewise neither installed nor used as seeds of the dependency walk. Unlike
     // an absent item they are still reported, with the check's error.
@@ -1161,7 +1161,8 @@ public class UpdateEngine : IDisposable
                     // managed_updates only patches what is already there. An item listed
                     // only under it (an entry also under managed_installs deduplicates to
                     // "install") is left alone on a machine that does not have it.
-                    // Presence is Munki's some_version_installed, not the status check.
+                    // Presence is Munki 7's someVersionInstalled, as analyze.swift
+                    // processManagedUpdate uses it, not the status check.
                     // A failed check is looked at even when it asks for no action (an
                     // installcheck_script timeout does), so it is reported as failed.
                     if ((status.NeedsAction || status.Status == "error")
@@ -1171,7 +1172,7 @@ public class UpdateEngine : IDisposable
                         if (!presence.Installed)
                         {
                             var (absentReason, absentReasonCode, checkFailed) = DescribeAbsentManagedUpdate(status, presence);
-                            // A clean absence is routine (Munki logs it at debug level);
+                            // A clean absence is routine (Munki logs it with display.debug1);
                             // a check that could not run is not.
                             if (checkFailed)
                                 ConsoleLogger.Warn($"Skipping {item.Name}: {absentReason}");

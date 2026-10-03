@@ -429,7 +429,7 @@ public class StatusService
 
     /// <summary>
     /// Whether some version of the item is on the machine, whatever its version.
-    /// A port of Munki's some_version_installed, used only to decide whether a
+    /// A port of Munki 7's someVersionInstalled (installationstate.swift), used only to decide whether a
     /// managed_updates item is present and so eligible for an update. The
     /// ManagedInstalls registry entry Cimian writes when it installs something is
     /// not evidence of presence: it outlives the app it describes.
@@ -458,7 +458,16 @@ public class StatusService
             return new PresenceResult(script.ReasonCode != StatusReasonCode.InstallcheckNeeded, script.Reason);
         }
 
-        // 4. An installs array: installed only if every entry is there at some version.
+        // 3. A version_script decides alone: no version printed means not installed.
+        if (!string.IsNullOrEmpty(item.VersionScript))
+        {
+            var r = CheckVersionScript(item);
+            if (r.Status == "error")
+                return PresenceResult.Failed(r.Reason, r.ReasonCode);
+            return new PresenceResult(!string.IsNullOrEmpty(r.InstalledVersion), r.Reason);
+        }
+
+        // 5. An installs array: installed only if every entry is there at some version.
         if (item.Installs != null && item.Installs.Count > 0)
         {
             for (var i = 0; i < item.Installs.Count; i++)
@@ -481,17 +490,9 @@ public class StatusService
             return new PresenceResult(true, $"All {item.Installs.Count} installs entries present");
         }
 
-        // 5. Receipts. Cimian has no package receipts; the checks that stand in for
+        // 6. Receipts. Cimian has no package receipts; the checks that stand in for
         //    them are the ones CheckStatus uses when there is no installs array, taken
         //    in the same order.
-        if (!string.IsNullOrEmpty(item.VersionScript))
-        {
-            var r = CheckVersionScript(item);
-            if (r.Status == "error")
-                return PresenceResult.Failed(r.Reason, r.ReasonCode);
-            return new PresenceResult(!string.IsNullOrEmpty(r.InstalledVersion), r.Reason);
-        }
-
         if (!string.IsNullOrEmpty(item.Check.Registry.Name))
         {
             var r = CheckRegistryStatus(item);
@@ -529,8 +530,8 @@ public class StatusService
                 : new PresenceResult(false, $"MSI not registered in Windows Installer (ProductCode={msiInstaller.ProductCode}, UpgradeCode={msiInstaller.UpgradeCode})");
         }
 
-        // 6. Nothing to check. Munki calls this installed, and then installs nothing
-        //    because its installed_state agrees. CheckStatus calls a real installer
+        // 7. Nothing to check. Munki calls this installed, and then installs nothing
+        //    because its installedState agrees. CheckStatus calls a real installer
         //    with nothing to check not installed, so only a script-only item, which
         //    CheckStatus does call installed, is present here. The net result is
         //    Munki's: nothing is installed on the item's behalf.
