@@ -714,6 +714,38 @@ public class ManagedUpdatesPresenceTests : IDisposable
     }
 
     [Fact]
+    public void ManagedUpdateOnly_PresentButStatusCheckThrows_DependencyOfManagedInstall_IsNotInstalled()
+    {
+        // Munki 7's installedState reads the failed check as installed every time the
+        // item is processed, as a managed update or as a dependency, so nothing is
+        // installed for it.
+        var dep = OutdatedItem(Unique("lockeddep"));
+        var parent = AbsentItem(Unique("parent"));
+        parent.Requires = new List<string> { dep.Name };
+        var manifest = new List<ManifestItem> { Entry(parent.Name, "install"), Entry(dep.Name, "update") };
+        var catalog = Catalog(parent, dep);
+
+        List<CatalogItem> toInstall, toUpdate, toUninstall;
+        List<Cimian.Core.Models.SessionPackageInfo> items;
+        Cimian.Core.Models.InstallInfoFile info;
+        using (new FileStream(dep.Installs[0].Path!, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+            _engine.ResolveDependencies(manifest, catalog, toUpdate);
+            items = _engine.BuildSessionItems(manifest, toInstall, toUpdate, toUninstall, catalog, NoOutcomes, NoSuppressions);
+            info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+        }
+
+        Assert.Single(toInstall, parent);
+        Assert.DoesNotContain(toUpdate, i => i.Name == dep.Name);
+        Assert.Contains(dep.Name, _engine.ManagedUpdatesCheckFailures);
+        var reported = Assert.Single(items, i => i.Name == dep.Name);
+        Assert.Equal("Warning", reported.Status);
+        Assert.Equal("managed_updates", reported.ItemType);
+        Assert.DoesNotContain(info.ManagedInstalls, i => i.Name == dep.Name);
+    }
+
+    [Fact]
     public void ManagedInstall_PresentButStatusCheckThrows_StillInstalls()
     {
         var item = OutdatedItem(Unique("locked"));
