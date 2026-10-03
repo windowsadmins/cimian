@@ -294,36 +294,32 @@ public class InstallerService
 
         try
         {
-            using var process = new Process { StartInfo = startInfo };
             var output = new StringBuilder();
 
-            process.OutputDataReceived += (s, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
+            using var started = InstallerProcess.Start(startInfo,
+                data =>
                 {
-                    output.AppendLine(e.Data);
-                    ConsoleLogger.Debug($"  {e.Data}");
-                }
-            };
-
-            process.ErrorDataReceived += (s, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        output.AppendLine(data);
+                        ConsoleLogger.Debug($"  {data}");
+                    }
+                },
+                data =>
                 {
-                    output.AppendLine($"ERROR: {e.Data}");
-                }
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        output.AppendLine($"ERROR: {data}");
+                    }
+                });
+            var process = started.Process;
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
 
             try
             {
-                await process.WaitForExitAsync(cts.Token);
+                await started.WaitForExitAsync(cts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -1949,37 +1945,34 @@ exit 0
 
         try
         {
-            using var process = new Process { StartInfo = startInfo };
-            
-            process.OutputDataReceived += (s, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
+            // Started on a private desktop when this run is in a user's session, so an
+            // installer's windows stay off that desktop as they do in session 0.
+            using var started = InstallerProcess.Start(startInfo,
+                data =>
                 {
-                    output.AppendLine(e.Data);
-                    ConsoleLogger.Detail($"[{itemName}:stdout] {e.Data}");
-                }
-            };
-            
-            process.ErrorDataReceived += (s, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        output.AppendLine(data);
+                        ConsoleLogger.Detail($"[{itemName}:stdout] {data}");
+                    }
+                },
+                data =>
                 {
-                    output.AppendLine($"ERROR: {e.Data}");
-                    ConsoleLogger.Detail($"[{itemName}:stderr] {e.Data}");
-                }
-            };
-
-            process.Start();
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        output.AppendLine($"ERROR: {data}");
+                        ConsoleLogger.Detail($"[{itemName}:stderr] {data}");
+                    }
+                });
+            var process = started.Process;
             ConsoleLogger.Detail($"Process started with PID {process.Id}");
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(timeout);
 
             try
             {
-                await process.WaitForExitAsync(cts.Token);
+                await started.WaitForExitAsync(cts.Token);
             }
             catch (OperationCanceledException)
             {
