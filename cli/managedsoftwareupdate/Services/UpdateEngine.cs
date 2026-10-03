@@ -1032,6 +1032,16 @@ public class UpdateEngine : IDisposable
     /// <summary>Why each absent managed_updates item was skipped, as recorded in the status-check event.</summary>
     internal IReadOnlyDictionary<string, (string Reason, string ReasonCode)> ManagedUpdatesSkipReasons => _absentManagedUpdates;
 
+    // managed_updates items that are present but whose status check failed this run,
+    // with the check's reason and reason code. Munki's installed_state reads a failed
+    // installcheck_script as installed, so it queues nothing for such an item; these
+    // are likewise neither installed nor used as seeds of the dependency walk. Unlike
+    // an absent item they are still reported, with the check's error.
+    private readonly Dictionary<string, (string Reason, string ReasonCode)> _brokenCheckManagedUpdates = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Present managed_updates items left alone because their status check failed.</summary>
+    internal IReadOnlyDictionary<string, (string Reason, string ReasonCode)> ManagedUpdatesCheckFailures => _brokenCheckManagedUpdates;
+
     /// <summary>
     /// The reason and reason code recorded for a managed_updates item skipped as absent.
     /// When the check itself could not be evaluated, its own reason code is kept, so a
@@ -1152,7 +1162,9 @@ public class UpdateEngine : IDisposable
                     // only under it (an entry also under managed_installs deduplicates to
                     // "install") is left alone on a machine that does not have it.
                     // Presence is Munki's some_version_installed, not the status check.
-                    if (status.NeedsAction
+                    // A failed check is looked at even when it asks for no action (an
+                    // installcheck_script timeout does), so it is reported as failed.
+                    if ((status.NeedsAction || status.Status == "error")
                         && item.Action.Equals("update", StringComparison.OrdinalIgnoreCase))
                     {
                         var presence = _statusService.SomeVersionInstalled(catalogItem, status);
@@ -1175,6 +1187,28 @@ public class UpdateEngine : IDisposable
                                 null,
                                 false);
                             _absentManagedUpdates[catalogItem.Name] = (absentReason, absentReasonCode);
+                            break;
+                        }
+
+                        // Present, but the status check itself failed, so there is no
+                        // telling what needs doing. Munki queues nothing here; a fresh
+                        // install would replace whatever is on the machine on a guess.
+                        if (status.Status == "error")
+                        {
+                            var checkReasonCode = string.IsNullOrEmpty(status.ReasonCode)
+                                ? Cimian.Core.Models.StatusReasonCode.CheckFailed
+                                : status.ReasonCode;
+                            ConsoleLogger.Warn($"Leaving {item.Name} alone: listed under managed_updates and installed, but its status check failed ({status.Reason})");
+                            _sessionLogger?.LogStatusCheck(
+                                catalogItem.Name,
+                                catalogItem.Version,
+                                status.Status,
+                                status.Reason,
+                                checkReasonCode,
+                                status.DetectionMethod,
+                                status.InstalledVersion,
+                                false);
+                            _brokenCheckManagedUpdates[catalogItem.Name] = (status.Reason, checkReasonCode);
                             break;
                         }
                     }
@@ -1658,6 +1692,7 @@ public class UpdateEngine : IDisposable
             // A managed_updates item that is not installed was skipped, so nothing
             // is installed on its behalf either.
             .Where(m => !_absentManagedUpdates.ContainsKey(m.Name))
+            .Where(m => !_brokenCheckManagedUpdates.ContainsKey(m.Name))
             .Where(m => itemFilterService?.HasFilter != true || itemFilterService.Items.Contains(m.Name))
             .Select(m => m.Name)
             .ToList();
@@ -3178,6 +3213,27 @@ public class UpdateEngine : IDisposable
                     // Distinct from install/update/remove so consumers can filter on it.
                     ActionPerformed = suppression.PendingRestart ? "restart_deferred" : "loop_suppressed",
                     OutcomeTimestamp = DateTime.UtcNow
+                });
+                continue;
+            }
+
+            // A present managed_updates item whose status check failed was left alone.
+            // Report the check's error, as a warning, rather than "Installed".
+            if (action == "update" && _brokenCheckManagedUpdates.TryGetValue(mi.Name, out var brokenCheck))
+            {
+                items.Add(new SessionPackageInfo
+                {
+                    Name = mi.Name,
+                    Version = version,
+                    Status = "Warning",
+                    ItemType = itemType,
+                    DisplayName = displayName,
+                    InstalledVersion = ResolveInstalledVersion(mi.Name, null, version),
+                    WarningMessage = brokenCheck.Reason,
+                    WarningMessages = WarningList(brokenCheck.Reason, null),
+                    StatusReason = brokenCheck.Reason,
+                    StatusReasonCode = brokenCheck.ReasonCode,
+                    DetectionMethod = Cimian.Core.Models.DetectionMethod.None
                 });
                 continue;
             }

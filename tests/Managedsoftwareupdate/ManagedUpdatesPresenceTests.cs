@@ -533,4 +533,143 @@ public class ManagedUpdatesPresenceTests : IDisposable
 
         Assert.False(Presence().SomeVersionInstalled(item).Installed);
     }
+    // --- Present, but the status check failed: Munki queues nothing ------------------
+
+    private UpdateEngine EngineWithInstallcheckTimeout(TimeSpan timeout) =>
+        new(_config, new StatusService(timeout, name => _managedInstallsEntries.Contains(name)));
+
+    /// <summary>A script-only item whose installcheck_script times out: a failed check that asks for no action.</summary>
+    private CatalogItem ScriptTimeoutItem(string name) => new()
+    {
+        Name = name,
+        Version = "2.0.0",
+        InstallcheckScript = "Start-Sleep -Seconds 30"
+    };
+
+    [Fact]
+    public void ManagedUpdateOnly_InstallcheckScriptTimesOut_QueuesNothing_AndKeepsTheCheckReasonCode()
+    {
+        var engine = EngineWithInstallcheckTimeout(TimeSpan.FromMilliseconds(500));
+        var dep = AbsentItem(Unique("dep"));
+        var item = ScriptTimeoutItem(Unique("scripterr"));
+        item.Requires = new List<string> { dep.Name };
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+        var catalog = Catalog(item, dep);
+
+        var (toInstall, toUpdate, _, _) = engine.IdentifyActions(manifest, catalog);
+        engine.ResolveDependencies(manifest, catalog, toUpdate);
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.DoesNotContain(manifest, m => m.Name == dep.Name);
+        Assert.Empty(engine.ManagedUpdatesSkippedAbsent);
+        var failure = Assert.Contains(item.Name, engine.ManagedUpdatesCheckFailures);
+        Assert.Equal(StatusReasonCode.ScriptError, failure.ReasonCode);
+        Assert.Contains("timed out", failure.Reason);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_InstallcheckScriptTimesOut_IsReportedWithTheCheckError()
+    {
+        var engine = EngineWithInstallcheckTimeout(TimeSpan.FromMilliseconds(500));
+        var item = ScriptTimeoutItem(Unique("scripterr"));
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+        var catalog = Catalog(item);
+
+        var (toInstall, toUpdate, toUninstall, _) = engine.IdentifyActions(manifest, catalog);
+        var items = engine.BuildSessionItems(manifest, toInstall, toUpdate, toUninstall, catalog, NoOutcomes, NoSuppressions);
+        var info = engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        var reported = Assert.Single(items, i => i.Name == item.Name);
+        Assert.Equal("Warning", reported.Status);
+        Assert.Equal(StatusReasonCode.ScriptError, reported.StatusReasonCode);
+        Assert.Contains("timed out", reported.WarningMessage);
+
+        Assert.Contains(item.Name, info.ManagedUpdates);
+        Assert.Contains(item.Name, info.ProcessedInstalls);
+        Assert.DoesNotContain(info.ManagedInstalls, i => i.Name == item.Name);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_PresentButStatusCheckThrows_QueuesNothing_AndKeepsTheCheckReasonCode()
+    {
+        // The file is there, so the item is present, but it is locked, so hashing it
+        // throws: the status check is an error that asks for action. Before this the
+        // item fell through to a fresh install.
+        var item = OutdatedItem(Unique("locked"));
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        List<CatalogItem> toInstall, toUpdate;
+        using (new FileStream(item.Installs[0].Path!, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+        }
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Empty(_engine.ManagedUpdatesSkippedAbsent);
+        var failure = Assert.Contains(item.Name, _engine.ManagedUpdatesCheckFailures);
+        Assert.Equal(StatusReasonCode.CheckFailed, failure.ReasonCode);
+    }
+
+    [Fact]
+    public void ManagedInstall_PresentButStatusCheckThrows_StillInstalls()
+    {
+        var item = OutdatedItem(Unique("locked"));
+        var manifest = new List<ManifestItem> { Entry(item.Name, "install") };
+
+        List<CatalogItem> toInstall;
+        using (new FileStream(item.Installs[0].Path!, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            (toInstall, _, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+        }
+
+        Assert.Single(toInstall, item);
+        Assert.Empty(_engine.ManagedUpdatesCheckFailures);
+    }
+}
+
+/// <summary>
+/// The warning line for a managed_updates item whose status check failed. Shares a
+/// collection with the other tests that swap Console.Out, so they never run at once.
+/// </summary>
+[Collection(ConsoleOutputCollection.Name)]
+public class ManagedUpdatesCheckFailureWarningTests : IDisposable
+{
+    private readonly TextWriter _originalOut = Console.Out;
+    private readonly StringWriter _stdout = new();
+    private readonly string _testDir = Path.Combine(Path.GetTempPath(), "CimianTests", "ManagedUpdatesWarn", Guid.NewGuid().ToString("N"));
+
+    public ManagedUpdatesCheckFailureWarningTests()
+    {
+        Directory.CreateDirectory(_testDir);
+        Console.SetOut(_stdout);
+    }
+
+    public void Dispose()
+    {
+        Console.SetOut(_originalOut);
+        try { Directory.Delete(_testDir, recursive: true); } catch { /* Ignore cleanup errors */ }
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_InstallcheckScriptTimesOut_LogsAWarningWithTheCheckReason()
+    {
+        var config = new CimianConfig { CachePath = Path.Combine(_testDir, "Cache") };
+        Directory.CreateDirectory(config.CachePath);
+        var engine = new UpdateEngine(config, new StatusService(TimeSpan.FromMilliseconds(500), _ => false));
+        var item = new CatalogItem
+        {
+            Name = "scripterr" + Guid.NewGuid().ToString("N"),
+            Version = "2.0.0",
+            InstallcheckScript = "Start-Sleep -Seconds 30"
+        };
+        var manifest = new List<ManifestItem> { new() { Name = item.Name, Action = "update", SourceManifest = "test" } };
+
+        engine.IdentifyActions(manifest, new Dictionary<string, CatalogItem> { [item.Name.ToLowerInvariant()] = item });
+
+        var output = _stdout.ToString();
+        Assert.Contains($"Leaving {item.Name} alone", output);
+        Assert.Contains("timed out", output);
+    }
 }
