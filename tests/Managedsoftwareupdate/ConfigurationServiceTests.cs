@@ -18,7 +18,9 @@ public class ConfigurationServiceTests : IDisposable
         _testConfigDir = Path.Combine(Path.GetTempPath(), "CimianTests", Guid.NewGuid().ToString());
         Directory.CreateDirectory(_testConfigDir);
         _testConfigPath = Path.Combine(_testConfigDir, "Config.yaml");
-        _service = new ConfigurationService();
+        // No policy key: a machine with Cimian policy set (HKLM\SOFTWARE\Policies\Cimian)
+        // would otherwise override the values these tests load.
+        _service = new ConfigurationService(policyRegistryPath: null);
     }
 
     public void Dispose()

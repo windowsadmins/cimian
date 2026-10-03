@@ -21,7 +21,9 @@ public class ConfigurationServiceTests
         var config = _configService.GetDefaultConfig();
         
         Assert.NotNull(config);
-        Assert.NotEmpty(config.RepoPath);
+        // RepoPath is resolved from the working directory's deployment checkout, and is
+        // empty outside one, which is where the test runner sits.
+        Assert.Equal(RepoResolver.ResolveDefaultRepoPath() ?? string.Empty, config.RepoPath);
         Assert.Equal("none", config.CloudProvider);
         Assert.Equal("Development", config.DefaultCatalog);
         Assert.Equal("x64,arm64", config.DefaultArch);
