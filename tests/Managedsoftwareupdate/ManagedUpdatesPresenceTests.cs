@@ -395,6 +395,89 @@ public class ManagedUpdatesPresenceTests : IDisposable
         Assert.Contains(outdated.Name, info.ManagedUpdates);
         Assert.Contains(outdated.Name, info.ProcessedInstalls);
     }
+    // --- An absent managed_updates item another item needs is installed as a dependency --
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_DependencyOfManagedInstall_IsInstalled()
+    {
+        var dep = AbsentItem(Unique("dep"));
+        var parent = AbsentItem(Unique("parent"));
+        parent.Requires = new List<string> { dep.Name };
+        var manifest = new List<ManifestItem> { Entry(parent.Name, "install"), Entry(dep.Name, "update") };
+        var catalog = Catalog(parent, dep);
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, catalog);
+        _engine.ResolveDependencies(manifest, catalog, toUpdate);
+
+        Assert.Single(toInstall, parent);
+        Assert.Contains(toUpdate, i => i.Name == dep.Name);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_DependencyOfManagedInstall_IsReportedAsInstall()
+    {
+        var dep = AbsentItem(Unique("dep"));
+        var parent = AbsentItem(Unique("parent"));
+        parent.Requires = new List<string> { dep.Name };
+        var manifest = new List<ManifestItem> { Entry(parent.Name, "install"), Entry(dep.Name, "update") };
+        var catalog = Catalog(parent, dep);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        _engine.ResolveDependencies(manifest, catalog, toUpdate);
+        var items = _engine.BuildSessionItems(manifest, toInstall, toUpdate, toUninstall, catalog, NoOutcomes, NoSuppressions);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        var reported = Assert.Single(items, i => i.Name == dep.Name);
+        Assert.Equal("managed_installs", reported.ItemType);
+        Assert.Single(info.ManagedInstalls, i => i.Name == dep.Name);
+        Assert.Single(info.ProcessedInstalls, n => n == dep.Name);
+        Assert.DoesNotContain(dep.Name, info.ManagedUpdates);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_DependencyOfManagedInstall_ReportsItsOutcome()
+    {
+        var dep = AbsentItem(Unique("dep"));
+        var parent = AbsentItem(Unique("parent"));
+        parent.Requires = new List<string> { dep.Name };
+        var manifest = new List<ManifestItem> { Entry(parent.Name, "install"), Entry(dep.Name, "update") };
+        var catalog = Catalog(parent, dep);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        _engine.ResolveDependencies(manifest, catalog, toUpdate);
+        var outcomes = new Dictionary<string, ItemOutcome>
+        {
+            [dep.Name.ToLowerInvariant()] = new(dep.Name, dep.Version, "install", false, "installer exited 1603", DateTime.UtcNow)
+        };
+        var items = _engine.BuildSessionItems(manifest, toInstall, toUpdate, toUninstall, catalog, outcomes, NoSuppressions);
+
+        var reported = Assert.Single(items, i => i.Name == dep.Name);
+        Assert.Equal("managed_installs", reported.ItemType);
+        Assert.Equal("Failed", reported.Status);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_NotADependency_IsStillLeftOut()
+    {
+        var absent = AbsentItem(Unique("absent"));
+        var unrelatedDep = AbsentItem(Unique("unrelated"));
+        var parent = AbsentItem(Unique("parent"));
+        parent.Requires = new List<string> { unrelatedDep.Name };
+        var manifest = new List<ManifestItem> { Entry(parent.Name, "install"), Entry(absent.Name, "update") };
+        var catalog = Catalog(parent, unrelatedDep, absent);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        _engine.ResolveDependencies(manifest, catalog, toUpdate);
+        var items = _engine.BuildSessionItems(manifest, toInstall, toUpdate, toUninstall, catalog, NoOutcomes, NoSuppressions);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        Assert.DoesNotContain(toUpdate, i => i.Name == absent.Name);
+        Assert.DoesNotContain(items, i => i.Name == absent.Name);
+        Assert.DoesNotContain(absent.Name, info.ProcessedInstalls);
+        Assert.DoesNotContain(info.ManagedInstalls, i => i.Name == absent.Name);
+        Assert.DoesNotContain(absent.Name, info.ManagedUpdates);
+    }
+
     // --- SomeVersionInstalled, rule by rule ------------------------------------------
 
     private StatusService Presence(TimeSpan? installcheckTimeout = null) =>

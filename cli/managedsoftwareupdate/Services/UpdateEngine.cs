@@ -1032,6 +1032,28 @@ public class UpdateEngine : IDisposable
     /// <summary>Why each absent managed_updates item was skipped, as recorded in the status-check event.</summary>
     internal IReadOnlyDictionary<string, (string Reason, string ReasonCode)> ManagedUpdatesSkipReasons => _absentManagedUpdates;
 
+    // Absent managed_updates items that another install or update requires (or that
+    // are update_for one) and that are being installed for it. As in Munki 7, where
+    // processInstall takes them up as dependencies after processManagedUpdate skipped
+    // them, they are reported as installs: on managed_installs and processed_installs,
+    // not on managed_updates.
+    private readonly HashSet<string> _absentManagedUpdatesInstalledAsDependency = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Absent managed_updates items being installed as a dependency of another item.</summary>
+    internal IReadOnlyCollection<string> ManagedUpdatesInstalledAsDependency => _absentManagedUpdatesInstalledAsDependency;
+
+    /// <summary>
+    /// The manifest action an item is reported under. An absent managed_updates item
+    /// being installed as a dependency is reported as an install.
+    /// </summary>
+    private string ReportedAction(ManifestItem mi)
+    {
+        var action = mi.Action?.ToLowerInvariant() ?? "install";
+        return action == "update" && _absentManagedUpdatesInstalledAsDependency.Contains(mi.Name)
+            ? "install"
+            : action;
+    }
+
     // managed_updates items that are present but whose status check failed this run,
     // with the check's reason and reason code. Munki's installedState reads a failed
     // installcheck_script as installed, so it queues nothing for such an item; these
@@ -1743,6 +1765,12 @@ public class UpdateEngine : IDisposable
                 && !itemsToProcess.Any(i => i.Name.Equals(depItem.Name, StringComparison.OrdinalIgnoreCase)))
             {
                 itemsToProcess.Add(depItem);
+            }
+
+            if (status.NeedsAction && _absentManagedUpdates.ContainsKey(depItem.Name))
+            {
+                _absentManagedUpdatesInstalledAsDependency.Add(depItem.Name);
+                LogInfo($"Dependency {depItem.Name} is listed under managed_updates and not installed; installing it for the item that needs it");
             }
         }
 
@@ -3158,7 +3186,7 @@ public class UpdateEngine : IDisposable
             if (string.IsNullOrEmpty(mi.Name) || !seen.Add(mi.Name))
                 continue;
 
-            var action = mi.Action?.ToLowerInvariant() ?? "install";
+            var action = ReportedAction(mi);
             var key = mi.Name.ToLowerInvariant();
 
             // A managed_updates item that is not installed was not processed, so, as
@@ -3429,7 +3457,7 @@ public class UpdateEngine : IDisposable
                 var key = mi.Name.ToLowerInvariant();
                 catalogMap.TryGetValue(key, out var cat);
 
-                var action = mi.Action?.ToLowerInvariant() ?? "install";
+                var action = ReportedAction(mi);
 
                 switch (action)
                 {
