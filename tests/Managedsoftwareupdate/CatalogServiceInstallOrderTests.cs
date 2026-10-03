@@ -1,12 +1,16 @@
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core.Models;
+using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
 /// <summary>
 /// Tests for <see cref="CatalogService.OrderByRequires"/> and
-/// <see cref="CatalogService.FindFailedRequirement"/>: an item must be installed
+/// <see cref="CatalogService.FindFailedRequirement"/> and
+/// <see cref="CatalogService.RequirementFailureOutcome(CatalogItem, ICollection{string}, DateTime)"/>:
+/// an item must be installed
 /// after the items it requires when both are installed in the same run.
 /// </summary>
 public class CatalogServiceInstallOrderTests
@@ -187,5 +191,75 @@ public class CatalogServiceInstallOrderTests
 
         Assert.Equal(new[] { "Base" }, attempted);
         Assert.Equal(new[] { "Base", "Mid", "Top" }, failed);
+    }
+
+    [Fact]
+    public void RequirementFailureOutcome_NoneFailed_ReturnsNull()
+    {
+        Assert.Null(CatalogService.RequirementFailureOutcome(Mid, new List<string> { "Top" }, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void RequirementFailureOutcome_RequirementFailed_IsAFailedInstallWithTheReason()
+    {
+        var app = Item("App", "runtime-1.2.3");
+        var now = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+
+        var outcome = CatalogService.RequirementFailureOutcome(app, new List<string> { "Runtime" }, now);
+
+        Assert.NotNull(outcome);
+        Assert.Equal("App", outcome!.Name);
+        Assert.Equal("1.0", outcome.Version);
+        Assert.Equal("install", outcome.Action);
+        Assert.False(outcome.Success);
+        Assert.Equal("Required dependency failed to install: runtime-1.2.3", outcome.ErrorMessage);
+        Assert.Equal(now, outcome.Timestamp);
+    }
+
+    [Fact]
+    public void RequirementFailureOutcome_ForNamedRequirement_IsAFailedInstallWithTheReason()
+    {
+        // The recursive path already knows which requirement failed.
+        var outcome = CatalogService.RequirementFailureOutcome(Top, "Mid", DateTime.UtcNow);
+
+        Assert.Equal("Top", outcome.Name);
+        Assert.Equal("install", outcome.Action);
+        Assert.False(outcome.Success);
+        Assert.Equal("Required dependency failed to install: Mid", outcome.ErrorMessage);
+    }
+
+    [Fact]
+    public void RequirementFailureOutcome_SkippedDependants_ReportAsFailedOnce()
+    {
+        // The install loop with Base failing: Base gets its outcome from the install
+        // attempt, and Mid and Top, which are not attempted, get theirs from the skip.
+        var failed = new List<string>();
+        var outcomes = new List<ItemOutcome>();
+
+        foreach (var item in CatalogService.OrderByRequires(new[] { Top, Mid, Base }, Chain))
+        {
+            var skipped = CatalogService.RequirementFailureOutcome(item, failed, DateTime.UtcNow);
+            if (skipped != null)
+            {
+                outcomes.Add(skipped);
+                failed.Add(item.Name);
+                continue;
+            }
+
+            outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", false, "exit code 1", DateTime.UtcNow));
+            failed.Add(item.Name);
+        }
+
+        Assert.Equal(new[] { "Base", "Mid", "Top" }, outcomes.Select(o => o.Name).ToArray());
+        Assert.Equal(3, outcomes.Count(o => !o.Success));
+
+        var byName = outcomes.ToDictionary(o => o.Name, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("Required dependency failed to install: Base", byName["Mid"].ErrorMessage);
+        Assert.Equal("Required dependency failed to install: Mid", byName["Top"].ErrorMessage);
+        foreach (var name in new[] { "Mid", "Top" })
+        {
+            Assert.Equal("Failed", SessionItemStatusResolver.Resolve(byName[name], true, false, false, "install"));
+            Assert.Equal("Failed", SessionItemStatusResolver.Resolve(byName[name], false, true, false, "install"));
+        }
     }
 }

@@ -690,6 +690,26 @@ public class CatalogService
         return null;
     }
 
+    /// <summary>
+    /// The outcome for an item that is not attempted because one of its requirements
+    /// failed earlier in the run, or null when none of them failed.
+    /// </summary>
+    public static Cimian.Core.Models.ItemOutcome? RequirementFailureOutcome(
+        CatalogItem item, ICollection<string> failedItems, DateTime timestamp)
+    {
+        var requirement = FindFailedRequirement(item, failedItems);
+        return requirement == null ? null : RequirementFailureOutcome(item, requirement, timestamp);
+    }
+
+    /// <summary>
+    /// The outcome for an item that is not attempted because <paramref name="requirement"/>,
+    /// one of its requires entries, failed to install.
+    /// </summary>
+    public static Cimian.Core.Models.ItemOutcome RequirementFailureOutcome(
+        CatalogItem item, string requirement, DateTime timestamp)
+        => new(item.Name, item.Version, "install", false,
+            $"Required dependency failed to install: {requirement}", timestamp);
+
     private static Dictionary<string, List<string>> BuildUpdateForIndex(
         Dictionary<string, CatalogItem> catalog)
     {

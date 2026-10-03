@@ -1789,10 +1789,12 @@ public class UpdateEngine : IDisposable
 
             // A scheduled requirement counts as satisfied in CheckDependencies(),
             // so one that already failed has to be caught here.
-            var failedRequirement = CatalogService.FindFailedRequirement(item, failedItems);
-            if (failedRequirement != null)
+            // It is recorded as failed so that items.json and the run summary match the GUI.
+            var requirementFailure = CatalogService.RequirementFailureOutcome(item, failedItems, DateTime.UtcNow);
+            if (requirementFailure != null)
             {
-                var skipReason = $"Required dependency failed to install: {failedRequirement}";
+                var skipReason = requirementFailure.ErrorMessage;
+                outcomes.Add(requirementFailure);
                 ConsoleLogger.Error($"Skipping {item.Name}: {skipReason}");
                 _sessionLogger?.Log("ERROR", $"Skipping {item.Name}: {skipReason}");
                 ReportItemStatus(item.Name, "failed", skipReason);
@@ -2018,6 +2020,7 @@ public class UpdateEngine : IDisposable
                 if (!await ProcessInstallWithDependenciesAsync(dep, installedItems, newScheduled, downloadedPaths, outcomes, cancellationToken))
                 {
                     ConsoleLogger.Error($"Failed to install required dependency: {dep}");
+                    outcomes.Add(CatalogService.RequirementFailureOutcome(item, dep, DateTime.UtcNow));
                     return false;
                 }
 
