@@ -1,6 +1,8 @@
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using InstallInfoFile = Cimian.Core.Models.InstallInfoFile;
+using InstallInfoItem = Cimian.Core.Models.InstallInfoItem;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
@@ -197,5 +199,96 @@ public class OptionalForceInstallDeadlineTests : IDisposable
         _engine.IdentifyActions(manifest, Catalog(item));
 
         Assert.True(_engine.ForceDeadlineOverridesInstallWindow(item, DateTime.Now));
+    }
+
+    /// <summary>Runs the action pass and dependency resolution the way a session does.</summary>
+    private InstallInfoFile Resolve(List<ManifestItem> manifest, Dictionary<string, CatalogItem> catalog)
+    {
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        _engine.ResolveDependencies(manifest, catalog, toUpdate);
+        return _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+    }
+
+    private static InstallInfoItem Pending(InstallInfoFile info, string name) =>
+        Assert.Single(info.ManagedInstalls, i => i.Name == name);
+
+    [Fact]
+    public void SelfServeRequest_NotInstalledRequiresDependency_DependencyDeadlineNotEnforced()
+    {
+        var dependency = AbsentWithPastDeadline(Unique("requireddep"));
+        var parent = AbsentWithPastDeadline(Unique("requiringparent"));
+        parent.Requires = new List<string> { dependency.Name };
+        var manifest = new List<ManifestItem> { SelfServeRequest(parent.Name) };
+
+        var info = Resolve(manifest, Catalog(parent, dependency));
+
+        Assert.False(_engine.ForceDeadlineOverridesInstallWindow(dependency, DateTime.Now));
+        Assert.Null(Pending(info, dependency.Name).ForceInstallAfterDate);
+    }
+
+    [Fact]
+    public void SelfServeRequest_NotInstalledUpdateForItem_DeadlineNotEnforced()
+    {
+        var parent = AbsentWithPastDeadline(Unique("updatedparent"));
+        var update = AbsentWithPastDeadline(Unique("updatefordep"));
+        update.UpdateFor = new List<string> { parent.Name };
+        var manifest = new List<ManifestItem> { SelfServeRequest(parent.Name) };
+
+        var info = Resolve(manifest, Catalog(parent, update));
+
+        Assert.False(_engine.ForceDeadlineOverridesInstallWindow(update, DateTime.Now));
+        Assert.Null(Pending(info, update.Name).ForceInstallAfterDate);
+    }
+
+    [Fact]
+    public void SelfServeRequest_DependencyAlsoManagedInstall_KeepsDeadline()
+    {
+        var dependency = AbsentWithPastDeadline(Unique("manageddep"));
+        var parent = AbsentWithPastDeadline(Unique("sharedparent"));
+        parent.Requires = new List<string> { dependency.Name };
+        var manifest = new List<ManifestItem>
+        {
+            SelfServeRequest(parent.Name),
+            Entry(dependency.Name, "install")
+        };
+
+        var info = Resolve(manifest, Catalog(parent, dependency));
+
+        Assert.True(_engine.ForceDeadlineOverridesInstallWindow(dependency, DateTime.Now));
+        Assert.Equal(dependency.ForceInstallAfterDate, Pending(info, dependency.Name).ForceInstallAfterDate);
+    }
+
+    [Fact]
+    public void SelfServeRequest_DependencyOfManagedInstall_KeepsDeadline()
+    {
+        var dependency = AbsentWithPastDeadline(Unique("shareddep"));
+        var requested = AbsentWithPastDeadline(Unique("requestedparent"));
+        var managed = AbsentWithPastDeadline(Unique("managedparent"));
+        requested.Requires = new List<string> { dependency.Name };
+        managed.Requires = new List<string> { dependency.Name };
+        var manifest = new List<ManifestItem>
+        {
+            SelfServeRequest(requested.Name),
+            Entry(managed.Name, "install")
+        };
+
+        var info = Resolve(manifest, Catalog(requested, managed, dependency));
+
+        Assert.True(_engine.ForceDeadlineOverridesInstallWindow(dependency, DateTime.Now));
+        Assert.Equal(dependency.ForceInstallAfterDate, Pending(info, dependency.Name).ForceInstallAfterDate);
+    }
+
+    [Fact]
+    public void SelfServeRequest_DependencyInstalledAndOutOfDate_KeepsDeadline()
+    {
+        var dependency = OutdatedWithPastDeadline(Unique("outdateddep"));
+        var parent = AbsentWithPastDeadline(Unique("outdatedparent"));
+        parent.Requires = new List<string> { dependency.Name };
+        var manifest = new List<ManifestItem> { SelfServeRequest(parent.Name) };
+
+        var info = Resolve(manifest, Catalog(parent, dependency));
+
+        Assert.True(_engine.ForceDeadlineOverridesInstallWindow(dependency, DateTime.Now));
+        Assert.Equal(dependency.ForceInstallAfterDate, Pending(info, dependency.Name).ForceInstallAfterDate);
     }
 }

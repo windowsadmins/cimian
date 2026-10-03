@@ -1062,10 +1062,13 @@ public class UpdateEngine : IDisposable
             Cimian.Core.Models.StatusReasonCode.NotInstalled, false);
     }
 
-    // Self Service requests for optional items with no version installed yet. As in
-    // Munki 7 (analyze.swift processInstall with isOptionalInstall), the deadline is
-    // not enforced for them: it neither overrides install_window nor goes into their
-    // InstallInfo.yaml record. Once some version is installed it applies as usual.
+    // Self Service requests for optional items with no version installed yet, and the
+    // requires/update_for items pulled in only by such requests that have no version
+    // installed either. As in Munki 7 (analyze.swift processInstall with
+    // isOptionalInstall, which it passes on to requires and update_for items), the
+    // deadline is not enforced for them: it neither overrides install_window nor goes
+    // into their InstallInfo.yaml record. Once some version is installed it applies as
+    // usual.
     private readonly HashSet<string> _deadlineWaivedOptionalInstalls = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -1674,6 +1677,19 @@ public class UpdateEngine : IDisposable
 
         var deps = CatalogService.BuildDependencyClosure(seedNames, catalogMap);
 
+        // Munki 7 processes managed_installs and managed_updates before Self Service
+        // requests, so a dependency reachable from any managed seed is processed as a
+        // managed item and keeps its deadline. Only one reached through Self Service
+        // requests alone is processed as an optional install.
+        var promotedSeeds = manifestItems
+            .Where(m => m.PromotedFromOptional)
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var managedSeeds = seedNames.Where(n => !promotedSeeds.Contains(n)).ToList();
+        var managedReach = new HashSet<string>(
+            managedSeeds.Concat(CatalogService.BuildDependencyClosure(managedSeeds, catalogMap)),
+            StringComparer.OrdinalIgnoreCase);
+
         foreach (var depName in deps)
         {
             var depKey = depName.ToLowerInvariant();
@@ -1696,6 +1712,15 @@ public class UpdateEngine : IDisposable
             var status = _statusService.CheckStatus(depItem, "install", _config.CachePath);
 
             LogInfo($"Dependency {depItem.Name} v{depItem.Version}: needsAction={status.NeedsAction} ({status.Reason})");
+
+            if (status.NeedsAction
+                && depItem.ForceInstallAfterDate != null
+                && !managedReach.Contains(depItem.Name)
+                && !_statusService.SomeVersionInstalled(depItem, status).Installed)
+            {
+                _deadlineWaivedOptionalInstalls.Add(depItem.Name);
+                LogDetail($"    force_install_after_date not enforced for {depItem.Name}: required by an optional install requested in Self Service, no version installed yet");
+            }
 
             // Dependencies reach items.json too, so their detection result matters here.
             RememberInstalledVersion(depItem.Name, status);
@@ -3446,6 +3471,9 @@ public class UpdateEngine : IDisposable
                             // Checked here rather than read from IdentifyActions: an --item run
                             // still writes a record for a queued request outside the filter.
                             if (cat != null && installCheck != null && IsDeadlineWaived(mi, cat, installCheck))
+                                item.ForceInstallAfterDate = null;
+                            // A dependency's waiver is decided in ResolveDependencies.
+                            else if (mi.SourceManifest == "dependency" && _deadlineWaivedOptionalInstalls.Contains(mi.Name))
                                 item.ForceInstallAfterDate = null;
                             info.ManagedInstalls.Add(item);
                         }
