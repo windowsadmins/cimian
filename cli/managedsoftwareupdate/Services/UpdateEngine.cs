@@ -3500,8 +3500,9 @@ public class UpdateEngine : IDisposable
                             // still writes a record for a queued request outside the filter.
                             if (cat != null && installCheck != null && IsDeadlineWaived(mi, cat, installCheck))
                                 item.ForceInstallAfterDate = null;
-                            // A dependency's waiver is decided in ResolveDependencies.
-                            else if (mi.SourceManifest == "dependency" && _deadlineWaivedOptionalInstalls.Contains(mi.Name))
+                            // A dependency's waiver is decided in ResolveDependencies. Its entry
+                            // may be the resolver's own or an absent managed_updates one.
+                            else if (!mi.PromotedFromOptional && _deadlineWaivedOptionalInstalls.Contains(mi.Name))
                                 item.ForceInstallAfterDate = null;
                             info.ManagedInstalls.Add(item);
                         }

@@ -291,4 +291,23 @@ public class OptionalForceInstallDeadlineTests : IDisposable
         Assert.True(_engine.ForceDeadlineOverridesInstallWindow(dependency, DateTime.Now));
         Assert.Equal(dependency.ForceInstallAfterDate, Pending(info, dependency.Name).ForceInstallAfterDate);
     }
+
+    [Fact]
+    public void SelfServeRequest_DependencyIsAbsentManagedUpdate_DeadlineNotEnforced()
+    {
+        var dependency = AbsentWithPastDeadline(Unique("absentupdatedep"));
+        var parent = AbsentWithPastDeadline(Unique("absentupdateparent"));
+        parent.Requires = new List<string> { dependency.Name };
+        var manifest = new List<ManifestItem>
+        {
+            SelfServeRequest(parent.Name),
+            Entry(dependency.Name, "update")
+        };
+
+        var info = Resolve(manifest, Catalog(parent, dependency));
+
+        Assert.False(_engine.ForceDeadlineOverridesInstallWindow(dependency, DateTime.Now));
+        Assert.Null(Pending(info, dependency.Name).ForceInstallAfterDate);
+        Assert.DoesNotContain(dependency.Name, info.ManagedUpdates);
+    }
 }
