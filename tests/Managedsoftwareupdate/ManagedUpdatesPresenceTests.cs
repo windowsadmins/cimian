@@ -1,6 +1,8 @@
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core.Models;
+using CatalogItem = Cimian.CLI.managedsoftwareupdate.Models.CatalogItem;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
@@ -8,7 +10,8 @@ namespace Cimian.Tests.Managedsoftwareupdate;
 /// managed_updates means "patch if present": an item listed only there is updated
 /// where it is installed and left alone where it is not. These tests drive the real
 /// status checks against files in a temp directory, with item names no machine has
-/// a ManagedInstalls registry entry for.
+/// a ManagedInstalls registry entry for. The ManagedInstalls entry lookup is
+/// injected, so a test can leave one behind without writing HKLM.
 /// </summary>
 public class ManagedUpdatesPresenceTests : IDisposable
 {
@@ -19,6 +22,9 @@ public class ManagedUpdatesPresenceTests : IDisposable
     private readonly UpdateEngine _engine;
     private readonly string _suffix = Guid.NewGuid().ToString("N");
 
+    // Item names the injected lookup reports a ManagedInstalls entry for.
+    private readonly HashSet<string> _managedInstallsEntries = new(StringComparer.OrdinalIgnoreCase);
+
     public ManagedUpdatesPresenceTests()
     {
         _testDir = Path.Combine(Path.GetTempPath(), "CimianTests", "ManagedUpdates", _suffix);
@@ -26,7 +32,8 @@ public class ManagedUpdatesPresenceTests : IDisposable
 
         _config = new CimianConfig { CachePath = Path.Combine(_testDir, "Cache") };
         Directory.CreateDirectory(_config.CachePath);
-        _engine = new UpdateEngine(_config);
+        _engine = new UpdateEngine(_config, new StatusService(
+            managedInstallsEntryLookup: name => _managedInstallsEntries.Contains(name)));
     }
 
     public void Dispose()
@@ -181,5 +188,349 @@ public class ManagedUpdatesPresenceTests : IDisposable
         Assert.Contains(toUpdate, i => i.Name == item.Name);
         Assert.Contains(toUpdate, i => i.Name == dep.Name);
         Assert.Contains(manifest, m => m.Name == dep.Name);
+    }
+    private static readonly IReadOnlyDictionary<string, ItemOutcome> NoOutcomes =
+        new Dictionary<string, ItemOutcome>();
+
+    private static readonly IReadOnlyDictionary<string, (string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> NoSuppressions =
+        new Dictionary<string, (string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)>();
+
+    /// <summary>An item whose installs array names one present file and one missing file.</summary>
+    private CatalogItem HalfInstalledItem(string name)
+    {
+        var present = Path.Combine(_testDir, name + ".present");
+        File.WriteAllText(present, "build");
+        return new CatalogItem
+        {
+            Name = name,
+            Version = "2.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = present, Md5Checksum = WrongHash },
+                new() { Type = "file", Path = Path.Combine(_testDir, name + ".missing") }
+            }
+        };
+    }
+
+    // --- Presence follows Munki's some_version_installed ---------------------------
+
+    [Fact]
+    public void ManagedUpdateOnly_OnDemand_IsLeftAlone()
+    {
+        var item = OutdatedItem(Unique("ondemand"));
+        item.OnDemand = true;
+        _managedInstallsEntries.Add(item.Name);
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Contains(item.Name, _engine.ManagedUpdatesSkippedAbsent);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_InstallcheckScriptSaysInstallNeeded_WithLeftoverManagedInstallsEntry_IsLeftAlone()
+    {
+        // The app was installed by Cimian once and has since been removed: the
+        // ManagedInstalls entry is still there, the installcheck_script says install.
+        var item = new CatalogItem
+        {
+            Name = Unique("removed"),
+            Version = "2.0.0",
+            InstallcheckScript = "exit 0"
+        };
+        _managedInstallsEntries.Add(item.Name);
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Contains(item.Name, _engine.ManagedUpdatesSkippedAbsent);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_InstallsArrayWithOneOfTwoFilesMissing_WithLeftoverManagedInstallsEntry_IsLeftAlone()
+    {
+        var item = HalfInstalledItem(Unique("half"));
+        _managedInstallsEntries.Add(item.Name);
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Contains(item.Name, _engine.ManagedUpdatesSkippedAbsent);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_InstallerBlockProductCodeNotRegistered_WithLeftoverManagedInstallsEntry_IsLeftAlone()
+    {
+        var item = new CatalogItem
+        {
+            Name = Unique("msireceipt"),
+            Version = "2.0.0",
+            Installer = new InstallerInfo { Type = "msi", ProductCode = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}" }
+        };
+        _managedInstallsEntries.Add(item.Name);
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Contains(item.Name, _engine.ManagedUpdatesSkippedAbsent);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_CheckFilePresentAndOutOfDate_StillUpdates()
+    {
+        var path = Path.Combine(_testDir, "checkfile.txt");
+        File.WriteAllText(path, "no version resource");
+        var item = new CatalogItem
+        {
+            Name = Unique("checkfile"),
+            Version = "2.0.0",
+            Check = new CheckInfo { File = new FileCheck { Path = path, Hash = WrongHash } }
+        };
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Single(toUpdate, item);
+        Assert.Empty(_engine.ManagedUpdatesSkippedAbsent);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_RealInstallerWithNothingToDetect_IsLeftAlone()
+    {
+        // No installs, no receipts, no check.*, no ManagedInstalls entry. Munki's
+        // rule 6 calls this installed, and Munki then installs nothing because its
+        // installed_state agrees. Cimian's status check calls it not installed, so
+        // presence has to say absent for the same net result.
+        var item = new CatalogItem
+        {
+            Name = Unique("nodetect"),
+            Version = "2.0.0",
+            Installer = new InstallerInfo { Type = "exe", Location = "apps/nodetect.exe" }
+        };
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Contains(item.Name, _engine.ManagedUpdatesSkippedAbsent);
+    }
+
+    // --- A broken status check is reported as broken --------------------------------
+
+    [Fact]
+    public void ManagedUpdateOnly_StatusCheckFailed_IsSkippedWithTheCheckReasonCode()
+    {
+        // An installs entry with neither a type nor an identity field cannot be evaluated.
+        var item = new CatalogItem
+        {
+            Name = Unique("broken"),
+            Version = "2.0.0",
+            Installs = new List<InstallCheckItem> { new() }
+        };
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        var (toInstall, toUpdate, _, _) = _engine.IdentifyActions(manifest, Catalog(item));
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        var skip = Assert.Contains(item.Name, _engine.ManagedUpdatesSkipReasons);
+        Assert.Equal(StatusReasonCode.CheckFailed, skip.ReasonCode);
+        Assert.Contains("status check failed", skip.Reason);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_IsSkippedAsNotInstalled()
+    {
+        var item = AbsentItem(Unique("absent"));
+        var manifest = new List<ManifestItem> { Entry(item.Name, "update") };
+
+        _engine.IdentifyActions(manifest, Catalog(item));
+
+        var skip = Assert.Contains(item.Name, _engine.ManagedUpdatesSkipReasons);
+        Assert.Equal(StatusReasonCode.NotInstalled, skip.ReasonCode);
+    }
+
+    // --- Reporting: an absent item appears nowhere, as in Munki ----------------------
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_IsLeftOutOfItemsJson()
+    {
+        var absent = AbsentItem(Unique("absent"));
+        var outdated = OutdatedItem(Unique("outdated"));
+        var manifest = new List<ManifestItem> { Entry(absent.Name, "update"), Entry(outdated.Name, "update") };
+        var catalog = Catalog(absent, outdated);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var items = _engine.BuildSessionItems(manifest, toInstall, toUpdate, toUninstall, catalog, NoOutcomes, NoSuppressions);
+
+        Assert.DoesNotContain(items, i => i.Name == absent.Name);
+        var reported = Assert.Single(items, i => i.Name == outdated.Name);
+        Assert.Equal("managed_updates", reported.ItemType);
+    }
+
+    [Fact]
+    public void ManagedUpdateOnly_NotInstalled_IsLeftOutOfInstallInfo()
+    {
+        var absent = AbsentItem(Unique("absent"));
+        var outdated = OutdatedItem(Unique("outdated"));
+        var manifest = new List<ManifestItem> { Entry(absent.Name, "update"), Entry(outdated.Name, "update") };
+        var catalog = Catalog(absent, outdated);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        Assert.DoesNotContain(absent.Name, info.ManagedUpdates);
+        Assert.DoesNotContain(absent.Name, info.ProcessedInstalls);
+        Assert.DoesNotContain(info.ManagedInstalls, i => i.Name == absent.Name);
+        Assert.Contains(outdated.Name, info.ManagedUpdates);
+        Assert.Contains(outdated.Name, info.ProcessedInstalls);
+    }
+    // --- SomeVersionInstalled, rule by rule ------------------------------------------
+
+    private StatusService Presence(TimeSpan? installcheckTimeout = null) =>
+        new(installcheckTimeout, name => _managedInstallsEntries.Contains(name));
+
+    [Fact]
+    public void SomeVersionInstalled_OnDemand_IsNotInstalled()
+    {
+        var item = OutdatedItem(Unique("ondemand"));
+        item.OnDemand = true;
+
+        Assert.False(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_InstallcheckScriptExitsZero_IsNotInstalled_EvenWithManagedInstallsEntry()
+    {
+        var item = new CatalogItem { Name = Unique("script0"), Version = "2.0.0", InstallcheckScript = "exit 0" };
+        _managedInstallsEntries.Add(item.Name);
+
+        Assert.False(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_InstallcheckScriptExitsNonZero_IsInstalled()
+    {
+        var item = new CatalogItem { Name = Unique("script1"), Version = "2.0.0", InstallcheckScript = "exit 1" };
+
+        Assert.True(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_InstallcheckScriptErrors_IsInstalled()
+    {
+        var item = new CatalogItem { Name = Unique("scripterr"), Version = "2.0.0", InstallcheckScript = "Start-Sleep -Seconds 30" };
+
+        var presence = Presence(TimeSpan.FromMilliseconds(500)).SomeVersionInstalled(item);
+
+        Assert.True(presence.Installed);
+        Assert.Null(presence.FailureReasonCode);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_InstallcheckScript_ReusesTheResultItIsGiven()
+    {
+        // The script would say "install needed"; the result handed in says otherwise.
+        var item = new CatalogItem { Name = Unique("reuse"), Version = "2.0.0", InstallcheckScript = "exit 0" };
+        var prior = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Script,
+            ReasonCode = StatusReasonCode.ScriptConfirmed,
+            Reason = "already run"
+        };
+
+        Assert.True(Presence().SomeVersionInstalled(item, prior).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_EveryInstallsEntryPresent_IsInstalled()
+    {
+        var item = OutdatedItem(Unique("present"));
+
+        Assert.True(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_OneOfTwoInstallsEntriesMissing_IsNotInstalled_EvenWithManagedInstallsEntry()
+    {
+        var item = HalfInstalledItem(Unique("half"));
+        _managedInstallsEntries.Add(item.Name);
+
+        var presence = Presence().SomeVersionInstalled(item);
+
+        Assert.False(presence.Installed);
+        Assert.Null(presence.FailureReasonCode);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_InstallsEntryCannotBeEvaluated_IsNotInstalled_WithAFailureCode()
+    {
+        var item = new CatalogItem { Name = Unique("broken"), Version = "2.0.0", Installs = new List<InstallCheckItem> { new() } };
+
+        var presence = Presence().SomeVersionInstalled(item);
+
+        Assert.False(presence.Installed);
+        Assert.Equal(StatusReasonCode.CheckFailed, presence.FailureReasonCode);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_ReceiptLikeCheckFile_FollowsTheFile()
+    {
+        var path = Path.Combine(_testDir, "receipt.txt");
+        var item = new CatalogItem
+        {
+            Name = Unique("receipt"),
+            Version = "2.0.0",
+            Check = new CheckInfo { File = new FileCheck { Path = path } }
+        };
+
+        Assert.False(Presence().SomeVersionInstalled(item).Installed);
+        File.WriteAllText(path, "here");
+        Assert.True(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Fact]
+    public void SomeVersionInstalled_ReceiptLikeInstallerProductCodeNotRegistered_IsNotInstalled()
+    {
+        var item = new CatalogItem
+        {
+            Name = Unique("msireceipt"),
+            Version = "2.0.0",
+            Installer = new InstallerInfo { Type = "msi", ProductCode = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}" }
+        };
+        _managedInstallsEntries.Add(item.Name);
+
+        Assert.False(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("nopkg")]
+    [InlineData("script")]
+    public void SomeVersionInstalled_NoChecks_ScriptOnlyItem_IsInstalled(string installerType)
+    {
+        var item = new CatalogItem { Name = Unique("nochecks"), Version = "2.0.0", Installer = new InstallerInfo { Type = installerType } };
+
+        Assert.True(Presence().SomeVersionInstalled(item).Installed);
+    }
+
+    [Theory]
+    [InlineData("exe")]
+    [InlineData("msi")]
+    public void SomeVersionInstalled_NoChecks_RealInstaller_IsNotInstalled(string installerType)
+    {
+        var item = new CatalogItem { Name = Unique("nodetect"), Version = "2.0.0", Installer = new InstallerInfo { Type = installerType } };
+
+        Assert.False(Presence().SomeVersionInstalled(item).Installed);
     }
 }

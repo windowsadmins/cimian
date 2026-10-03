@@ -69,6 +69,12 @@ public class UpdateEngine : IDisposable
         EnableAnsiColors();
     }
 
+    /// <summary>For tests: an engine whose status checks run through <paramref name="statusService"/>.</summary>
+    internal UpdateEngine(CimianConfig config, StatusService statusService) : this(config)
+    {
+        _statusService = statusService;
+    }
+
     /// <summary>
     /// Computes the LoopGuard catalog fingerprint for an item. If it changes, LoopGuard
     /// clears the package's loop suppression — the admin may have fixed the root cause.
@@ -1015,20 +1021,36 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    // managed_updates items the status check found absent this run. managed_updates
-    // means "patch if present", so these are neither installed nor used as seeds of
-    // the dependency walk.
-    private readonly HashSet<string> _absentManagedUpdates = new(StringComparer.OrdinalIgnoreCase);
+    // managed_updates items found absent this run, with the reason and reason code
+    // recorded for each. managed_updates means "patch if present", so these are not
+    // installed, not used as seeds of the dependency walk, and, as in Munki, left out
+    // of items.json and InstallInfo.yaml.
+    private readonly Dictionary<string, (string Reason, string ReasonCode)> _absentManagedUpdates = new(StringComparer.OrdinalIgnoreCase);
 
-    internal IReadOnlyCollection<string> ManagedUpdatesSkippedAbsent => _absentManagedUpdates;
+    internal IReadOnlyCollection<string> ManagedUpdatesSkippedAbsent => _absentManagedUpdates.Keys;
+
+    /// <summary>Why each absent managed_updates item was skipped, as recorded in the status-check event.</summary>
+    internal IReadOnlyDictionary<string, (string Reason, string ReasonCode)> ManagedUpdatesSkipReasons => _absentManagedUpdates;
 
     /// <summary>
-    /// Whether a status check found the item on the machine. An item that needs action
-    /// is present when the check saw an installed version, or classified the action as
-    /// an update (something is there, or Cimian has a record of installing it).
+    /// The reason and reason code recorded for a managed_updates item skipped as absent.
+    /// When the check itself could not be evaluated, its own reason code is kept, so a
+    /// broken check reads as broken rather than as a clean "not installed".
     /// </summary>
-    internal static bool IsPresentForUpdate(Cimian.CLI.managedsoftwareupdate.Models.StatusCheckResult status) =>
-        status.IsUpdate || !string.IsNullOrEmpty(status.InstalledVersion);
+    internal static (string Reason, string ReasonCode, bool CheckFailed) DescribeAbsentManagedUpdate(
+        Cimian.CLI.managedsoftwareupdate.Models.StatusCheckResult status, PresenceResult presence)
+    {
+        if (presence.FailureReasonCode != null)
+            return ($"listed under managed_updates only; status check failed, so it is treated as not installed ({presence.Reason})",
+                presence.FailureReasonCode, true);
+
+        if (status.Status == "error")
+            return ($"listed under managed_updates only; status check failed, so it is treated as not installed ({status.Reason})",
+                string.IsNullOrEmpty(status.ReasonCode) ? Cimian.Core.Models.StatusReasonCode.CheckFailed : status.ReasonCode, true);
+
+        return ($"listed under managed_updates only and not installed ({presence.Reason})",
+            Cimian.Core.Models.StatusReasonCode.NotInstalled, false);
+    }
 
     internal (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
@@ -1129,23 +1151,32 @@ public class UpdateEngine : IDisposable
                     // managed_updates only patches what is already there. An item listed
                     // only under it (an entry also under managed_installs deduplicates to
                     // "install") is left alone on a machine that does not have it.
+                    // Presence is Munki's some_version_installed, not the status check.
                     if (status.NeedsAction
-                        && item.Action.Equals("update", StringComparison.OrdinalIgnoreCase)
-                        && !IsPresentForUpdate(status))
+                        && item.Action.Equals("update", StringComparison.OrdinalIgnoreCase))
                     {
-                        var absentReason = $"listed under managed_updates only and not installed ({status.Reason})";
-                        ConsoleLogger.Info($"Skipping {item.Name}: {absentReason}");
-                        _sessionLogger?.LogStatusCheck(
-                            catalogItem.Name,
-                            catalogItem.Version,
-                            "skipped",
-                            absentReason,
-                            Cimian.Core.Models.StatusReasonCode.NotInstalled,
-                            status.DetectionMethod,
-                            null,
-                            false);
-                        _absentManagedUpdates.Add(catalogItem.Name);
-                        break;
+                        var presence = _statusService.SomeVersionInstalled(catalogItem, status);
+                        if (!presence.Installed)
+                        {
+                            var (absentReason, absentReasonCode, checkFailed) = DescribeAbsentManagedUpdate(status, presence);
+                            // A clean absence is routine (Munki logs it at debug level);
+                            // a check that could not run is not.
+                            if (checkFailed)
+                                ConsoleLogger.Warn($"Skipping {item.Name}: {absentReason}");
+                            else
+                                ConsoleLogger.Detail($"Skipping {item.Name}: {absentReason}");
+                            _sessionLogger?.LogStatusCheck(
+                                catalogItem.Name,
+                                catalogItem.Version,
+                                "skipped",
+                                absentReason,
+                                absentReasonCode,
+                                status.DetectionMethod,
+                                null,
+                                false);
+                            _absentManagedUpdates[catalogItem.Name] = (absentReason, absentReasonCode);
+                            break;
+                        }
                     }
 
                     // Log status check event with full reason tracking
@@ -1626,7 +1657,7 @@ public class UpdateEngine : IDisposable
             .Where(m => m.Action?.ToLowerInvariant() == "install" || m.Action?.ToLowerInvariant() == "update")
             // A managed_updates item that is not installed was skipped, so nothing
             // is installed on its behalf either.
-            .Where(m => !_absentManagedUpdates.Contains(m.Name))
+            .Where(m => !_absentManagedUpdates.ContainsKey(m.Name))
             .Where(m => itemFilterService?.HasFilter != true || itemFilterService.Items.Contains(m.Name))
             .Select(m => m.Name)
             .ToList();
@@ -3057,6 +3088,28 @@ public class UpdateEngine : IDisposable
     {
         if (_sessionLogger == null) return;
 
+        _sessionLogger.SetCurrentSessionItems(
+            BuildSessionItems(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomesByName, loopSuppressedByName));
+
+        // Surface LoopGuard suppressions for reports/loop_suppressed.json. Pulled from
+        // LoopGuard rather than this run's list so packages suppressed in earlier runs
+        // (still active backoff) also appear.
+        if (_loopGuard != null)
+        {
+            _sessionLogger.SetCurrentLoopSuppressed(_loopGuard.GetSuppressedReport());
+        }
+    }
+
+    /// <summary>The items.json item list for this run, one record per manifest item.</summary>
+    internal List<SessionPackageInfo> BuildSessionItems(
+        List<ManifestItem> manifestItems,
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        List<CatalogItem> toUninstall,
+        Dictionary<string, CatalogItem> catalogMap,
+        IReadOnlyDictionary<string, ItemOutcome> outcomesByName,
+        IReadOnlyDictionary<string, (string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> loopSuppressedByName)
+    {
         var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
         var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
         var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
@@ -3071,6 +3124,12 @@ public class UpdateEngine : IDisposable
 
             var action = mi.Action?.ToLowerInvariant() ?? "install";
             var key = mi.Name.ToLowerInvariant();
+
+            // A managed_updates item that is not installed was not processed, so, as
+            // in Munki, it is not reported. Without this it would reach the resolver
+            // with no outcome and no pending flag and be reported as "Installed".
+            if (action == "update" && _absentManagedUpdates.ContainsKey(mi.Name))
+                continue;
 
             // Determine item type (Go parity: determineItemType mapping)
             var itemType = action switch
@@ -3211,15 +3270,7 @@ public class UpdateEngine : IDisposable
             });
         }
 
-        _sessionLogger.SetCurrentSessionItems(items);
-
-        // Surface LoopGuard suppressions for reports/loop_suppressed.json. Pulled from
-        // LoopGuard rather than this run's list so packages suppressed in earlier runs
-        // (still active backoff) also appear.
-        if (_loopGuard != null)
-        {
-            _sessionLogger.SetCurrentLoopSuppressed(_loopGuard.GetSuppressedReport());
-        }
+        return items;
     }
 
     /// <summary>
@@ -3276,6 +3327,32 @@ public class UpdateEngine : IDisposable
     {
         try
         {
+            var info = BuildInstallInfo(manifestItems, toInstall, toUpdate, toUninstall, catalogMap, outcomes);
+
+            // Serialize and write
+            var yaml = YamlUtils.SerializeInstallInfo(info);
+            var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
+            File.WriteAllText(path, yaml);
+
+            LogInfo($"Wrote {path}");
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to write InstallInfo.yaml: {ex.Message}");
+            _sessionLogger?.Log("WARN", $"Failed to write InstallInfo.yaml: {ex.Message}");
+        }
+    }
+
+    /// <summary>The InstallInfo.yaml content for this run.</summary>
+    internal InstallInfoFile BuildInstallInfo(
+        List<ManifestItem> manifestItems,
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        List<CatalogItem> toUninstall,
+        Dictionary<string, CatalogItem> catalogMap,
+        IReadOnlyCollection<ItemOutcome>? outcomes = null)
+    {
+        {
             var toInstallNames = toInstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
             var toUpdateNames = toUpdate.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
             var toUninstallNames = toUninstall.Select(i => i.Name.ToLowerInvariant()).ToHashSet();
@@ -3301,6 +3378,11 @@ public class UpdateEngine : IDisposable
                 {
                     case "install":
                     case "update":
+                        // A managed_updates item that is not installed was not processed:
+                        // as in Munki, it is on neither managed_updates nor processed_installs.
+                        if (action == "update" && _absentManagedUpdates.ContainsKey(mi.Name))
+                            break;
+
                         // Always bookkeep the name as processed.
                         info.ProcessedInstalls.Add(mi.Name);
 
@@ -3429,17 +3511,7 @@ public class UpdateEngine : IDisposable
                 }
             }
 
-            // Serialize and write
-            var yaml = YamlUtils.SerializeInstallInfo(info);
-            var path = Path.Combine(Path.GetDirectoryName(_config.CachePath) ?? CimianPaths.ManagedInstallsRoot, "InstallInfo.yaml");
-            File.WriteAllText(path, yaml);
-
-            LogInfo($"Wrote {path}");
-        }
-        catch (Exception ex)
-        {
-            ConsoleLogger.Warn($"Failed to write InstallInfo.yaml: {ex.Message}");
-            _sessionLogger?.Log("WARN", $"Failed to write InstallInfo.yaml: {ex.Message}");
+            return info;
         }
     }
 
