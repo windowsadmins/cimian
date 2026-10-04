@@ -38,6 +38,9 @@ public class ManifestService
     public IReadOnlyList<string> FeaturedItems => _featuredItems;
     private SystemFacts? _systemFacts;
 
+    /// <summary>SelfServeManifest.yaml to merge; tests point it at a temp file.</summary>
+    internal string SelfServeManifestPath { get; init; } = CimianPaths.SelfServeManifestYaml;
+
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
         _config = config;
@@ -674,7 +677,7 @@ public class ManifestService
     /// entries persist in SelfServeManifest.yaml until the user cancels the request; once the
     /// software is installed, normal status checks suppress further action.
     /// </summary>
-    private async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
+    internal async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
     {
         if (_config.SkipSelfService)
         {
@@ -685,7 +688,7 @@ public class ManifestService
         SelfServiceManifest selfServe;
         try
         {
-            var svc = new SelfServiceManifestService();
+            var svc = new SelfServiceManifestService(SelfServeManifestPath);
             selfServe = await svc.LoadAsync();
         }
         catch (Exception ex)

@@ -54,6 +54,9 @@ public class UpdateEngine : IDisposable
     private List<ManifestItem> _allManifestItems = new();
     private Dictionary<string, CatalogItem> _catalogMap = new();
 
+    /// <summary>SelfServeManifest.yaml whose removal requests are consumed; tests point it at a temp file.</summary>
+    internal string SelfServeManifestPath { get; init; } = CimianPaths.SelfServeManifestYaml;
+
     public UpdateEngine(CimianConfig config)
     {
         _config = config;
@@ -3414,7 +3417,7 @@ public class UpdateEngine : IDisposable
     /// races the deletion. A failed removal (app still present) is retained and
     /// retried next run. Mirrors the reference clean_up_managed_uninstalls.
     /// </summary>
-    private async Task CleanUpSelfServeUninstallsAsync(List<ItemOutcome> uninstallOutcomes)
+    internal async Task CleanUpSelfServeUninstallsAsync(List<ItemOutcome> uninstallOutcomes)
     {
         if (_config.SkipSelfService) return;
 
@@ -3426,7 +3429,7 @@ public class UpdateEngine : IDisposable
 
         try
         {
-            var svc = new SelfServiceManifestService();
+            var svc = new SelfServiceManifestService(SelfServeManifestPath);
             var manifest = await svc.LoadAsync();
             var before = manifest.ManagedUninstalls.Count;
             manifest.ManagedUninstalls = manifest.ManagedUninstalls
