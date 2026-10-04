@@ -53,9 +53,6 @@ public class CimianConfig
     [YamlMember(Alias = "LocalOnlyManifest")]
     public string? LocalOnlyManifest { get; set; }
 
-    [YamlMember(Alias = "SkipSelfService")]
-    public bool SkipSelfService { get; set; }
-
     [YamlMember(Alias = "AuthToken")]
     public string? AuthToken { get; set; }
 

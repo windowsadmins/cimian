@@ -673,18 +673,12 @@ public class ManifestService
     /// new install item if no server manifest references it. `managed_uninstalls` entries
     /// flip the action to uninstall (or add a new uninstall item).
     ///
-    /// Honors Config.SkipSelfService so admins can disable self-service end-to-end. The user
+    /// Runs on every check, as Munki's processSelfServeManifest does. The user
     /// entries persist in SelfServeManifest.yaml until the user cancels the request; once the
     /// software is installed, normal status checks suppress further action.
     /// </summary>
     internal async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
     {
-        if (_config.SkipSelfService)
-        {
-            ConsoleLogger.Debug("SelfServe merge skipped (SkipSelfService=true)");
-            return;
-        }
-
         SelfServiceManifest selfServe;
         try
         {

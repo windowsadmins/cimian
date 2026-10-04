@@ -7,8 +7,8 @@ namespace Cimian.Tests.Managedsoftwareupdate;
 
 /// <summary>
 /// The Self Service manifest is processed on every run, as in Munki 7's
-/// processSelfServeManifest. A Config.yaml left over from when SkipSelfService
-/// existed must still load, and must not turn Self Service off.
+/// processSelfServeManifest. A Config.yaml that still sets the removed skip key
+/// must still load, and must not turn Self Service off.
 /// </summary>
 public class SelfServeAlwaysProcessedTests : IDisposable
 {
@@ -46,7 +46,7 @@ public class SelfServeAlwaysProcessedTests : IDisposable
     }
 
     [Fact]
-    public void LoadConfig_WithLegacySkipSelfServiceKey_LoadsOtherSettings()
+    public void LoadConfig_WithRemovedSkipKey_LoadsOtherSettings()
     {
         var config = LoadLegacyConfig();
 
@@ -55,7 +55,7 @@ public class SelfServeAlwaysProcessedTests : IDisposable
     }
 
     [Fact]
-    public async Task MergeSelfServeManifest_WithLegacySkipSelfServiceKey_StillMergesRequests()
+    public async Task MergeSelfServeManifest_WithRemovedSkipKey_StillMergesRequests()
     {
         File.WriteAllText(_selfServePath, """
             managed_installs:
@@ -77,7 +77,7 @@ public class SelfServeAlwaysProcessedTests : IDisposable
     }
 
     [Fact]
-    public async Task CleanUpSelfServeUninstalls_WithLegacySkipSelfServiceKey_StillConsumesCompletedRemovals()
+    public async Task CleanUpSelfServeUninstalls_WithRemovedSkipKey_StillConsumesCompletedRemovals()
     {
         File.WriteAllText(_selfServePath, """
             managed_uninstalls:

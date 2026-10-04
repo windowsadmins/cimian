@@ -3419,8 +3419,6 @@ public class UpdateEngine : IDisposable
     /// </summary>
     internal async Task CleanUpSelfServeUninstallsAsync(List<ItemOutcome> uninstallOutcomes)
     {
-        if (_config.SkipSelfService) return;
-
         var removed = uninstallOutcomes
             .Where(o => o.Success)
             .Select(o => o.Name)
