@@ -54,8 +54,8 @@ public class UpdateEngine : IDisposable
     private List<ManifestItem> _allManifestItems = new();
     private Dictionary<string, CatalogItem> _catalogMap = new();
 
-    /// <summary>SelfServeManifest.yaml whose removal requests are consumed; tests point it at a temp file.</summary>
-    internal string SelfServeManifestPath { get; init; } = CimianPaths.SelfServeManifestYaml;
+    /// <summary>Opens the SelfServeManifest.yaml whose removals are consumed; tests open a temp file instead.</summary>
+    internal Func<SelfServiceManifestService> CreateSelfServeManifestService { get; init; } = () => new SelfServiceManifestService();
 
     public UpdateEngine(CimianConfig config)
     {
@@ -3427,7 +3427,7 @@ public class UpdateEngine : IDisposable
 
         try
         {
-            var svc = new SelfServiceManifestService(SelfServeManifestPath);
+            var svc = CreateSelfServeManifestService();
             var manifest = await svc.LoadAsync();
             var before = manifest.ManagedUninstalls.Count;
             manifest.ManagedUninstalls = manifest.ManagedUninstalls

@@ -108,7 +108,7 @@ public class SelfServiceManifestService : ISelfServiceManifestService
     /// Reads and writes <paramref name="manifestPath"/> instead of the system file, so tests
     /// do not touch the machine's SelfServeManifest.yaml.
     /// </summary>
-    public SelfServiceManifestService(string manifestPath, ILogger<SelfServiceManifestService>? logger = null)
+    internal SelfServiceManifestService(string manifestPath, ILogger<SelfServiceManifestService>? logger = null)
     {
         SelfServiceManifestPath = manifestPath;
         _logger = logger;

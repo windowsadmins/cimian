@@ -63,7 +63,7 @@ public class SelfServeAlwaysProcessedTests : IDisposable
             managed_uninstalls:
               - VLC
             """);
-        var service = new ManifestService(LoadLegacyConfig()) { SelfServeManifestPath = _selfServePath };
+        var service = new ManifestService(LoadLegacyConfig()) { CreateSelfServeManifestService = () => new Cimian.Core.Services.SelfServiceManifestService(_selfServePath) };
         var items = new List<ManifestItem>
         {
             new() { Name = "Firefox", Action = "optional", SourceManifest = "Staff" },
@@ -84,7 +84,7 @@ public class SelfServeAlwaysProcessedTests : IDisposable
               - VLC
               - Zoom
             """);
-        var engine = new UpdateEngine(LoadLegacyConfig()) { SelfServeManifestPath = _selfServePath };
+        var engine = new UpdateEngine(LoadLegacyConfig()) { CreateSelfServeManifestService = () => new Cimian.Core.Services.SelfServiceManifestService(_selfServePath) };
         var outcomes = new List<ItemOutcome>
         {
             new("VLC", "3.0.0", "remove", true, null, DateTime.UtcNow),

@@ -38,8 +38,8 @@ public class ManifestService
     public IReadOnlyList<string> FeaturedItems => _featuredItems;
     private SystemFacts? _systemFacts;
 
-    /// <summary>SelfServeManifest.yaml to merge; tests point it at a temp file.</summary>
-    internal string SelfServeManifestPath { get; init; } = CimianPaths.SelfServeManifestYaml;
+    /// <summary>Opens the SelfServeManifest.yaml to merge; tests open a temp file instead.</summary>
+    internal Func<SelfServiceManifestService> CreateSelfServeManifestService { get; init; } = () => new SelfServiceManifestService();
 
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
@@ -682,7 +682,7 @@ public class ManifestService
         SelfServiceManifest selfServe;
         try
         {
-            var svc = new SelfServiceManifestService(SelfServeManifestPath);
+            var svc = CreateSelfServeManifestService();
             selfServe = await svc.LoadAsync();
         }
         catch (Exception ex)
