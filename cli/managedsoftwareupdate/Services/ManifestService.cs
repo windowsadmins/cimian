@@ -683,12 +683,6 @@ public class ManifestService
     /// </summary>
     internal async Task SeedDefaultInstallsAsync(List<ManifestItem> items, ISelfServiceManifestService? selfServeService = null)
     {
-        if (_config.SkipSelfService)
-        {
-            ConsoleLogger.Debug("SelfServe default_installs seed skipped (SkipSelfService=true)");
-            return;
-        }
-
         if (!items.Any(i => string.Equals(i.Action, "default", StringComparison.OrdinalIgnoreCase)))
         {
             return;
