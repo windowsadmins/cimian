@@ -35,8 +35,9 @@ public enum StaleUsageOutcome
 /// </summary>
 public enum StaleUsageScope
 {
-    /// <summary>Admin intent — managed_installs/default_installs/profile/app,
-    /// or an explicit uninstall already in flight. Never stale-removed.</summary>
+    /// <summary>Admin intent — managed_installs/profile/app, or an explicit
+    /// uninstall already in flight. Never stale-removed. A leftover
+    /// Action=default (not yet SelfServe-seeded) is also protected.</summary>
     Protected,
     /// <summary>Installed via the user's SelfServeManifest — the primary
     /// removal target. Removal must also clear the self-serve subscription or
