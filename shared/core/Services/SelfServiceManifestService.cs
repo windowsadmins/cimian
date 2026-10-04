@@ -27,7 +27,7 @@ public class SelfServiceManifest
     public List<string> OptionalInstalls { get; set; } = [];
 
     /// <summary>
-    /// Names already offered via manifest <c>default_installs</c> (Munki 6.1 parity).
+    /// Names already offered via manifest <c>default_installs</c> (Munki 7 parity).
     /// Once recorded here, the client will not re-seed the name into
     /// <see cref="ManagedInstalls"/> — so a user who removes the item in MSC
     /// keeps it removed.

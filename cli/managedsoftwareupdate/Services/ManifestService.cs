@@ -75,8 +75,8 @@ public class ManifestService
             items.AddRange(conditionalResults);
         }
 
-        // PASS 3: One-time SelfServe seed for manifest default_installs (Munki 6.1).
-        // Must run before the SelfServe merge so newly seeded managed_installs are
+        // PASS 3: One-time SelfServe seed for manifest default_installs (Munki 7
+        // processDefaultInstalls). Must run before the SelfServe merge so newly seeded managed_installs are
         // promoted in this same run.
         await SeedDefaultInstallsAsync(items);
 
@@ -675,13 +675,13 @@ public class ManifestService
     }
 
     /// <summary>
-    /// One-time SelfServe seed for manifest <c>default_installs</c> (Munki 6.1 parity:
-    /// <c>process_default_installs</c>). Names not yet recorded under SelfServe
+    /// One-time SelfServe seed for manifest <c>default_installs</c> (Munki 7 parity:
+    /// <c>processDefaultInstalls</c> in selfservice.swift). Names not yet recorded under SelfServe
     /// <c>default_installs</c> are appended there and to <c>managed_installs</c>.
     /// Subsequent runs see the SelfServe record and do not re-seed, so a user who
     /// removes the item in MSC keeps it removed.
     /// </summary>
-    private async Task SeedDefaultInstallsAsync(List<ManifestItem> items)
+    internal async Task SeedDefaultInstallsAsync(List<ManifestItem> items, ISelfServiceManifestService? selfServeService = null)
     {
         if (_config.SkipSelfService)
         {
@@ -694,11 +694,11 @@ public class ManifestService
             return;
         }
 
-        SelfServiceManifestService svc;
+        ISelfServiceManifestService svc;
         SelfServiceManifest selfServe;
         try
         {
-            svc = new SelfServiceManifestService();
+            svc = selfServeService ?? new SelfServiceManifestService();
             selfServe = await svc.LoadAsync();
         }
         catch (Exception ex)
@@ -724,7 +724,7 @@ public class ManifestService
     }
 
     /// <summary>
-    /// Pure seed logic matching Munki <c>process_default_installs</c>. Mutates
+    /// Pure seed logic matching Munki 7 <c>processDefaultInstalls</c>. Mutates
     /// <paramref name="selfServe"/> in place. Returns true when the SelfServe
     /// manifest changed and should be persisted.
     /// </summary>
@@ -810,6 +810,16 @@ public class ManifestService
             return;
         }
 
+        MergeSelfServeInto(items, selfServe);
+    }
+
+    /// <summary>
+    /// Applies a loaded SelfServeManifest's install and removal requests to the
+    /// manifest item list. Split from <see cref="MergeSelfServeManifestAsync"/> so the
+    /// merge can be exercised without the on-disk manifest.
+    /// </summary>
+    internal void MergeSelfServeInto(List<ManifestItem> items, SelfServiceManifest selfServe)
+    {
         if (selfServe.ManagedInstalls.Count == 0 && selfServe.ManagedUninstalls.Count == 0)
         {
             return;
@@ -860,22 +870,11 @@ public class ManifestService
                     SetItemSource(name, selfServeSource, "managed_installs");
                     ConsoleLogger.Debug($"SelfServe: promoted optional to install item: {name} originalSource: {optional.SourceManifest}");
                 }
-                else
-                {
-                    // default_installs marker (already SelfServe-seeded): promote it.
-                    // Pure managed_updates with a stale SelfServe install request is
-                    // left alone — MSC never offers those items.
-                    var target = matches.FirstOrDefault(i =>
-                        string.Equals(i.Action, "default", StringComparison.OrdinalIgnoreCase));
-                    if (target != null)
-                    {
-                        target.Action = "install";
-                        target.IsSelfServe = true;
-                        target.PromotedFromOptional = false;
-                        SetItemSource(name, selfServeSource, "managed_installs");
-                        ConsoleLogger.Debug($"SelfServe: promoted default to install item: {name} originalSource: {target.SourceManifest}");
-                    }
-                }
+                // Otherwise the item is not an optional install, so the request is left
+                // alone. Munki 7's processSelfServeManifest likewise installs only the
+                // SelfServe managed_installs that are available optional installs: an
+                // item listed under default_installs alone is seeded but never installed,
+                // and a pure managed_updates item is never offered in MSC.
             }
             // If the item is already managed_installs / uninstall by server policy,
             // leave it alone — admin policy wins.
@@ -1077,8 +1076,10 @@ public class ManifestService
     /// managed_installs and optional_installs is treated as a managed install.
     ///
     /// Action precedence (highest to lowest):
-    ///   install &gt; uninstall &gt; update &gt; default &gt; optional &gt; profile/app
-    /// (profile and app share the same rank.)
+    ///   install &gt; uninstall &gt; update &gt; optional &gt; default &gt; profile/app
+    /// (profile and app share the same rank.) A default_installs entry only seeds
+    /// the SelfServe manifest, so it never hides the same item's optional_installs
+    /// entry: the item stays offered in MSC after the user removes it.
     ///
     /// Within the same action, the highest version wins; otherwise the first
     /// occurrence's position is preserved.
@@ -1137,8 +1138,8 @@ public class ManifestService
         "install" => 6,
         "uninstall" => 5,
         "update" => 4,
-        "default" => 3,
-        "optional" => 2,
+        "optional" => 3,
+        "default" => 2,
         "profile" => 1,
         "app" => 1,
         _ => 0,

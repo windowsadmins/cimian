@@ -153,7 +153,7 @@ public class SelfServiceManifest
     public List<string> OptionalInstalls { get; set; } = new();
 
     /// <summary>
-    /// Names already offered via manifest <c>default_installs</c> (Munki 6.1 parity).
+    /// Names already offered via manifest <c>default_installs</c> (Munki 7 parity).
     /// Once recorded, the client will not re-seed into managed_installs.
     /// </summary>
     [YamlMember(Alias = "default_installs")]
