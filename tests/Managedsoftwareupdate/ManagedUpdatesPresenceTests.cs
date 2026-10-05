@@ -156,6 +156,77 @@ public class ManagedUpdatesPresenceTests : IDisposable
         Assert.Empty(_engine.ManagedUpdatesSkippedAbsent);
     }
 
+    // --- An item in both managed_updates and optional_installs keeps both roles --------
+
+    private List<ManifestItem> UpdateAndOptional(string name) =>
+        new ManifestService(_config).DeduplicateItems(new List<ManifestItem>
+        {
+            Entry(name, "optional"),
+            Entry(name, "update")
+        });
+
+    [Fact]
+    public void InBothManagedUpdatesAndOptionalInstalls_InstalledAndOutOfDate_UpdatesAndStaysOptional()
+    {
+        var item = OutdatedItem(Unique("both"));
+        var manifest = UpdateAndOptional(item.Name);
+        var catalog = Catalog(item);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        Assert.Single(toUpdate, item);
+        Assert.Contains(item.Name, info.ManagedUpdates);
+        Assert.Contains(info.ManagedInstalls, i => i.Name == item.Name);
+        // The row is the one optional_installs alone would write for this item.
+        var optional = Assert.Single(info.OptionalInstalls, i => i.Name == item.Name);
+        var optionalOnly = _engine.BuildOptionalInstallRecord(item.Name, item, null);
+        Assert.True(optional.NeedsUpdate);
+        Assert.Equal("update-available", optional.Status);
+        Assert.Equal(optionalOnly.Installed, optional.Installed);
+        Assert.False(optional.WillBeInstalled);
+    }
+
+    [Fact]
+    public void InBothManagedUpdatesAndOptionalInstalls_NotInstalled_SkipsTheUpdateButStaysOptional()
+    {
+        var item = AbsentItem(Unique("both"));
+        var manifest = UpdateAndOptional(item.Name);
+        var catalog = Catalog(item);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        Assert.Empty(toInstall);
+        Assert.Empty(toUpdate);
+        Assert.Contains(item.Name, _engine.ManagedUpdatesSkippedAbsent);
+        Assert.DoesNotContain(item.Name, info.ManagedUpdates);
+        Assert.DoesNotContain(item.Name, info.ProcessedInstalls);
+        var optional = Assert.Single(info.OptionalInstalls, i => i.Name == item.Name);
+        Assert.False(optional.Installed);
+        Assert.False(optional.NeedsUpdate);
+        Assert.Equal("not-installed", optional.Status);
+    }
+
+    [Fact]
+    public void InManagedInstallsManagedUpdatesAndOptionalInstalls_InstallWins_WithNoOptionalRecord()
+    {
+        var item = AbsentItem(Unique("all"));
+        var manifest = new ManifestService(_config).DeduplicateItems(new List<ManifestItem>
+        {
+            Entry(item.Name, "optional"),
+            Entry(item.Name, "update"),
+            Entry(item.Name, "install")
+        });
+        var catalog = Catalog(item);
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        var info = _engine.BuildInstallInfo(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        Assert.Single(toInstall, item);
+        Assert.DoesNotContain(info.OptionalInstalls, i => i.Name == item.Name);
+    }
+
     [Fact]
     public void ManagedUpdateOnly_NotInstalled_DoesNotPullInItsRequires()
     {

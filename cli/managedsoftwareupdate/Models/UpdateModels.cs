@@ -358,6 +358,13 @@ public class ManifestItem
     public bool PromotedFromOptional { get; set; }
 
     /// <summary>
+    /// True when this item won deduplication as a managed_updates entry and the same
+    /// name is also listed under optional_installs. The two lists are independent, so
+    /// InstallInfo keeps the item's optional_installs record next to the update.
+    /// </summary>
+    public bool AlsoOptional { get; set; }
+
+    /// <summary>
     /// True when this item's action was set by the user-writable
     /// SelfServeManifest (install request or promoted optional). SourceManifest
     /// keeps the server manifest that listed the item, so this flag is the only
