@@ -613,7 +613,7 @@ public class UpdateEngine : IDisposable
                     if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
                     {
                         // Deadline override: force_install_after_date takes priority over install_window
-                        if (item.ForceInstallAfterDate != null && now >= item.ForceInstallAfterDate.Value)
+                        if (ForceDeadlineOverridesInstallWindow(item, now))
                         {
                             LogInfo($"Installing {item.Name} v{item.Version} despite install_window {item.InstallWindow}: force_install_after_date {item.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
                             _sessionLogger?.LogStatusCheck(
@@ -1084,6 +1084,34 @@ public class UpdateEngine : IDisposable
             Cimian.Core.Models.StatusReasonCode.NotInstalled, false);
     }
 
+    // Self Service requests for optional items with no version installed yet, and the
+    // requires/update_for items pulled in only by such requests that have no version
+    // installed either. As in Munki 7 (analyze.swift processInstall with
+    // isOptionalInstall, which it passes on to requires and update_for items), the
+    // deadline is not enforced for them: it neither overrides install_window nor goes
+    // into their InstallInfo.yaml record. Once some version is installed it applies as
+    // usual.
+    private readonly HashSet<string> _deadlineWaivedOptionalInstalls = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the item's force_install_after_date has passed and is enforced, so it is
+    /// installed even outside its install_window.
+    /// </summary>
+    internal bool ForceDeadlineOverridesInstallWindow(CatalogItem item, DateTime now) =>
+        item.ForceInstallAfterDate != null
+        && now >= item.ForceInstallAfterDate.Value
+        && !_deadlineWaivedOptionalInstalls.Contains(item.Name);
+
+    /// <summary>
+    /// Whether force_install_after_date is left unenforced for a manifest item: a Self
+    /// Service request for an optional item with no version installed. Presence is
+    /// Munki 7's someVersionInstalled.
+    /// </summary>
+    private bool IsDeadlineWaived(ManifestItem item, CatalogItem catalogItem, StatusCheckResult status) =>
+        item.PromotedFromOptional
+        && catalogItem.ForceInstallAfterDate != null
+        && !_statusService.SomeVersionInstalled(catalogItem, status).Installed;
+
     internal (List<CatalogItem> ToInstall, List<CatalogItem> ToUpdate, List<CatalogItem> ToUninstall,
              List<(CatalogItem Item, string Reason, string? Cause, string? InstalledVersion, bool WasUpdate, bool PendingRestart)> LoopSuppressed)
         IdentifyActions(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap,
@@ -1349,6 +1377,12 @@ public class UpdateEngine : IDisposable
                             }
                         }
 
+                        if (IsDeadlineWaived(item, catalogItem, status))
+                        {
+                            _deadlineWaivedOptionalInstalls.Add(catalogItem.Name);
+                            ConsoleLogger.Detail($"    force_install_after_date not enforced for {item.Name}: optional install requested in Self Service, no version installed yet");
+                        }
+
                         if (status.IsUpdate)
                         {
                             toUpdate.Add(catalogItem);
@@ -1372,68 +1406,9 @@ public class UpdateEngine : IDisposable
                     break;
 
                 case "optional":
-                    // Optional items are normally user-selected via the GUI.
-                    // But if force_install_after_date has passed, enforce installation.
-                    if (catalogItem.ForceInstallAfterDate != null && DateTime.Now >= catalogItem.ForceInstallAfterDate.Value)
-                    {
-                        // Gate forced-optional installs on OS-version and agent-version eligibility.
-                        if (!IsEligibleForOsVersion(catalogItem, out var optOsReason, out var optOsReasonCode))
-                        {
-                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optOsReason}");
-                            _sessionLogger?.LogStatusCheck(
-                                catalogItem.Name,
-                                catalogItem.Version,
-                                "skipped",
-                                optOsReason,
-                                optOsReasonCode,
-                                DetectionMethod.None,
-                                null,
-                                false);
-                            break;
-                        }
-
-                        if (!IsEligibleForAgentVersion(catalogItem, out var optAgentReason, out var optAgentCode))
-                        {
-                            ConsoleLogger.Info($"Skipping forced optional {item.Name}: {optAgentReason}");
-                            _sessionLogger?.LogStatusCheck(
-                                catalogItem.Name,
-                                catalogItem.Version,
-                                "skipped",
-                                optAgentReason,
-                                optAgentCode,
-                                DetectionMethod.None,
-                                null,
-                                false);
-                            break;
-                        }
-
-                        var optStatus = _statusService.CheckStatus(catalogItem, "install", _config.CachePath);
-                        ConsoleLogger.Detail($"    CheckStatus for {item.Name} (forced deadline): NeedsAction={optStatus.NeedsAction}, Status={optStatus.Status}");
-
-                        _sessionLogger?.LogStatusCheck(
-                            catalogItem.Name, catalogItem.Version, optStatus.Status,
-                            optStatus.Reason, optStatus.ReasonCode, optStatus.DetectionMethod,
-                            optStatus.InstalledVersion, optStatus.NeedsAction);
-
-                        RememberInstalledVersion(catalogItem.Name, optStatus);
-
-                        if (optStatus.NeedsAction)
-                        {
-                            ConsoleLogger.Info($"    -> force_install_after_date {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed, forcing install of optional item {item.Name}");
-                            _sessionLogger?.Log("INFO", $"Forcing install of optional item {item.Name}: deadline {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
-                            _sessionLogger?.LogStatusCheck(
-                                catalogItem.Name, catalogItem.Version, "pending",
-                                $"force_install_after_date {catalogItem.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed",
-                                Cimian.Core.Models.StatusReasonCode.ForceInstallDeadline,
-                                Cimian.Core.Models.DetectionMethod.None,
-                                optStatus.InstalledVersion, true);
-
-                            if (optStatus.IsUpdate)
-                                toUpdate.Add(catalogItem);
-                            else
-                                toInstall.Add(catalogItem);
-                        }
-                    }
+                    // Munki parity: force_install_after_date does not apply to a title that is
+                    // only in optional_installs. The user must opt in (SelfServe promotes the
+                    // action to install) before a deadline can queue or banner the item.
                     break;
 
                 case "uninstall":
@@ -1735,6 +1710,19 @@ public class UpdateEngine : IDisposable
 
         var deps = CatalogService.BuildDependencyClosure(seedNames, catalogMap);
 
+        // Munki 7 processes managed_installs and managed_updates before Self Service
+        // requests, so a dependency reachable from any managed seed is processed as a
+        // managed item and keeps its deadline. Only one reached through Self Service
+        // requests alone is processed as an optional install.
+        var promotedSeeds = manifestItems
+            .Where(m => m.PromotedFromOptional)
+            .Select(m => m.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var managedSeeds = seedNames.Where(n => !promotedSeeds.Contains(n)).ToList();
+        var managedReach = new HashSet<string>(
+            managedSeeds.Concat(CatalogService.BuildDependencyClosure(managedSeeds, catalogMap)),
+            StringComparer.OrdinalIgnoreCase);
+
         foreach (var depName in deps)
         {
             var depKey = depName.ToLowerInvariant();
@@ -1767,6 +1755,15 @@ public class UpdateEngine : IDisposable
             var status = _statusService.CheckStatus(depItem, "install", _config.CachePath);
 
             LogInfo($"Dependency {depItem.Name} v{depItem.Version}: needsAction={status.NeedsAction} ({status.Reason})");
+
+            if (status.NeedsAction
+                && depItem.ForceInstallAfterDate != null
+                && !managedReach.Contains(depItem.Name)
+                && !_statusService.SomeVersionInstalled(depItem, status).Installed)
+            {
+                _deadlineWaivedOptionalInstalls.Add(depItem.Name);
+                LogDetail($"    force_install_after_date not enforced for {depItem.Name}: required by an optional install requested in Self Service, no version installed yet");
+            }
 
             // Dependencies reach items.json too, so their detection result matters here.
             RememberInstalledVersion(depItem.Name, status);
@@ -1849,6 +1846,10 @@ public class UpdateEngine : IDisposable
     {
         LogInfo($"Installing/updating {items.Count} items with dependency processing...");
 
+        // A requirement must be installed before the item that requires it, but
+        // the list arrives as installs then updates, in manifest and discovery order.
+        items = CatalogService.OrderByRequires(items, _catalogMap);
+
         var outcomes = new List<ItemOutcome>();
         var successCount = 0;
         var failCount = 0;
@@ -1901,6 +1902,8 @@ public class UpdateEngine : IDisposable
         // Start with items that are already confirmed installed (from status checks)
         var installedItems = new List<string>();
         var scheduledItems = items.Select(i => i.Name).ToList();
+        // Items that failed in this run, so that what requires them is not attempted
+        var failedItems = new List<string>();
         var itemIndex = 0;
 
         // Process each item with full dependency handling
@@ -1937,6 +1940,22 @@ public class UpdateEngine : IDisposable
                 continue;
             }
 
+            // A scheduled requirement counts as satisfied in CheckDependencies(),
+            // so one that already failed has to be caught here.
+            // It is recorded as failed so that items.json and the run summary match the GUI.
+            var requirementFailure = CatalogService.RequirementFailureOutcome(item, failedItems, DateTime.UtcNow);
+            if (requirementFailure != null)
+            {
+                var skipReason = requirementFailure.ErrorMessage;
+                outcomes.Add(requirementFailure);
+                ConsoleLogger.Error($"Skipping {item.Name}: {skipReason}");
+                _sessionLogger?.Log("ERROR", $"Skipping {item.Name}: {skipReason}");
+                ReportItemStatus(item.Name, "failed", skipReason);
+                failedItems.Add(item.Name);
+                failCount++;
+                continue;
+            }
+
             var success = await ProcessInstallWithDependenciesAsync(
                 item.Name,
                 installedItems,
@@ -1957,6 +1976,7 @@ public class UpdateEngine : IDisposable
             else
             {
                 failCount++;
+                failedItems.Add(item.Name);
             }
         }
 
@@ -2153,6 +2173,7 @@ public class UpdateEngine : IDisposable
                 if (!await ProcessInstallWithDependenciesAsync(dep, installedItems, newScheduled, downloadedPaths, outcomes, cancellationToken))
                 {
                     ConsoleLogger.Error($"Failed to install required dependency: {dep}");
+                    outcomes.Add(CatalogService.RequirementFailureOutcome(item, dep, DateTime.UtcNow));
                     return false;
                 }
 
@@ -3520,6 +3541,14 @@ public class UpdateEngine : IDisposable
                             item.NeedsUpdate = isUpdate;
                             item.InstalledVersion = installCheck?.InstalledVersion;
                             item.Installed = !string.IsNullOrEmpty(installCheck?.InstalledVersion);
+                            // Checked here rather than read from IdentifyActions: an --item run
+                            // still writes a record for a queued request outside the filter.
+                            if (cat != null && installCheck != null && IsDeadlineWaived(mi, cat, installCheck))
+                                item.ForceInstallAfterDate = null;
+                            // A dependency's waiver is decided in ResolveDependencies. Its entry
+                            // may be the resolver's own or an absent managed_updates one.
+                            else if (!mi.PromotedFromOptional && _deadlineWaivedOptionalInstalls.Contains(mi.Name))
+                                item.ForceInstallAfterDate = null;
                             info.ManagedInstalls.Add(item);
                         }
                         // Else: already installed and up-to-date. No pending record is written;
@@ -3655,7 +3684,7 @@ public class UpdateEngine : IDisposable
         }
     }
 
-    private static InstallInfoItem BuildInstallInfoItem(string name, CatalogItem? cat)
+    internal static InstallInfoItem BuildInstallInfoItem(string name, CatalogItem? cat)
     {
         var item = new InstallInfoItem
         {
@@ -3680,9 +3709,13 @@ public class UpdateEngine : IDisposable
     /// overrides the natural status while a user-requested action is pending, so
     /// the software list reflects the in-flight state instead of a stale snapshot.
     /// </summary>
-    private InstallInfoItem BuildOptionalInstallRecord(string name, CatalogItem? cat, string? pendingStatus)
+    internal InstallInfoItem BuildOptionalInstallRecord(string name, CatalogItem? cat, string? pendingStatus)
     {
         var optItem = BuildInstallInfoItem(name, cat);
+        // Optional Software-tab rows must not carry a force deadline. Munki only
+        // shows force_install_after_date on managed_installs pending items; a
+        // catalog stamp alone must not banner Self Service titles.
+        optItem.ForceInstallAfterDate = null;
         if (cat != null)
         {
             var status = _statusService.CheckStatus(cat, "install", _config.CachePath);

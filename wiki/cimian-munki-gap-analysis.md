@@ -39,7 +39,7 @@
 
 | # | Gap | Description | Implementation Effort |
 |---|-----|-------------|----------------------|
-| 1 | ~~`force_install_after_date` enforcement~~ | **DONE** — `IdentifyActions` forces optional items when deadline passes; deadline overrides `install_window` deferral | Implemented |
+| 1 | ~~`force_install_after_date` enforcement~~ | **DONE** — enforced for managed installs and updates; a passed deadline overrides `install_window` deferral. As in Munki 7 (`updatecheck/analyze.swift`), a title only in `optional_installs` is never forced, and a Self Service request for one with no version installed yet carries no deadline | Implemented |
 | 2 | ~~`RestartAction` enforcement~~ | **DONE** — `RequireRestart`/`RecommendRestart` schedules reboot; `RequireLogout` forces logoff. Auto/bootstrap only; interactive logs recommendation. | Implemented |
 
 ### Priority 2: UI Feature Gaps
