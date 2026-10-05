@@ -435,8 +435,8 @@ public class StatusService
     /// not evidence of presence: it outlives the app it describes.
     /// </summary>
     /// <param name="installcheckResult">
-    /// The status check already run for this item, if any. An installcheck_script
-    /// result in it is reused rather than running the script a second time.
+    /// The status check already run for this item, if any. An installcheck_script or
+    /// version_script result in it is reused rather than running the script a second time.
     /// </param>
     public PresenceResult SomeVersionInstalled(CatalogItem item, StatusCheckResult? installcheckResult = null)
     {
@@ -459,9 +459,13 @@ public class StatusService
         }
 
         // 3. A version_script decides alone: no version printed means not installed.
+        //    CheckStatus runs it ahead of everything but an installcheck_script, which
+        //    this item does not have, so a script result handed in is the script's own.
         if (!string.IsNullOrEmpty(item.VersionScript))
         {
-            var r = CheckVersionScript(item);
+            var r = installcheckResult?.DetectionMethod == DetectionMethod.Script
+                ? installcheckResult
+                : CheckVersionScript(item);
             if (r.Status == "error")
                 return PresenceResult.Failed(r.Reason, r.ReasonCode);
             return new PresenceResult(!string.IsNullOrEmpty(r.InstalledVersion), r.Reason);

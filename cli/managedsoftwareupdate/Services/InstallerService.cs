@@ -339,7 +339,6 @@ public class InstallerService
             if (process.ExitCode == 0)
             {
                 ConsoleLogger.Success($"sbin-installer completed successfully for {item.Name}");
-                _sessionLogger?.Log("INFO", $"sbin-installer completed successfully for {item.Name}");
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed",
                     $"sbin-installer installation succeeded for {item.Name}");
                 return (true, outputStr);
@@ -391,7 +390,6 @@ public class InstallerService
             {
                 var archError = $"Package architecture '{buildInfo.Architecture}' is not compatible with system";
                 ConsoleLogger.Warn(archError);
-                _sessionLogger?.Log("WARN", archError);
                 // Don't fail - let sbin-installer handle it (it may have its own logic)
             }
 
@@ -414,7 +412,6 @@ public class InstallerService
                     {
                         var error = $"Package signature verification required but failed: {signatureDetails}";
                         ConsoleLogger.Error(error);
-                        _sessionLogger?.Log("ERROR", error);
                         return (false, error);
                     }
                 }
@@ -669,7 +666,6 @@ public class InstallerService
             {
                 postinstallWarning = postResult.WarningMessage;
                 ConsoleLogger.Warn($"Postinstall WARNING for {item.Name}: {postinstallWarning}");
-                _sessionLogger?.Log("WARN", $"Postinstall WARNING for {item.Name}: {postinstallWarning}");
             }
             else if (!postResult.Success)
             {

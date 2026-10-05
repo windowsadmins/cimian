@@ -1235,40 +1235,46 @@ public class SessionLogger : IDisposable
     /// Excludes MDM profiles/apps (managed externally by Device Management Service).
     /// </summary>
     private void GenerateItemsReport()
-    {
-        if (_currentSessionItems.Count == 0)
-            return;
+        => WriteItemsReport(Path.Combine(ReportsDir, "items.json"), _currentSessionItems, _sessionId, new DataExporter());
 
+    /// <summary>Writes items.json for <paramref name="sessionItems"/> to <paramref name="itemsPath"/>.</summary>
+    /// <remarks>
+    /// Written every run, even with nothing to report. Skipping the write left the
+    /// previous run's file in place, so its statuses went on being reported.
+    /// </remarks>
+    internal static void WriteItemsReport(string itemsPath, List<SessionPackageInfo> sessionItems, string sessionId, DataExporter exporter)
+    {
         // Filter out MDM-managed items before passing to DataExporter
-        var cimianItems = _currentSessionItems
+        var cimianItems = sessionItems
             .Where(pkg => !string.Equals(pkg.ItemType, "managedprofile", StringComparison.OrdinalIgnoreCase) &&
                           !string.Equals(pkg.ItemType, "managedapp", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (cimianItems.Count == 0)
+        {
+            File.WriteAllText(itemsPath, JsonSerializer.Serialize(new List<ItemRecord>(), JsonOptions));
             return;
+        }
 
         try
         {
             // Use DataExporter for historical enrichment + loop detection
-            var exporter = new DataExporter();
-            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems, _sessionId);
+            var items = exporter.GenerateCurrentItemsFromPackagesInfo(cimianItems, sessionId);
 
-            var itemsPath = Path.Combine(ReportsDir, "items.json");
             File.WriteAllText(itemsPath, JsonSerializer.Serialize(items, JsonOptions));
         }
         catch (Exception ex)
         {
             // Fallback to simple generation if DataExporter fails
             Console.Error.WriteLine($"[WARN] DataExporter enrichment failed, using simple items report: {ex.Message}");
-            GenerateItemsReportSimple(cimianItems);
+            GenerateItemsReportSimple(itemsPath, cimianItems, sessionId);
         }
     }
 
     /// <summary>
     /// Simple items.json generation without historical enrichment (fallback).
     /// </summary>
-    private void GenerateItemsReportSimple(List<SessionPackageInfo> items)
+    private static void GenerateItemsReportSimple(string itemsPath, List<SessionPackageInfo> items, string sessionId)
     {
         var records = new List<Cimian.Core.Models.ItemRecord>();
         var now = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
@@ -1291,7 +1297,7 @@ public class SessionLogger : IDisposable
                 // Stamp session id (yyyy-MM-dd-HHmm) only when this run touched the
                 // item; status-checked items get an empty string so consumers can
                 // filter to "what the last run actually did."
-                LastSeenInSession = actedOnThisRun ? _sessionId : "",
+                LastSeenInSession = actedOnThisRun ? sessionId : "",
                 LastAttemptTime = now,
                 LastAttemptStatus = normalizedStatus,
                 LastUpdate = now,
@@ -1300,7 +1306,6 @@ public class SessionLogger : IDisposable
             });
         }
 
-        var itemsPath = Path.Combine(ReportsDir, "items.json");
         File.WriteAllText(itemsPath, JsonSerializer.Serialize(records, JsonOptions));
     }
 
