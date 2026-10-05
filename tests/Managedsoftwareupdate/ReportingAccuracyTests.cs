@@ -289,6 +289,38 @@ public class CheckOnlyReportTests : IDisposable
     }
 
     [Fact]
+    public void ManifestHierarchy_ShowsInstalledAndCatalogVersions()
+    {
+        var id = Guid.NewGuid().ToString("N")[..8];
+        var current = new CatalogItem { Name = "Current" + id, Version = "2.51.0", VersionScript = "Write-Output '2.51.0'" };
+        var outdated = new CatalogItem { Name = "Outdated" + id, Version = "7.5.3", VersionScript = "Write-Output '7.5.2'" };
+        var absent = AbsentItem("Absent" + id);
+        absent.Version = "1.104.1";
+        // Installed, but nothing reports which version.
+        var unversionedPath = Path.Combine(_testDir, "unversioned.bin");
+        File.WriteAllText(unversionedPath, "build");
+        var unversioned = new CatalogItem
+        {
+            Name = "Unversioned" + id,
+            Version = "3.0.0",
+            Installs = new List<InstallCheckItem> { new() { Type = "file", Path = unversionedPath } }
+        };
+        var all = new[] { current, outdated, absent, unversioned };
+        var manifest = all.Select(i => new ManifestItem { Name = i.Name, Action = "install", SourceManifest = "ManagementTools" }).ToList();
+        var catalog = all.ToDictionary(i => i.Name.ToLowerInvariant());
+
+        var (toInstall, toUpdate, toUninstall, _) = _engine.IdentifyActions(manifest, catalog);
+        _engine.PrintCheckOnlyReport(manifest, toInstall, toUpdate, toUninstall, catalog);
+
+        // A redirected console writes the arrow as "->".
+        var output = _stdout.ToString().Replace("→", "->");
+        Assert.Contains($"{current.Name} (2.51.0 -> 2.51.0)", output);
+        Assert.Contains($"{outdated.Name} (7.5.2 -> 7.5.3)", output);
+        Assert.Contains($"{absent.Name} (not installed -> 1.104.1)", output);
+        Assert.Contains($"{unversioned.Name} (3.0.0)", output);
+    }
+
+    [Fact]
     public void CheckOnly_ListsPendingItemsInInstallOrder()
     {
         // Listed first, but it requires the second, so a run installs the second first.

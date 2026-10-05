@@ -2650,7 +2650,7 @@ public class UpdateEngine : IDisposable
     /// <summary>
     /// Prints the manifest hierarchy tree - matches Go output
     /// </summary>
-    private void PrintManifestHierarchy(List<ManifestItem> manifestItems)
+    private void PrintManifestHierarchy(List<ManifestItem> manifestItems, Dictionary<string, CatalogItem> catalogMap)
     {
         // Group items by source manifest
         var manifestCounts = new Dictionary<string, int>();
@@ -2679,11 +2679,30 @@ public class UpdateEngine : IDisposable
         
         // Build hierarchy tree
         var tree = BuildManifestHierarchy(manifestCounts, manifestPackages);
-        PrintManifestTree(tree, "", true, manifestPackages);
+        PrintManifestTree(tree, "", true, manifestPackages, catalogMap);
         
         Log();
     }
     
+    /// <summary>
+    /// The versions shown after an item in the manifest tree: " (installed → catalog)",
+    /// with "not installed" when the status check found it absent, or " (catalog)" when
+    /// nothing reports the installed version.
+    /// </summary>
+    private string VersionLabel(string name, Dictionary<string, CatalogItem> catalogMap)
+    {
+        if (!catalogMap.TryGetValue(name.ToLowerInvariant(), out var item) || string.IsNullOrEmpty(item.Version))
+            return "";
+
+        if (!InstalledByStatusCheck(item))
+            return $" (not installed → {item.Version})";
+
+        var installed = ResolveInstalledVersion(item.Name, null, item.Version);
+        return string.IsNullOrEmpty(installed)
+            ? $" ({item.Version})"
+            : $" ({installed} → {item.Version})";
+    }
+
     private class ManifestNode
     {
         public string Name { get; set; } = "";
@@ -2747,14 +2766,14 @@ public class UpdateEngine : IDisposable
         return root;
     }
     
-    private void PrintManifestTree(ManifestNode node, string prefix, bool isLast, Dictionary<string, List<ManifestItem>> packages)
+    private void PrintManifestTree(ManifestNode node, string prefix, bool isLast, Dictionary<string, List<ManifestItem>> packages, Dictionary<string, CatalogItem> catalogMap)
     {
         if (node.Name == "root")
         {
             var names = node.Children.Keys.ToList();
             for (int i = 0; i < names.Count; i++)
             {
-                PrintManifestTree(node.Children[names[i]], "", i == names.Count - 1, packages);
+                PrintManifestTree(node.Children[names[i]], "", i == names.Count - 1, packages, catalogMap);
             }
             return;
         }
@@ -2778,7 +2797,7 @@ public class UpdateEngine : IDisposable
             {
                 var isLastPkg = i == manifestPkgs.Count - 1 && node.Children.Count == 0;
                 var pkgConnector = isLastPkg ? "└─" : "├─";
-                Log($"{childPrefix}{pkgConnector} {Truncate(manifestPkgs[i].Name, 30)}");
+                Log($"{childPrefix}{pkgConnector} {Truncate(manifestPkgs[i].Name, 30)}{VersionLabel(manifestPkgs[i].Name, catalogMap)}");
             }
         }
         
@@ -2786,7 +2805,7 @@ public class UpdateEngine : IDisposable
         var childNames = node.Children.Keys.ToList();
         for (int i = 0; i < childNames.Count; i++)
         {
-            PrintManifestTree(node.Children[childNames[i]], childPrefix, i == childNames.Count - 1, packages);
+            PrintManifestTree(node.Children[childNames[i]], childPrefix, i == childNames.Count - 1, packages, catalogMap);
         }
     }
 
@@ -2831,7 +2850,7 @@ public class UpdateEngine : IDisposable
         List<CatalogItem> toUninstall,
         Dictionary<string, CatalogItem> catalogMap)
     {
-        PrintManifestHierarchy(displayItems);
+        PrintManifestHierarchy(displayItems, catalogMap);
         PrintManagedInstallsTable(displayItems, toInstall, toUpdate, catalogMap);
         PrintManagedUpdatesTable(displayItems, toUpdate, catalogMap);
         PrintManagedUninstallsTable(displayItems, toUninstall, catalogMap);
