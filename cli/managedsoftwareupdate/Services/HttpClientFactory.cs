@@ -128,7 +128,7 @@ public static class CimianHttpClientFactory
     // Printable ASCII and tab only.
     private static bool HasInvalidCharacter(string text) => text.Any(c => c > '~' || (c < ' ' && c != '\t'));
 
-    private static bool TrySplitHeader(string? entry, out string name, out string value)
+    internal static bool TrySplitHeader(string? entry, out string name, out string value)
     {
         name = value = string.Empty;
         var colon = entry?.IndexOf(':') ?? -1;
