@@ -385,19 +385,20 @@ public class DownloadService
         IProgress<double>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(item.Installer.Location))
+        var location = item.EffectiveInstallerLocation();
+        if (string.IsNullOrEmpty(location))
         {
             // Script-only item
             return null;
         }
 
-        var url = BuildFullUrl(item.Installer.Location);
+        var url = BuildFullUrl(location);
         var localPath = GetCachePath(item);
 
         var success = await DownloadFileAsync(
             url,
             localPath,
-            item.Installer.Hash,
+            item.EffectiveInstallerHash(),
             progress,
             cancellationToken);
 
@@ -460,7 +461,7 @@ public class DownloadService
     /// </summary>
     public string GetCachePath(CatalogItem item)
     {
-        var fileName = Path.GetFileName(item.Installer.Location);
+        var fileName = Path.GetFileName(item.EffectiveInstallerLocation());
         
         // Organize by category if available
         if (!string.IsNullOrEmpty(item.Category))
