@@ -223,7 +223,7 @@ public class StaleUsageEvaluatorTests
 
     [Theory]
     [InlineData("install")]   // managed_installs — admin mandates presence
-    [InlineData("default")]   // default_installs — enforced like an install
+    [InlineData("default")]   // leftover Action=default (not SelfServe-seeded)
     [InlineData("uninstall")] // already being removed
     [InlineData("profile")]
     [InlineData("app")]

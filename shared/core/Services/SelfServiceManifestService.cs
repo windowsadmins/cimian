@@ -25,6 +25,15 @@ public class SelfServiceManifest
 
     [YamlMember(Alias = "optional_installs")]
     public List<string> OptionalInstalls { get; set; } = [];
+
+    /// <summary>
+    /// Names already offered via manifest <c>default_installs</c> (Munki 7 parity).
+    /// Once recorded here, the client will not re-seed the name into
+    /// <see cref="ManagedInstalls"/> — so a user who removes the item in MSC
+    /// keeps it removed.
+    /// </summary>
+    [YamlMember(Alias = "default_installs")]
+    public List<string> DefaultInstalls { get; set; } = [];
 }
 
 /// <summary>
@@ -154,6 +163,7 @@ public class SelfServiceManifestService : ISelfServiceManifestService
             manifest.ManagedInstalls ??= [];
             manifest.ManagedUninstalls ??= [];
             manifest.OptionalInstalls ??= [];
+            manifest.DefaultInstalls ??= [];
 
             _logger?.LogDebug("Loaded self-service manifest with {InstallCount} install requests and {UninstallCount} uninstall requests",
                 manifest.ManagedInstalls.Count, manifest.ManagedUninstalls.Count);
