@@ -105,6 +105,119 @@ Catalogs:
         Assert.Contains("staging", config.Catalogs);
     }
 
+    [Fact]
+    public void LoadConfig_AdditionalHttpHeaders_ArePreservedInOrder()
+    {
+        var yamlWithHeaders = @"
+SoftwareRepoURL: https://test.example.com
+AdditionalHttpHeaders:
+  - ""X-Client-Serial: ABC123""
+  - ""X-Client-Id: 9F1E0B6C""
+";
+        File.WriteAllText(_testConfigPath, yamlWithHeaders);
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(["X-Client-Serial: ABC123", "X-Client-Id: 9F1E0B6C"], config.AdditionalHttpHeaders);
+    }
+
+    [Fact]
+    public void LoadConfig_AdditionalHttpHeaders_UnquotedEntries_AreReadAsStrings()
+    {
+        // Without quotes, "Name: value" is a one-key mapping in YAML, not a string.
+        var yamlWithHeaders = @"
+SoftwareRepoURL: https://test.example.com
+AdditionalHttpHeaders:
+  - X-Client-Serial: ABC123
+  - X-Client-Count: 5
+  - X-Client-Flag:
+";
+        File.WriteAllText(_testConfigPath, yamlWithHeaders);
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(["X-Client-Serial: ABC123", "X-Client-Count: 5", "X-Client-Flag: "], config.AdditionalHttpHeaders);
+    }
+
+    [Fact]
+    public void LoadConfig_AdditionalHttpHeaders_QuotedAndUnquotedEntries_KeepTheirOrder()
+    {
+        var yamlWithHeaders = @"
+AdditionalHttpHeaders:
+  - ""X-Client-Serial: ABC123""
+  - X-Client-Id: 9F1E0B6C
+  - ""X-Client-Time: 10:30:15""
+";
+        File.WriteAllText(_testConfigPath, yamlWithHeaders);
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(["X-Client-Serial: ABC123", "X-Client-Id: 9F1E0B6C", "X-Client-Time: 10:30:15"],
+            config.AdditionalHttpHeaders);
+    }
+
+    [Fact]
+    public void LoadConfig_AdditionalHttpHeaders_BlockMapping_ReadsEachPairInOrder()
+    {
+        var yamlWithHeaders = @"
+SoftwareRepoURL: https://test.example.com
+AdditionalHttpHeaders:
+  X-Client-Serial: ABC123
+  X-Client-Time: ""10:30:15""
+  X-Client-Flag:
+  X-Client-Id: 9F1E0B6C
+";
+        File.WriteAllText(_testConfigPath, yamlWithHeaders);
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(["X-Client-Serial: ABC123", "X-Client-Time: 10:30:15", "X-Client-Flag: ", "X-Client-Id: 9F1E0B6C"],
+            config.AdditionalHttpHeaders);
+    }
+
+    [Theory]
+    [InlineData("AdditionalHttpHeaders:\n  - X-Client-Serial: ABC123")]
+    [InlineData("AdditionalHttpHeaders:\n  X-Client-Serial: ABC123")]
+    [InlineData("AdditionalHttpHeaders: 'X-Client-Serial: ABC123'")]
+    public void LoadConfig_AdditionalHttpHeaders_OtherSpellings_ReadTheEntryAndKeepTheRestOfTheConfig(string headers)
+    {
+        // An unquoted entry, a mapping and a lone string are not a list of strings in YAML.
+        var yamlWithHeaders = $@"
+SoftwareRepoURL: https://test.example.com
+AuthToken: token
+{headers}
+Catalogs:
+  - production
+  - testing
+";
+        File.WriteAllText(_testConfigPath, yamlWithHeaders);
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(["X-Client-Serial: ABC123"], config.AdditionalHttpHeaders);
+        Assert.Equal("https://test.example.com", config.SoftwareRepoURL);
+        Assert.Equal("token", config.AuthToken);
+        Assert.Equal(["production", "testing"], config.Catalogs);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("~")]
+    [InlineData("null")]
+    public void LoadConfig_AdditionalHttpHeaders_NullKey_IsAnEmptyList(string value)
+    {
+        var yamlWithHeaders = $@"
+SoftwareRepoURL: https://test.example.com
+AdditionalHttpHeaders: {value}
+";
+        File.WriteAllText(_testConfigPath, yamlWithHeaders);
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal("https://test.example.com", config.SoftwareRepoURL);
+        Assert.Empty(config.AdditionalHttpHeaders);
+    }
+
     #endregion
 
     #region GetDefaultConfig Tests
@@ -188,6 +301,20 @@ Catalogs:
         Assert.Equal(originalConfig.LogLevel, loadedConfig.LogLevel);
         Assert.Equal(originalConfig.InstallerTimeout, loadedConfig.InstallerTimeout);
         Assert.Equal(originalConfig.NoPreflight, loadedConfig.NoPreflight);
+    }
+
+    [Fact]
+    public void SaveConfig_AdditionalHttpHeaders_RoundTrip_PreservesEntries()
+    {
+        var config = new CimianConfig
+        {
+            AdditionalHttpHeaders = ["X-Client-Serial: ABC123", "X-Client-Time: 10:30:15"]
+        };
+
+        _service.SaveConfig(config, _testConfigPath);
+        var loadedConfig = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(config.AdditionalHttpHeaders, loadedConfig.AdditionalHttpHeaders);
     }
 
     #endregion

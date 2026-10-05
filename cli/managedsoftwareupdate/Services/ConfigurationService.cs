@@ -29,11 +29,13 @@ public class ConfigurationService
         _policyRegistryPath = policyRegistryPath;
         _deserializer = new DeserializerBuilder()
             .WithNamingConvention(PascalCaseNamingConvention.Instance)
+            .WithTypeConverter(new HeaderListConverter())
             .IgnoreUnmatchedProperties()
             .Build();
 
         _serializer = new SerializerBuilder()
             .WithNamingConvention(PascalCaseNamingConvention.Instance)
+            .WithTypeConverter(new HeaderListConverter())
             .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
             .Build();
     }

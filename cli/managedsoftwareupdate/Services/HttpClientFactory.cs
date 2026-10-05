@@ -15,7 +15,8 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 public static class CimianHttpClientFactory
 {
     /// <summary>
-    /// Creates an HttpClient configured with authentication and optional client certificates.
+    /// Creates an HttpClient configured with authentication, optional client certificates and
+    /// the AdditionalHttpHeaders setting.
     /// Auth priority: DPAPI registry → Bearer token → Basic auth.
     /// </summary>
     public static HttpClient CreateHttpClient(CimianConfig config, TimeSpan? timeout = null)
@@ -71,7 +72,72 @@ public static class CimianHttpClientFactory
 
         client.DefaultRequestHeaders.Add("User-Agent", "Cimian-ManagedSoftwareUpdate/1.0");
 
+        AddAdditionalHeaders(client, config);
+
         return client;
+    }
+
+    /// <summary>
+    /// Adds the AdditionalHttpHeaders entries to every request the client sends. An entry is
+    /// split at its first colon, and a later entry for the same header replaces an earlier
+    /// one. Authorization belongs to the auth settings above and User-Agent identifies the
+    /// client, so an entry for either is skipped rather than replacing them. So is an entry
+    /// with a control or non-ASCII character in its value: a line break or another control
+    /// character would be written to the wire as it is, and .NET will not send a request
+    /// that carries a non-ASCII one. Warnings give an entry's position, not its value,
+    /// because a header value can be a secret.
+    /// </summary>
+    private static void AddAdditionalHeaders(HttpClient client, CimianConfig config)
+    {
+        var headers = client.DefaultRequestHeaders;
+        var entryNumber = 0;
+        foreach (var entry in config.AdditionalHttpHeaders ?? [])
+        {
+            entryNumber++;
+            if (!TrySplitHeader(entry, out var name, out var value))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: expected \"Name: value\"");
+                continue;
+            }
+
+            if (HasInvalidCharacter(name) || HasInvalidCharacter(value))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: a name or value can hold only printable ASCII characters");
+                continue;
+            }
+
+            if (name.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("User-Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: {name} cannot be set here");
+                continue;
+            }
+
+            if (headers.TryGetValues(name, out _))
+            {
+                headers.Remove(name);
+            }
+
+            if (!headers.TryAddWithoutValidation(name, value))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: not a valid request header name");
+            }
+        }
+    }
+
+    // Printable ASCII and tab only.
+    private static bool HasInvalidCharacter(string text) => text.Any(c => c > '~' || (c < ' ' && c != '\t'));
+
+    private static bool TrySplitHeader(string? entry, out string name, out string value)
+    {
+        name = value = string.Empty;
+        var colon = entry?.IndexOf(':') ?? -1;
+        if (entry is null || colon < 0)
+            return false;
+
+        name = entry[..colon].Trim();
+        value = entry[(colon + 1)..].Trim();
+        return name.Length > 0;
     }
 
     /// <summary>
