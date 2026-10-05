@@ -345,23 +345,6 @@ public class DefaultInstallsPresenceTests : IDisposable
         Assert.Empty(toUninstall);
     }
 
-    [Fact]
-    public async Task Seed_RunsWhenSkipSelfServiceIsSet()
-    {
-        // SkipSelfService does not gate the default_installs seed; Munki has no
-        // equivalent setting.
-        var name = Unique("Browser");
-        var config = new CimianConfig { CachePath = _config.CachePath, SkipSelfService = true };
-        var store = new InMemorySelfServe(EmptySelfServe());
-
-        await new ManifestService(config).SeedDefaultInstallsAsync(
-            new List<ManifestItem> { Entry(name, "default") }, store);
-
-        Assert.Equal(1, store.Saves);
-        Assert.Contains(name, store.Manifest.DefaultInstalls, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains(name, store.Manifest.ManagedInstalls, StringComparer.OrdinalIgnoreCase);
-    }
-
     /// <summary>A SelfServe manifest held in memory instead of on disk.</summary>
     private sealed class InMemorySelfServe(SelfServiceManifest manifest) : ISelfServiceManifestService
     {

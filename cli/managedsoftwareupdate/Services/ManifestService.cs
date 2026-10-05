@@ -38,6 +38,9 @@ public class ManifestService
     public IReadOnlyList<string> FeaturedItems => _featuredItems;
     private SystemFacts? _systemFacts;
 
+    /// <summary>Opens the SelfServeManifest.yaml to merge; tests open a temp file instead.</summary>
+    internal Func<SelfServiceManifestService> CreateSelfServeManifestService { get; init; } = () => new SelfServiceManifestService();
+
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
         _config = config;
@@ -780,22 +783,16 @@ public class ManifestService
     /// new install item if no server manifest references it. `managed_uninstalls` entries
     /// flip the action to uninstall (or add a new uninstall item).
     ///
-    /// Honors Config.SkipSelfService so admins can disable self-service end-to-end. The user
+    /// Runs on every check, as Munki's processSelfServeManifest does. The user
     /// entries persist in SelfServeManifest.yaml until the user cancels the request; once the
     /// software is installed, normal status checks suppress further action.
     /// </summary>
-    private async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
+    internal async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
     {
-        if (_config.SkipSelfService)
-        {
-            ConsoleLogger.Debug("SelfServe merge skipped (SkipSelfService=true)");
-            return;
-        }
-
         SelfServiceManifest selfServe;
         try
         {
-            var svc = new SelfServiceManifestService();
+            var svc = CreateSelfServeManifestService();
             selfServe = await svc.LoadAsync();
         }
         catch (Exception ex)

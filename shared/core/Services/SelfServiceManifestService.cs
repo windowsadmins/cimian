@@ -98,7 +98,7 @@ public interface ISelfServiceManifestService
 /// </summary>
 public class SelfServiceManifestService : ISelfServiceManifestService
 {
-    private static readonly string SelfServiceManifestPath = CimianPaths.SelfServeManifestYaml;
+    private readonly string SelfServiceManifestPath;
     
     private readonly ILogger<SelfServiceManifestService>? _logger;
     private readonly IDeserializer _deserializer;
@@ -109,7 +109,17 @@ public class SelfServiceManifestService : ISelfServiceManifestService
     public event EventHandler? RequestsChanged;
 
     public SelfServiceManifestService(ILogger<SelfServiceManifestService>? logger = null)
+        : this(CimianPaths.SelfServeManifestYaml, logger)
     {
+    }
+
+    /// <summary>
+    /// Reads and writes <paramref name="manifestPath"/> instead of the system file, so tests
+    /// do not touch the machine's SelfServeManifest.yaml.
+    /// </summary>
+    internal SelfServiceManifestService(string manifestPath, ILogger<SelfServiceManifestService>? logger = null)
+    {
+        SelfServiceManifestPath = manifestPath;
         _logger = logger;
         
         _deserializer = new DeserializerBuilder()

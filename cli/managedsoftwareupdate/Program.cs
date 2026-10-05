@@ -266,7 +266,6 @@ public class Program
         Console.WriteLine($"  PreflightFailureAction: {config.PreflightFailureAction}");
         Console.WriteLine($"  PostflightFailureAction: {config.PostflightFailureAction}");
         Console.WriteLine($"  LocalOnlyManifest: {config.LocalOnlyManifest ?? "(not set)"}");
-        Console.WriteLine($"  SkipSelfService: {config.SkipSelfService}");
         Console.WriteLine($"  LoopGuardEnabled: {config.LoopGuardEnabled}");
         Console.WriteLine($"  AuthUser: {(string.IsNullOrEmpty(config.AuthUser) ? "(not set)" : "***")}");
         Console.WriteLine($"  AuthToken: {(string.IsNullOrEmpty(config.AuthToken) ? "(not set)" : "***")}");

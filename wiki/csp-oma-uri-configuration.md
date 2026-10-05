@@ -79,7 +79,6 @@ appear in `Config.yaml`. A provisioning script that materializes
 | `CheckOnly` | REG_DWORD or REG_SZ | Check-only mode |
 | `NoPreflight` | REG_DWORD or REG_SZ | Skip preflight scripts |
 | `NoPostflight` | REG_DWORD or REG_SZ | Skip postflight scripts |
-| `SkipSelfService` | REG_DWORD or REG_SZ | Skip self-service manifest processing |
 | `UseCache` | REG_DWORD or REG_SZ | Use the local download cache (default `true`) |
 | `ForceChocolatey` | REG_DWORD or REG_SZ | Force Chocolatey provider |
 | `PreferSbinInstaller` | REG_DWORD or REG_SZ | Prefer sbin-installer (default `true`) |
