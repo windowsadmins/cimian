@@ -613,12 +613,12 @@ public class UpdateEngine : IDisposable
                     if (item.InstallWindow != null && !item.InstallWindow.IsWithinWindow(now))
                     {
                         // Deadline override: force_install_after_date takes priority over install_window
-                        if (ForceDeadlineOverridesInstallWindow(item, now))
+                        if (ForceDeadlineOverridesInstallWindow(item, now) && item.ForceInstallAfterDate is DateTime deadline)
                         {
-                            LogInfo($"Installing {item.Name} v{item.Version} despite install_window {item.InstallWindow}: force_install_after_date {item.ForceInstallAfterDate.Value:yyyy-MM-dd} has passed");
+                            LogInfo($"Installing {item.Name} v{item.Version} despite install_window {item.InstallWindow}: force_install_after_date {deadline:yyyy-MM-dd} has passed");
                             _sessionLogger?.LogStatusCheck(
                                 item.Name, item.Version, "pending",
-                                $"Deadline {item.ForceInstallAfterDate.Value:yyyy-MM-dd} overrides install window {item.InstallWindow}",
+                                $"Deadline {deadline:yyyy-MM-dd} overrides install window {item.InstallWindow}",
                                 Cimian.Core.Models.StatusReasonCode.DeadlineOverridesWindow,
                                 Cimian.Core.Models.DetectionMethod.None, null, true);
                             continue; // Keep in list, don't defer
