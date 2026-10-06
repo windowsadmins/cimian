@@ -3590,6 +3590,11 @@ public class UpdateEngine : IDisposable
                 {
                     case "install":
                     case "update":
+                        // managed_updates does not consume the name, so an item also listed
+                        // under optional_installs keeps its optional record, installed or not.
+                        if (action == "update" && mi.AlsoOptional)
+                            info.OptionalInstalls.Add(BuildOptionalInstallRecord(mi.Name, cat, null));
+
                         // A managed_updates item that is not installed was not processed:
                         // as in Munki, it is on neither managed_updates nor processed_installs.
                         if (action == "update" && _absentManagedUpdates.ContainsKey(mi.Name))

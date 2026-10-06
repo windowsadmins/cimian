@@ -33,6 +33,13 @@ namespace Cimian.Core.Services;
 ///   8+ installs → suppress 7 days (the cap), then retry automatically
 ///   3 installs within 2 hours (rapid-fire) → suppress 12 hours
 ///
+/// Every count above is taken over a rolling 24-hour window (LoopWindow). An item that
+/// legitimately reruns now and then — after each OS update, or on a weekly schedule —
+/// is not a loop, but with lifetime counters it crossed "3 installs across 3 sessions"
+/// on its third rerun and was suppressed for hours. Only installs inside the window are
+/// kept; older ones are pruned from persisted state, so a genuine loop still trips on
+/// the same thresholds while spaced reruns never accumulate.
+///
 /// When a window expires the accumulated counters are retired with it, so the package is
 /// genuinely retried instead of instantly re-tripping the same thresholds on the same
 /// history; a persistent SuppressionCycles count floors the next window (1 prior cycle →
@@ -67,6 +74,12 @@ public class LoopGuard
     // keeps the system self-healing: the worst case is a once-per-LoopMaxTime retry.
     private const int DefaultMaxSuppressionDays = 7;
 
+    /// <summary>
+    /// How far back installs count toward the loop thresholds. Installs older than this
+    /// are dropped from state, so only a burst of reinstalls can trip suppression.
+    /// </summary>
+    internal static readonly TimeSpan LoopWindow = TimeSpan.FromHours(24);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -99,7 +112,9 @@ public class LoopGuard
         _disabled = disabled;
         _maxSuppressionDays = maxSuppressionDays > 0 ? maxSuppressionDays : DefaultMaxSuppressionDays;
         _state = LoadState();
+        ApplyWindowToAll();
         BuildHistoryFromEvents();
+        ApplyWindowToAll();
     }
 
     /// <summary>
@@ -114,7 +129,9 @@ public class LoopGuard
         LogsDir_Override = logsDir;
         CacheDir_Override = cacheDir;
         _state = LoadState();
+        ApplyWindowToAll();
         BuildHistoryFromEvents();
+        ApplyWindowToAll();
     }
 
     /// <summary>
@@ -438,6 +455,7 @@ public class LoopGuard
         pkgState.VersionAttempts.Clear();
         pkgState.RecentTimestamps.Clear();
         pkgState.ProcessedSessions.Clear();
+        pkgState.Attempts.Clear();
         pkgState.TriggerCounts.Clear();
         pkgState.Trigger = null;
         pkgState.TriggerLastSeen = null;
@@ -522,32 +540,17 @@ public class LoopGuard
             _state.Packages[key] = pkgState;
         }
 
-        pkgState.AttemptCount++;
-        pkgState.LastAttempt = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        pkgState.LastAttempt = now;
         NoteTrigger(pkgState, trigger, countIt: true);
-        if (!string.IsNullOrEmpty(_currentSessionId) && !pkgState.ProcessedSessions.Contains(_currentSessionId))
-        {
-            pkgState.ProcessedSessions.Add(_currentSessionId);
-            pkgState.SessionCount = pkgState.ProcessedSessions.Count;
-        }
         pkgState.LastVersion = version;
         pkgState.LastSuccess = success;
         if (!string.IsNullOrEmpty(catalogFingerprint))
             pkgState.CatalogFingerprint = catalogFingerprint;
 
-        // Track per-version counts
-        if (!string.IsNullOrEmpty(version))
-        {
-            pkgState.VersionAttempts.TryGetValue(version, out var count);
-            pkgState.VersionAttempts[version] = count + 1;
-        }
-
-        // Track timestamps for rapid-fire detection
-        pkgState.RecentTimestamps.Add(DateTime.UtcNow);
-
-        // Keep only last 20 timestamps
-        while (pkgState.RecentTimestamps.Count > 20)
-            pkgState.RecentTimestamps.RemoveAt(0);
+        // The session id travels with the attempt so the next run's events.jsonl
+        // rebuild knows this install was already counted.
+        pkgState.Attempts.Add(new LoopAttempt { At = now, Version = version, Session = _currentSessionId });
 
         // Check if this attempt triggers suppression. Suppress() records the window and
         // the rule that opened it; the operator-facing message is composed at report time
@@ -794,6 +797,8 @@ public class LoopGuard
     /// </summary>
     private (bool Suppress, string Reason) EvaluateSuppressionThresholds(string key, PackageLoopState pkgState, string version)
     {
+        ApplyWindow(pkgState);
+
         // Threshold 1: Rapid-fire — 3 installs within 2 hours
         var twoHoursAgo = DateTime.UtcNow.AddHours(-2);
         var recentCount = pkgState.RecentTimestamps.Count(t => t >= twoHoursAgo);
@@ -895,6 +900,40 @@ public class LoopGuard
         return (true, BuildSuppressionMessage(pkgState.PackageName, pkgState.LastVersion ?? "", pkgState, window));
     }
 
+    /// <summary>
+    /// Drops installs that have aged out of <see cref="LoopWindow"/> and recomputes every
+    /// counter the thresholds read from the installs that remain. The counters are derived
+    /// state: state written before the window existed carries lifetime totals and no
+    /// per-install list, so this zeroes them on load and the events.jsonl rebuild refills
+    /// whatever falls inside the window.
+    /// </summary>
+    private static void ApplyWindow(PackageLoopState pkgState)
+    {
+        var windowStart = DateTime.UtcNow - LoopWindow;
+        pkgState.Attempts.RemoveAll(a => a.At < windowStart);
+
+        pkgState.AttemptCount = pkgState.Attempts.Count;
+        pkgState.VersionAttempts = pkgState.Attempts
+            .Where(a => !string.IsNullOrEmpty(a.Version))
+            .GroupBy(a => a.Version!)
+            .ToDictionary(g => g.Key, g => g.Count());
+        pkgState.RecentTimestamps = pkgState.Attempts
+            .Select(a => a.At)
+            .OrderBy(t => t)
+            .TakeLast(20)
+            .ToList();
+        pkgState.ProcessedSessions = new HashSet<string>(
+            pkgState.Attempts.Where(a => !string.IsNullOrEmpty(a.Session)).Select(a => a.Session!),
+            StringComparer.OrdinalIgnoreCase);
+        pkgState.SessionCount = pkgState.ProcessedSessions.Count;
+    }
+
+    private void ApplyWindowToAll()
+    {
+        foreach (var pkgState in _state.Packages.Values)
+            ApplyWindow(pkgState);
+    }
+
     #endregion
 
     #region History Building
@@ -910,7 +949,9 @@ public class LoopGuard
         if (!Directory.Exists(logsDir))
             return;
 
-        var cutoff = DateTime.UtcNow.AddDays(-7);
+        // Day directories are named in local time, so reach one day past the window;
+        // ProcessEventsFile drops any event that is actually older than it.
+        var cutoff = DateTime.UtcNow - LoopWindow - TimeSpan.FromDays(1);
         var sessionsProcessed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         try
@@ -968,6 +1009,7 @@ public class LoopGuard
 
     private void ProcessEventsFile(string eventsPath, string sessionId)
     {
+        var windowStart = DateTime.UtcNow - LoopWindow;
         try
         {
             foreach (var line in File.ReadLines(eventsPath))
@@ -1018,27 +1060,23 @@ public class LoopGuard
                     var preClearHistory = clearWatermark.HasValue &&
                         (!eventTime.HasValue || eventTime.Value < clearWatermark.Value);
 
+                    // Only installs inside the loop window count. An event with no
+                    // timestamp cannot be placed in the window, so it is not counted.
+                    var inWindow = eventTime.HasValue && eventTime.Value >= windowStart;
+
                     // Only count if not already tracked in state (avoid double-counting
                     // from both state file and events)
-                    if (!pkgState.ProcessedSessions.Contains(sessionId) && !preClearHistory)
+                    if (!pkgState.ProcessedSessions.Contains(sessionId) && !preClearHistory && inWindow)
                     {
-                        pkgState.AttemptCount++;
                         pkgState.LastSuccess = string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase)
                                             || string.Equals(status, "success", StringComparison.OrdinalIgnoreCase);
 
                         if (!string.IsNullOrEmpty(version))
-                        {
                             pkgState.LastVersion = version;
-                            pkgState.VersionAttempts.TryGetValue(version, out var vc);
-                            pkgState.VersionAttempts[version] = vc + 1;
-                        }
 
-                        if (eventTime.HasValue)
-                        {
-                            pkgState.RecentTimestamps.Add(eventTime.Value);
-                            if (pkgState.LastAttempt == null || eventTime.Value > pkgState.LastAttempt)
-                                pkgState.LastAttempt = eventTime.Value;
-                        }
+                        pkgState.Attempts.Add(new LoopAttempt { At = eventTime!.Value, Version = version, Session = sessionId });
+                        if (pkgState.LastAttempt == null || eventTime.Value > pkgState.LastAttempt)
+                            pkgState.LastAttempt = eventTime.Value;
                     }
 
                     pkgState.ProcessedSessions.Add(sessionId);
@@ -1047,12 +1085,6 @@ public class LoopGuard
                 {
                     // Skip malformed event lines
                 }
-            }
-
-            // Update session counts
-            foreach (var pkgState in _state.Packages.Values)
-            {
-                pkgState.SessionCount = pkgState.ProcessedSessions.Count;
             }
         }
         catch
@@ -1419,6 +1451,30 @@ public class PackageLoopState
     /// </summary>
     [JsonPropertyName("trigger_counts")]
     public Dictionary<string, int> TriggerCounts { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Installs inside <see cref="LoopGuard.LoopWindow"/>, oldest first. The counters
+    /// above are derived from this list; entries older than the window are pruned.
+    /// </summary>
+    [JsonPropertyName("attempts")]
+    public List<LoopAttempt> Attempts { get; set; } = new();
+}
+
+/// <summary>
+/// One counted install: when it ran, which version, and the session that ran it.
+/// </summary>
+public class LoopAttempt
+{
+    [JsonPropertyName("at")]
+    public DateTime At { get; set; }
+
+    [JsonPropertyName("version")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Version { get; set; }
+
+    [JsonPropertyName("session")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Session { get; set; }
 }
 
 #endregion

@@ -1074,11 +1074,16 @@ public class ManifestService
     ///
     /// Within the same action, the highest version wins; otherwise the first
     /// occurrence's position is preserved.
+    ///
+    /// When update wins over an optional entry for the same name, the survivor is
+    /// marked <see cref="ManifestItem.AlsoOptional"/>: managed_updates and
+    /// optional_installs are independent lists, so the item stays offered in MSC.
     /// </summary>
     public List<ManifestItem> DeduplicateItems(List<ManifestItem> items)
     {
         var dedup = new Dictionary<string, ManifestItem>(StringComparer.OrdinalIgnoreCase);
         var orderedKeys = new List<string>();
+        var optionalKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in items)
         {
@@ -1086,6 +1091,8 @@ public class ManifestService
                 continue;
 
             var key = item.Name.ToLowerInvariant();
+            if (string.Equals(item.Action, "optional", StringComparison.OrdinalIgnoreCase))
+                optionalKeys.Add(key);
 
             if (dedup.TryGetValue(key, out var existing))
             {
@@ -1114,7 +1121,13 @@ public class ManifestService
         var result = new List<ManifestItem>();
         foreach (var key in orderedKeys)
         {
-            result.Add(dedup[key]);
+            var winner = dedup[key];
+            if (optionalKeys.Contains(key)
+                && string.Equals(winner.Action, "update", StringComparison.OrdinalIgnoreCase))
+            {
+                winner.AlsoOptional = true;
+            }
+            result.Add(winner);
         }
         return result;
     }
