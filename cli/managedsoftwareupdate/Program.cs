@@ -217,7 +217,7 @@ public class Program
                 config.LogLevel = "DEBUG";
             }
 
-            // Create and run update engine. Dispose releases file-imported client cert keys.
+            // Create and run update engine
             using var engine = new UpdateEngine(config);
 
             var result = await engine.RunAsync(
@@ -238,6 +238,8 @@ public class Program
         }
         finally
         {
+            // Delete the client certificate's machine key before another run can start.
+            SharedClientCertificate.Release();
             ReleaseSingleInstance();
         }
     }

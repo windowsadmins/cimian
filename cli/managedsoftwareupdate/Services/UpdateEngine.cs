@@ -388,7 +388,8 @@ public class UpdateEngine : IDisposable
                 
                 // Preflight may have changed the repo URL or client cert. Build the
                 // replacements first so a failed reload leaves the current clients
-                // in place, then dispose the previous ones to delete their temp keys.
+                // in place, then dispose the previous ones. The client certificate is
+                // shared, so it is reloaded only if its file setting changed.
                 var manifestService = new ManifestService(_config);
                 var catalogService = new CatalogService(_config);
                 var downloadService = new DownloadService(_config);
