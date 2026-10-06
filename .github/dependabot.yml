@@ -1,0 +1,45 @@
+# Dependabot version updates for NuGet packages and GitHub Actions.
+# Security updates (when enabled in repo settings) can still open sooner
+# than this schedule.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    groups:
+      microsoft-system:
+        patterns:
+          - "System.*"
+          - "Microsoft.*"
+      test-deps:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+          - "coverlet*"
+      other-nuget:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "System.*"
+          - "Microsoft.*"
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+          - "coverlet*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
