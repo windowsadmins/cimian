@@ -62,6 +62,16 @@ public class CimianConfig
     [YamlMember(Alias = "AuthPassword")]
     public string? AuthPassword { get; set; }
 
+    /// <summary>
+    /// Extra headers sent with every request, each written "Name: value" as in Munki's
+    /// setting of the same name. A request that is redirected carries them to the other
+    /// host too. Authorization comes from AuthToken, AuthUser and AuthPassword, and
+    /// User-Agent is fixed, so neither can be set here.
+    /// </summary>
+    [YamlMember(Alias = "AdditionalHttpHeaders")]
+    [YamlConverter(typeof(HeaderListConverter))]
+    public List<string> AdditionalHttpHeaders { get; set; } = new();
+
     [YamlMember(Alias = "InstallerTimeout")]
     public int InstallerTimeout { get; set; } = 900; // 15 minutes default
 
