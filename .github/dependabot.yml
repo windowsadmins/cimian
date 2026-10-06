@@ -11,16 +11,29 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    ignore:
+      # FluentAssertions 8 and later needs a paid licence for commercial use.
+      - dependency-name: "FluentAssertions"
+        update-types: ["version-update:semver-major"]
+    # A dependency joins the first group whose patterns match, so the narrow
+    # groups come before microsoft-system.
     groups:
-      microsoft-system:
-        patterns:
-          - "System.*"
-          - "Microsoft.*"
       test-deps:
         patterns:
           - "xunit*"
           - "Microsoft.NET.Test.Sdk"
           - "coverlet*"
+      # Windows App SDK updates can break the GUIs, so they get their own PR.
+      windows-app-sdk:
+        patterns:
+          - "Microsoft.WindowsAppSDK"
+      microsoft-system:
+        patterns:
+          - "System.*"
+          - "Microsoft.*"
+        exclude-patterns:
+          - "Microsoft.NET.Test.Sdk"
+          - "Microsoft.WindowsAppSDK"
       other-nuget:
         patterns:
           - "*"
@@ -28,7 +41,6 @@ updates:
           - "System.*"
           - "Microsoft.*"
           - "xunit*"
-          - "Microsoft.NET.Test.Sdk"
           - "coverlet*"
 
   - package-ecosystem: "github-actions"
