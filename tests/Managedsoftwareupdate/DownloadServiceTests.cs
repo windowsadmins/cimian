@@ -203,60 +203,32 @@ public class DownloadServiceTests : IDisposable
         Assert.DoesNotContain(" ", cachePath);
     }
 
-    [Fact]
-    public void GetCachePath_InstallerItemLocation_NamesTheFileAfterIt()
-    {
-        var item = new CatalogItem
-        {
-            Name = "TestApp",
-            InstallerItemLocation = "installer-item.7.setup.msi"
-        };
-
-        var cachePath = _service.GetCachePath(item);
-
-        Assert.Equal(Path.Combine(_testCacheDir, "installer-item.7.setup.msi"), cachePath);
-    }
-
-    [Fact]
-    public void GetCachePath_BothLocations_NamesTheFileAfterInstallerItemLocation()
-    {
-        var item = new CatalogItem
-        {
-            Name = "TestApp",
-            Installer = new InstallerInfo { Location = "apps/testapp/setup.msi" },
-            InstallerItemLocation = "installer-item.7.setup.msi"
-        };
-
-        var cachePath = _service.GetCachePath(item);
-
-        Assert.Equal(Path.Combine(_testCacheDir, "installer-item.7.setup.msi"), cachePath);
-    }
-
     #endregion
 
     #region DownloadItemAsync Tests
 
     [Fact]
-    public async Task DownloadItemAsync_InstallerItemLocationOnly_DownloadsFromIt()
+    public async Task DownloadItemAsync_MunkiInstallerItemLocation_DownloadsFromTheNormalizedLocation()
     {
         var handler = new StubHandler("installer"u8.ToArray());
         var service = new DownloadService(_testConfig, new HttpClient(handler));
         var item = new CatalogItem
         {
             Name = "TestApp",
-            InstallerItemLocation = "installer-item.7.setup.msi"
+            InstallerItemLocation = "apps/testapp/setup.msi"
         };
+        item.NormalizeMunkiInstallerKeys();
 
         var path = await service.DownloadItemAsync(item);
 
-        Assert.Equal(Path.Combine(_testCacheDir, "installer-item.7.setup.msi"), path);
+        Assert.Equal(Path.Combine(_testCacheDir, "setup.msi"), path);
         Assert.Equal("installer", File.ReadAllText(path!));
         Assert.All(handler.RequestedUrls,
-            url => Assert.Equal("https://test.example.com/repo/pkgs/installer-item.7.setup.msi", url));
+            url => Assert.Equal("https://test.example.com/repo/pkgs/apps/testapp/setup.msi", url));
     }
 
     [Fact]
-    public async Task DownloadItemAsync_BothLocations_DownloadsFromInstallerItemLocation()
+    public async Task DownloadItemAsync_BothLocations_DownloadsFromTheInstallerBlock()
     {
         var handler = new StubHandler("installer"u8.ToArray());
         var service = new DownloadService(_testConfig, new HttpClient(handler));
@@ -266,53 +238,13 @@ public class DownloadServiceTests : IDisposable
             Installer = new InstallerInfo { Location = "apps/testapp/setup.msi" },
             InstallerItemLocation = "installer-item.7.setup.msi"
         };
+        item.NormalizeMunkiInstallerKeys();
 
         var path = await service.DownloadItemAsync(item);
 
-        Assert.Equal(Path.Combine(_testCacheDir, "installer-item.7.setup.msi"), path);
+        Assert.Equal(Path.Combine(_testCacheDir, "setup.msi"), path);
         Assert.All(handler.RequestedUrls,
-            url => Assert.Equal("https://test.example.com/repo/pkgs/installer-item.7.setup.msi", url));
-    }
-
-    [Fact]
-    public async Task DownloadItemAsync_InstallerItemHash_AcceptsAMatchingCachedFile()
-    {
-        var handler = new StubHandler("installer"u8.ToArray());
-        var service = new DownloadService(_testConfig, new HttpClient(handler));
-        var item = new CatalogItem
-        {
-            Name = "TestApp",
-            InstallerItemLocation = "installer-item.7.setup.msi"
-        };
-        var cached = service.GetCachePath(item);
-        File.WriteAllText(cached, "cached");
-        item.InstallerItemHash = DownloadService.CalculateSHA256(cached);
-
-        var path = await service.DownloadItemAsync(item);
-
-        Assert.Equal(cached, path);
-        Assert.Empty(handler.RequestedUrls);
-    }
-
-    [Fact]
-    public async Task DownloadItemAsync_BothHashes_VerifiesAgainstTheInstallerHash()
-    {
-        var handler = new StubHandler("installer"u8.ToArray());
-        var service = new DownloadService(_testConfig, new HttpClient(handler));
-        var item = new CatalogItem
-        {
-            Name = "TestApp",
-            InstallerItemLocation = "installer-item.7.setup.msi",
-            InstallerItemHash = new string('a', 64)
-        };
-        var cached = service.GetCachePath(item);
-        File.WriteAllText(cached, "cached");
-        item.Installer.Hash = DownloadService.CalculateSHA256(cached);
-
-        var path = await service.DownloadItemAsync(item);
-
-        Assert.Equal(cached, path);
-        Assert.Empty(handler.RequestedUrls);
+            url => Assert.Equal("https://test.example.com/repo/pkgs/apps/testapp/setup.msi", url));
     }
 
     /// <summary>

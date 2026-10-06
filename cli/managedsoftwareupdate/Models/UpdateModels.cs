@@ -410,20 +410,22 @@ public class CatalogItem
     public InstallerInfo Installer { get; set; } = new();
 
     /// <summary>
-    /// Munki's installer_item_location. A server that speaks Munki's protocol may rewrite
-    /// it to the name it serves the file under, so it wins over installer.location for
-    /// the download.
+    /// Munki-format fallback for installer.location, read only at catalog load.
+    /// <see cref="NormalizeMunkiInstallerKeys"/> copies it into the installer block when
+    /// installer.location is empty; everything else reads installer.location.
     /// </summary>
     [YamlMember(Alias = "installer_item_location")]
     public string? InstallerItemLocation { get; set; }
 
-    /// <summary>Munki's installer_item_hash (SHA-256), used when installer.hash is absent.</summary>
+    /// <summary>
+    /// Munki-format fallback for installer.hash (SHA-256), read only at catalog load.
+    /// </summary>
     [YamlMember(Alias = "installer_item_hash")]
     public string? InstallerItemHash { get; set; }
 
     /// <summary>
-    /// Munki's installer_item_size, in kilobytes (installer.size is in bytes). Used when
-    /// installer.size is absent.
+    /// Munki-format fallback for installer.size, read only at catalog load. Munki gives it
+    /// in kilobytes; installer.size is in bytes.
     /// </summary>
     [YamlMember(Alias = "installer_item_size")]
     public long? InstallerItemSize { get; set; }
@@ -546,18 +548,23 @@ public class CatalogItem
     public string? LoopFingerprint { get; set; }
 
     /// <summary>
-    /// Where the installer is downloaded from: installer_item_location when the pkginfo has
-    /// one, otherwise installer.location. Empty when there is nothing to download.
+    /// Fills the installer block from Munki's top-level installer_item_* keys where it
+    /// has no value of its own. The installer block is the schema, so a value it already
+    /// has is never overwritten. Called once when a catalog is loaded.
     /// </summary>
-    public string EffectiveInstallerLocation() =>
-        !string.IsNullOrEmpty(InstallerItemLocation) ? InstallerItemLocation : Installer?.Location ?? string.Empty;
+    public void NormalizeMunkiInstallerKeys()
+    {
+        Installer ??= new InstallerInfo();
 
-    /// <summary>The installer's SHA-256: installer.hash, otherwise installer_item_hash.</summary>
-    public string? EffectiveInstallerHash() =>
-        !string.IsNullOrEmpty(Installer?.Hash) ? Installer.Hash : InstallerItemHash;
+        if (string.IsNullOrEmpty(Installer.Location) && !string.IsNullOrEmpty(InstallerItemLocation))
+            Installer.Location = InstallerItemLocation;
 
-    /// <summary>The installer's size in bytes: installer.size, otherwise installer_item_size, which is in kilobytes.</summary>
-    public long? EffectiveInstallerSize() => Installer?.Size ?? InstallerItemSize * 1024;
+        if (string.IsNullOrEmpty(Installer.Hash) && !string.IsNullOrEmpty(InstallerItemHash))
+            Installer.Hash = InstallerItemHash;
+
+        if (Installer.Size == null && InstallerItemSize != null)
+            Installer.Size = InstallerItemSize * 1024;
+    }
 
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0

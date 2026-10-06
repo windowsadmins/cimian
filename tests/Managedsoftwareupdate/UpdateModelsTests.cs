@@ -260,76 +260,80 @@ public class UpdateModelsTests
     }
 
     [Fact]
-    public void EffectiveInstallerLocation_InstallerItemLocationOnly_ReturnsIt()
-    {
-        var item = new CatalogItem { InstallerItemLocation = "apps/tool/tool-1.0.exe" };
-
-        Assert.Equal("apps/tool/tool-1.0.exe", item.EffectiveInstallerLocation());
-    }
-
-    [Fact]
-    public void EffectiveInstallerLocation_BothLocations_ReturnsInstallerItemLocation()
+    public void NormalizeMunkiInstallerKeys_NestedValuesPresent_NestedWins()
     {
         var item = new CatalogItem
         {
-            Installer = new InstallerInfo { Location = "apps/tool/tool-1.0.exe" },
-            InstallerItemLocation = "installer-item.7.tool-1.0.exe"
+            Installer = new InstallerInfo { Location = "apps/tool/tool-1.0.exe", Hash = "aaa", Size = 4096 },
+            InstallerItemLocation = "installer-item.7.tool-1.0.exe",
+            InstallerItemHash = "bbb",
+            InstallerItemSize = 2
         };
 
-        Assert.Equal("installer-item.7.tool-1.0.exe", item.EffectiveInstallerLocation());
+        item.NormalizeMunkiInstallerKeys();
+
+        Assert.Equal("apps/tool/tool-1.0.exe", item.Installer.Location);
+        Assert.Equal("aaa", item.Installer.Hash);
+        Assert.Equal(4096L, item.Installer.Size);
+    }
+
+    [Fact]
+    public void NormalizeMunkiInstallerKeys_NestedValuesAbsent_FallsBackToMunkiKeys()
+    {
+        var item = new CatalogItem
+        {
+            InstallerItemLocation = "apps/tool/tool-1.0.exe",
+            InstallerItemHash = "bbb",
+            InstallerItemSize = 2
+        };
+
+        item.NormalizeMunkiInstallerKeys();
+
+        Assert.Equal("apps/tool/tool-1.0.exe", item.Installer.Location);
+        Assert.Equal("bbb", item.Installer.Hash);
+        Assert.Equal(2048L, item.Installer.Size);
+    }
+
+    [Fact]
+    public void NormalizeMunkiInstallerKeys_NullInstaller_CreatesIt()
+    {
+        var item = new CatalogItem { Installer = null!, InstallerItemLocation = "apps/tool/tool-1.0.exe" };
+
+        item.NormalizeMunkiInstallerKeys();
+
+        Assert.NotNull(item.Installer);
+        Assert.Equal("apps/tool/tool-1.0.exe", item.Installer.Location);
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public void EffectiveInstallerLocation_NoInstallerItemLocation_ReturnsInstallerLocation(string? installerItemLocation)
-    {
-        var item = new CatalogItem
-        {
-            Installer = new InstallerInfo { Location = "apps/tool/tool-1.0.exe" },
-            InstallerItemLocation = installerItemLocation
-        };
-
-        Assert.Equal("apps/tool/tool-1.0.exe", item.EffectiveInstallerLocation());
-    }
-
-    [Fact]
-    public void EffectiveInstallerLocation_NullInstaller_ReturnsEmpty()
-    {
-        var item = new CatalogItem { Installer = null! };
-
-        Assert.Equal(string.Empty, item.EffectiveInstallerLocation());
-    }
-
-    [Theory]
-    [InlineData("aaa", "bbb", "aaa")]
-    [InlineData(null, "bbb", "bbb")]
-    [InlineData("", "bbb", "bbb")]
-    [InlineData(null, null, null)]
-    public void EffectiveInstallerHash_UsesInstallerItemHashOnlyWhenInstallerHashIsAbsent(string? installerHash, string? installerItemHash, string? expected)
+    public void NormalizeMunkiInstallerKeys_EmptyNestedHash_FallsBack(string? installerHash)
     {
         var item = new CatalogItem
         {
             Installer = new InstallerInfo { Hash = installerHash },
-            InstallerItemHash = installerItemHash
+            InstallerItemHash = "bbb"
         };
 
-        Assert.Equal(expected, item.EffectiveInstallerHash());
+        item.NormalizeMunkiInstallerKeys();
+
+        Assert.Equal("bbb", item.Installer.Hash);
     }
 
-    [Theory]
-    [InlineData(4096L, 2L, 4096L)]
-    [InlineData(null, 2L, 2048L)]
-    [InlineData(null, null, null)]
-    public void EffectiveInstallerSize_UsesInstallerItemSizeOnlyWhenInstallerSizeIsAbsent(long? installerSize, long? installerItemSize, long? expected)
+    [Fact]
+    public void NormalizeMunkiInstallerKeys_NestedOnly_IsUnchanged()
     {
         var item = new CatalogItem
         {
-            Installer = new InstallerInfo { Size = installerSize },
-            InstallerItemSize = installerItemSize
+            Installer = new InstallerInfo { Location = "apps/tool/tool-1.0.exe", Hash = "aaa", Size = 4096 }
         };
 
-        Assert.Equal(expected, item.EffectiveInstallerSize());
+        item.NormalizeMunkiInstallerKeys();
+
+        Assert.Equal("apps/tool/tool-1.0.exe", item.Installer.Location);
+        Assert.Equal("aaa", item.Installer.Hash);
+        Assert.Equal(4096L, item.Installer.Size);
     }
 
     #endregion

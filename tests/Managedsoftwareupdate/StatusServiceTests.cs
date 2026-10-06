@@ -262,31 +262,6 @@ public class StatusServiceTests
     #region Static Method Tests
 
     [Fact]
-    public void IsCimianPackage_InstallerItemLocation_ReturnsTrue()
-    {
-        var item = new CatalogItem
-        {
-            Name = "Updater",
-            InstallerItemLocation = "tools/cimian-1.0.0.msi"
-        };
-
-        Assert.True(StatusService.IsCimianPackage(item));
-    }
-
-    [Fact]
-    public void IsCimianPackage_RenamedInstallerItemLocation_ChecksInstallerLocation()
-    {
-        var item = new CatalogItem
-        {
-            Name = "Updater",
-            Installer = new InstallerInfo { Location = "tools/cimian-1.0.0.msi" },
-            InstallerItemLocation = "installer-item.12.Updater-1.0.0.msi"
-        };
-
-        Assert.True(StatusService.IsCimianPackage(item));
-    }
-
-    [Fact]
     public void IsAdministrator_ReturnsBoolean()
     {
         // This will return true or false depending on how tests are run

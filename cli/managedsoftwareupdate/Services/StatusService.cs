@@ -60,18 +60,14 @@ public class StatusService
             }
         }
         
-        // Check installer location for main Cimian packages. A server may rename
-        // installer_item_location, so installer.location is checked as well.
-        foreach (var location in new[] { item.Installer?.Location, item.InstallerItemLocation })
+        // Check installer location for main Cimian packages
+        var installerLocation = item.Installer.Location?.ToLowerInvariant() ?? "";
+        if (installerLocation.Contains("/cimian-") ||
+            installerLocation.Contains("/cimiantools-") ||
+            (installerLocation.Contains("/cimian.") && 
+             (installerLocation.EndsWith(".msi") || installerLocation.EndsWith(".nupkg"))))
         {
-            var installerLocation = location?.ToLowerInvariant() ?? "";
-            if (installerLocation.Contains("/cimian-") ||
-                installerLocation.Contains("/cimiantools-") ||
-                (installerLocation.Contains("/cimian.") &&
-                 (installerLocation.EndsWith(".msi") || installerLocation.EndsWith(".nupkg"))))
-            {
-                return true;
-            }
+            return true;
         }
         
         return false;
@@ -2247,7 +2243,7 @@ if ($results.Count -gt 0) {{
         }
 
         // Check disk space
-        var installerSize = item.EffectiveInstallerSize() ?? 0;
+        var installerSize = item.Installer.Size ?? 0;
         if (installerSize > 0 && !HasSufficientDiskSpace(installerSize, null, out var availableBytes))
         {
             var requiredMb = installerSize / (1024 * 1024);

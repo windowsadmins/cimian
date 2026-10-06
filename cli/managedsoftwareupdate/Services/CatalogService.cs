@@ -188,6 +188,16 @@ public class CatalogService
 
     private List<CatalogItem> ParseCatalog(string yaml)
     {
+        var items = DeserializeCatalog(yaml);
+        foreach (var item in items)
+        {
+            item.NormalizeMunkiInstallerKeys();
+        }
+        return items;
+    }
+
+    private static List<CatalogItem> DeserializeCatalog(string yaml)
+    {
         try
         {
             // Route through the canonical Cimian deserializer (no naming convention):
