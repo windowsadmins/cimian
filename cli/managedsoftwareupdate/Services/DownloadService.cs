@@ -12,10 +12,12 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// Features: HEAD request for size, resumable downloads, bandwidth monitoring
 /// Migrated from Go pkg/download
 /// </summary>
-public class DownloadService
+public class DownloadService : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly CimianConfig _config;
+    private readonly bool _ownsHttpClient;
+    private bool _disposed;
     
     // Download configuration constants
     private const int DefaultTimeoutMinutes = 10;
@@ -33,8 +35,22 @@ public class DownloadService
 
     public DownloadService(CimianConfig config, HttpClient? httpClient = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
         _config = config;
+        _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? CimianHttpClientFactory.CreateHttpClient(config, Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Disposes the client this service created. An injected client stays with its caller.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        if (_ownsHttpClient)
+            _httpClient.Dispose();
     }
 
     /// <summary>
