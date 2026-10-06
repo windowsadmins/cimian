@@ -259,6 +259,79 @@ public class UpdateModelsTests
         Assert.False(item.IsUninstallable());
     }
 
+    [Fact]
+    public void EffectiveInstallerLocation_InstallerItemLocationOnly_ReturnsIt()
+    {
+        var item = new CatalogItem { InstallerItemLocation = "apps/tool/tool-1.0.exe" };
+
+        Assert.Equal("apps/tool/tool-1.0.exe", item.EffectiveInstallerLocation());
+    }
+
+    [Fact]
+    public void EffectiveInstallerLocation_BothLocations_ReturnsInstallerItemLocation()
+    {
+        var item = new CatalogItem
+        {
+            Installer = new InstallerInfo { Location = "apps/tool/tool-1.0.exe" },
+            InstallerItemLocation = "installer-item.7.tool-1.0.exe"
+        };
+
+        Assert.Equal("installer-item.7.tool-1.0.exe", item.EffectiveInstallerLocation());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void EffectiveInstallerLocation_NoInstallerItemLocation_ReturnsInstallerLocation(string? installerItemLocation)
+    {
+        var item = new CatalogItem
+        {
+            Installer = new InstallerInfo { Location = "apps/tool/tool-1.0.exe" },
+            InstallerItemLocation = installerItemLocation
+        };
+
+        Assert.Equal("apps/tool/tool-1.0.exe", item.EffectiveInstallerLocation());
+    }
+
+    [Fact]
+    public void EffectiveInstallerLocation_NullInstaller_ReturnsEmpty()
+    {
+        var item = new CatalogItem { Installer = null! };
+
+        Assert.Equal(string.Empty, item.EffectiveInstallerLocation());
+    }
+
+    [Theory]
+    [InlineData("aaa", "bbb", "aaa")]
+    [InlineData(null, "bbb", "bbb")]
+    [InlineData("", "bbb", "bbb")]
+    [InlineData(null, null, null)]
+    public void EffectiveInstallerHash_UsesInstallerItemHashOnlyWhenInstallerHashIsAbsent(string? installerHash, string? installerItemHash, string? expected)
+    {
+        var item = new CatalogItem
+        {
+            Installer = new InstallerInfo { Hash = installerHash },
+            InstallerItemHash = installerItemHash
+        };
+
+        Assert.Equal(expected, item.EffectiveInstallerHash());
+    }
+
+    [Theory]
+    [InlineData(4096L, 2L, 4096L)]
+    [InlineData(null, 2L, 2048L)]
+    [InlineData(null, null, null)]
+    public void EffectiveInstallerSize_UsesInstallerItemSizeOnlyWhenInstallerSizeIsAbsent(long? installerSize, long? installerItemSize, long? expected)
+    {
+        var item = new CatalogItem
+        {
+            Installer = new InstallerInfo { Size = installerSize },
+            InstallerItemSize = installerItemSize
+        };
+
+        Assert.Equal(expected, item.EffectiveInstallerSize());
+    }
+
     #endregion
 
     #region InstallerInfo Tests

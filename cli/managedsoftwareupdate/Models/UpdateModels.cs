@@ -409,6 +409,25 @@ public class CatalogItem
     [YamlMember(Alias = "installer")]
     public InstallerInfo Installer { get; set; } = new();
 
+    /// <summary>
+    /// Munki's installer_item_location. A server that speaks Munki's protocol may rewrite
+    /// it to the name it serves the file under, so it wins over installer.location for
+    /// the download.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_location")]
+    public string? InstallerItemLocation { get; set; }
+
+    /// <summary>Munki's installer_item_hash (SHA-256), used when installer.hash is absent.</summary>
+    [YamlMember(Alias = "installer_item_hash")]
+    public string? InstallerItemHash { get; set; }
+
+    /// <summary>
+    /// Munki's installer_item_size, in kilobytes (installer.size is in bytes). Used when
+    /// installer.size is absent.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_size")]
+    public long? InstallerItemSize { get; set; }
+
     [YamlMember(Alias = "uninstaller")]
     public List<UninstallerInfo> Uninstaller { get; set; } = new();
 
@@ -525,6 +544,20 @@ public class CatalogItem
     /// </summary>
     [YamlMember(Alias = "loop_fingerprint")]
     public string? LoopFingerprint { get; set; }
+
+    /// <summary>
+    /// Where the installer is downloaded from: installer_item_location when the pkginfo has
+    /// one, otherwise installer.location. Empty when there is nothing to download.
+    /// </summary>
+    public string EffectiveInstallerLocation() =>
+        !string.IsNullOrEmpty(InstallerItemLocation) ? InstallerItemLocation : Installer?.Location ?? string.Empty;
+
+    /// <summary>The installer's SHA-256: installer.hash, otherwise installer_item_hash.</summary>
+    public string? EffectiveInstallerHash() =>
+        !string.IsNullOrEmpty(Installer?.Hash) ? Installer.Hash : InstallerItemHash;
+
+    /// <summary>The installer's size in bytes: installer.size, otherwise installer_item_size, which is in kilobytes.</summary>
+    public long? EffectiveInstallerSize() => Installer?.Size ?? InstallerItemSize * 1024;
 
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0

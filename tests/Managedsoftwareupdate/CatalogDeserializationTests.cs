@@ -47,4 +47,22 @@ public class CatalogDeserializationTests
         Assert.NotNull(item);
         Assert.False(item!.OnDemand);
     }
+
+    [Fact]
+    public void CatalogItem_BindsMunkiInstallerItemKeys()
+    {
+        const string yaml = """
+            name: Firefox
+            version: 130.0
+            installer_item_location: installer-item.7.Firefox-130.0.exe
+            installer_item_hash: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+            installer_item_size: 2048
+            """;
+
+        var item = YamlUtils.Deserializer.Deserialize<CatalogItem>(yaml);
+
+        Assert.Equal("installer-item.7.Firefox-130.0.exe", item.EffectiveInstallerLocation());
+        Assert.Equal("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", item.EffectiveInstallerHash());
+        Assert.Equal(2048L * 1024, item.EffectiveInstallerSize());
+    }
 }

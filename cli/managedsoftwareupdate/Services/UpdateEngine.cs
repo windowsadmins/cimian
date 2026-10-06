@@ -92,7 +92,7 @@ public class UpdateEngine : IDisposable
     /// like, which is exactly why the server-side stamp exists.
     /// </para>
     /// </summary>
-    private static string ComputeCatalogFingerprint(CatalogItem item)
+    internal static string ComputeCatalogFingerprint(CatalogItem item)
     {
         var sb = new System.Text.StringBuilder(512);
 
@@ -114,9 +114,9 @@ public class UpdateEngine : IDisposable
         sb.Append('|');
         sb.Append(item.PreinstallScript ?? "");
         sb.Append('|');
-        sb.Append(item.Installer?.Hash ?? "");
+        sb.Append(item.EffectiveInstallerHash() ?? "");
         sb.Append('|');
-        sb.Append(item.Installer?.Location ?? "");
+        sb.Append(item.EffectiveInstallerLocation());
         sb.Append('|');
         sb.Append(item.Installer?.Type ?? "");
         sb.Append('|');
@@ -2009,7 +2009,7 @@ public class UpdateEngine : IDisposable
             if (!cat.Precache) continue;
 
             // Skip script-only items (no installer to download)
-            if (string.IsNullOrEmpty(cat.Installer?.Location)) continue;
+            if (string.IsNullOrEmpty(cat.EffectiveInstallerLocation())) continue;
 
             // Skip if already cached
             var cachePath = _downloadService.GetCachePath(cat);
@@ -3696,7 +3696,7 @@ public class UpdateEngine : IDisposable
             Category = cat?.Category,
             Developer = cat?.Developer,
             Icon = cat?.IconName,
-            InstallerItemSize = cat?.Installer?.Size ?? 0,
+            InstallerItemSize = cat?.EffectiveInstallerSize() ?? 0,
             Uninstallable = cat?.IsUninstallable() ?? false,
             RestartAction = cat?.RestartAction,
             ForceInstallAfterDate = cat?.ForceInstallAfterDate,
@@ -3728,7 +3728,7 @@ public class UpdateEngine : IDisposable
                 : "installed");
 
             // Check if installer is precached (already downloaded to local cache)
-            if (!string.IsNullOrEmpty(cat.Installer?.Location))
+            if (!string.IsNullOrEmpty(cat.EffectiveInstallerLocation()))
             {
                 var cachePath = _downloadService.GetCachePath(cat);
                 optItem.Precached = File.Exists(cachePath);
