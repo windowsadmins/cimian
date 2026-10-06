@@ -555,10 +555,7 @@ public class UpdateEngine : IDisposable
                     ? itemFilterService.FilterManifestItems(manifestItems) 
                     : manifestItems;
                     
-                PrintManifestHierarchy(displayItems);
-                PrintManagedInstallsTable(displayItems, toInstall, toUpdate, catalogMap);
-                PrintManagedUpdatesTable(displayItems, toUpdate, catalogMap);
-                PrintManagedUninstallsTable(displayItems, toUninstall, catalogMap);
+                PrintCheckOnlyReport(displayItems, toInstall, toUpdate, toUninstall, catalogMap);
             }
 
             // Print summary
@@ -815,7 +812,6 @@ public class UpdateEngine : IDisposable
                         if (string.IsNullOrEmpty(localFile))
                         {
                             ConsoleLogger.Error($"Failed to download self-update package: {item.Name}");
-                            _sessionLogger?.Log("ERROR", $"Failed to download self-update package: {item.Name}");
                             continue;
                         }
                         
@@ -834,7 +830,6 @@ public class UpdateEngine : IDisposable
                         else
                         {
                             ConsoleLogger.Error($"Failed to schedule self-update: {item.Name}");
-                            _sessionLogger?.Log("ERROR", $"Failed to schedule self-update: {item.Name}");
                         }
                     }
                     
@@ -893,7 +888,6 @@ public class UpdateEngine : IDisposable
                 if (!postflightSuccess)
                 {
                     ConsoleLogger.Warn($"Postflight script failed: {postflightOutput}");
-                    _sessionLogger?.Log("WARN", $"Postflight script failed: {postflightOutput}");
                 }
             }
 
@@ -966,7 +960,6 @@ public class UpdateEngine : IDisposable
             else
             {
                 ConsoleLogger.Warn("Some operations failed");
-                _sessionLogger?.Log("WARN", "Some operations failed");
                 ReportError("Some operations failed");
 
                 // Collect items data for items.json report
@@ -999,7 +992,6 @@ public class UpdateEngine : IDisposable
         {
             ReportError($"Update failed: {ex.Message}");
             ConsoleLogger.Error($"Update failed: {ex.Message}");
-            _sessionLogger?.Log("ERROR", $"Update failed: {ex.Message}");
             if (_verbosity >= 2)
             {
                 ConsoleLogger.Debug(ex.StackTrace ?? "");
@@ -1282,7 +1274,7 @@ public class UpdateEngine : IDisposable
 
                     // Keep what detection found. This is the only point in the run that
                     // holds it, and the session report is built long after the check.
-                    RememberInstalledVersion(catalogItem.Name, status);
+                    RememberStatus(catalogItem.Name, status);
 
                     if (!status.NeedsAction)
                     {
@@ -1322,7 +1314,6 @@ public class UpdateEngine : IDisposable
                                 : catalogItem.Recurring ? "recurring" : "--item";
                             var msg = $"{bypassReason}: bypassing LoopGuard for '{catalogItem.Name}'";
                             ConsoleLogger.Info(msg);
-                            _sessionLogger?.Log("INFO", msg);
                         }
 
                         // Check LoopGuard before adding to install list
@@ -1338,7 +1329,6 @@ public class UpdateEngine : IDisposable
                             if (defer)
                             {
                                 ConsoleLogger.Info(deferReason);
-                                _sessionLogger?.Log("INFO", deferReason);
                                 _sessionLogger?.LogStatusCheck(
                                     catalogItem.Name,
                                     catalogItem.Version,
@@ -1360,11 +1350,9 @@ public class UpdateEngine : IDisposable
                                 // what the package's checks keep finding.
                                 var loopCause = _loopGuard.GetSuppressionCause(catalogItem.Name);
                                 ConsoleLogger.Warn(loopReason);
-                                _sessionLogger?.Log("WARN", loopReason);
                                 if (!string.IsNullOrEmpty(loopCause))
                                 {
                                     ConsoleLogger.Warn(loopCause);
-                                    _sessionLogger?.Log("WARN", loopCause);
                                 }
                                 _sessionLogger?.LogStatusCheck(
                                     catalogItem.Name,
@@ -1769,7 +1757,7 @@ public class UpdateEngine : IDisposable
             }
 
             // Dependencies reach items.json too, so their detection result matters here.
-            RememberInstalledVersion(depItem.Name, status);
+            RememberStatus(depItem.Name, status);
 
             if (!existingNames.Contains(depKey))
             {
@@ -1952,7 +1940,6 @@ public class UpdateEngine : IDisposable
                 var skipReason = requirementFailure.ErrorMessage;
                 outcomes.Add(requirementFailure);
                 ConsoleLogger.Error($"Skipping {item.Name}: {skipReason}");
-                _sessionLogger?.Log("ERROR", $"Skipping {item.Name}: {skipReason}");
                 ReportItemStatus(item.Name, "failed", skipReason);
                 failedItems.Add(item.Name);
                 failCount++;
@@ -2223,7 +2210,6 @@ public class UpdateEngine : IDisposable
         {
             var msg = $"Download missing for {item.Name} — cannot install {installerType} without a local file";
             ConsoleLogger.Error(msg);
-            _sessionLogger?.Log("ERROR", msg);
             _sessionLogger?.LogInstall(item.Name, item.Version, "install", "failed", msg);
             outcomes.Add(new ItemOutcome(item.Name, item.Version, "install", false, msg, DateTime.UtcNow));
             return false;
@@ -2306,11 +2292,9 @@ public class UpdateEngine : IDisposable
             else if (convergenceWarning != null)
             {
                 ConsoleLogger.Warn(convergenceWarning);
-                _sessionLogger?.Log("WARN", convergenceWarning);
                 if (convergenceCause != null)
                 {
                     ConsoleLogger.Warn(convergenceCause);
-                    _sessionLogger?.Log("WARN", convergenceCause);
                 }
                 _loopGuard?.MarkNonConverged(item.Name, item.Version, ComputeCatalogFingerprint(item), _config.LoopReprobeHours, convergenceTrigger);
             }
@@ -2839,6 +2823,42 @@ public class UpdateEngine : IDisposable
         return inCatalog;
     }
 
+    /// <summary>The --checkonly report: the manifest hierarchy and the status tables.</summary>
+    internal void PrintCheckOnlyReport(
+        List<ManifestItem> displayItems,
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        List<CatalogItem> toUninstall,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        PrintManifestHierarchy(displayItems);
+        PrintManagedInstallsTable(displayItems, toInstall, toUpdate, catalogMap);
+        PrintManagedUpdatesTable(displayItems, toUpdate, catalogMap);
+        PrintManagedUninstallsTable(displayItems, toUninstall, catalogMap);
+        PrintInstallOrder(toInstall, toUpdate, catalogMap);
+    }
+
+    /// <summary>
+    /// Lists the pending installs and updates in the order a run installs them: every
+    /// item after the items it requires.
+    /// </summary>
+    private void PrintInstallOrder(
+        List<CatalogItem> toInstall,
+        List<CatalogItem> toUpdate,
+        Dictionary<string, CatalogItem> catalogMap)
+    {
+        var ordered = CatalogService.OrderByRequires(toInstall.Concat(toUpdate), catalogMap);
+        if (ordered.Count == 0) return;
+
+        Log("----------------------------------------------------------------------");
+        Log($"INSTALL ORDER ({ordered.Count} items)");
+        Log("----------------------------------------------------------------------");
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            Log($"{i + 1}. {ordered[i].Name} v{ordered[i].Version}");
+        }
+    }
+
     /// <summary>
     /// Prints the managed installs status table - matches Go output
     /// </summary>
@@ -2889,6 +2909,10 @@ public class UpdateEngine : IDisposable
             else if (toUpdateNames.Contains(name.ToLowerInvariant()))
             {
                 status = "Pending Update";
+            }
+            else if (catalogItem != null && !InstalledByStatusCheck(catalogItem))
+            {
+                status = "Not Installed";
             }
 
             // Annotate items deferred by install_window
@@ -2968,6 +2992,15 @@ public class UpdateEngine : IDisposable
             if (toUpdateNames.Contains(name.ToLowerInvariant()))
             {
                 status = "Pending Update";
+            }
+            else if (_absentManagedUpdates.ContainsKey(name))
+            {
+                // Skipped: managed_updates only patches what is installed.
+                status = "Not Installed";
+            }
+            else if (_brokenCheckManagedUpdates.ContainsKey(name))
+            {
+                status = "Check Failed";
             }
 
             // Annotate items deferred by install_window
@@ -3339,6 +3372,37 @@ public class UpdateEngine : IDisposable
             // Determine status — prefer the actual install/uninstall outcome over the
             // pre-install plan. Only fall back to "Pending …" when nothing was attempted.
             var hadOutcome = outcomesByName.TryGetValue(key, out var outcome) && outcome is not null;
+
+            // No action was taken on the item, so report what the status check found
+            // instead of assuming it is installed. As in Munki, which reports from
+            // installInfo, an optional or default_installs item that is not installed was
+            // not processed and is not reported, and a managed install or Self Service
+            // request that is not installed is still to be installed.
+            if (!hadOutcome
+                && catItem != null
+                && action is ("install" or "optional" or "default")
+                && !toInstallNames.Contains(key)
+                && !toUpdateNames.Contains(key)
+                && !InstalledByStatusCheck(catItem))
+            {
+                if (action != "install")
+                    continue;
+
+                var notInstalled = _checkedStatus[catItem.Name];
+                items.Add(new SessionPackageInfo
+                {
+                    Name = mi.Name,
+                    Version = version,
+                    Status = "Pending Install",
+                    ItemType = itemType,
+                    DisplayName = displayName,
+                    InstalledVersion = ResolveInstalledVersion(mi.Name, null, version),
+                    StatusReason = $"Not installed, and not installed this run ({notInstalled.Reason})",
+                    StatusReasonCode = Cimian.Core.Models.StatusReasonCode.NotInstalled,
+                    DetectionMethod = notInstalled.DetectionMethod
+                });
+                continue;
+            }
             var status = SessionItemStatusResolver.Resolve(
                 hadOutcome ? outcome : null,
                 isPendingInstall:   toInstallNames.Contains(key),
@@ -3469,7 +3533,6 @@ public class UpdateEngine : IDisposable
         catch (Exception ex)
         {
             ConsoleLogger.Warn($"Failed to write InstallInfo.yaml: {ex.Message}");
-            _sessionLogger?.Log("WARN", $"Failed to write InstallInfo.yaml: {ex.Message}");
         }
     }
 
@@ -3803,6 +3866,33 @@ public class UpdateEngine : IDisposable
     private readonly Dictionary<string, string> _installedVersions = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// This run's status check result for each item, by name: the one planning took, or
+    /// one taken for the report where planning checked nothing. Reporting reads it, so an
+    /// item no action was taken on is reported as the check found it.
+    /// </summary>
+    private readonly Dictionary<string, StatusCheckResult> _checkedStatus = new(StringComparer.OrdinalIgnoreCase);
+
+    private void RememberStatus(string name, StatusCheckResult status)
+    {
+        _checkedStatus[name] = status;
+        RememberInstalledVersion(name, status);
+    }
+
+    /// <summary>
+    /// Whether some version of the item is installed, by this run's status check. Used for
+    /// items no action was taken on; an item that is installed but out of date counts.
+    /// </summary>
+    private bool InstalledByStatusCheck(CatalogItem item)
+    {
+        if (!_checkedStatus.TryGetValue(item.Name, out var status))
+        {
+            status = _statusService.CheckStatus(item, "install", _config.CachePath);
+            RememberStatus(item.Name, status);
+        }
+        return !status.NeedsAction || status.IsUpdate;
+    }
+
+    /// <summary>
     /// Records what a status check found installed. Empty results are not recorded, so a
     /// later check that resolves a version cannot be overwritten by an earlier blank one.
     /// </summary>
@@ -3956,7 +4046,6 @@ public class UpdateEngine : IDisposable
             catch (Exception ex)
             {
                 ConsoleLogger.Error($"Failed to schedule system restart: {ex.Message}");
-                _sessionLogger?.Log("ERROR", $"Failed to schedule system restart: {ex.Message}");
             }
         }
         else
@@ -3995,7 +4084,6 @@ public class UpdateEngine : IDisposable
             catch (Exception ex)
             {
                 ConsoleLogger.Error($"Failed to initiate user logout: {ex.Message}");
-                _sessionLogger?.Log("ERROR", $"Failed to initiate user logout: {ex.Message}");
             }
         }
         else
