@@ -416,6 +416,27 @@ public class CatalogItem
     [YamlMember(Alias = "installer")]
     public InstallerInfo Installer { get; set; } = new();
 
+    /// <summary>
+    /// Munki-format fallback for installer.location, read only at catalog load.
+    /// <see cref="NormalizeMunkiInstallerKeys"/> copies it into the installer block when
+    /// installer.location is empty; everything else reads installer.location.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_location")]
+    public string? InstallerItemLocation { get; set; }
+
+    /// <summary>
+    /// Munki-format fallback for installer.hash (SHA-256), read only at catalog load.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_hash")]
+    public string? InstallerItemHash { get; set; }
+
+    /// <summary>
+    /// Munki-format fallback for installer.size, read only at catalog load. Munki gives it
+    /// in kilobytes; installer.size is in bytes.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_size")]
+    public long? InstallerItemSize { get; set; }
+
     [YamlMember(Alias = "uninstaller")]
     public List<UninstallerInfo> Uninstaller { get; set; } = new();
 
@@ -532,6 +553,25 @@ public class CatalogItem
     /// </summary>
     [YamlMember(Alias = "loop_fingerprint")]
     public string? LoopFingerprint { get; set; }
+
+    /// <summary>
+    /// Fills the installer block from Munki's top-level installer_item_* keys where it
+    /// has no value of its own. The installer block is the schema, so a value it already
+    /// has is never overwritten. Called once when a catalog is loaded.
+    /// </summary>
+    public void NormalizeMunkiInstallerKeys()
+    {
+        Installer ??= new InstallerInfo();
+
+        if (string.IsNullOrEmpty(Installer.Location) && !string.IsNullOrEmpty(InstallerItemLocation))
+            Installer.Location = InstallerItemLocation;
+
+        if (string.IsNullOrEmpty(Installer.Hash) && !string.IsNullOrEmpty(InstallerItemHash))
+            Installer.Hash = InstallerItemHash;
+
+        if (Installer.Size == null && InstallerItemSize != null)
+            Installer.Size = InstallerItemSize * 1024;
+    }
 
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0

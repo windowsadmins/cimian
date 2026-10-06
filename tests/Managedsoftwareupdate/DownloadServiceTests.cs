@@ -1,3 +1,4 @@
+using System.Net;
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
@@ -200,6 +201,67 @@ public class DownloadServiceTests : IDisposable
 
         Assert.Contains("my_cool_category", cachePath.ToLowerInvariant());
         Assert.DoesNotContain(" ", cachePath);
+    }
+
+    #endregion
+
+    #region DownloadItemAsync Tests
+
+    [Fact]
+    public async Task DownloadItemAsync_MunkiInstallerItemLocation_DownloadsFromTheNormalizedLocation()
+    {
+        var handler = new StubHandler("installer"u8.ToArray());
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var item = new CatalogItem
+        {
+            Name = "TestApp",
+            InstallerItemLocation = "apps/testapp/setup.msi"
+        };
+        item.NormalizeMunkiInstallerKeys();
+
+        var path = await service.DownloadItemAsync(item);
+
+        Assert.Equal(Path.Combine(_testCacheDir, "setup.msi"), path);
+        Assert.Equal("installer", File.ReadAllText(path!));
+        Assert.All(handler.RequestedUrls,
+            url => Assert.Equal("https://test.example.com/repo/pkgs/apps/testapp/setup.msi", url));
+    }
+
+    [Fact]
+    public async Task DownloadItemAsync_BothLocations_DownloadsFromTheInstallerBlock()
+    {
+        var handler = new StubHandler("installer"u8.ToArray());
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var item = new CatalogItem
+        {
+            Name = "TestApp",
+            Installer = new InstallerInfo { Location = "apps/testapp/setup.msi" },
+            InstallerItemLocation = "installer-item.7.setup.msi"
+        };
+        item.NormalizeMunkiInstallerKeys();
+
+        var path = await service.DownloadItemAsync(item);
+
+        Assert.Equal(Path.Combine(_testCacheDir, "setup.msi"), path);
+        Assert.All(handler.RequestedUrls,
+            url => Assert.Equal("https://test.example.com/repo/pkgs/apps/testapp/setup.msi", url));
+    }
+
+    /// <summary>
+    /// Answers every request with the same body and records the URLs requested.
+    /// </summary>
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        private readonly byte[] _body;
+        public List<string> RequestedUrls { get; } = new();
+
+        public StubHandler(byte[] body) => _body = body;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestedUrls.Add(request.RequestUri!.ToString());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(_body) });
+        }
     }
 
     #endregion
