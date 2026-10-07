@@ -14,6 +14,59 @@ public class CimianConfig
     [YamlMember(Alias = "ClientIdentifier")]
     public string ClientIdentifier { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The format of the repository's catalogs and manifests: "yaml" (the default) or
+    /// "plist". With plist the client asks for catalogs and manifests without an
+    /// extension (Munki's layout) and parses the XML plist. The cache stays YAML either
+    /// way.
+    /// </summary>
+    [YamlMember(Alias = "RepoFormat")]
+    public string? RepoFormat { get; set; }
+
+    /// <summary>
+    /// <see cref="RepoFormat"/> as an enum value: Yaml or Plist. Any other value is read as
+    /// YAML, with a warning in the run log, so a typo does not end a run half way.
+    /// </summary>
+    [YamlIgnore]
+    public Cimian.Core.Services.RepoFormat RepositoryFormat
+        => RepoFormatProblem == null ? Cimian.Core.Services.RepoFormatParser.Parse(RepoFormat) : Cimian.Core.Services.RepoFormat.Yaml;
+
+    /// <summary>Why <see cref="RepoFormat"/> is not usable, or null when it is.</summary>
+    [YamlIgnore]
+    public string? RepoFormatProblem
+    {
+        get
+        {
+            try
+            {
+                Cimian.Core.Services.RepoFormatParser.Parse(RepoFormat);
+                return null;
+            }
+            catch (ArgumentException)
+            {
+                return $"RepoFormat '{RepoFormat}' is not yaml or plist";
+            }
+        }
+    }
+
+    /// <summary>
+    /// The warning a run logs for an unusable <see cref="RepoFormat"/>, or null. Without it a
+    /// typo would only show as missing catalogs and manifests.
+    /// </summary>
+    [YamlIgnore]
+    internal string? RepoFormatWarning
+        => RepoFormatProblem is { } problem ? $"{problem}: reading the repository as YAML" : null;
+
+    /// <summary>The RepoFormat line of --show-config: the form in use, and why when it is not the value given.</summary>
+    internal string DescribeRepoFormat()
+    {
+        if (RepoFormatProblem != null)
+            return $"yaml ('{RepoFormat}' is not yaml or plist)";
+        if (string.IsNullOrWhiteSpace(RepoFormat))
+            return "yaml (not set)";
+        return Cimian.Core.Services.RepoFormatParser.Name(RepositoryFormat);
+    }
+
     [YamlMember(Alias = "CachePath")]
     public string CachePath { get; set; } = CimianPaths.CacheDir;
 
