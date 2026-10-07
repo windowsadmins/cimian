@@ -251,6 +251,7 @@ public class Program
         Console.WriteLine();
         Console.WriteLine("Current configuration:");
         Console.WriteLine($"  SoftwareRepoURL: {config.SoftwareRepoURL}");
+        Console.WriteLine($"  RepoFormat: {config.DescribeRepoFormat()}");
         Console.WriteLine($"  ClientIdentifier: {config.ClientIdentifier}");
         Console.WriteLine($"  CachePath: {config.CachePath}");
         Console.WriteLine($"  CatalogsPath: {config.CatalogsPath}");

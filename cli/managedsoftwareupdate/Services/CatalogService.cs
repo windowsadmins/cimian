@@ -77,8 +77,10 @@ public class CatalogService
     public async Task<List<CatalogItem>> DownloadCatalogAsync(string catalogName)
     {
         var items = new List<CatalogItem>();
-        var catalogUrl = $"{_config.SoftwareRepoURL.TrimEnd('/')}/catalogs/{catalogName}.yaml";
-        var localPath = Path.Combine(_config.CatalogsPath, $"{catalogName}.yaml");
+        // The address follows the repository's format. The cache is always YAML (cimistatus
+        // and the reports read it), so a downloaded plist is converted before it is saved.
+        var catalogUrl = $"{_config.SoftwareRepoURL.TrimEnd('/')}/catalogs/{RepoPaths.CatalogFileName(catalogName, _config.RepositoryFormat)}";
+        var localPath = Path.Combine(_config.CatalogsPath, RepoPaths.CatalogFileName(catalogName, RepoFormat.Yaml));
         ConsoleLogger.Debug($"Starting download url: {catalogUrl} destination: {localPath}");
 
         try
@@ -86,7 +88,7 @@ public class CatalogService
             var response = await _httpClient.GetAsync(catalogUrl);
             if (response.IsSuccessStatusCode)
             {
-                var content = await response.Content.ReadAsStringAsync();
+                var content = YamlUtils.AsYaml(await response.Content.ReadAsStringAsync(), RepoFileKind.Catalog);
                 ConsoleLogger.Debug($"Download completed to temp file tempFile: {localPath}.downloading size: {content.Length}");
                 
                 // Save locally

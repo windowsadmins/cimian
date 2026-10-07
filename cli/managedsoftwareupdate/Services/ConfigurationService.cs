@@ -233,6 +233,11 @@ public class ConfigurationService
             errors.Add("InstallerTimeout must be at least 60 seconds");
         }
 
+        if (config.RepoFormatProblem is { } repoFormatProblem)
+        {
+            errors.Add(repoFormatProblem);
+        }
+
         return errors;
     }
 

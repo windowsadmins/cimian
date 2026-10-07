@@ -269,11 +269,13 @@ public class ManifestService
         // Seed a tentative Ok so a circular include resolves to Ok and recursion stops;
         // overwritten with the real result at each return path below.
         manifestResults[manifestName] = ManifestFetchResult.Ok;
-        ConsoleLogger.Debug($"Processing manifest originalName: {manifestName} processedName: {manifestName}.yaml");
+        var remoteName = RepoPaths.ManifestFileName(manifestName, _config.RepositoryFormat);
+        ConsoleLogger.Debug($"Processing manifest originalName: {manifestName} processedName: {remoteName}");
 
-        // Try to download the manifest
-        var manifestUrl = $"{_config.SoftwareRepoURL.TrimEnd('/')}/manifests/{manifestName}.yaml";
-        var localPath = Path.Combine(_config.ManifestsPath, $"{manifestName}.yaml");
+        // Try to download the manifest. The address follows the repository's format; the
+        // cache is always YAML, so a downloaded plist is converted before it is saved.
+        var manifestUrl = $"{_config.SoftwareRepoURL.TrimEnd('/')}/manifests/{remoteName}";
+        var localPath = Path.Combine(_config.ManifestsPath, RepoPaths.ManifestFileName(manifestName, RepoFormat.Yaml));
         ConsoleLogger.Debug($"Downloading manifest url: {manifestUrl} localPath: {localPath}");
 
         try
@@ -282,7 +284,7 @@ public class ManifestService
             var response = await _httpClient.GetAsync(manifestUrl);
             if (response.IsSuccessStatusCode)
             {
-                var content = await response.Content.ReadAsStringAsync();
+                var content = YamlUtils.AsYaml(await response.Content.ReadAsStringAsync(), RepoFileKind.Manifest);
                 ConsoleLogger.Debug($"Download completed to temp file tempFile: {localPath}.downloading size: {content.Length}");
                 
                 // Save locally
@@ -324,8 +326,14 @@ public class ManifestService
                         ConsoleLogger.Debug($"Processing included manifests from {manifestName} count: {manifest.IncludedManifests.Count}");
                         foreach (var include in manifest.IncludedManifests)
                         {
-                            // Clean up the include path - normalize slashes and remove .yaml extension
-                            var includeName = include.Replace(".yaml", "").Replace("\\", "/");
+                            // Munki skips an empty include name instead of asking for the manifests folder.
+                            if (string.IsNullOrWhiteSpace(include))
+                                continue;
+
+                            // Munki asks for an include by its exact name; in YAML mode one .yaml or .plist
+                            // suffix is removed first. Backslashes become slashes.
+                            var includeName = (_config.RepositoryFormat == RepoFormat.Plist ? include : RepoPaths.StripSuffix(include))
+                                .Replace("\\", "/");
                             ConsoleLogger.Debug($"Processing included manifest: {includeName}");
                             
                             // Include paths are relative or absolute manifest references
