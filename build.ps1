@@ -994,7 +994,11 @@ function Build-NuGetPackage {
     $nuspecContent = (Get-Content $nuspecTemplate -Raw) -replace '\{\{VERSION\}\}', $Version.Semantic
     [System.IO.File]::WriteAllText($nuspecPath, $nuspecContent, [System.Text.Encoding]::UTF8)
 
-    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
+    # nuget pack names the file with the normalized version, which drops leading
+    # zeros from each part (26.10.8.0241 becomes 26.10.8.241). Use the same name
+    # here so the nuget.exe path finds its own output before 10:00.
+    $nupkgVersion = ($Version.Semantic -split '\.' | ForEach-Object { if ($_ -match '^\d+$') { [string][long]$_ } else { $_ } }) -join '.'
+    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$nupkgVersion.nupkg"
 
     # Method 1: Try using nuget.exe directly (simplest, most reliable)
     if (Test-Command "nuget") {
