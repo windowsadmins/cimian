@@ -809,7 +809,7 @@ public class InstallerInfo
     /// </summary>
     [YamlMember(Alias = "flags")]
     public List<string> Flags { get; set; } = new();
-    /// <summary>Additional process exit codes to treat as a successful install, beyond 0 and 3010 (e.g. an installer that returns 2 for "installed, reboot recommended").</summary>
+    /// <summary>Additional process exit codes to treat as a successful install, beyond 0, 3010 and 1641 (e.g. an installer that returns 2 for "installed, reboot recommended").</summary>
     [YamlMember(Alias = "success_codes")]
     public List<int>? SuccessCodes { get; set; }
 
