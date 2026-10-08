@@ -530,7 +530,7 @@ installer:
 # What files this package installs
 installs:
   - type: file
-    path: "C:\Program Files\Adobe\Acrobat DC\Reader\AcroRd32.exe"
+    path: 'C:\Program Files\Adobe\Acrobat DC\Reader\AcroRd32.exe'
     md5checksum: "d41d8cd98f00b204e9800998ecf8427e"
     version: "24.003.20054"
 
@@ -573,7 +573,7 @@ installer:
 # Installation tracking
 installs:
   - type: file
-    path: "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
+    path: 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe'
     version: "17.8.34316.72"
 
 # Custom scripts
@@ -681,13 +681,13 @@ installer:
 # Multiple file installations tracked
 installs:
   - type: file
-    path: "C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE"
+    path: 'C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE'
     version: "16.0.17126.20132"
   - type: file  
-    path: "C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE"
+    path: 'C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE'
     version: "16.0.17126.20132"
   - type: file
-    path: "C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE" 
+    path: 'C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE' 
     version: "16.0.17126.20132"
 
 # Prerequisites and dependencies
