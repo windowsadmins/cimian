@@ -135,7 +135,7 @@ class Program
 
         if (string.IsNullOrEmpty(config.RepoPath))
         {
-            Console.Error.WriteLine("Error: repo_path not configured in config file");
+            Console.Error.WriteLine("Error: RepoPath not configured in Config.yaml");
             return 1;
         }
 
