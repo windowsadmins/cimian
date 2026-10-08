@@ -3177,6 +3177,7 @@ public class UpdateEngine : IDisposable
                 1625 => "installation forbidden by system policy",
                 1638 => "another version of this product is already installed",
                 1639 => "invalid command line argument",
+                1641 => "success, and the installer has started a restart",
                 3010 => "success, but a restart is required",
                 _ => null
             };
