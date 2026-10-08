@@ -35,6 +35,10 @@ public class InstallerService
     
     private readonly CimianConfig _config;
     private readonly ScriptService _scriptService;
+
+    // CIMIAN-WARNING message from the install_script of the item being installed;
+    // reset at the start of each InstallAsync.
+    private string? _installScriptWarning;
     private SessionLogger? _sessionLogger;
 
     /// <summary>
@@ -583,8 +587,9 @@ public class InstallerService
     /// <summary>
     /// Installs a catalog item.
     /// <para>
-    /// Returns <c>WarningMessage</c> when the postinstall script signals a Warning
-    /// outcome via exit code 2 or a "CIMIAN-WARNING: ..." marker line. The install
+    /// Returns <c>WarningMessage</c> when a script signals a Warning outcome with a
+    /// "CIMIAN-WARNING: ..." marker line: the item's install_script or
+    /// postinstall_script, or a script packaged inside the installer. The install
     /// itself is still reported as <c>Success=true</c>; the caller should surface
     /// the item as Warning (e.g. set <see cref="Cimian.Core.Models.SessionPackageInfo.Status"/>
     /// to "Warning") and record the message on <see cref="Cimian.Core.Models.ItemOutcome.WarningMessage"/>.
@@ -598,6 +603,7 @@ public class InstallerService
         ConsoleLogger.Info($"Installing {item.Name} v{item.Version}...");
         _sessionLogger?.Log("INFO", $"Starting installation: {item.Name} v{item.Version}");
         _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started", $"Installing {item.Name}");
+        _installScriptWarning = null;
 
         // Run preinstall script if present
         if (!string.IsNullOrEmpty(item.PreinstallScript))
@@ -644,7 +650,9 @@ public class InstallerService
         // The installer has returned, so any script it ran as an MSI custom action has
         // finished writing. Fold that output into this session's log before branching on
         // the result - a failed install is exactly when the script's output matters.
-        EmitPackageScriptOutput();
+        // A packaged script's CIMIAN-WARNING marker only ever reaches us this way, since
+        // the script ran inside msiexec or sbin-installer rather than as our child.
+        var packageScriptWarning = EmitPackageScriptOutput();
 
         if (!result.Success)
         {
@@ -695,7 +703,7 @@ public class InstallerService
         ConsoleLogger.Success($"Successfully installed {item.Name} v{item.Version}");
         _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed", $"Successfully installed {item.Name}");
 
-        return (result.Success, result.Output, postinstallWarning);
+        return (result.Success, result.Output, postinstallWarning ?? _installScriptWarning ?? packageScriptWarning);
     }
 
     /// <summary>
@@ -844,9 +852,10 @@ public class InstallerService
     /// </summary>
     public void EmitPendingPackageScriptOutput() => EmitPackageScriptOutput();
 
-    private void EmitPackageScriptOutput()
+    private string? EmitPackageScriptOutput()
     {
-        foreach (var output in SessionLogger.CollectPackageScriptLogs())
+        var outputs = SessionLogger.CollectPackageScriptLogs();
+        foreach (var output in outputs)
         {
             foreach (var line in output.Lines)
             {
@@ -860,6 +869,23 @@ public class InstallerService
                     $"{SessionLogger.MaxPackageScriptLogLines} lines");
             }
         }
+
+        return FindPackageScriptWarning(outputs);
+    }
+
+    /// <summary>
+    /// The CIMIAN-WARNING message a packaged script printed, if any. Postinstall output
+    /// is read first, as it is for a pkgsinfo's own scripts.
+    /// </summary>
+    internal static string? FindPackageScriptWarning(IEnumerable<SessionLogger.PackageScriptOutput> outputs)
+    {
+        foreach (var output in outputs.OrderBy(o => string.Equals(o.Phase, "postinstall", StringComparison.OrdinalIgnoreCase) ? 0 : 1))
+        {
+            var warning = ScriptService.ExtractWarningMarker(string.Join(Environment.NewLine, output.Lines));
+            if (warning != null)
+                return warning;
+        }
+        return null;
     }
 
     private string GetInstallerType(CatalogItem item, string localFile)
@@ -1497,7 +1523,19 @@ try {{
 
         ConsoleLogger.Info($"Running install_script for {item.Name}...");
         _sessionLogger?.Log("INFO", $"Executing install_script for {item.Name}");
-        return await _scriptService.ExecuteScriptAsync(item.InstallScript, cancellationToken);
+        var result = await _scriptService.ExecuteScriptWithDetailsAsync(item.InstallScript, cancellationToken);
+
+        // For a nopkg item the install_script is the install, so its CIMIAN-WARNING
+        // marker is the item's outcome, as a postinstall_script's is: installed, but
+        // needing follow-up. A script that exits 2 with the marker therefore counts as
+        // installed with a warning, not as a failure.
+        if (result.WarningMessage != null)
+        {
+            _installScriptWarning = result.WarningMessage;
+            ConsoleLogger.Warn($"install_script WARNING for {item.Name}: {result.WarningMessage}");
+            return (true, result.Output);
+        }
+        return (result.Success, result.Output);
     }
 
     private async Task<(bool Success, string Output)> UninstallMsiAsync(
