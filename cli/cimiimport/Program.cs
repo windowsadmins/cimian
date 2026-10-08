@@ -222,6 +222,17 @@ public class Program
                 return;
             }
 
+            var inputErrors = ImportService.ValidateInputs(packagePath, config, scripts, uninstaller);
+            if (inputErrors.Count > 0)
+            {
+                foreach (var error in inputErrors)
+                {
+                    Console.Error.WriteLine($"[ERROR] {error}");
+                }
+                context.ExitCode = 1;
+                return;
+            }
+
             // Check for git repo and pull
             var importService = new ImportService();
             if (ImportService.IsGitRepository(config.RepoPath))
@@ -251,14 +262,22 @@ public class Program
                 {
                     // Run makecatalogs
                     Console.WriteLine("Running makecatalogs...");
-                    RunMakeCatalogs(config.RepoPath);
-
-                    Console.WriteLine("Import completed successfully.");
-                    context.ExitCode = 0;
+                    if (RunMakeCatalogs(config.RepoPath))
+                    {
+                        Console.WriteLine("Import completed successfully.");
+                        context.ExitCode = 0;
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine("[ERROR] The item was imported, but makecatalogs failed, so it is not in the catalogs yet.");
+                        context.ExitCode = 1;
+                    }
                 }
                 else
                 {
-                    context.ExitCode = 0; // User canceled
+                    // The inputs were checked above, so this is the admin declining the
+                    // import at the final prompt. Like munkiimport, that is not an error.
+                    context.ExitCode = 0;
                 }
             }
             catch (Exception ex)
@@ -278,7 +297,8 @@ public class Program
         Console.WriteLine($"cimiimport v{version.Major}.{version.Minor}.{version.Build}");
     }
 
-    private static void RunMakeCatalogs(string repoPath)
+    /// <returns>False when makecatalogs ran and failed; a missing makecatalogs is only a warning.</returns>
+    private static bool RunMakeCatalogs(string repoPath)
     {
         try
         {
@@ -286,7 +306,7 @@ public class Program
             if (!File.Exists(makeCatalogsBinary))
             {
                 Console.WriteLine("⚠️ makecatalogs not found");
-                return;
+                return true;
             }
 
             var psi = new System.Diagnostics.ProcessStartInfo
@@ -303,11 +323,16 @@ public class Program
             psi.ArgumentList.Add("--silent");
 
             using var process = System.Diagnostics.Process.Start(psi);
-            process?.WaitForExit();
+            if (process == null)
+                return false;
+
+            process.WaitForExit();
+            return process.ExitCode == 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ makecatalogs error: {ex.Message}");
+            Console.Error.WriteLine($"[ERROR] makecatalogs error: {ex.Message}");
+            return false;
         }
     }
 }

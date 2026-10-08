@@ -21,6 +21,46 @@ public class ImportService
     }
 
     /// <summary>
+    /// Checks the inputs an import needs before anything touches the repo, as munkiimport
+    /// does. Returns one message per problem; empty means the import can start.
+    /// A script or uninstaller that cannot be found is an error, not a warning: the import
+    /// used to carry on without it, which published a pkgsinfo missing the very script or
+    /// uninstaller the admin asked for.
+    /// </summary>
+    public static List<string> ValidateInputs(string packagePath, ImportConfiguration config, ScriptPaths scripts, string? uninstallerPath)
+    {
+        var errors = new List<string>();
+
+        if (!File.Exists(packagePath))
+            errors.Add($"Installer '{packagePath}' does not exist");
+
+        if (string.IsNullOrWhiteSpace(config.RepoPath))
+            errors.Add("No repo path: set RepoPath with cimiimport --config, or pass --repo_path");
+        else if (!Directory.Exists(config.RepoPath))
+            errors.Add($"Repo path '{config.RepoPath}' does not exist");
+
+        foreach (var (option, path) in new[]
+                 {
+                     ("--preinstall-script", scripts.Preinstall),
+                     ("--postinstall-script", scripts.Postinstall),
+                     ("--preuninstall-script", scripts.Preuninstall),
+                     ("--postuninstall-script", scripts.Postuninstall),
+                     ("--install-check-script", scripts.InstallCheck),
+                     ("--uninstall-check-script", scripts.UninstallCheck),
+                 })
+        {
+            // "template" takes the script from the existing item instead of a file
+            if (!string.IsNullOrEmpty(path) && path != "template" && !File.Exists(path))
+                errors.Add($"{option} '{path}' does not exist");
+        }
+
+        if (!string.IsNullOrEmpty(uninstallerPath) && !File.Exists(uninstallerPath))
+            errors.Add($"--uninstaller '{uninstallerPath}' does not exist");
+
+        return errors;
+    }
+
+    /// <summary>
     /// Performs the full import workflow. User interaction is routed through
     /// <paramref name="prompter"/>; pass <see cref="ConsolePrompter"/> for the
     /// classic CLI experience, <see cref="NoInteractivePrompter"/> for
