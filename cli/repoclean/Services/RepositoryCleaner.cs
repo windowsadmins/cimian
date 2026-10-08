@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
+using Cimian.CLI.Makecatalogs.Services;
 
 namespace Cimian.CLI.Repoclean.Services;
 
@@ -31,73 +31,89 @@ public class RepositoryCleaner : IRepositoryCleaner
         _fileRepository = fileRepository;
     }
 
-    public async Task CleanAsync(RepoCleanOptions options)
+    public async Task<int> CleanAsync(RepoCleanOptions options)
     {
         if (string.IsNullOrEmpty(options.RepoUrl))
         {
             Console.WriteLine("Error: Repository URL is required");
-            return;
+            return 1;
         }
 
         if (options.Keep < 1)
         {
             Console.WriteLine("Error: --keep value must be a positive integer");
-            return;
+            return 1;
         }
 
         Console.WriteLine($"Using repository: {options.RepoUrl}");
 
+        // A mistyped or unmounted path used to read as an empty repo and exit 0,
+        // which under --auto looks exactly like a clean run.
+        if (!_fileRepository.Exists(options.RepoUrl))
+        {
+            Console.WriteLine($"Error: Repository path does not exist: {options.RepoUrl}");
+            return 1;
+        }
+
+        if (!_fileRepository.Exists("pkgsinfo"))
+        {
+            Console.WriteLine($"Error: No pkgsinfo directory in {options.RepoUrl}; is this a Cimian repository?");
+            return 1;
+        }
+
         try
         {
-            // Initialize repository connection
-            if (!_fileRepository.Exists(options.RepoUrl))
-            {
-                Console.WriteLine($"Error: Repository path does not exist: {options.RepoUrl}");
-                return;
-            }
+            var manifests = await _manifestAnalyzer.AnalyzeManifestsAsync(_fileRepository);
+            var pkgInfo = await _pkgInfoAnalyzer.AnalyzePkgInfoAsync(_fileRepository, manifests.Items);
+            var orphanedPackages = await _packageAnalyzer.FindOrphanedPackagesAsync(_fileRepository, pkgInfo.ReferencedPackages);
 
-            // Analyze manifests
-            var (manifestItems, manifestItemsWithVersions) = await _manifestAnalyzer.AnalyzeManifestsAsync(_fileRepository);
-
-            // Analyze pkginfo files
-            var (pkgInfoDb, requiredItems, referencedPackages, pkgInfoCount) = 
-                await _pkgInfoAnalyzer.AnalyzePkgInfoAsync(_fileRepository, manifestItems);
-
-            // Find orphaned packages
-            var orphanedPackages = await _packageAnalyzer.FindOrphanedPackagesAsync(_fileRepository, referencedPackages);
-
-            // Find cleanup items
             var (itemsToDelete, packagesToKeep) = FindCleanupItems(
-                pkgInfoDb, manifestItems, manifestItemsWithVersions, requiredItems, options);
+                pkgInfo.PkgInfoDb, manifests.Items, manifests.ItemsWithVersions, pkgInfo.RequiredItems, options);
 
-            // Display statistics
-            DisplayStatistics(itemsToDelete, orphanedPackages, pkgInfoCount, pkgInfoDb.Count, packagesToKeep);
+            DisplayStatistics(itemsToDelete, orphanedPackages, pkgInfo.PkgInfoCount, pkgInfo.PkgInfoDb.Count, packagesToKeep);
 
-            // Perform cleanup if requested
-            if (itemsToDelete.Any() || orphanedPackages.Any())
+            // An unreadable pkgsinfo still points at a payload, and an unreadable manifest
+            // still names items, but neither is counted above. Deleting on that picture
+            // removes things that are in use, so report and stop.
+            var readErrors = manifests.ParseErrors.Concat(pkgInfo.ParseErrors).ToList();
+            if (readErrors.Count > 0)
             {
-                if (options.Remove)
+                Console.WriteLine();
+                Console.WriteLine($"Error: {readErrors.Count} file(s) could not be read, so what they reference is unknown:");
+                foreach (var error in readErrors)
                 {
-                    if (await ShouldProceedWithDeletion(options))
-                    {
-                        await DeleteItemsAsync(itemsToDelete, orphanedPackages, packagesToKeep);
-                        await RebuildCatalogsAsync(options);
-                    }
+                    Console.WriteLine($"\t{error}");
                 }
-                else
-                {
-                    Console.WriteLine("\nRun with --remove to actually delete these items.");
-                }
+                Console.WriteLine("Nothing was deleted. Fix or remove these files and run repoclean again.");
+                return 1;
             }
-            else
+
+            if (!itemsToDelete.Any() && !orphanedPackages.Any())
             {
                 Console.WriteLine("No items found for deletion.");
+                return 0;
             }
+
+            if (!options.Remove)
+            {
+                Console.WriteLine("\nRun with --remove to actually delete these items.");
+                return 0;
+            }
+
+            if (!await ShouldProceedWithDeletion(options))
+            {
+                return 0;
+            }
+
+            var failures = await DeleteItemsAsync(itemsToDelete, orphanedPackages, packagesToKeep);
+            var rebuild = RebuildCatalogs(options);
+            return failures == 0 && rebuild == 0 ? 0 : 1;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during repository cleanup");
+            _logger.LogDebug(ex, "Error during repository cleanup");
             Console.WriteLine($"Error: {ex.Message}");
+            return 1;
         }
     }
 
@@ -109,7 +125,7 @@ public class RepositoryCleaner : IRepositoryCleaner
         RepoCleanOptions options)
     {
         var itemsToDelete = new List<PackageInfo>();
-        var packagesToKeep = new HashSet<string>();
+        var packagesToKeep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var kvp in pkgInfoDb.OrderBy(x => x.Key))
         {
@@ -140,35 +156,17 @@ public class RepositoryCleaner : IRepositoryCleaner
                 
                 if (manifestItemsWithVersions.Contains((itemList[0].Name, version)))
                 {
-                    foreach (var item in itemList)
-                    {
-                        if (!string.IsNullOrEmpty(item.PackagePath))
-                            packagesToKeep.Add(item.PackagePath);
-                        if (!string.IsNullOrEmpty(item.UninstallPackagePath))
-                            packagesToKeep.Add(item.UninstallPackagePath);
-                    }
+                    KeepPayloads(itemList, packagesToKeep);
                     lineInfo = "(REQUIRED by a manifest)";
                 }
                 else if (requiredItems.Contains((itemList[0].Name, version)))
                 {
-                    foreach (var item in itemList)
-                    {
-                        if (!string.IsNullOrEmpty(item.PackagePath))
-                            packagesToKeep.Add(item.PackagePath);
-                        if (!string.IsNullOrEmpty(item.UninstallPackagePath))
-                            packagesToKeep.Add(item.UninstallPackagePath);
-                    }
+                    KeepPayloads(itemList, packagesToKeep);
                     lineInfo = "(REQUIRED by another pkginfo item)";
                 }
                 else if (index <= options.Keep)
                 {
-                    foreach (var item in itemList)
-                    {
-                        if (!string.IsNullOrEmpty(item.PackagePath))
-                            packagesToKeep.Add(item.PackagePath);
-                        if (!string.IsNullOrEmpty(item.UninstallPackagePath))
-                            packagesToKeep.Add(item.UninstallPackagePath);
-                    }
+                    KeepPayloads(itemList, packagesToKeep);
                 }
                 else
                 {
@@ -205,6 +203,14 @@ public class RepositoryCleaner : IRepositoryCleaner
         }
 
         return (itemsToDelete, packagesToKeep);
+    }
+
+    private static void KeepPayloads(IEnumerable<PackageInfo> items, HashSet<string> packagesToKeep)
+    {
+        foreach (var payload in items.SelectMany(i => i.PayloadPaths))
+        {
+            packagesToKeep.Add(payload);
+        }
     }
 
     private string NormalizeVersion(string version)
@@ -285,9 +291,10 @@ public class RepositoryCleaner : IRepositoryCleaner
                 packageTotalSize += item.PackageSize;
             }
             
-            if (!string.IsNullOrEmpty(item.UninstallPackagePath) && !packagesToKeep.Contains(item.UninstallPackagePath))
+            var uninstallers = item.UninstallPackagePaths.Where(p => !packagesToKeep.Contains(p)).ToList();
+            if (uninstallers.Count > 0)
             {
-                packageCount++;
+                packageCount += uninstallers.Count;
                 packageTotalSize += item.UninstallPackageSize;
             }
         }
@@ -365,79 +372,67 @@ public class RepositoryCleaner : IRepositoryCleaner
         return await readTask;
     }
 
-    private async Task DeleteItemsAsync(List<PackageInfo> itemsToDelete, List<string> orphanedPackages, HashSet<string> packagesToKeep)
+    /// <returns>The number of files that could not be deleted.</returns>
+    private async Task<int> DeleteItemsAsync(List<PackageInfo> itemsToDelete, List<string> orphanedPackages, HashSet<string> packagesToKeep)
     {
-        // Delete pkginfo items and referenced packages
+        var failures = 0;
+        var deletedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        async Task Delete(string path)
+        {
+            Console.WriteLine($"Removing {path}");
+            try
+            {
+                await _fileRepository.DeleteAsync(path);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error removing {path}: {ex.Message}");
+                failures++;
+            }
+        }
+
         foreach (var item in itemsToDelete)
         {
             if (!string.IsNullOrEmpty(item.ResourceIdentifier))
             {
-                Console.WriteLine($"Removing {item.ResourceIdentifier}");
-                try
-                {
-                    await _fileRepository.DeleteAsync(item.ResourceIdentifier);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error removing {item.ResourceIdentifier}: {ex.Message}");
-                }
+                await Delete(item.ResourceIdentifier);
             }
 
-            if (!string.IsNullOrEmpty(item.PackagePath) && !packagesToKeep.Contains(item.PackagePath))
+            foreach (var payload in item.PayloadPaths)
             {
-                var packagePath = Path.Combine("pkgs", item.PackagePath);
-                Console.WriteLine($"Removing {packagePath}");
-                try
-                {
-                    await _fileRepository.DeleteAsync(packagePath);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error removing {packagePath}: {ex.Message}");
-                }
-            }
+                // A payload that any kept pkgsinfo points at stays, whatever else points at it.
+                if (packagesToKeep.Contains(payload) || !deletedPackages.Add(payload))
+                    continue;
 
-            if (!string.IsNullOrEmpty(item.UninstallPackagePath) && !packagesToKeep.Contains(item.UninstallPackagePath))
-            {
-                var packagePath = Path.Combine("pkgs", item.UninstallPackagePath);
-                Console.WriteLine($"Removing {packagePath}");
-                try
-                {
-                    await _fileRepository.DeleteAsync(packagePath);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Error removing {packagePath}: {ex.Message}");
-                }
+                await Delete(Path.Combine("pkgs", payload));
             }
         }
 
-        // Delete orphaned packages
         foreach (var package in orphanedPackages)
         {
-            var packagePath = Path.Combine("pkgs", package);
-            Console.WriteLine($"Removing {packagePath}");
-            try
-            {
-                await _fileRepository.DeleteAsync(packagePath);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error removing {packagePath}: {ex.Message}");
-            }
+            if (packagesToKeep.Contains(package) || !deletedPackages.Add(package))
+                continue;
+
+            await Delete(Path.Combine("pkgs", package));
         }
+
+        return failures;
     }
 
-    private Task RebuildCatalogsAsync(RepoCleanOptions options)
+    /// <summary>
+    /// Rebuilds the catalogs with makecatalogs' own builder, as Munki's repoclean does,
+    /// so they stop listing the pkgsinfo just removed.
+    /// </summary>
+    private static int RebuildCatalogs(RepoCleanOptions options)
     {
         Console.WriteLine($"Rebuilding catalogs at {options.RepoUrl}...");
-        
-        // In a real implementation, this would call the makecatalogs equivalent
-        // For now, we'll just print a message
-        Console.WriteLine("Catalog rebuild would be performed here...");
-        
-        // TODO: Implement catalog rebuilding logic
-        // This would involve calling the equivalent of makecatalogs
-        return Task.CompletedTask;
+
+        var builder = new CatalogBuilder(
+            log: Console.WriteLine,
+            warn: msg => Console.WriteLine($"WARNING: {msg}"),
+            success: Console.WriteLine);
+
+        return builder.Run(options.RepoUrl, silent: true);
     }
 }
