@@ -3,7 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
-using WixToolset.Dtf.WindowsInstaller;
+using Cimian.Core.Msi;
 
 namespace Cimian.CLI.Makepkginfo.Services;
 
@@ -43,7 +43,7 @@ public class MetadataExtractor
         string Description);
 
     /// <summary>
-    /// Extracts metadata from an MSI file using DTF (direct msi.dll interop).
+    /// Extracts metadata from an MSI file through msi.dll.
     /// </summary>
     public MsiMetadata ExtractMsiMetadata(string msiPath)
     {
@@ -54,10 +54,10 @@ public class MetadataExtractor
 
         try
         {
-            using var db = new Database(msiPath, DatabaseOpenMode.ReadOnly);
+            using var db = MsiDatabase.OpenReadOnly(msiPath);
 
             string? ReadProp(string name) {
-                try { return db.ExecuteScalar($"SELECT `Value` FROM `Property` WHERE `Property` = '{name}'")?.ToString(); }
+                try { return db.GetProperty(name); }
                 catch { return null; }
             }
 
