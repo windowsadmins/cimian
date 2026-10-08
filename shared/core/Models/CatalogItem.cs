@@ -151,7 +151,8 @@ public class CatalogItem
     public List<string>? SupportedArchitectures { get; set; }
 
     /// <summary>
-    /// Installation timeout in minutes
+    /// Per-item override of the fleet InstallerTimeout, in seconds. The client kills an
+    /// installer that runs longer, so 1800 is half an hour, and 30 is thirty seconds.
     /// </summary>
     [YamlMember(Alias = "installer_timeout")]
     public int? InstallerTimeout { get; set; }
