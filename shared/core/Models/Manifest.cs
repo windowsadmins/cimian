@@ -35,12 +35,6 @@ public class Manifest
     public List<ConditionalItem> ConditionalItems { get; set; } = new();
 
     /// <summary>
-    /// Global configuration that applies to all items
-    /// </summary>
-    [YamlMember(Alias = "configuration")]
-    public Configuration? Configuration { get; set; }
-
-    /// <summary>
     /// Metadata for the manifest
     /// </summary>
     [YamlMember(Alias = "metadata")]
