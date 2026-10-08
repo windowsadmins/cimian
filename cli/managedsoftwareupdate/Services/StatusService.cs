@@ -36,6 +36,16 @@ public class StatusService
     }
 
     /// <summary>
+    /// True when an installs array failure means the item is not on the machine at all,
+    /// as opposed to present but not matching the catalog.
+    /// </summary>
+    internal static bool IsAbsentReason(string? reasonCode) => reasonCode is
+        StatusReasonCode.FileMissing or
+        StatusReasonCode.DirectoryMissing or
+        StatusReasonCode.ProductCodeMissing or
+        StatusReasonCode.NotInstalled;
+
+    /// <summary>
     /// Checks if the item is the Cimian/CimianTools self-update package
     /// </summary>
     public static bool IsCimianPackage(CatalogItem item)
@@ -158,6 +168,24 @@ public class StatusService
                 var installsResult = CheckInstallsArray(item);
                 if (installsResult.NeedsAction)
                 {
+                    // A removal check reads the same walk the other way round: an item
+                    // that is not on disk is the outcome a managed_uninstalls entry wants.
+                    // The walk also fails for an item that is present but does not match
+                    // the catalog (older version, hash mismatch), so only the missing
+                    // reasons may say "not present".
+                    if (string.Equals(action, "uninstall", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (IsAbsentReason(installsResult.ReasonCode))
+                        {
+                            ConsoleLogger.Info($"File verification found the item not present, removal complete item: {item.Name}");
+                        }
+                        else
+                        {
+                            ConsoleLogger.Info($"File verification does not match the catalog item, treated as nothing to remove item: {item.Name} reason: {installsResult.Reason}");
+                        }
+                        ConsoleLogger.Debug($"CheckStatus indicates nothing left to remove item: {item.Name}");
+                        return installsResult;
+                    }
                     ConsoleLogger.Info($"File verification failed - reinstallation required item: {item.Name}");
                     ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                     return installsResult;
@@ -337,7 +365,10 @@ public class StatusService
             return CheckUninstallcheckScript(item);
         }
 
-        var installStatus = CheckStatus(item, "install", cachePath);
+        // Detection is the install check, but it runs as an uninstall so its log lines
+        // describe a removal ("not present, removal complete") rather than an install
+        // that has gone missing ("reinstallation required").
+        var installStatus = CheckStatus(item, "uninstall", cachePath);
         var result = new StatusCheckResult
         {
             DetectionMethod = installStatus.DetectionMethod,
