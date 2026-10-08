@@ -324,12 +324,13 @@
                             <TextBlock x:Name="InfoCategoryText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
-                        <!-- Installed Version -->
+                        <!-- Primary version row: Installed Version, or Available Version when not installed -->
                         <StackPanel 
                             x:Name="InstalledVersionPanel"
                             Grid.Row="1" Grid.Column="0" 
-                            Margin="0,0,0,12">
-                            <TextBlock Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            Margin="0,0,0,12"
+                            Visibility="Collapsed">
+                            <TextBlock x:Name="InstalledVersionLabel" Text="Installed Version" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <TextBlock x:Name="InstalledVersionText" Style="{StaticResource BodyTextBlockStyle}"/>
                         </StackPanel>
 
