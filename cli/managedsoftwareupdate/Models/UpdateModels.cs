@@ -347,6 +347,14 @@ public class ConditionalItem
 
     [YamlMember(Alias = "optional_installs")]
     public List<string> OptionalInstalls { get; set; } = new();
+
+    /// <summary>
+    /// Conditional items evaluated only when this item's condition matches, as Munki
+    /// allows. Without this property the key was dropped on load and nested items
+    /// never ran.
+    /// </summary>
+    [YamlMember(Alias = "conditional_items")]
+    public List<ConditionalItem> ConditionalItems { get; set; } = new();
 }
 
 /// <summary>
