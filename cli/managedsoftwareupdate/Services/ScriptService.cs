@@ -136,31 +136,27 @@ public class ScriptService
             startInfo.ArgumentList.Add("-Command");
             startInfo.ArgumentList.Add(scriptContent);
 
-            using var process = new Process { StartInfo = startInfo };
             var output = new StringBuilder();
             var errors = new StringBuilder();
 
-            process.OutputDataReceived += (sender, e) =>
-            {
-                if (e.Data != null)
+            using var started = InstallerProcess.Start(startInfo,
+                data =>
                 {
-                    output.AppendLine(e.Data);
-                }
-            };
-
-            process.ErrorDataReceived += (sender, e) =>
-            {
-                if (e.Data != null)
+                    if (data != null)
+                    {
+                        output.AppendLine(data);
+                    }
+                },
+                data =>
                 {
-                    errors.AppendLine(e.Data);
-                }
-            };
+                    if (data != null)
+                    {
+                        errors.AppendLine(data);
+                    }
+                });
+            var process = started.Process;
 
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            await process.WaitForExitAsync(cancellationToken);
+            await started.WaitForExitAsync(cancellationToken);
 
             var combinedOutput = output.ToString();
             if (errors.Length > 0)
@@ -218,27 +214,23 @@ public class ScriptService
             startInfo.ArgumentList.Add("-Command");
             startInfo.ArgumentList.Add(scriptContent);
 
-            using var process = new Process { StartInfo = startInfo };
             var output = new StringBuilder();
             var errors = new StringBuilder();
 
-            process.OutputDataReceived += (sender, e) =>
-            {
-                if (e.Data != null) output.AppendLine(e.Data);
-            };
-
-            process.ErrorDataReceived += (sender, e) =>
-            {
-                if (e.Data != null) errors.AppendLine(e.Data);
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            using var started = InstallerProcess.Start(startInfo,
+                data =>
+                {
+                    if (data != null) output.AppendLine(data);
+                },
+                data =>
+                {
+                    if (data != null) errors.AppendLine(data);
+                });
+            var process = started.Process;
 
             try
             {
-                await process.WaitForExitAsync(cancellationToken);
+                await started.WaitForExitAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -383,36 +375,32 @@ public class ScriptService
             // Set TERM so ANSI colors are preserved (matching Go behavior)
             startInfo.Environment["TERM"] = "xterm-256color";
 
-            using var process = new Process { StartInfo = startInfo };
             var output = new StringBuilder();
             var errors = new StringBuilder();
 
-            process.OutputDataReceived += (sender, e) =>
-            {
-                if (e.Data != null)
+            using var started = InstallerProcess.Start(startInfo,
+                data =>
                 {
-                    output.AppendLine(e.Data);
-                    // Stream output to console in real-time
-                    Console.WriteLine(e.Data);
-                }
-            };
-
-            process.ErrorDataReceived += (sender, e) =>
-            {
-                if (e.Data != null)
+                    if (data != null)
+                    {
+                        output.AppendLine(data);
+                        // Stream output to console in real-time
+                        Console.WriteLine(data);
+                    }
+                },
+                data =>
                 {
-                    errors.AppendLine(e.Data);
-                    Console.Error.WriteLine(e.Data);
-                }
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+                    if (data != null)
+                    {
+                        errors.AppendLine(data);
+                        Console.Error.WriteLine(data);
+                    }
+                });
+            var process = started.Process;
 
             try
             {
-                await process.WaitForExitAsync(cancellationToken);
+                await started.WaitForExitAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
