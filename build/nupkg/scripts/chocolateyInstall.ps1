@@ -172,12 +172,33 @@ try {
 
     # Add to PATH
     Write-Host "Adding Cimian to system PATH..."
+    # Kept exactly once, however many times this has run before.
+    #
+    # The old test was "-split ';' -notcontains $InstallDir", an exact string
+    # compare. It does not match the same directory written with a trailing
+    # backslash, so a build that once wrote one left an entry that no later
+    # install could see and no uninstall could remove -- a permanent duplicate
+    # that a further append could only add to. The machine PATH has a hard
+    # length limit, so this has to converge rather than grow.
     $currentPath = [Environment]::GetEnvironmentVariable("PATH", [EnvironmentVariableTarget]::Machine)
-    if ($currentPath -split ';' -notcontains $InstallDir) {
-        $newPath = "$InstallDir;$currentPath"
+    if ($null -eq $currentPath) { $currentPath = "" }
+    $target = $InstallDir.TrimEnd([char]92)
+    $kept = @()
+    foreach ($entry in ($currentPath -split ';')) {
+        $trimmed = $entry.Trim()
+        if ($trimmed.Length -eq 0) { continue }
+        if ($trimmed.TrimEnd([char]92) -ieq $target) { continue }
+        $kept += $trimmed
+    }
+    # Ours goes first, as it always has, and only ours is touched: other
+    # duplicates on this PATH belong to other installers.
+    $newPath = (@($target) + $kept) -join ';'
+    if ($newPath -ne $currentPath) {
         [Environment]::SetEnvironmentVariable("PATH", $newPath, [EnvironmentVariableTarget]::Machine)
-        $env:PATH = "$InstallDir;$env:PATH"
-        Write-Host "Added to system PATH"
+        Write-Host "System PATH updated: '$target' now listed once"
+    }
+    if (($env:PATH -split ';' | Where-Object { $_.Trim().TrimEnd([char]92) -ieq $target }).Count -eq 0) {
+        $env:PATH = "$target;$env:PATH"
     }
 
     # Install and start CimianWatcher service for responsive bootstrap monitoring

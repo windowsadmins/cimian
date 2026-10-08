@@ -25,6 +25,15 @@ public class SelfServiceManifest
 
     [YamlMember(Alias = "optional_installs")]
     public List<string> OptionalInstalls { get; set; } = [];
+
+    /// <summary>
+    /// Names already offered via manifest <c>default_installs</c> (Munki 7 parity).
+    /// Once recorded here, the client will not re-seed the name into
+    /// <see cref="ManagedInstalls"/> — so a user who removes the item in MSC
+    /// keeps it removed.
+    /// </summary>
+    [YamlMember(Alias = "default_installs")]
+    public List<string> DefaultInstalls { get; set; } = [];
 }
 
 /// <summary>
@@ -89,7 +98,7 @@ public interface ISelfServiceManifestService
 /// </summary>
 public class SelfServiceManifestService : ISelfServiceManifestService
 {
-    private static readonly string SelfServiceManifestPath = CimianPaths.SelfServeManifestYaml;
+    private readonly string SelfServiceManifestPath;
     
     private readonly ILogger<SelfServiceManifestService>? _logger;
     private readonly IDeserializer _deserializer;
@@ -100,7 +109,17 @@ public class SelfServiceManifestService : ISelfServiceManifestService
     public event EventHandler? RequestsChanged;
 
     public SelfServiceManifestService(ILogger<SelfServiceManifestService>? logger = null)
+        : this(CimianPaths.SelfServeManifestYaml, logger)
     {
+    }
+
+    /// <summary>
+    /// Reads and writes <paramref name="manifestPath"/> instead of the system file, so tests
+    /// do not touch the machine's SelfServeManifest.yaml.
+    /// </summary>
+    internal SelfServiceManifestService(string manifestPath, ILogger<SelfServiceManifestService>? logger = null)
+    {
+        SelfServiceManifestPath = manifestPath;
         _logger = logger;
         
         _deserializer = new DeserializerBuilder()
@@ -144,6 +163,7 @@ public class SelfServiceManifestService : ISelfServiceManifestService
             manifest.ManagedInstalls ??= [];
             manifest.ManagedUninstalls ??= [];
             manifest.OptionalInstalls ??= [];
+            manifest.DefaultInstalls ??= [];
 
             _logger?.LogDebug("Loaded self-service manifest with {InstallCount} install requests and {UninstallCount} uninstall requests",
                 manifest.ManagedInstalls.Count, manifest.ManagedUninstalls.Count);

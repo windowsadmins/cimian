@@ -291,6 +291,8 @@ public static class YamlUtils
     // Walks the direct string properties of `obj`, normalizing CRLF to LF and
     // collapsing sequences of three or more consecutive blank lines to two.
     // Keeps multiline `|` blocks clean across Windows/Linux checkouts.
+    // Script properties (`*Script`) only get the CRLF fix: a script can embed
+    // content that is verified byte-for-byte, so its blank lines must survive.
     // Note: only processes the immediate object's properties — nested objects
     // (e.g. List<InstallItem>) are not walked, but PkgsInfo script properties
     // are all flat so this is sufficient for all current callers.
@@ -303,10 +305,11 @@ public static class YamlUtils
             if (!prop.CanRead || !prop.CanWrite) continue;
             if (prop.PropertyType == typeof(string))
             {
-                if (prop.GetValue(obj) is string s && (s.Contains('\r') || s.Contains("\n\n\n")))
+                var isScript = prop.Name.EndsWith("Script", StringComparison.Ordinal);
+                if (prop.GetValue(obj) is string s && (s.Contains('\r') || (!isScript && s.Contains("\n\n\n"))))
                 {
                     var normalized = s.Replace("\r\n", "\n").Replace("\r", "\n");
-                    while (normalized.Contains("\n\n\n"))
+                    while (!isScript && normalized.Contains("\n\n\n"))
                         normalized = normalized.Replace("\n\n\n", "\n\n");
                     prop.SetValue(obj, normalized);
                 }

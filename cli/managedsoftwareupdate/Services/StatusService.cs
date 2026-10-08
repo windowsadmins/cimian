@@ -22,10 +22,17 @@ public class StatusService
     private static readonly string BootstrapFlagFile = CimianPaths.BootstrapFlagFile;
     private static readonly TimeSpan DefaultInstallcheckTimeout = TimeSpan.FromMinutes(2);
     private readonly TimeSpan _installcheckTimeout;
+    private readonly Func<string, bool> _hasManagedInstallsEntry;
 
-    public StatusService(TimeSpan? installcheckTimeout = null)
+    /// <param name="installcheckTimeout">How long an installcheck_script may run.</param>
+    /// <param name="managedInstallsEntryLookup">
+    /// Whether HKLM\SOFTWARE\ManagedInstalls has an entry for an item name. Tests pass
+    /// their own; the default reads the registry.
+    /// </param>
+    public StatusService(TimeSpan? installcheckTimeout = null, Func<string, bool>? managedInstallsEntryLookup = null)
     {
         _installcheckTimeout = installcheckTimeout ?? DefaultInstallcheckTimeout;
+        _hasManagedInstallsEntry = managedInstallsEntryLookup ?? ReadManagedInstallsEntry;
     }
 
     /// <summary>
@@ -162,6 +169,13 @@ public class StatusService
                 result.Reason = "Installs array verification passed";
                 result.ReasonCode = StatusReasonCode.FileMatch;
                 result.DetectionMethod = DetectionMethod.InstallsArray;
+
+                // Carry over what the walk actually found on disk. Only the failure path
+                // returned installsResult, so on success every version it had resolved —
+                // including the MSI/ARP one — was discarded with the object. That is why
+                // packages verified through their installs array reported no version at
+                // all while the check that proved they were installed had just read one.
+                NoteInstalledVersion(result, installsResult.InstalledVersion);
                 ConsoleLogger.Debug($"CheckStatus explicitly indicates NO update required item: {item.Name}");
                 return result;
             }
@@ -307,6 +321,329 @@ public class StatusService
     /// Checks the installcheck_script - if exit code 0, install is needed; if exit code 1, install is not needed
     /// This is Go parity behavior
     /// </summary>
+    /// <summary>
+    /// Decides whether a managed_uninstalls item still needs removing. Removal is only
+    /// needed while the item is present, so an item that is already gone is checked and
+    /// skipped instead of running its uninstaller and postuninstall_script every session.
+    /// uninstallcheck_script decides when the pkgsinfo declares one (exit 0 = removal
+    /// needed, non-zero = skip); otherwise the install detection decides. A detection
+    /// error skips removal: uninstalling on a guess is worse than trying again next run.
+    /// </summary>
+    public StatusCheckResult CheckUninstallStatus(CatalogItem item, string cachePath)
+    {
+        if (!string.IsNullOrEmpty(item.UninstallcheckScript))
+        {
+            ConsoleLogger.Info($"Checking removal status via uninstallcheck_script item: {item.Name}");
+            return CheckUninstallcheckScript(item);
+        }
+
+        var installStatus = CheckStatus(item, "install", cachePath);
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = installStatus.DetectionMethod,
+            InstalledVersion = installStatus.InstalledVersion,
+            TargetVersion = item.Version
+        };
+
+        if (installStatus.Status == "error")
+        {
+            result.Status = "error";
+            result.NeedsAction = false;
+            result.Reason = $"Removal skipped, install detection failed: {installStatus.Reason}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
+            result.Error = installStatus.Error;
+        }
+        else if (installStatus.NeedsAction)
+        {
+            result.Status = "removed";
+            result.NeedsAction = false;
+            result.Reason = "Not installed, nothing to remove";
+            result.ReasonCode = StatusReasonCode.NotInstalled;
+        }
+        else
+        {
+            result.Status = "pending";
+            result.NeedsAction = true;
+            result.Reason = "Installed, removal needed";
+            result.ReasonCode = installStatus.ReasonCode;
+        }
+
+        return result;
+    }
+
+    private StatusCheckResult CheckUninstallcheckScript(CatalogItem item)
+    {
+        var result = new StatusCheckResult
+        {
+            DetectionMethod = DetectionMethod.Script,
+            TargetVersion = item.Version
+        };
+
+        try
+        {
+            var scriptService = new ScriptService();
+            using var timeout = new CancellationTokenSource(_installcheckTimeout);
+            var scriptResult = scriptService
+                .ExecuteScriptWithDetailsAsync(item.UninstallcheckScript!, timeout.Token)
+                .GetAwaiter()
+                .GetResult();
+            var scriptSaid = string.IsNullOrWhiteSpace(scriptResult.Output) ? "no output" : scriptResult.Output.Trim();
+
+            if (scriptResult.ExitCode == ScriptService.TimeoutExitCode)
+            {
+                var timeoutSeconds = Math.Ceiling(_installcheckTimeout.TotalSeconds);
+                var reason = $"uninstallcheck_script timed out after {timeoutSeconds:0} seconds for {item.Name}";
+                ConsoleLogger.Error(reason);
+                result.Status = "error";
+                result.NeedsAction = false;
+                result.Reason = reason;
+                result.ReasonCode = StatusReasonCode.ScriptError;
+                result.Error = new TimeoutException(reason);
+            }
+            else if (scriptResult.Success)
+            {
+                result.Status = "pending";
+                result.NeedsAction = true;
+                result.Reason = $"uninstallcheck_script exited 0, which means removal needed (script output: {scriptSaid})";
+                result.ReasonCode = StatusReasonCode.ScriptConfirmed;
+            }
+            else
+            {
+                result.Status = "removed";
+                result.NeedsAction = false;
+                result.Reason = $"uninstallcheck_script returned non-zero (no removal needed, script output: {scriptSaid})";
+                result.ReasonCode = StatusReasonCode.NotInstalled;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Status = "error";
+            result.NeedsAction = false;
+            result.Reason = $"uninstallcheck_script failed: {ex.Message}";
+            result.ReasonCode = StatusReasonCode.ScriptError;
+            result.Error = ex;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Whether some version of the item is on the machine, whatever its version.
+    /// A port of Munki 7's someVersionInstalled (installationstate.swift), used only to decide whether a
+    /// managed_updates item is present and so eligible for an update. The
+    /// ManagedInstalls registry entry Cimian writes when it installs something is
+    /// not evidence of presence: it outlives the app it describes.
+    /// </summary>
+    /// <param name="installcheckResult">
+    /// The status check already run for this item, if any. An installcheck_script or
+    /// version_script result in it is reused rather than running the script a second time.
+    /// </param>
+    public PresenceResult SomeVersionInstalled(CatalogItem item, StatusCheckResult? installcheckResult = null)
+    {
+        // The running agent is present by definition.
+        if (IsCimianPackage(item))
+            return new PresenceResult(true, "Cimian itself is running");
+
+        // 1. OnDemand items are never installed.
+        if (item.OnDemand)
+            return new PresenceResult(false, "OnDemand item, never treated as installed");
+
+        // 2. installcheck_script decides alone: exit 0 means install needed, so not
+        //    installed; any other result, an error included, means installed.
+        if (!string.IsNullOrEmpty(item.InstallcheckScript))
+        {
+            var script = installcheckResult?.DetectionMethod == DetectionMethod.Script
+                ? installcheckResult
+                : CheckInstallcheckScript(item);
+            return new PresenceResult(script.ReasonCode != StatusReasonCode.InstallcheckNeeded, script.Reason);
+        }
+
+        // 3. A version_script decides alone: no version printed means not installed.
+        //    CheckStatus runs it ahead of everything but an installcheck_script, which
+        //    this item does not have, so a script result handed in is the script's own.
+        if (!string.IsNullOrEmpty(item.VersionScript))
+        {
+            var r = installcheckResult?.DetectionMethod == DetectionMethod.Script
+                ? installcheckResult
+                : CheckVersionScript(item);
+            if (r.Status == "error")
+                return PresenceResult.Failed(r.Reason, r.ReasonCode);
+            return new PresenceResult(!string.IsNullOrEmpty(r.InstalledVersion), r.Reason);
+        }
+
+        // 5. An installs array: installed only if every entry is there at some version.
+        if (item.Installs != null && item.Installs.Count > 0)
+        {
+            for (var i = 0; i < item.Installs.Count; i++)
+            {
+                var entry = item.Installs[i];
+                var where = DescribeInstallsEntry(i, entry);
+                try
+                {
+                    var (present, failure) = InstallsEntryPresent(item, entry);
+                    if (failure != null)
+                        return PresenceResult.Failed($"{where}: {failure}", StatusReasonCode.CheckFailed);
+                    if (!present)
+                        return new PresenceResult(false, $"{where}: not present");
+                }
+                catch (Exception ex)
+                {
+                    return PresenceResult.Failed($"{where}: {ex.Message}", StatusReasonCode.CheckFailed);
+                }
+            }
+            return new PresenceResult(true, $"All {item.Installs.Count} installs entries present");
+        }
+
+        // 6. Receipts. Cimian has no package receipts; the checks that stand in for
+        //    them are the ones CheckStatus uses when there is no installs array, taken
+        //    in the same order.
+        if (!string.IsNullOrEmpty(item.Check.Registry.Name))
+        {
+            var r = CheckRegistryStatus(item);
+            if (r.Status == "error")
+                return PresenceResult.Failed(r.Reason, r.ReasonCode);
+            return new PresenceResult(r.ReasonCode != StatusReasonCode.RegistryMissing, r.Reason);
+        }
+
+        if (item.Check.File != null && !string.IsNullOrEmpty(item.Check.File.Path))
+        {
+            var path = item.Check.File.Path;
+            return File.Exists(path)
+                ? new PresenceResult(true, $"File exists: {path}")
+                : new PresenceResult(false, $"File not found: {path}");
+        }
+
+        if (!string.IsNullOrEmpty(item.Check.Script))
+        {
+            var r = CheckScriptStatus(item);
+            if (r.Status == "error")
+                return PresenceResult.Failed(r.Reason, r.ReasonCode);
+            return new PresenceResult(r.Status == "installed", r.Reason);
+        }
+
+        var msiInstaller = item.Installer;
+        if (msiInstaller != null
+            && string.Equals(msiInstaller.Type, "msi", StringComparison.OrdinalIgnoreCase)
+            && (!string.IsNullOrEmpty(msiInstaller.ProductCode) ||
+                !string.IsNullOrEmpty(msiInstaller.UpgradeCode)))
+        {
+            var (installed, _, _) = CheckMsiWithUpgradeCode(
+                msiInstaller.ProductCode, msiInstaller.UpgradeCode, item.Version, item.Name);
+            return installed
+                ? new PresenceResult(true, "MSI registered in Windows Installer")
+                : new PresenceResult(false, $"MSI not registered in Windows Installer (ProductCode={msiInstaller.ProductCode}, UpgradeCode={msiInstaller.UpgradeCode})");
+        }
+
+        // 7. Nothing to check. Munki calls this installed, and then installs nothing
+        //    because its installedState agrees. CheckStatus calls a real installer
+        //    with nothing to check not installed, so only a script-only item, which
+        //    CheckStatus does call installed, is present here. The net result is
+        //    Munki's: nothing is installed on the item's behalf.
+        var installerType = (item.Installer?.Type ?? string.Empty).Trim().ToLowerInvariant();
+        return installerType is "" or "nopkg" or "script"
+            ? new PresenceResult(true, "No checks defined; script-only item treated as installed")
+            : new PresenceResult(false, $"No checks defined for installer type '{installerType}', so nothing shows it is installed");
+    }
+
+    /// <summary>
+    /// Whether one installs entry is on the machine at any version. Failure is set
+    /// when the entry cannot be evaluated.
+    /// </summary>
+    private (bool Present, string? Failure) InstallsEntryPresent(CatalogItem item, InstallCheckItem entry)
+    {
+        switch (entry.EffectiveType())
+        {
+            case "file":
+                return string.IsNullOrEmpty(entry.Path)
+                    ? (false, "file entry declares no path")
+                    : (File.Exists(entry.Path), null);
+
+            case "directory":
+                return string.IsNullOrEmpty(entry.Path)
+                    ? (false, "directory entry declares no path")
+                    : (Directory.Exists(entry.Path), null);
+
+            case "msi":
+                var catalogVersion = !string.IsNullOrEmpty(entry.Version) ? entry.Version : item.Version;
+                return (ResolveMsiInstallsEntry(item, entry, catalogVersion).installed, null);
+
+            case "msix":
+            case "appx":
+                if (string.IsNullOrEmpty(entry.IdentityName))
+                    return (false, "msix entry declares no identity_name");
+                return (QueryMsixProvisionedPackage(entry.IdentityName).Found, null);
+
+            default:
+                return (false, "entry declares neither a type nor any identity field");
+        }
+    }
+
+    /// <summary>
+    /// Whether an msi installs entry is registered, and at what version: its
+    /// product_code/upgrade_code, or, where it declares neither, an ARP entry named
+    /// after the item, or an ARP entry matching the entry's own display_name.
+    /// </summary>
+    private (bool installed, bool versionMatch, string? installedVersion) ResolveMsiInstallsEntry(
+        CatalogItem item, InstallCheckItem installItem, string catalogVersion)
+    {
+        var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
+            installItem.ProductCode, installItem.UpgradeCode, catalogVersion, item.Name);
+
+        // If MSI detection failed, try registry lookup using item's display_name or name as fallback.
+        // This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update).
+        // Only run when pkginfo did NOT declare a ProductCode/UpgradeCode -- when codes are
+        // declared they are authoritative, and their absence means the item is genuinely
+        // not installed. Fuzzy name matching against unrelated apps (e.g. "OculusPatch"
+        // collapsing onto "Oculus") would otherwise mark patches as already current.
+        if (!msiInstalled
+            && string.IsNullOrEmpty(installItem.ProductCode)
+            && string.IsNullOrEmpty(installItem.UpgradeCode))
+        {
+            var displayNameToSearch = !string.IsNullOrEmpty(item.DisplayName) ? item.DisplayName : item.Name;
+            var fallbackVersion = FindVersionByDisplayName(displayNameToSearch);
+            if (!string.IsNullOrEmpty(fallbackVersion))
+            {
+                msiInstalled = true;
+                msiInstalledVersion = fallbackVersion;
+                ConsoleLogger.Info($"Found app via display_name fallback item: {item.Name} displayName: {displayNameToSearch} installedVersion: {fallbackVersion}");
+
+                // Check version match
+                if (!string.IsNullOrEmpty(catalogVersion))
+                {
+                    var comparison = CatalogService.CompareVersions(catalogVersion, fallbackVersion);
+                    msiVersionMatch = comparison <= 0;
+                }
+                else
+                {
+                    msiVersionMatch = true;
+                }
+            }
+        }
+
+        // Wrapper MSIs (empty File table; payload installed by an embedded
+        // setup.exe, e.g. Mozilla Firefox) may drop their Windows Installer
+        // registration after in-app self-update -- the updater maintains a
+        // plain ARP entry instead, so the declared codes miss forever and
+        // every run reinstalls. When the pkginfo entry carries an explicit
+        // display_name, treat an ARP DisplayName hit as installed. Opt-in
+        // per entry: codes stay authoritative for normal MSIs, preserving
+        // the no-fuzzy-matching guard above.
+        if (!msiInstalled && !string.IsNullOrEmpty(installItem.DisplayName))
+        {
+            var arpVersion = FindVersionByDisplayName(installItem.DisplayName);
+            if (!string.IsNullOrEmpty(arpVersion))
+            {
+                msiInstalled = true;
+                msiInstalledVersion = arpVersion;
+                msiVersionMatch = string.IsNullOrEmpty(catalogVersion)
+                    || CatalogService.CompareVersions(catalogVersion, arpVersion) <= 0;
+                ConsoleLogger.Info($"Found app via installs[].display_name fallback item: {item.Name} displayName: {installItem.DisplayName} installedVersion: {arpVersion}");
+            }
+        }
+
+        return (msiInstalled, msiVersionMatch, msiInstalledVersion);
+    }
+
     private StatusCheckResult CheckInstallcheckScript(CatalogItem item)
     {
         var result = new StatusCheckResult
@@ -517,9 +854,16 @@ public class StatusService
                         // Check version - use item.Version as fallback when install.Version is not specified (reduces pkgsinfo redundancy)
                         // Go parity: When hash verification passed, version mismatches are informational only (hash is authoritative)
                         var expectedVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
+
+                        // Read the version whether or not the catalog gives us something to
+                        // compare against. It was previously resolved only as an input to the
+                        // comparison and then dropped, so a file-detected package reported no
+                        // version at all — which is most of the catalog.
+                        var fileVersion = GetFileVersion(installItem.Path);
+                        NoteInstalledVersion(result, fileVersion);
+
                         if (!string.IsNullOrEmpty(expectedVersion))
                         {
-                            var fileVersion = GetFileVersion(installItem.Path);
                             if (!string.IsNullOrEmpty(fileVersion))
                             {
                                 var comparison = CatalogService.CompareVersions(expectedVersion, fileVersion);
@@ -594,60 +938,8 @@ public class StatusService
                     // Use robust MSI detection with both ProductCode and UpgradeCode
                     // This handles auto-updating apps (Chrome, etc.) where ProductCode changes each version
                     var catalogVersion = !string.IsNullOrEmpty(installItem.Version) ? installItem.Version : item.Version;
-                    var (msiInstalled, msiVersionMatch, msiInstalledVersion) = CheckMsiWithUpgradeCode(
-                        installItem.ProductCode, installItem.UpgradeCode, catalogVersion, item.Name);
-
-                    // If MSI detection failed, try registry lookup using item's display_name or name as fallback.
-                    // This handles cases where app was installed via EXE instead of MSI (e.g., Chrome auto-update).
-                    // Only run when pkginfo did NOT declare a ProductCode/UpgradeCode -- when codes are
-                    // declared they are authoritative, and their absence means the item is genuinely
-                    // not installed. Fuzzy name matching against unrelated apps (e.g. "OculusPatch"
-                    // collapsing onto "Oculus") would otherwise mark patches as already current.
-                    if (!msiInstalled
-                        && string.IsNullOrEmpty(installItem.ProductCode)
-                        && string.IsNullOrEmpty(installItem.UpgradeCode))
-                    {
-                        var displayNameToSearch = !string.IsNullOrEmpty(item.DisplayName) ? item.DisplayName : item.Name;
-                        var fallbackVersion = FindVersionByDisplayName(displayNameToSearch);
-                        if (!string.IsNullOrEmpty(fallbackVersion))
-                        {
-                            msiInstalled = true;
-                            msiInstalledVersion = fallbackVersion;
-                            ConsoleLogger.Info($"Found app via display_name fallback item: {item.Name} displayName: {displayNameToSearch} installedVersion: {fallbackVersion}");
-
-                            // Check version match
-                            if (!string.IsNullOrEmpty(catalogVersion))
-                            {
-                                var comparison = CatalogService.CompareVersions(catalogVersion, fallbackVersion);
-                                msiVersionMatch = comparison <= 0;
-                            }
-                            else
-                            {
-                                msiVersionMatch = true;
-                            }
-                        }
-                    }
-
-                    // Wrapper MSIs (empty File table; payload installed by an embedded
-                    // setup.exe, e.g. Mozilla Firefox) may drop their Windows Installer
-                    // registration after in-app self-update -- the updater maintains a
-                    // plain ARP entry instead, so the declared codes miss forever and
-                    // every run reinstalls. When the pkginfo entry carries an explicit
-                    // display_name, treat an ARP DisplayName hit as installed. Opt-in
-                    // per entry: codes stay authoritative for normal MSIs, preserving
-                    // the no-fuzzy-matching guard above.
-                    if (!msiInstalled && !string.IsNullOrEmpty(installItem.DisplayName))
-                    {
-                        var arpVersion = FindVersionByDisplayName(installItem.DisplayName);
-                        if (!string.IsNullOrEmpty(arpVersion))
-                        {
-                            msiInstalled = true;
-                            msiInstalledVersion = arpVersion;
-                            msiVersionMatch = string.IsNullOrEmpty(catalogVersion)
-                                || CatalogService.CompareVersions(catalogVersion, arpVersion) <= 0;
-                            ConsoleLogger.Info($"Found app via installs[].display_name fallback item: {item.Name} displayName: {installItem.DisplayName} installedVersion: {arpVersion}");
-                        }
-                    }
+                    var (msiInstalled, msiVersionMatch, msiInstalledVersion) =
+                        ResolveMsiInstallsEntry(item, installItem, catalogVersion);
 
                     if (!msiInstalled)
                     {
@@ -772,6 +1064,7 @@ public class StatusService
                         }
                     }
 
+                    NoteInstalledVersion(result, msixVersion);
                     ConsoleLogger.Info($"MSIX verification passed item: {item.Name} installedVersion: {msixVersion} catalogVersion: {msixCatalogVersion}");
                     result.InstalledVersion = msixVersion;
                     break;
@@ -1199,7 +1492,9 @@ if ($results.Count -gt 0) {{
     /// <summary>
     /// Check if item has a ManagedInstalls registry entry (indicates previous installation)
     /// </summary>
-    private bool HasManagedInstallsEntry(string itemName)
+    private bool HasManagedInstallsEntry(string itemName) => _hasManagedInstallsEntry(itemName);
+
+    private static bool ReadManagedInstallsEntry(string itemName)
     {
         try
         {
@@ -1647,6 +1942,23 @@ if ($results.Count -gt 0) {{
         return result;
     }
 
+    /// <summary>
+    /// Records what a check found installed, first non-empty reading wins.
+    ///
+    /// <para>
+    /// Purely an observation: it never influences <see cref="StatusCheckResult.NeedsAction"/>
+    /// or any version comparison. A pkgsinfo with several installs entries is describing one
+    /// package, so the first entry that yields a version is the one that names it; letting a
+    /// later versionless entry (a marker file, a directory) overwrite it would report the
+    /// package as versionless despite having just resolved one.
+    /// </para>
+    /// </summary>
+    private static void NoteInstalledVersion(StatusCheckResult result, string? found)
+    {
+        if (!string.IsNullOrWhiteSpace(found) && string.IsNullOrWhiteSpace(result.InstalledVersion))
+            result.InstalledVersion = found!.Trim();
+    }
+
     private static string? GetFileVersion(string path)
     {
         try
@@ -1966,4 +2278,14 @@ if ($results.Count -gt 0) {{
 
     [DllImport("user32.dll")]
     private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+}
+
+/// <summary>
+/// The answer to "is some version of this item installed?". FailureReasonCode is
+/// set when the check could not be evaluated; the item then counts as not installed.
+/// </summary>
+public sealed record PresenceResult(bool Installed, string Reason, string? FailureReasonCode = null)
+{
+    public static PresenceResult Failed(string reason, string reasonCode) =>
+        new(false, reason, string.IsNullOrEmpty(reasonCode) ? StatusReasonCode.CheckFailed : reasonCode);
 }

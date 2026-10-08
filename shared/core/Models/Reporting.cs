@@ -402,8 +402,18 @@ public class ItemRecord
     [JsonPropertyName("latest_version")]
     public string LatestVersion { get; set; } = string.Empty;
 
+    /// <summary>
+    /// What detection actually found on the machine, as opposed to
+    /// <see cref="LatestVersion"/>, which is only the catalog target.
+    ///
+    /// <para>
+    /// Always serialized, including when null. Omitting it made an item whose version
+    /// could not be determined indistinguishable from a client too old to report one,
+    /// and that ambiguity is what let the field sit empty everywhere without surfacing.
+    /// A null here is a claim — "this run could not determine a version" — not silence.
+    /// </para>
+    /// </summary>
     [JsonPropertyName("installed_version")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? InstalledVersion { get; set; }
 
     // Status and timing

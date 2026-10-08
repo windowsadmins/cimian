@@ -339,7 +339,6 @@ public class InstallerService
             if (process.ExitCode == 0)
             {
                 ConsoleLogger.Success($"sbin-installer completed successfully for {item.Name}");
-                _sessionLogger?.Log("INFO", $"sbin-installer completed successfully for {item.Name}");
                 _sessionLogger?.LogInstall(item.Name, item.Version, "install", "completed",
                     $"sbin-installer installation succeeded for {item.Name}");
                 return (true, outputStr);
@@ -391,7 +390,6 @@ public class InstallerService
             {
                 var archError = $"Package architecture '{buildInfo.Architecture}' is not compatible with system";
                 ConsoleLogger.Warn(archError);
-                _sessionLogger?.Log("WARN", archError);
                 // Don't fail - let sbin-installer handle it (it may have its own logic)
             }
 
@@ -414,7 +412,6 @@ public class InstallerService
                     {
                         var error = $"Package signature verification required but failed: {signatureDetails}";
                         ConsoleLogger.Error(error);
-                        _sessionLogger?.Log("ERROR", error);
                         return (false, error);
                     }
                 }
@@ -669,7 +666,6 @@ public class InstallerService
             {
                 postinstallWarning = postResult.WarningMessage;
                 ConsoleLogger.Warn($"Postinstall WARNING for {item.Name}: {postinstallWarning}");
-                _sessionLogger?.Log("WARN", $"Postinstall WARNING for {item.Name}: {postinstallWarning}");
             }
             else if (!postResult.Success)
             {
@@ -1489,7 +1485,13 @@ try {{
     {
         if (string.IsNullOrWhiteSpace(item.InstallScript))
         {
-            ConsoleLogger.Warn($"nopkg item '{item.Name}' has no install_script defined");
+            // A nopkg item is allowed to do all of its work in preinstall_script or
+            // postinstall_script, which run around this call, so a missing
+            // install_script is only worth a warning when the item has no script
+            // at all. Warning otherwise put a false WARN in every session that
+            // installed such an item, burying the warnings that matter.
+            if (string.IsNullOrWhiteSpace(item.PreinstallScript) && string.IsNullOrWhiteSpace(item.PostinstallScript))
+                ConsoleLogger.Warn($"nopkg item '{item.Name}' has no install_script, preinstall_script or postinstall_script defined");
             return (true, "No install_script defined; nothing to run");
         }
 
@@ -1777,7 +1779,6 @@ try {{
     /// Both steps are required in practice — removing only the provisioned entry
     /// leaves the app fully functional for currently-registered users, which is
     /// surprising and inconsistent with what an admin expects from "uninstall".
-    /// This is the same pattern Gorilla's MSIX PR uses.
     ///
     /// PackageFullName is read from HKLM\SOFTWARE\ManagedInstalls\&lt;Name&gt; (written
     /// at install time by RegisterInstallation). Falls back to runtime discovery

@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Cimian.Status.Models;
@@ -615,6 +616,10 @@ namespace Cimian.Status.Services
         /// <summary>
         /// Helper method to run command-line tools asynchronously
         /// </summary>
+        // Nothing this class shells out to is long-running; a schtasks call that has
+        // not answered in 30s is not going to.
+        private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(30);
+
         private async Task<(int ExitCode, string Output)> RunCommandAsync(string fileName, string arguments)
         {
             using var process = new Process
@@ -631,12 +636,34 @@ namespace Cimian.Status.Services
             };
 
             process.Start();
-            
-            var output = await process.StandardOutput.ReadToEndAsync();
-            var error = await process.StandardError.ReadToEndAsync();
-            
-            await process.WaitForExitAsync();
-            
+
+            // Start both reads before waiting, and never await them first.
+            //
+            // ReadToEndAsync completes when the pipe closes, and the pipe closes
+            // when the child exits, so awaiting it up front leaves everything below
+            // unreachable for a child that does not exit. Every caller of this method
+            // runs schtasks.exe, which talks to the Task Scheduler service; on a
+            // machine whose scheduler has degraded that never returns, and neither
+            // did this. There was no timeout here at all to save it.
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(CommandTimeout);
+
+            try
+            {
+                await process.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                _logger.LogWarning("{FileName} did not return within {Seconds:N0}s; abandoning it", fileName, CommandTimeout.TotalSeconds);
+                return (-1, string.Empty);
+            }
+
+            var output = await stdout;
+            var error = await stderr;
+
             var fullOutput = string.IsNullOrEmpty(error) ? output : $"{output}\n{error}";
             return (process.ExitCode, fullOutput);
         }

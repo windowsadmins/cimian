@@ -99,7 +99,7 @@ public class ManifestServiceTests
     {
         var service = CreateService();
 
-        // default_installs is "install once, don't re-enforce". An explicit
+        // default_installs is a one-time SelfServe seed. An explicit
         // managed_install for the same name must take over so the item stays
         // enforced if removed.
         var items = new List<ManifestItem>
@@ -116,23 +116,24 @@ public class ManifestServiceTests
     }
 
     [Fact]
-    public void DeduplicateItems_DefaultSupersedesOptional()
+    public void DeduplicateItems_OptionalSupersedesDefault()
     {
         var service = CreateService();
 
-        // default_installs is installed automatically; optional_installs is
-        // opt-in. If both are listed, default wins.
+        // default_installs only seeds SelfServe; optional_installs is what offers
+        // the item in MSC. If both are listed, the optional entry wins so the
+        // item stays offered after the user removes it.
         var items = new List<ManifestItem>
         {
-            new() { Name = "Editor", Action = "optional", SourceManifest = "Staff" },
             new() { Name = "Editor", Action = "default", SourceManifest = "Provisioning" },
+            new() { Name = "Editor", Action = "optional", SourceManifest = "Staff" },
         };
 
         var result = service.DeduplicateItems(items);
 
         var entry = Assert.Single(result);
-        Assert.Equal("default", entry.Action);
-        Assert.Equal("Provisioning", entry.SourceManifest);
+        Assert.Equal("optional", entry.Action);
+        Assert.Equal("Staff", entry.SourceManifest);
     }
 
     [Fact]

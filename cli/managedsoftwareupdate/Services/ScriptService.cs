@@ -21,6 +21,32 @@ public class ScriptService
 {
     public const int TimeoutExitCode = -2;
 
+    /// <summary>
+    /// How long preflight and postflight are each allowed to run before the run is
+    /// abandoned and their process tree killed.
+    /// </summary>
+    /// <remarks>
+    /// These exist because the timeout machinery below was unreachable. Every caller
+    /// passed either CancellationToken.None or a token that is only ever cancelled by
+    /// a user stop, so nothing set a deadline and TimeoutExitCode could not occur.
+    ///
+    /// The consequence is not a slow run, it is a machine that stops updating for
+    /// good. postflight runs the reports collector, which shells out to
+    /// schtasks.exe; on a host whose Task Scheduler has partly wedged that call never
+    /// returns. The session then never ends, so the single-instance mutex is never
+    /// released, so every scheduled run afterwards exits immediately with "Another
+    /// instance is running". Measured on two lab workstations: 101 and 88 minutes
+    /// hung, no new packages installed for hours, and nothing reported as failed
+    /// because from the outside the machine simply looked idle.
+    ///
+    /// Postflight gets the longer budget of the two because it does the reporting
+    /// work. Both are generous on purpose: this is a safeguard against a script that
+    /// will never finish, not a performance limit on one that is merely slow.
+    /// </remarks>
+    public static readonly TimeSpan PreflightTimeout = TimeSpan.FromMinutes(10);
+
+    public static readonly TimeSpan PostflightTimeout = TimeSpan.FromMinutes(15);
+
     // Postinstall scripts may emit a line of the form:
     //   CIMIAN-WARNING: <message>
     // on stdout or stderr. The runner extracts the message into ScriptResult.WarningMessage,
@@ -384,7 +410,42 @@ public class ScriptService
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await process.WaitForExitAsync(cancellationToken);
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Kill the whole tree, not just the shell we started.
+                //
+                // The outer catch would already turn this into a returned failure, so
+                // the caller unblocks either way -- but the processes underneath would
+                // be left running. That matters here because the thing that hangs is
+                // never the PowerShell host itself: it is something it shelled out to,
+                // schtasks.exe against a wedged Task Scheduler being the case actually
+                // observed. Abandoning the wait without killing the tree leaves that
+                // process alive to be joined by another one on the next run.
+                try
+                {
+                    if (!process.HasExited)
+                    {
+                        process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync(CancellationToken.None);
+                    }
+                }
+                catch (Exception killException)
+                {
+                    errors.AppendLine($"Failed to terminate timed-out script process: {killException.Message}");
+                }
+
+                var timedOut = output.ToString();
+                if (errors.Length > 0)
+                {
+                    timedOut += Environment.NewLine + errors;
+                }
+
+                return (false, $"Script execution timed out: {scriptPath}{Environment.NewLine}{timedOut}".Trim());
+            }
 
             var combinedOutput = output.ToString();
             if (errors.Length > 0)
@@ -441,6 +502,23 @@ public class ScriptService
     }
 
     /// <summary>
+    /// A token that is cancelled either by the caller or by <paramref name="timeout"/>,
+    /// whichever comes first.
+    /// </summary>
+    /// <remarks>
+    /// Applied here rather than at the call sites so that it cannot be forgotten by
+    /// one of them. That is exactly how the original bug survived: the execution path
+    /// honoured cancellation correctly, and every caller handed it a token that was
+    /// never going to be cancelled.
+    /// </remarks>
+    private static CancellationTokenSource CreateDeadline(CancellationToken caller, TimeSpan timeout)
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(caller);
+        cts.CancelAfter(timeout);
+        return cts;
+    }
+
+    /// <summary>
     /// Runs the preflight script if it exists
     /// </summary>
     public async Task<(bool Success, string Output)> RunPreflightAsync(
@@ -469,7 +547,9 @@ public class ScriptService
         }
 
         ConsoleLogger.Info($"Executing preflight script: {preflightPath}");
-        return await ExecuteScriptFileAsync(preflightPath, cancellationToken);
+
+        using var deadline = CreateDeadline(cancellationToken, PreflightTimeout);
+        return await ExecuteScriptFileAsync(preflightPath, deadline.Token);
     }
 
     /// <summary>
@@ -501,6 +581,8 @@ public class ScriptService
         }
 
         ConsoleLogger.Info($"Executing postflight script: {postflightPath}");
-        return await ExecuteScriptFileAsync(postflightPath, cancellationToken);
+
+        using var deadline = CreateDeadline(cancellationToken, PostflightTimeout);
+        return await ExecuteScriptFileAsync(postflightPath, deadline.Token);
     }
 }

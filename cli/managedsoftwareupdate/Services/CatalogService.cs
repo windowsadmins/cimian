@@ -188,6 +188,16 @@ public class CatalogService
 
     private List<CatalogItem> ParseCatalog(string yaml)
     {
+        var items = DeserializeCatalog(yaml);
+        foreach (var item in items)
+        {
+            item.NormalizeMunkiInstallerKeys();
+        }
+        return items;
+    }
+
+    private static List<CatalogItem> DeserializeCatalog(string yaml)
+    {
         try
         {
             // Route through the canonical Cimian deserializer (no naming convention):
@@ -600,6 +610,115 @@ public class CatalogService
 
         return deps;
     }
+
+    /// <summary>
+    /// Orders a run's install list so that every item stands after the items it
+    /// <c>requires</c>, directly or through other catalog items.
+    /// </summary>
+    /// <remarks>
+    /// The order is otherwise the one given: an item moves only as far forward
+    /// as a dependant needs it to. Requirements are followed through
+    /// <paramref name="catalog"/>, so an item is still placed after a
+    /// requirement of a requirement when the one in between is not part of the
+    /// run. A cycle in <c>requires</c> cannot be ordered; the edge that closes
+    /// it is ignored, so the walk terminates and every item is returned once.
+    /// </remarks>
+    /// <param name="items">The run's install list.</param>
+    /// <param name="catalog">Loaded catalog keyed by lowercase name.</param>
+    /// <returns>The same items, requirements first.</returns>
+    public static List<CatalogItem> OrderByRequires(
+        IEnumerable<CatalogItem> items,
+        Dictionary<string, CatalogItem> catalog)
+    {
+        var runItems = items.ToList();
+        var inRun = new Dictionary<string, CatalogItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in runItems)
+        {
+            inRun.TryAdd(item.Name, item);
+        }
+
+        var ordered = new List<CatalogItem>(runItems.Count);
+        // Every name the walk has entered. A name met again is either already
+        // placed or still open further up the walk, which is a cycle.
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Visit(string name, CatalogItem? node)
+        {
+            if (!visited.Add(name)) return;
+
+            if (node?.Requires != null)
+            {
+                foreach (var reqEntry in node.Requires)
+                {
+                    var (reqName, _) = SplitNameAndVersion(reqEntry);
+                    if (string.IsNullOrEmpty(reqName)) continue;
+
+                    if (!inRun.TryGetValue(reqName, out var reqItem))
+                    {
+                        catalog.TryGetValue(reqName.ToLowerInvariant(), out reqItem);
+                    }
+                    Visit(reqItem?.Name ?? reqName, reqItem);
+                }
+            }
+
+            if (node != null && inRun.TryGetValue(name, out var runItem) && ReferenceEquals(runItem, node))
+            {
+                ordered.Add(node);
+            }
+        }
+
+        foreach (var item in runItems)
+        {
+            Visit(item.Name, item);
+        }
+
+        return ordered;
+    }
+
+    /// <summary>
+    /// Returns the first entry of <paramref name="item"/>'s <c>requires</c> whose
+    /// name is in <paramref name="failedItems"/>, or null when there is none.
+    /// </summary>
+    /// <param name="item">The catalog item about to be installed.</param>
+    /// <param name="failedItems">Names of items that failed earlier in this run.</param>
+    public static string? FindFailedRequirement(CatalogItem item, ICollection<string> failedItems)
+    {
+        if (item.Requires == null || failedItems.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var reqEntry in item.Requires)
+        {
+            var (reqName, _) = SplitNameAndVersion(reqEntry);
+            if (failedItems.Contains(reqName, StringComparer.OrdinalIgnoreCase))
+            {
+                return reqEntry;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The outcome for an item that is not attempted because one of its requirements
+    /// failed earlier in the run, or null when none of them failed.
+    /// </summary>
+    public static Cimian.Core.Models.ItemOutcome? RequirementFailureOutcome(
+        CatalogItem item, ICollection<string> failedItems, DateTime timestamp)
+    {
+        var requirement = FindFailedRequirement(item, failedItems);
+        return requirement == null ? null : RequirementFailureOutcome(item, requirement, timestamp);
+    }
+
+    /// <summary>
+    /// The outcome for an item that is not attempted because <paramref name="requirement"/>,
+    /// one of its requires entries, failed to install.
+    /// </summary>
+    public static Cimian.Core.Models.ItemOutcome RequirementFailureOutcome(
+        CatalogItem item, string requirement, DateTime timestamp)
+        => new(item.Name, item.Version, "install", false,
+            $"Required dependency failed to install: {requirement}", timestamp);
 
     private static Dictionary<string, List<string>> BuildUpdateForIndex(
         Dictionary<string, CatalogItem> catalog)

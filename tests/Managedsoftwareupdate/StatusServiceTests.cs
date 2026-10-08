@@ -58,6 +58,116 @@ public class StatusServiceTests
 
     #endregion
 
+    #region installed_version resolution
+
+    /// <summary>
+    /// A real Windows binary with genuine version metadata. Using a system file keeps the
+    /// test honest — FileVersionInfo against a hand-made temp file returns nothing, which
+    /// would pass a broken implementation.
+    /// </summary>
+    private static string VersionedSystemFile =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "kernel32.dll");
+
+    /// <summary>
+    /// The regression: the installs-array walk resolved a version, and CheckStatus threw
+    /// it away on the success path by returning a fresh result rather than the walk's.
+    /// Only the failure path carried it, so a package that verified cleanly reported no
+    /// version at all — while the very check that proved it was installed had just read one.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_InstallsArrayPasses_StillReportsTheInstalledVersion()
+    {
+        var item = new CatalogItem
+        {
+            Name = "VersionedFilePackage",
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = VersionedSystemFile }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.False(string.IsNullOrWhiteSpace(result.InstalledVersion));
+    }
+
+    /// <summary>
+    /// Reading the version must stay an observation. A file that exists satisfies the check
+    /// regardless of what its metadata says, so recording the version cannot flip the
+    /// install decision — that would change what the fleet installs.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_ReadingTheVersionDoesNotChangeTheInstallDecision()
+    {
+        var item = new CatalogItem
+        {
+            Name = "NoExpectedVersionPackage",
+            Version = "",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = VersionedSystemFile }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.Equal("installed", result.Status);
+    }
+
+    /// <summary>
+    /// A missing file is still pending. The version work must not mask a real failure.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_MissingFile_IsStillPendingAndReportsNoVersion()
+    {
+        var item = new CatalogItem
+        {
+            Name = "AbsentPackage",
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = Path.Combine(_testDir, "does-not-exist.exe") }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.True(result.NeedsAction);
+        Assert.True(string.IsNullOrWhiteSpace(result.InstalledVersion));
+    }
+
+    /// <summary>
+    /// One package, several installs entries. The entry that yields a version names the
+    /// package; a later versionless marker file must not erase it.
+    /// </summary>
+    [Fact]
+    public void CheckStatus_AVersionlessLaterEntryDoesNotEraseTheVersion()
+    {
+        var marker = Path.Combine(_testDir, "marker.txt");
+        File.WriteAllText(marker, "installed");
+
+        var item = new CatalogItem
+        {
+            Name = "MultiEntryPackage",
+            Version = "",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = VersionedSystemFile },
+                new() { Type = "file", Path = marker }
+            }
+        };
+
+        var result = _service.CheckStatus(item, "install", _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.False(string.IsNullOrWhiteSpace(result.InstalledVersion));
+    }
+
+    #endregion
+
     [Fact]
     public void CheckStatus_TimedOutInstallcheck_ReturnsDetectionErrorWithoutInstall()
     {
@@ -76,6 +186,77 @@ public class StatusServiceTests
         Assert.Equal(Cimian.Core.Models.StatusReasonCode.ScriptError, result.ReasonCode);
         Assert.Contains("timed out", result.Reason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(item.Name, result.Reason);
+    }
+
+    [Fact]
+    public void CheckUninstallStatus_AbsentItem_SkipsRemoval()
+    {
+        var item = new CatalogItem
+        {
+            Name = "AlreadyRemovedPackage",
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = Path.Combine(_testDir, "does-not-exist.exe") }
+            }
+        };
+
+        var result = _service.CheckUninstallStatus(item, _testDir);
+
+        Assert.False(result.NeedsAction);
+        Assert.Equal(Cimian.Core.Models.StatusReasonCode.NotInstalled, result.ReasonCode);
+    }
+
+    [Fact]
+    public void CheckUninstallStatus_PresentItem_NeedsRemoval()
+    {
+        var item = new CatalogItem
+        {
+            Name = "PresentPackage",
+            Version = "",
+            Installs = new List<InstallCheckItem> { new() { Type = "file", Path = VersionedSystemFile } }
+        };
+
+        var result = _service.CheckUninstallStatus(item, _testDir);
+
+        Assert.True(result.NeedsAction);
+    }
+
+    [Theory]
+    [InlineData("exit 0", true)]
+    [InlineData("exit 1", false)]
+    public void CheckUninstallStatus_UninstallcheckScript_Decides(string script, bool needsRemoval)
+    {
+        var marker = Path.Combine(_testDir, "present.txt");
+        File.WriteAllText(marker, "installed");
+        var item = new CatalogItem
+        {
+            Name = "ScriptedRemoval",
+            Version = "1.0.0",
+            UninstallcheckScript = script,
+            Installs = new List<InstallCheckItem> { new() { Type = "file", Path = marker } }
+        };
+
+        var result = _service.CheckUninstallStatus(item, _testDir);
+
+        Assert.Equal(needsRemoval, result.NeedsAction);
+    }
+
+    [Fact]
+    public void CheckUninstallStatus_TimedOutUninstallcheck_SkipsRemoval()
+    {
+        var service = new StatusService(TimeSpan.FromMilliseconds(250));
+        var item = new CatalogItem
+        {
+            Name = "HungRemovalCheck",
+            Version = "1.0.0",
+            UninstallcheckScript = "while ($true) { Start-Sleep -Milliseconds 100 }"
+        };
+
+        var result = service.CheckUninstallStatus(item, _testDir);
+
+        Assert.Equal("error", result.Status);
+        Assert.False(result.NeedsAction);
     }
 
     #region Static Method Tests

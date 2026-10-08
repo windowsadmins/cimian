@@ -269,11 +269,102 @@ public class ItemsJsonFinalizationTests
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
+    // ── installed_version: what is on the machine, not what the catalog targets ──
+
+    /// <summary>
+    /// The regression this pins: items.json carried only latest_version (the catalog
+    /// target), so nothing downstream could say what a machine actually had. The field
+    /// existed on the model end to end and was simply never populated, which read as
+    /// "empty" rather than "broken" everywhere it surfaced.
+    /// </summary>
+    [Fact]
+    public void GenerateCurrentItems_CarriesTheInstalledVersionThroughToTheRecord()
+    {
+        using var fixture = new SessionsFixture();
+
+        var exporter = new DataExporter(fixture.BaseDir);
+        var items = exporter.GenerateCurrentItemsFromPackagesInfo(
+            new List<SessionPackageInfo>
+            {
+                new()
+                {
+                    Name = "Foo",
+                    Version = "2.0",              // catalog target
+                    InstalledVersion = "1.4",     // what detection found
+                    Status = "Installed",
+                    ItemType = "managed_installs",
+                    DisplayName = "Foo"
+                }
+            },
+            currentSessionId: "2026-04-27-1000");
+
+        var foo = items.Single();
+        Assert.Equal("2.0", foo.LatestVersion);
+        Assert.Equal("1.4", foo.InstalledVersion);
+    }
+
+    /// <summary>
+    /// The historical/stats producer reads events rather than the live session, so it
+    /// needs its own path to the same fact.
+    /// </summary>
+    [Fact]
+    public void GenerateItemsTable_TakesTheInstalledVersionFromEventHistory()
+    {
+        using var fixture = new SessionsFixture();
+        fixture.WriteSession("2026-04-27-1000",
+            StatusCheckEventLine("Foo", packageVersion: "2.0", installedVersion: "1.4"));
+
+        var exporter = new DataExporter(fixture.BaseDir);
+
+        var foo = exporter.GenerateItemsTable(30).Single(i => i.ItemName == "Foo");
+        Assert.Equal("1.4", foo.InstalledVersion);
+    }
+
+    /// <summary>
+    /// A later blank must not erase a version an earlier check resolved — otherwise a
+    /// single unreadable check in a session wipes the answer for the whole run.
+    /// </summary>
+    [Fact]
+    public void GenerateItemsTable_ABlankLaterEventDoesNotEraseAKnownVersion()
+    {
+        using var fixture = new SessionsFixture();
+        fixture.WriteSession("2026-04-27-1000",
+            StatusCheckEventLine("Foo", packageVersion: "2.0", installedVersion: "1.4"),
+            StatusCheckEventLine("Foo", packageVersion: "2.0", installedVersion: ""));
+
+        var exporter = new DataExporter(fixture.BaseDir);
+
+        Assert.Equal("1.4", exporter.GenerateItemsTable(30).Single(i => i.ItemName == "Foo").InstalledVersion);
+    }
+
+    /// <summary>
+    /// An absent key and an undetermined version are different facts. Omitting the
+    /// property made a client that could not read a version look identical to one too
+    /// old to report the field at all, which is what kept this invisible.
+    /// </summary>
+    [Fact]
+    public void ItemRecord_AlwaysSerializesInstalledVersionEvenWhenUnknown()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new ItemRecord { ItemName = "Foo", LatestVersion = "2.0", InstalledVersion = null });
+
+        Assert.Contains("\"installed_version\"", json);
+    }
+
     private static string EventLine(string action, string status, string packageName, string packageVersion) =>
         "{\"action\":\"" + action + "\"," +
         "\"status\":\"" + status + "\"," +
         "\"package_name\":\"" + packageName + "\"," +
         "\"package_version\":\"" + packageVersion + "\"," +
+        "\"timestamp\":\"" + DateTime.UtcNow.ToString("o") + "\"}";
+
+    /// <summary>A status_check event, which is what carries installed_version in a real run.</summary>
+    private static string StatusCheckEventLine(string packageName, string packageVersion, string installedVersion) =>
+        "{\"action\":\"status_check\"," +
+        "\"status\":\"installed\"," +
+        "\"package_name\":\"" + packageName + "\"," +
+        "\"package_version\":\"" + packageVersion + "\"," +
+        "\"installed_version\":\"" + installedVersion + "\"," +
         "\"timestamp\":\"" + DateTime.UtcNow.ToString("o") + "\"}";
 
     private sealed class SessionsFixture : IDisposable

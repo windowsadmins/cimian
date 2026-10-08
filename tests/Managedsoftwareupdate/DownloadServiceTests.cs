@@ -1,3 +1,4 @@
+using System.Net;
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
@@ -200,6 +201,67 @@ public class DownloadServiceTests : IDisposable
 
         Assert.Contains("my_cool_category", cachePath.ToLowerInvariant());
         Assert.DoesNotContain(" ", cachePath);
+    }
+
+    #endregion
+
+    #region DownloadItemAsync Tests
+
+    [Fact]
+    public async Task DownloadItemAsync_MunkiInstallerItemLocation_DownloadsFromTheNormalizedLocation()
+    {
+        var handler = new StubHandler("installer"u8.ToArray());
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var item = new CatalogItem
+        {
+            Name = "TestApp",
+            InstallerItemLocation = "apps/testapp/setup.msi"
+        };
+        item.NormalizeMunkiInstallerKeys();
+
+        var path = await service.DownloadItemAsync(item);
+
+        Assert.Equal(Path.Combine(_testCacheDir, "setup.msi"), path);
+        Assert.Equal("installer", File.ReadAllText(path!));
+        Assert.All(handler.RequestedUrls,
+            url => Assert.Equal("https://test.example.com/repo/pkgs/apps/testapp/setup.msi", url));
+    }
+
+    [Fact]
+    public async Task DownloadItemAsync_BothLocations_DownloadsFromTheInstallerBlock()
+    {
+        var handler = new StubHandler("installer"u8.ToArray());
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var item = new CatalogItem
+        {
+            Name = "TestApp",
+            Installer = new InstallerInfo { Location = "apps/testapp/setup.msi" },
+            InstallerItemLocation = "installer-item.7.setup.msi"
+        };
+        item.NormalizeMunkiInstallerKeys();
+
+        var path = await service.DownloadItemAsync(item);
+
+        Assert.Equal(Path.Combine(_testCacheDir, "setup.msi"), path);
+        Assert.All(handler.RequestedUrls,
+            url => Assert.Equal("https://test.example.com/repo/pkgs/apps/testapp/setup.msi", url));
+    }
+
+    /// <summary>
+    /// Answers every request with the same body and records the URLs requested.
+    /// </summary>
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        private readonly byte[] _body;
+        public List<string> RequestedUrls { get; } = new();
+
+        public StubHandler(byte[] body) => _body = body;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestedUrls.Add(request.RequestUri!.ToString());
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(_body) });
+        }
     }
 
     #endregion
@@ -518,6 +580,280 @@ public class DownloadServiceTests : IDisposable
         _service.ValidateAndCleanCache();
 
         Assert.True(File.Exists(ancient));
+    }
+
+    #endregion
+
+    #region Size and range support from the GET
+
+    // An address presigned for GET refuses a HEAD, so the size and range support the
+    // HEAD would have given have to come from the GET itself.
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DownloadFileAsync_HeadFails_ReportsProgressAgainstTheSizeOfTheGet(bool headThrows)
+    {
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+            {
+                return headThrows
+                    ? throw new HttpRequestException("connection reset")
+                    : Response(HttpStatusCode.Forbidden);
+            }
+
+            return Response(HttpStatusCode.OK, new byte[100]);
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var progress = new RecordingProgress();
+
+        var result = await service.DownloadFileAsync(
+            "https://test.example.com/refused.bin", Path.Combine(_testCacheDir, "refused.bin"), progress: progress);
+
+        Assert.True(result);
+        Assert.Equal(100.0, progress.Values.Last());
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_HeadRefused_ResumesAfterAShortBodyWhenTheGetAdvertisesRanges()
+    {
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        var ranges = new List<string?>();
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+                return Response(HttpStatusCode.Forbidden);
+
+            // The first body ends 60 bytes short of its Content-Length.
+            ranges.Add(request.Headers.Range?.ToString());
+            return ranges.Count == 1
+                ? Response(HttpStatusCode.OK, content[..40], contentLength: 100, acceptRanges: true)
+                : Response(HttpStatusCode.PartialContent, content[40..]);
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var path = Path.Combine(_testCacheDir, "resumed.bin");
+
+        var result = await service.DownloadFileAsync("https://test.example.com/resumed.bin", path);
+
+        Assert.True(result);
+        Assert.Equal(content, File.ReadAllBytes(path));
+        Assert.Equal([null, "bytes=40-"], ranges);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_HeadRefused_WholeFileAnswerToARange_RestartsInsteadOfAppending()
+    {
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        var ranges = new List<string?>();
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+                return Response(HttpStatusCode.Forbidden);
+
+            // The first body ends 60 bytes short of its Content-Length; the retry's Range is ignored.
+            ranges.Add(request.Headers.Range?.ToString());
+            return ranges.Count == 1
+                ? Response(HttpStatusCode.OK, content[..40], contentLength: 100, acceptRanges: true)
+                : Response(HttpStatusCode.OK, content, acceptRanges: true);
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var path = Path.Combine(_testCacheDir, "ignored.bin");
+
+        var result = await service.DownloadFileAsync("https://test.example.com/ignored.bin", path);
+
+        Assert.True(result);
+        Assert.Equal(content, File.ReadAllBytes(path));
+        Assert.Equal([null, "bytes=40-"], ranges);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_HeadAnswers_WholeFileAnswerToARange_RestartsInsteadOfAppending()
+    {
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        var path = Path.Combine(_testCacheDir, "ignored-after-head.bin");
+        File.WriteAllBytes(path + ".downloading", content[..40]);
+        var ranges = new List<string?>();
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+                return Response(HttpStatusCode.OK, content, acceptRanges: true);
+
+            ranges.Add(request.Headers.Range?.ToString());
+            return Response(HttpStatusCode.OK, content);
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+
+        var result = await service.DownloadFileAsync("https://test.example.com/ignored-after-head.bin", path);
+
+        Assert.True(result);
+        Assert.Equal(content, File.ReadAllBytes(path));
+        Assert.Equal(["bytes=40-"], ranges);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(41)]
+    public async Task DownloadFileAsync_PartialContentFromAnotherOffset_RestartsInsteadOfAppending(int offset)
+    {
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        var path = Path.Combine(_testCacheDir, "elsewhere.bin");
+        File.WriteAllBytes(path + ".downloading", content[..40]);
+        var ranges = new List<string?>();
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+                return Response(HttpStatusCode.OK, content, acceptRanges: true);
+
+            // Whatever range is asked for, the answer is a part that starts at the offset.
+            ranges.Add(request.Headers.Range?.ToString());
+            if (request.Headers.Range is null)
+                return Response(HttpStatusCode.OK, content);
+
+            var part = Response(HttpStatusCode.PartialContent, content[offset..]);
+            part.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(offset, 99, 100);
+            return part;
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+
+        var result = await service.DownloadFileAsync("https://test.example.com/elsewhere.bin", path);
+
+        Assert.True(result);
+        Assert.Equal(content, File.ReadAllBytes(path));
+        Assert.Equal(["bytes=40-", null], ranges);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_PartialContentFromTheRequestedOffset_IsAppended()
+    {
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        var path = Path.Combine(_testCacheDir, "appended.bin");
+        File.WriteAllBytes(path + ".downloading", content[..40]);
+        var ranges = new List<string?>();
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+                return Response(HttpStatusCode.OK, content, acceptRanges: true);
+
+            ranges.Add(request.Headers.Range?.ToString());
+            var part = Response(HttpStatusCode.PartialContent, content[40..]);
+            part.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(40, 99, 100);
+            return part;
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+
+        var result = await service.DownloadFileAsync("https://test.example.com/appended.bin", path);
+
+        Assert.True(result);
+        Assert.Equal(content, File.ReadAllBytes(path));
+        Assert.Equal(["bytes=40-"], ranges);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_PartialContentWithoutAStart_IsAppended()
+    {
+        var content = Enumerable.Range(0, 100).Select(i => (byte)i).ToArray();
+        var path = Path.Combine(_testCacheDir, "no-start.bin");
+        File.WriteAllBytes(path + ".downloading", content[..40]);
+        var ranges = new List<string?>();
+        var handler = new ScriptedHandler(request =>
+        {
+            if (request.Method == HttpMethod.Head)
+                return Response(HttpStatusCode.OK, content, acceptRanges: true);
+
+            ranges.Add(request.Headers.Range?.ToString());
+            var part = Response(HttpStatusCode.PartialContent, content[40..]);
+            part.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(100);
+            return part;
+        });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+
+        var result = await service.DownloadFileAsync("https://test.example.com/no-start.bin", path);
+
+        Assert.True(result);
+        Assert.Equal(content, File.ReadAllBytes(path));
+        Assert.Equal(["bytes=40-"], ranges);
+    }
+
+    [Fact]
+    public async Task DownloadFileAsync_HeadAnswers_KeepsTheSizeOfTheHead()
+    {
+        var body = new byte[100];
+        var handler = new ScriptedHandler(request => request.Method == HttpMethod.Head
+            ? Response(HttpStatusCode.OK, body)
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new UnknownLengthContent(body) });
+        var service = new DownloadService(_testConfig, new HttpClient(handler));
+        var progress = new RecordingProgress();
+
+        var result = await service.DownloadFileAsync(
+            "https://test.example.com/answered.bin", Path.Combine(_testCacheDir, "answered.bin"), progress: progress);
+
+        Assert.True(result);
+        Assert.Equal(100.0, progress.Values.Last());
+    }
+
+    [Theory]
+    [InlineData(-1L, 10)]
+    [InlineData(100L * 1024 * 1024, 10)]
+    [InlineData(1024L * 1024 * 1024, 22)]
+    public void GetAttemptTimeout_GrowsWithTheSizeButNotBelowTheDefault(long totalBytes, int expectedMinutes)
+    {
+        var timeout = DownloadService.GetAttemptTimeout(totalBytes);
+
+        Assert.Equal(TimeSpan.FromMinutes(expectedMinutes), timeout);
+    }
+
+    private static HttpResponseMessage Response(
+        HttpStatusCode status, byte[]? body = null, long? contentLength = null, bool acceptRanges = false)
+    {
+        var response = new HttpResponseMessage(status) { Content = new ByteArrayContent(body ?? []) };
+        if (contentLength.HasValue)
+            response.Content.Headers.ContentLength = contentLength;
+        if (acceptRanges)
+            response.Headers.AcceptRanges.Add("bytes");
+        return response;
+    }
+
+    /// <summary>
+    /// Answers every request from the given function.
+    /// </summary>
+    private sealed class ScriptedHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _respond;
+
+        public ScriptedHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) => _respond = respond;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_respond(request));
+    }
+
+    /// <summary>
+    /// A response body that does not state its length, as a chunked response does not.
+    /// </summary>
+    private sealed class UnknownLengthContent : HttpContent
+    {
+        private readonly byte[] _body;
+
+        public UnknownLengthContent(byte[] body) => _body = body;
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => stream.WriteAsync(_body).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = -1;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Progress that is recorded where it is reported; Progress&lt;T&gt; posts to another thread.
+    /// </summary>
+    private sealed class RecordingProgress : IProgress<double>
+    {
+        public List<double> Values { get; } = new();
+
+        public void Report(double value) => Values.Add(value);
     }
 
     #endregion

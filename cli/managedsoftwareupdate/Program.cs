@@ -266,12 +266,32 @@ public class Program
         Console.WriteLine($"  PreflightFailureAction: {config.PreflightFailureAction}");
         Console.WriteLine($"  PostflightFailureAction: {config.PostflightFailureAction}");
         Console.WriteLine($"  LocalOnlyManifest: {config.LocalOnlyManifest ?? "(not set)"}");
-        Console.WriteLine($"  SkipSelfService: {config.SkipSelfService}");
         Console.WriteLine($"  LoopGuardEnabled: {config.LoopGuardEnabled}");
         Console.WriteLine($"  AuthUser: {(string.IsNullOrEmpty(config.AuthUser) ? "(not set)" : "***")}");
         Console.WriteLine($"  AuthToken: {(string.IsNullOrEmpty(config.AuthToken) ? "(not set)" : "***")}");
+        Console.WriteLine($"  AdditionalHttpHeaders: {DescribeAdditionalHttpHeaders(config.AdditionalHttpHeaders)}");
 
         return 0;
+    }
+
+    /// <summary>
+    /// The AdditionalHttpHeaders setting as --show-config prints it: the header names, each
+    /// with its value masked, because a value can be a secret, like AuthToken above. An entry
+    /// that is not "Name: value" is shown by its position so the file can be corrected.
+    /// </summary>
+    internal static string DescribeAdditionalHttpHeaders(IReadOnlyList<string>? entries)
+    {
+        if (entries is null || entries.Count == 0)
+            return "(not set)";
+
+        var parts = new List<string>(entries.Count);
+        for (var i = 0; i < entries.Count; i++)
+        {
+            parts.Add(CimianHttpClientFactory.TrySplitHeader(entries[i], out var name, out _)
+                ? $"{name}: ***"
+                : $"(entry {i + 1}: not \"Name: value\")");
+        }
+        return string.Join(", ", parts);
     }
 
     private static async Task<int> RunPreflightOnlyAsync(Options options)

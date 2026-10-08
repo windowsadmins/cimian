@@ -53,9 +53,6 @@ public class CimianConfig
     [YamlMember(Alias = "LocalOnlyManifest")]
     public string? LocalOnlyManifest { get; set; }
 
-    [YamlMember(Alias = "SkipSelfService")]
-    public bool SkipSelfService { get; set; }
-
     [YamlMember(Alias = "AuthToken")]
     public string? AuthToken { get; set; }
 
@@ -64,6 +61,16 @@ public class CimianConfig
 
     [YamlMember(Alias = "AuthPassword")]
     public string? AuthPassword { get; set; }
+
+    /// <summary>
+    /// Extra headers sent with every request, each written "Name: value" as in Munki's
+    /// setting of the same name. A request that is redirected carries them to the other
+    /// host too. Authorization comes from AuthToken, AuthUser and AuthPassword, and
+    /// User-Agent is fixed, so neither can be set here.
+    /// </summary>
+    [YamlMember(Alias = "AdditionalHttpHeaders")]
+    [YamlConverter(typeof(HeaderListConverter))]
+    public List<string> AdditionalHttpHeaders { get; set; } = new();
 
     [YamlMember(Alias = "InstallerTimeout")]
     public int InstallerTimeout { get; set; } = 900; // 15 minutes default
@@ -361,6 +368,13 @@ public class ManifestItem
     public bool PromotedFromOptional { get; set; }
 
     /// <summary>
+    /// True when this item won deduplication as a managed_updates entry and the same
+    /// name is also listed under optional_installs. The two lists are independent, so
+    /// InstallInfo keeps the item's optional_installs record next to the update.
+    /// </summary>
+    public bool AlsoOptional { get; set; }
+
+    /// <summary>
     /// True when this item's action was set by the user-writable
     /// SelfServeManifest (install request or promoted optional). SourceManifest
     /// keeps the server manifest that listed the item, so this flag is the only
@@ -412,6 +426,27 @@ public class CatalogItem
     [YamlMember(Alias = "installer")]
     public InstallerInfo Installer { get; set; } = new();
 
+    /// <summary>
+    /// Munki-format fallback for installer.location, read only at catalog load.
+    /// <see cref="NormalizeMunkiInstallerKeys"/> copies it into the installer block when
+    /// installer.location is empty; everything else reads installer.location.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_location")]
+    public string? InstallerItemLocation { get; set; }
+
+    /// <summary>
+    /// Munki-format fallback for installer.hash (SHA-256), read only at catalog load.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_hash")]
+    public string? InstallerItemHash { get; set; }
+
+    /// <summary>
+    /// Munki-format fallback for installer.size, read only at catalog load. Munki gives it
+    /// in kilobytes; installer.size is in bytes.
+    /// </summary>
+    [YamlMember(Alias = "installer_item_size")]
+    public long? InstallerItemSize { get; set; }
+
     [YamlMember(Alias = "uninstaller")]
     public List<UninstallerInfo> Uninstaller { get; set; } = new();
 
@@ -441,6 +476,9 @@ public class CatalogItem
 
     [YamlMember(Alias = "installcheck_script")]
     public string? InstallcheckScript { get; set; }
+
+    [YamlMember(Alias = "uninstallcheck_script")]
+    public string? UninstallcheckScript { get; set; }
 
     [YamlMember(Alias = "install_script")]
     public string? InstallScript { get; set; }
@@ -525,6 +563,25 @@ public class CatalogItem
     /// </summary>
     [YamlMember(Alias = "loop_fingerprint")]
     public string? LoopFingerprint { get; set; }
+
+    /// <summary>
+    /// Fills the installer block from Munki's top-level installer_item_* keys where it
+    /// has no value of its own. The installer block is the schema, so a value it already
+    /// has is never overwritten. Called once when a catalog is loaded.
+    /// </summary>
+    public void NormalizeMunkiInstallerKeys()
+    {
+        Installer ??= new InstallerInfo();
+
+        if (string.IsNullOrEmpty(Installer.Location) && !string.IsNullOrEmpty(InstallerItemLocation))
+            Installer.Location = InstallerItemLocation;
+
+        if (string.IsNullOrEmpty(Installer.Hash) && !string.IsNullOrEmpty(InstallerItemHash))
+            Installer.Hash = InstallerItemHash;
+
+        if (Installer.Size == null && InstallerItemSize != null)
+            Installer.Size = InstallerItemSize * 1024;
+    }
 
     public bool IsUninstallable() => Uninstallable && (
         Uninstaller.Count > 0

@@ -260,7 +260,9 @@ public class CatalogBuilder
     /// <summary>
     /// Normalizes line endings in multiline string fields to prevent extra blank lines
     /// Converts \r\n (Windows) to \n (Unix) to avoid YamlDotNet creating extra lines with folded scalar style
-    /// Also collapses multiple consecutive newlines to prevent excessive blank lines in output
+    /// Also collapses multiple consecutive newlines in the description. Scripts keep their
+    /// blank lines: they can embed content that is verified byte-for-byte, such as a
+    /// here-string checked against a SHA-256, and changing it breaks that check on clients.
     /// </summary>
     private static void NormalizeLineEndings(PkgsInfo pkg)
     {
@@ -275,43 +277,31 @@ public class CatalogBuilder
         if (pkg.PreinstallScript != null)
         {
             pkg.PreinstallScript = pkg.PreinstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (pkg.PreinstallScript.Contains("\n\n\n"))
-                pkg.PreinstallScript = pkg.PreinstallScript.Replace("\n\n\n", "\n\n");
         }
         
         if (pkg.PostinstallScript != null)
         {
             pkg.PostinstallScript = pkg.PostinstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (pkg.PostinstallScript.Contains("\n\n\n"))
-                pkg.PostinstallScript = pkg.PostinstallScript.Replace("\n\n\n", "\n\n");
         }
         
         if (pkg.PreuninstallScript != null)
         {
             pkg.PreuninstallScript = pkg.PreuninstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (pkg.PreuninstallScript.Contains("\n\n\n"))
-                pkg.PreuninstallScript = pkg.PreuninstallScript.Replace("\n\n\n", "\n\n");
         }
         
         if (pkg.PostuninstallScript != null)
         {
             pkg.PostuninstallScript = pkg.PostuninstallScript.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (pkg.PostuninstallScript.Contains("\n\n\n"))
-                pkg.PostuninstallScript = pkg.PostuninstallScript.Replace("\n\n\n", "\n\n");
         }
         
         if (pkg.InstallCheckScript != null)
         {
             pkg.InstallCheckScript = pkg.InstallCheckScript.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (pkg.InstallCheckScript.Contains("\n\n\n"))
-                pkg.InstallCheckScript = pkg.InstallCheckScript.Replace("\n\n\n", "\n\n");
         }
         
         if (pkg.UninstallCheckScript != null)
         {
             pkg.UninstallCheckScript = pkg.UninstallCheckScript.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (pkg.UninstallCheckScript.Contains("\n\n\n"))
-                pkg.UninstallCheckScript = pkg.UninstallCheckScript.Replace("\n\n\n", "\n\n");
         }
     }
 
