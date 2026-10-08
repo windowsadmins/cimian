@@ -228,6 +228,59 @@ catalogs:
         Assert.Empty(warnings);
     }
 
+    private string Sha256Of(string relativePath)
+    {
+        using var stream = File.OpenRead(Path.Combine(_tempDir, "pkgs", relativePath));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    [Fact]
+    public void VerifyPayloads_HashCheck_AcceptsTheSha256TheClientVerifies()
+    {
+        CreatePayload("app1/installer.exe");
+        CreatePayload("app1/uninstaller.exe");
+        var items = new List<PkgsInfo>
+        {
+            new PkgsInfo
+            {
+                Name = "App1",
+                FilePath = "test.yaml",
+                Installer = new Installer { Location = "app1/installer.exe", Hash = Sha256Of("app1/installer.exe") },
+                Uninstaller = new List<Installer>
+                {
+                    new Installer { Location = "app1/uninstaller.exe", Hash = Sha256Of("app1/uninstaller.exe") }
+                }
+            }
+        };
+
+        var warnings = _builder.VerifyPayloads(_tempDir, items, hashCheck: true);
+
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void VerifyPayloads_HashCheck_ReportsAPayloadThatChanged()
+    {
+        CreatePayload("app1/installer.exe");
+        var recorded = Sha256Of("app1/installer.exe");
+        File.AppendAllText(Path.Combine(_tempDir, "pkgs", "app1", "installer.exe"), " rebuilt");
+        var items = new List<PkgsInfo>
+        {
+            new PkgsInfo
+            {
+                Name = "App1",
+                FilePath = "test.yaml",
+                Installer = new Installer { Location = "app1/installer.exe", Hash = recorded }
+            }
+        };
+
+        var warnings = _builder.VerifyPayloads(_tempDir, items, hashCheck: true);
+
+        var warning = Assert.Single(warnings);
+        Assert.Contains("installer hash mismatch", warning);
+        Assert.Contains($"actual {Sha256Of("app1/installer.exe")}", warning);
+    }
+
     [Fact]
     public void VerifyPayloads_WarnsForMissingInstaller()
     {
