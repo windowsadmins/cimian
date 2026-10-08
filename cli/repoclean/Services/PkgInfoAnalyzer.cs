@@ -6,326 +6,220 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
-using YamlDotNet.RepresentationModel;
 
 namespace Cimian.CLI.Repoclean.Services;
 
 public class PkgInfoAnalyzer : IPkgInfoAnalyzer
 {
     private readonly ILogger<PkgInfoAnalyzer> _logger;
-    private readonly IDeserializer _yamlDeserializer;
 
     public PkgInfoAnalyzer(ILogger<PkgInfoAnalyzer> logger)
     {
         _logger = logger;
-        _yamlDeserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .Build();
     }
 
-    public async Task<(Dictionary<string, Dictionary<string, List<PackageInfo>>> pkgInfoDb, HashSet<(string name, string version)> requiredItems, HashSet<string> referencedPackages, int pkgInfoCount)> AnalyzePkgInfoAsync(IFileRepository repository, HashSet<string> manifestItems)
+    public async Task<PkgInfoAnalysis> AnalyzePkgInfoAsync(IFileRepository repository, HashSet<string> manifestItems)
     {
         Console.WriteLine("Analyzing pkginfo files...");
-        
-        var pkgInfoDb = new Dictionary<string, Dictionary<string, List<PackageInfo>>>();
-        var requiredItems = new HashSet<(string name, string version)>();
-        var referencedPackages = new HashSet<string>();
-        var pkgInfoCount = 0;
 
-        try
+        var analysis = new PkgInfoAnalysis();
+        var pkgInfoList = await repository.GetItemListAsync("pkgsinfo");
+
+        foreach (var pkgInfoName in pkgInfoList.Where(IsPkgInfoFile))
         {
-            var pkgInfoList = await repository.GetItemListAsync("pkgsinfo");
-            
-            foreach (var pkgInfoName in pkgInfoList)
+            var pkgInfoPath = Path.Combine("pkgsinfo", pkgInfoName);
+            Dictionary<string, object> pkgInfo;
+            string data;
+            try
             {
-                try
-                {
-                    var pkgInfoPath = Path.Combine("pkgsinfo", pkgInfoName);
-                    var data = await repository.GetContentAsync(pkgInfoPath);
-                    var pkgInfo = ParsePkgInfoData(data, pkgInfoName);
-
-                    if (pkgInfo == null) continue;
-
-                    if (!pkgInfo.TryGetValue("name", out var nameObj) || nameObj is not string name ||
-                        !pkgInfo.TryGetValue("version", out var versionObj) || versionObj is not string version)
-                    {
-                        _logger.LogWarning("Missing 'name' or 'version' keys in {PkgInfoName}", pkgInfoName);
-                        continue;
-                    }
-
-                    var packageInfo = CreatePackageInfo(pkgInfo, name, version, pkgInfoPath, data.Length);
-                    
-                    // Track referenced packages
-                    if (!string.IsNullOrEmpty(packageInfo.PackagePath))
-                        referencedPackages.Add(packageInfo.PackagePath);
-                    if (!string.IsNullOrEmpty(packageInfo.UninstallPackagePath))
-                        referencedPackages.Add(packageInfo.UninstallPackagePath);
-
-                    // Process requirements
-                    ProcessRequirements(pkgInfo, name, manifestItems, requiredItems);
-
-                    // Process update_for
-                    ProcessUpdateFor(pkgInfo, name, manifestItems);
-
-                    // Generate metadata key
-                    var metakey = GenerateMetakey(pkgInfo);
-
-                    // Store in database
-                    if (!pkgInfoDb.ContainsKey(metakey))
-                        pkgInfoDb[metakey] = new Dictionary<string, List<PackageInfo>>();
-                    
-                    if (!pkgInfoDb[metakey].ContainsKey(version))
-                        pkgInfoDb[metakey][version] = new List<PackageInfo>();
-                    
-                    pkgInfoDb[metakey][version].Add(packageInfo);
-                    pkgInfoCount++;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing pkginfo {PkgInfoName}", pkgInfoName);
-                    Console.WriteLine($"Error processing pkginfo {pkgInfoName}: {ex.Message}");
-                }
+                data = await repository.GetContentAsync(pkgInfoPath);
+                pkgInfo = ParsePkgInfoData(data, pkgInfoName);
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting pkginfo list");
-            Console.WriteLine($"Error getting pkginfo list: {ex.Message}");
+            catch (Exception ex)
+            {
+                // An unreadable pkgsinfo still owns a payload. Leaving it out silently
+                // would list that payload as orphaned, so the caller must know.
+                _logger.LogDebug(ex, "Error parsing pkginfo {PkgInfoName}", pkgInfoName);
+                analysis.ParseErrors.Add($"{pkgInfoPath}: {ex.Message}");
+                continue;
+            }
+
+            var name = YamlValues.AsString(pkgInfo.GetValueOrDefault("name"));
+            var version = YamlValues.AsString(pkgInfo.GetValueOrDefault("version"));
+            if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(version))
+            {
+                analysis.ParseErrors.Add($"{pkgInfoPath}: missing 'name' or 'version'");
+                continue;
+            }
+
+            var packageInfo = CreatePackageInfo(pkgInfo, name, version, pkgInfoPath, data.Length);
+
+            foreach (var payload in packageInfo.PayloadPaths)
+            {
+                analysis.ReferencedPackages.Add(payload);
+            }
+
+            ProcessRequirements(packageInfo, manifestItems, analysis.RequiredItems);
+            ProcessUpdateFor(packageInfo, manifestItems);
+
+            var metakey = GenerateMetakey(pkgInfo);
+
+            if (!analysis.PkgInfoDb.TryGetValue(metakey, out var versions))
+            {
+                versions = new Dictionary<string, List<PackageInfo>>();
+                analysis.PkgInfoDb[metakey] = versions;
+            }
+
+            if (!versions.TryGetValue(version, out var items))
+            {
+                items = new List<PackageInfo>();
+                versions[version] = items;
+            }
+
+            items.Add(packageInfo);
+            analysis.PkgInfoCount++;
         }
 
-        return (pkgInfoDb, requiredItems, referencedPackages, pkgInfoCount);
+        return analysis;
     }
 
-    private PackageInfo CreatePackageInfo(Dictionary<string, object> pkgInfo, string name, string version, string resourceIdentifier, int dataLength)
+    private static PackageInfo CreatePackageInfo(Dictionary<string, object> pkgInfo, string name, string version, string resourceIdentifier, int dataLength)
     {
         var packageInfo = new PackageInfo
         {
             Name = name,
             Version = version,
             ResourceIdentifier = resourceIdentifier,
-            ItemSize = dataLength
+            ItemSize = dataLength,
+            Requires = YamlValues.AsStringList(pkgInfo.GetValueOrDefault("requires")),
+            UpdateFor = YamlValues.AsStringList(pkgInfo.GetValueOrDefault("update_for")),
+            Catalogs = YamlValues.AsStringList(pkgInfo.GetValueOrDefault("catalogs")),
+            SupportedArchitectures = YamlValues.AsStringList(pkgInfo.GetValueOrDefault("supported_architectures")),
+            MinimumCimianVersion = YamlValues.AsString(pkgInfo.GetValueOrDefault("minimum_cimian_version")) ?? string.Empty,
+            MinimumOsVersion = YamlValues.AsString(pkgInfo.GetValueOrDefault("minimum_os_version")) ?? string.Empty,
+            MaximumOsVersion = YamlValues.AsString(pkgInfo.GetValueOrDefault("maximum_os_version")) ?? string.Empty,
+            InstallableCondition = YamlValues.AsString(pkgInfo.GetValueOrDefault("installable_condition")) ?? string.Empty,
+            UninstallMethod = YamlValues.AsString(pkgInfo.GetValueOrDefault("uninstall_method")) ?? string.Empty
         };
 
-        // Handle installer section (Cimian format)
-        if (pkgInfo.TryGetValue("installer", out var installerObj))
+        // installer: (Cimian), with the Munki-style installer_item_location as fallback
+        if (YamlValues.AsMapping(pkgInfo.GetValueOrDefault("installer")) is { } installer)
         {
-            Dictionary<string, object>? installer = null;
-            
-            // Handle different types that YamlDotNet might return
-            if (installerObj is Dictionary<string, object> directDict)
+            if (YamlValues.AsString(installer.GetValueOrDefault("location")) is { Length: > 0 } location)
             {
-                installer = directDict;
+                packageInfo.PackagePath = YamlValues.NormalizeRepoPath(location);
             }
-            else if (installerObj is IDictionary<object, object> objectDict)
+            if (TryGetLong(installer.GetValueOrDefault("size"), out var size))
             {
-                installer = objectDict.ToDictionary(
-                    kvp => kvp.Key?.ToString() ?? "",
-                    kvp => kvp.Value ?? new object()
-                );
-            }
-            
-            if (installer != null)
-            {
-                if (installer.TryGetValue("location", out var locationObj) && locationObj is string location)
-                {
-                    packageInfo.PackagePath = NormalizePath(location);
-                }
-
-                if (installer.TryGetValue("size", out var sizeObj) && IsNumeric(sizeObj))
-                {
-                    packageInfo.PackageSize = Convert.ToInt64(sizeObj);
-                }
+                packageInfo.PackageSize = size;
             }
         }
-        // Fallback to legacy format
-        else if (pkgInfo.TryGetValue("installer_item_location", out var packagePath) && packagePath is string pkgPath)
+        else if (YamlValues.AsString(pkgInfo.GetValueOrDefault("installer_item_location")) is { Length: > 0 } pkgPath)
         {
-            packageInfo.PackagePath = NormalizePath(pkgPath);
+            packageInfo.PackagePath = YamlValues.NormalizeRepoPath(pkgPath);
         }
 
-        if (pkgInfo.TryGetValue("installer_item_size", out var packageSize) && IsNumeric(packageSize))
+        if (TryGetLong(pkgInfo.GetValueOrDefault("installer_item_size"), out var itemSizeKb))
         {
-            packageInfo.PackageSize = Convert.ToInt64(packageSize) * 1024; // Convert KB to bytes
+            packageInfo.PackageSize = itemSizeKb * 1024;
         }
 
-        // Handle uninstaller section (Cimian format)
-        if (pkgInfo.TryGetValue("uninstaller", out var uninstallerObj) && uninstallerObj is Dictionary<string, object> uninstaller)
+        // uninstaller: is a list in Cimian pkgsinfo (one entry per uninstaller); a single
+        // mapping is accepted too. Each entry with a location owns a payload in pkgs/.
+        foreach (var uninstaller in YamlValues.AsMappingList(pkgInfo.GetValueOrDefault("uninstaller")))
         {
-            if (uninstaller.TryGetValue("location", out var uninstallLocationObj) && uninstallLocationObj is string uninstallLocation)
+            if (YamlValues.AsString(uninstaller.GetValueOrDefault("location")) is { Length: > 0 } location)
             {
-                packageInfo.UninstallPackagePath = NormalizePath(uninstallLocation);
+                packageInfo.UninstallPackagePaths.Add(YamlValues.NormalizeRepoPath(location));
+            }
+            if (TryGetLong(uninstaller.GetValueOrDefault("size"), out var size))
+            {
+                packageInfo.UninstallPackageSize += size;
             }
         }
-        // Fallback to legacy format
-        else if (pkgInfo.TryGetValue("uninstaller_item_location", out var uninstallPath) && uninstallPath is string uninstallPkgPath)
+
+        if (YamlValues.AsString(pkgInfo.GetValueOrDefault("uninstaller_item_location")) is { Length: > 0 } uninstallPath)
         {
-            packageInfo.UninstallPackagePath = NormalizePath(uninstallPkgPath);
+            packageInfo.UninstallPackagePaths.Add(YamlValues.NormalizeRepoPath(uninstallPath));
         }
 
-        if (pkgInfo.TryGetValue("uninstaller_item_size", out var uninstallSize) && IsNumeric(uninstallSize))
+        if (TryGetLong(pkgInfo.GetValueOrDefault("uninstaller_item_size"), out var uninstallSizeKb))
         {
-            packageInfo.UninstallPackageSize = Convert.ToInt64(uninstallSize) * 1024; // Convert KB to bytes
+            packageInfo.UninstallPackageSize = uninstallSizeKb * 1024;
         }
 
-        // Parse catalogs
-        if (pkgInfo.TryGetValue("catalogs", out var catalogsObj) && catalogsObj is Newtonsoft.Json.Linq.JArray catalogsArray)
+        if (packageInfo.UninstallMethod == "removepackages")
         {
-            packageInfo.Catalogs = catalogsArray.Select(c => c.ToString()).ToList();
-        }
-
-        // Parse other fields as needed
-        if (pkgInfo.TryGetValue("minimum_cimian_version", out var minCimianVersion) && minCimianVersion is string minCimian)
-        {
-            packageInfo.MinimumCimianVersion = minCimian;
-        }
-
-        if (pkgInfo.TryGetValue("minimum_os_version", out var minOsVersion) && minOsVersion is string minOs)
-        {
-            packageInfo.MinimumOsVersion = minOs;
-        }
-
-        if (pkgInfo.TryGetValue("maximum_os_version", out var maxOsVersion) && maxOsVersion is string maxOs)
-        {
-            packageInfo.MaximumOsVersion = maxOs;
-        }
-
-        if (pkgInfo.TryGetValue("supported_architectures", out var archObj) && archObj is Newtonsoft.Json.Linq.JArray archArray)
-        {
-            packageInfo.SupportedArchitectures = archArray.Select(a => a.ToString()).ToList();
-        }
-
-        if (pkgInfo.TryGetValue("installable_condition", out var installableCondition) && installableCondition is string installCond)
-        {
-            packageInfo.InstallableCondition = installCond;
-        }
-
-        if (pkgInfo.TryGetValue("uninstall_method", out var uninstallMethod) && uninstallMethod is string uninstallMeth)
-        {
-            packageInfo.UninstallMethod = uninstallMeth;
-        }
-
-        // Parse receipts if uninstall_method is removepackages
-        if (packageInfo.UninstallMethod == "removepackages" && pkgInfo.TryGetValue("receipts", out var receiptsObj) && receiptsObj is Newtonsoft.Json.Linq.JArray receiptsArray)
-        {
-            packageInfo.Receipts = receiptsArray
-                .Select(r => r.ToObject<Dictionary<string, object>>())
-                .Where(r => r != null && r.ContainsKey("packageid"))
-                .Select(r => new Receipt { PackageId = r!["packageid"]?.ToString() ?? string.Empty })
+            packageInfo.Receipts = YamlValues.AsMappingList(pkgInfo.GetValueOrDefault("receipts"))
+                .Select(r => YamlValues.AsString(r.GetValueOrDefault("packageid")))
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Select(id => new Receipt { PackageId = id! })
                 .ToList();
         }
 
         return packageInfo;
     }
 
-    private void ProcessRequirements(Dictionary<string, object> pkgInfo, string name, HashSet<string> manifestItems, HashSet<(string name, string version)> requiredItems)
+    private static void ProcessRequirements(PackageInfo item, HashSet<string> manifestItems, HashSet<(string name, string version)> requiredItems)
     {
-        if (!pkgInfo.TryGetValue("requires", out var requiresObj)) return;
-
-        List<string> dependencies;
-        
-        if (requiresObj is string singleDependency)
-        {
-            dependencies = new List<string> { singleDependency };
-        }
-        else if (requiresObj is Newtonsoft.Json.Linq.JArray dependenciesArray)
-        {
-            dependencies = dependenciesArray.Select(d => d.ToString()).ToList();
-        }
-        else
-        {
-            return;
-        }
-
-        foreach (var dependency in dependencies)
+        foreach (var dependency in item.Requires)
         {
             var (requiredName, requiredVersion) = ParseNameAndVersion(dependency);
-            
+
             if (!string.IsNullOrEmpty(requiredVersion))
             {
                 requiredItems.Add((requiredName, requiredVersion));
             }
 
             // If this item is in a manifest, then anything it requires should be treated as if it, too, is in a manifest
-            if (manifestItems.Contains(name))
+            if (manifestItems.Contains(item.Name))
             {
                 manifestItems.Add(requiredName);
             }
         }
     }
 
-    private void ProcessUpdateFor(Dictionary<string, object> pkgInfo, string name, HashSet<string> manifestItems)
+    private static void ProcessUpdateFor(PackageInfo item, HashSet<string> manifestItems)
     {
-        if (!pkgInfo.TryGetValue("update_for", out var updateForObj)) return;
-
-        List<string> updateItems;
-        
-        if (updateForObj is string singleUpdateItem)
-        {
-            updateItems = new List<string> { singleUpdateItem };
-        }
-        else if (updateForObj is Newtonsoft.Json.Linq.JArray updateItemsArray)
-        {
-            updateItems = updateItemsArray.Select(u => u.ToString()).ToList();
-        }
-        else
-        {
-            return;
-        }
-
-        foreach (var updateItem in updateItems)
+        foreach (var updateItem in item.UpdateFor)
         {
             var (updateItemName, _) = ParseNameAndVersion(updateItem);
-            
             if (manifestItems.Contains(updateItemName))
             {
-                manifestItems.Add(name);
+                manifestItems.Add(item.Name);
             }
         }
     }
 
-    private string GenerateMetakey(Dictionary<string, object> pkgInfo)
+    private static string GenerateMetakey(Dictionary<string, object> pkgInfo)
     {
         var metakey = new StringBuilder();
         var keysToHash = new[] { "name", "catalogs", "minimum_cimian_version", "minimum_os_version", "maximum_os_version", "supported_architectures", "installable_condition" };
 
         // Add receipts to hash if uninstall_method is removepackages
-        var includeReceipts = pkgInfo.TryGetValue("uninstall_method", out var uninstallMethod) && uninstallMethod.ToString() == "removepackages";
+        var includeReceipts = YamlValues.AsString(pkgInfo.GetValueOrDefault("uninstall_method")) == "removepackages";
 
         foreach (var key in keysToHash)
         {
-            if (pkgInfo.TryGetValue(key, out var value) && value != null)
-            {
-                string valueString;
-                
-                if (key == "catalogs" && value is Newtonsoft.Json.Linq.JArray catalogsArray)
-                {
-                    valueString = string.Join(", ", catalogsArray.Select(c => c.ToString()).OrderBy(c => c));
-                }
-                else if (key == "supported_architectures" && value is Newtonsoft.Json.Linq.JArray archArray)
-                {
-                    valueString = string.Join(", ", archArray.Select(a => a.ToString()).OrderBy(a => a));
-                }
-                else
-                {
-                    valueString = value.ToString() ?? string.Empty;
-                }
+            if (!pkgInfo.TryGetValue(key, out var value) || value == null)
+                continue;
 
-                if (!string.IsNullOrEmpty(valueString))
-                {
-                    metakey.AppendLine($"{key}: {valueString}");
-                }
+            var valueString = key is "catalogs" or "supported_architectures"
+                ? string.Join(", ", YamlValues.AsStringList(value).OrderBy(v => v, StringComparer.Ordinal))
+                : YamlValues.AsString(value) ?? string.Empty;
+
+            if (!string.IsNullOrEmpty(valueString))
+            {
+                metakey.AppendLine($"{key}: {valueString}");
             }
         }
 
-        if (includeReceipts && pkgInfo.TryGetValue("receipts", out var receiptsObj) && receiptsObj is Newtonsoft.Json.Linq.JArray receiptsArray)
+        if (includeReceipts)
         {
-            var receiptIds = receiptsArray
-                .Select(r => r.ToObject<Dictionary<string, object>>())
-                .Where(r => r != null && r.ContainsKey("packageid"))
-                .Select(r => r!["packageid"]?.ToString() ?? string.Empty)
-                .OrderBy(id => id);
+            var receiptIds = YamlValues.AsMappingList(pkgInfo.GetValueOrDefault("receipts"))
+                .Select(r => YamlValues.AsString(r.GetValueOrDefault("packageid")) ?? string.Empty)
+                .Where(id => id.Length > 0)
+                .OrderBy(id => id, StringComparer.Ordinal);
 
             var receiptsString = string.Join(", ", receiptIds);
             if (!string.IsNullOrEmpty(receiptsString))
@@ -337,18 +231,18 @@ public class PkgInfoAnalyzer : IPkgInfoAnalyzer
         return metakey.ToString().TrimEnd('\r', '\n');
     }
 
-    private (string name, string version) ParseNameAndVersion(string itemString)
+    private static (string name, string version) ParseNameAndVersion(string itemString)
     {
         // Split on '--' first, then on '-'
         var delimiters = new[] { "--", "-" };
-        
+
         foreach (var delimiter in delimiters)
         {
             if (itemString.Contains(delimiter))
             {
                 var lastIndex = itemString.LastIndexOf(delimiter);
                 var potentialVersion = itemString.Substring(lastIndex + delimiter.Length);
-                
+
                 // Check if the potential version starts with a digit
                 if (!string.IsNullOrEmpty(potentialVersion) && char.IsDigit(potentialVersion[0]))
                 {
@@ -361,199 +255,36 @@ public class PkgInfoAnalyzer : IPkgInfoAnalyzer
         return (itemString, string.Empty);
     }
 
-    private Dictionary<string, object>? ParsePkgInfoData(string data, string pkgInfoName)
-    {
-        try
-        {
-            // First try YAML parsing
-            if (pkgInfoName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) || 
-                pkgInfoName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
-            {
-                // Always try the simplified approach first for YAML files
-                var result = new Dictionary<string, object>();
-                var lines = data.Split('\n');
-                bool foundName = false, foundVersion = false;
-                
-                // Extract basic fields
-                foreach (var line in lines)
-                {
-                    var trimmed = line.Trim();
-                    if (trimmed.StartsWith("name:") && !foundName)
-                    {
-                        var name = trimmed.Substring(5).Trim();
-                        // Remove quotes if present
-                        if ((name.StartsWith("\"") && name.EndsWith("\"")) || (name.StartsWith("'") && name.EndsWith("'")))
-                            name = name.Substring(1, name.Length - 2);
-                        result["name"] = name;
-                        foundName = true;
-                    }
-                    else if (trimmed.StartsWith("version:") && !foundVersion)
-                    {
-                        var version = trimmed.Substring(8).Trim();
-                        // Remove quotes if present
-                        if ((version.StartsWith("\"") && version.EndsWith("\"")) || (version.StartsWith("'") && version.EndsWith("'")))
-                            version = version.Substring(1, version.Length - 2);
-                        result["version"] = version;
-                        foundVersion = true;
-                    }
-                }
-                
-                // Extract installer location
-                var installerLocation = ExtractInstallerLocationFromYaml(data);
-                if (!string.IsNullOrEmpty(installerLocation))
-                {
-                    var installer = new Dictionary<string, object>
-                    {
-                        ["location"] = installerLocation
-                    };
-                    result["installer"] = installer;
-                }
-                
-                // If we found at least name and version, return the simplified result
-                if (foundName && foundVersion)
-                {
-                    return result;
-                }
-                
-                // Fallback to full YAML parsing if simplified approach didn't work
-                try
-                {
-                    var yamlStream = new YamlStream();
-                    yamlStream.Load(new StringReader(data));
-                    
-                    if (yamlStream.Documents.Count > 0 && yamlStream.Documents[0].RootNode is YamlMappingNode rootNode)
-                    {
-                        return ConvertYamlMappingToDict(rootNode);
-                    }
-                }
-                catch
-                {
-                    // If full YAML parsing fails, return the partial result if we have name/version
-                    if (foundName && foundVersion)
-                    {
-                        return result;
-                    }
-                    throw;
-                }
-            }
+    // makecatalogs reads YAML pkgsinfo; JSON is accepted as before. Anything else in
+    // pkgsinfo/ (a README, an editor backup) is not a pkgsinfo and owns no payload.
+    private static bool IsPkgInfoFile(string name) =>
+        name.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith(".yml", StringComparison.OrdinalIgnoreCase) ||
+        name.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
 
-            // Fall back to JSON parsing
-            return JsonConvert.DeserializeObject<Dictionary<string, object>>(data);
-        }
-        catch (Exception ex)
+    private static Dictionary<string, object> ParsePkgInfoData(string data, string pkgInfoName)
+    {
+        // Parse the whole document. A line scan that picked out name, version and
+        // installer.location used to stand in for this, and it never saw requires,
+        // uninstaller or catalogs -- the fields that decide what is safe to delete.
+        if (pkgInfoName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
+            pkgInfoName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogError(ex, "Error parsing pkginfo file {PkgInfoName}", pkgInfoName);
-            return null;
+            return YamlValues.ParseYamlMapping(data);
         }
+
+        return JsonConvert.DeserializeObject<Dictionary<string, object>>(data)
+            ?? throw new InvalidDataException("the document is empty");
     }
 
-    private string ExtractInstallerLocationFromYaml(string yamlContent)
+    private static bool TryGetLong(object? value, out long result)
     {
-        var lines = yamlContent.Split('\n');
-        bool inInstaller = false;
-        
-        for (int i = 0; i < lines.Length; i++)
+        result = 0;
+        return value switch
         {
-            var line = lines[i];
-            var trimmed = line.Trim();
-            
-            // Check for installer section start
-            if (trimmed == "installer:")
-            {
-                inInstaller = true;
-                continue;
-            }
-            
-            if (inInstaller)
-            {
-                // If we hit another top-level key (no indentation), we're out of installer section
-                if (!string.IsNullOrWhiteSpace(line) && !line.StartsWith(" ") && !line.StartsWith("\t") && line.Contains(":"))
-                {
-                    inInstaller = false;
-                    continue;
-                }
-                
-                // Look for location within installer section
-                if (trimmed.StartsWith("location:"))
-                {
-                    var location = trimmed.Substring(9).Trim();
-                    // Remove quotes if present
-                    location = location.Trim('"', '\'');
-                    return location;
-                }
-            }
-        }
-        
-        return "";
-    }
-
-    private string ExtractFieldFromYaml(string yamlContent, string fieldName)
-    {
-        var lines = yamlContent.Split('\n');
-        var pattern = $"{fieldName}:";
-        
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-            if (trimmed.StartsWith(pattern) && !trimmed.StartsWith($"{fieldName}_"))
-            {
-                var value = trimmed.Substring(pattern.Length).Trim();
-                // Remove quotes if present
-                value = value.Trim('"', '\'');
-                return value;
-            }
-        }
-        
-        return "";
-    }
-
-    private Dictionary<string, object> ConvertYamlMappingToDict(YamlMappingNode mappingNode)
-    {
-        var result = new Dictionary<string, object>();
-        
-        foreach (var kvp in mappingNode.Children)
-        {
-            if (kvp.Key is YamlScalarNode keyNode)
-            {
-                string key = keyNode.Value ?? "";
-                object value = ConvertYamlNode(kvp.Value);
-                result[key] = value;
-            }
-        }
-        
-        return result;
-    }
-
-    private object ConvertYamlNode(YamlNode node)
-    {
-        return node switch
-        {
-            YamlScalarNode scalar => scalar.Value ?? "",
-            YamlSequenceNode sequence => sequence.Children.Select(ConvertYamlNode).Cast<object>().ToList(),
-            YamlMappingNode mapping => ConvertYamlMappingToDict(mapping),
-            _ => ""
+            string s => long.TryParse(s, out result),
+            Newtonsoft.Json.Linq.JValue j when j.Value is not null => long.TryParse(j.ToString(), out result),
+            _ => false
         };
-    }
-
-    private string NormalizePath(string path)
-    {
-        if (string.IsNullOrEmpty(path))
-            return path;
-
-        // Remove leading backslash/slash and keep Windows path separators for consistency with file system
-        var normalizedPath = path.TrimStart('\\', '/');
-        
-        return normalizedPath;
-    }
-
-    private static bool IsNumeric(object value)
-    {
-        return value is byte || value is sbyte ||
-               value is short || value is ushort ||
-               value is int || value is uint ||
-               value is long || value is ulong ||
-               value is float || value is double ||
-               value is decimal ||
-               (value is string str && double.TryParse(str, out _));
     }
 }

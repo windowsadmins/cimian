@@ -19,26 +19,12 @@ public class PackageAnalyzer : IPackageAnalyzer
     {
         Console.WriteLine("Analyzing installer items...");
         
-        var orphanedPackages = new List<string>();
+        var referenced = new HashSet<string>(referencedPackages.Select(YamlValues.NormalizeRepoPath), StringComparer.OrdinalIgnoreCase);
+        var packagesList = await repository.GetItemListAsync("pkgs");
 
-        try
-        {
-            var packagesList = await repository.GetItemListAsync("pkgs");
-            
-            foreach (var package in packagesList)
-            {
-                if (!referencedPackages.Contains(package))
-                {
-                    orphanedPackages.Add(package);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting packages list");
-            Console.WriteLine($"Error getting packages list: {ex.Message}");
-        }
-
-        return orphanedPackages;
+        return packagesList
+            .Select(YamlValues.NormalizeRepoPath)
+            .Where(package => !referenced.Contains(package))
+            .ToList();
     }
 }

@@ -36,7 +36,9 @@ public class FileRepository : IFileRepository
         {
             return await Task.Run(() => Directory.GetFiles(fullPath, "*", SearchOption.AllDirectories)
                 .Select(f => Path.GetRelativePath(fullPath, f))
-                .Where(f => !f.StartsWith(".")) // Skip hidden files
+                // Skip any file or folder whose name starts with a dot, at any depth
+                // (.git, .DS_Store, AppleDouble ._ files), as Munki does.
+                .Where(f => !f.Split('\\', '/').Any(part => part.StartsWith('.')))
                 .ToList());
         }
         catch (Exception ex)

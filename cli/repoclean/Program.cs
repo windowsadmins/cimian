@@ -124,9 +124,7 @@ public class Program
             Console.WriteLine($"Keep versions: {keep}");
             Console.WriteLine();
 
-            await cleaner.CleanAsync(options);
-
-            return 0;
+            return await cleaner.CleanAsync(options);
         }
         catch (Exception ex)
         {
