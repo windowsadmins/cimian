@@ -1,5 +1,9 @@
+using System.Reflection;
+using System.Text;
 using Cimian.CLI.Makecatalogs.Models;
 using Cimian.Core.Services;
+using YamlDotNet.RepresentationModel;
+using YamlDotNet.Serialization;
 
 namespace Cimian.CLI.Makecatalogs.Services;
 
@@ -55,6 +59,7 @@ public class CatalogBuilder
                 if (pkgInfo != null)
                 {
                     pkgInfo.FilePath = file;
+                    pkgInfo.Source = ParseSource(yaml);
                     results.Add(pkgInfo);
                 }
             }
@@ -66,6 +71,141 @@ public class CatalogBuilder
         }
 
         return results;
+    }
+
+    private static YamlMappingNode? ParseSource(string yaml)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(yaml));
+        return stream.Documents.Count > 0 ? stream.Documents[0].RootNode as YamlMappingNode : null;
+    }
+
+    /// <summary>
+    /// One catalog item: the item as the model serializes it, plus every key in the
+    /// source pkgsinfo the model does not declare, at any depth (an uninstaller entry's
+    /// <c>command</c>, an installs entry's <c>key_path</c>), with its original value and
+    /// style. Munki's makecatalogs copies a pkgsinfo into the catalog whole; this does the
+    /// same while keeping the model's validation and canonical form for the keys it knows.
+    /// Like Munki, admin <c>notes</c> and top-level keys starting with an underscore
+    /// (<c>_metadata</c>) stay out. Returns null when there is nothing to add, so an item
+    /// with only known keys serializes exactly as before.
+    /// </summary>
+    private static string? SerializeWithSourceKeys(PkgsInfo pkg)
+    {
+        if (pkg.Source == null)
+            return null;
+
+        var stream = new YamlStream();
+        stream.Load(new StringReader(YamlUtils.Serializer.Serialize(pkg)));
+        if (stream.Documents.Count == 0 || stream.Documents[0].RootNode is not YamlMappingNode item)
+            return null;
+
+        if (!AddUnknownKeys(typeof(PkgsInfo), item, pkg.Source, topLevel: true))
+            return null;
+
+        return YamlUtils.Serializer.Serialize(item);
+    }
+
+    private static bool AddUnknownKeys(Type model, YamlMappingNode target, YamlMappingNode source, bool topLevel)
+    {
+        var known = ModelKeys(model);
+        var added = false;
+
+        foreach (var (keyNode, value) in source.Children)
+        {
+            if (keyNode is not YamlScalarNode { Value: { } key })
+                continue;
+            if (topLevel && (key == "notes" || key.StartsWith('_')))
+                continue;
+
+            if (!known.TryGetValue(key, out var property))
+            {
+                if (!target.Children.ContainsKey(keyNode))
+                {
+                    target.Add(new YamlScalarNode(key), value);
+                    added = true;
+                }
+                continue;
+            }
+
+            // A key the model knows: keep the model's value, but look inside it for
+            // unknown keys of its own.
+            if (!target.Children.TryGetValue(keyNode, out var targetValue))
+                continue;
+
+            if (targetValue is YamlMappingNode targetMap && value is YamlMappingNode sourceMap &&
+                IsModelType(property.PropertyType))
+            {
+                added |= AddUnknownKeys(property.PropertyType, targetMap, sourceMap, topLevel: false);
+            }
+            else if (targetValue is YamlSequenceNode targetList && value is YamlSequenceNode sourceList &&
+                     ListElementType(property.PropertyType) is { } element && IsModelType(element) &&
+                     targetList.Children.Count == sourceList.Children.Count)
+            {
+                for (var i = 0; i < targetList.Children.Count; i++)
+                {
+                    if (targetList.Children[i] is YamlMappingNode t && sourceList.Children[i] is YamlMappingNode src)
+                    {
+                        added |= AddUnknownKeys(element, t, src, topLevel: false);
+                    }
+                }
+            }
+        }
+
+        return added;
+    }
+
+    private static readonly Dictionary<Type, Dictionary<string, PropertyInfo>> ModelKeyCache = new();
+
+    // Every key a model type declares, as it appears in YAML.
+    private static Dictionary<string, PropertyInfo> ModelKeys(Type model)
+    {
+        lock (ModelKeyCache)
+        {
+            if (!ModelKeyCache.TryGetValue(model, out var keys))
+            {
+                keys = model.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(p => p.GetCustomAttribute<YamlIgnoreAttribute>() == null)
+                    .ToDictionary(p => p.GetCustomAttribute<YamlMemberAttribute>()?.Alias ?? p.Name, StringComparer.Ordinal);
+                ModelKeyCache[model] = keys;
+            }
+            return keys;
+        }
+    }
+
+    private static Type? ListElementType(Type type) =>
+        type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>) ? type.GetGenericArguments()[0] : null;
+
+    // A class from these models, as opposed to a string, collection or dictionary.
+    private static bool IsModelType(Type type) =>
+        type.IsClass && type != typeof(string) && type.Namespace == typeof(PkgsInfo).Namespace;
+
+    /// <summary>
+    /// A catalog in the same form as <see cref="YamlUtils.SerializeCatalog{T}"/>, with
+    /// each item carrying the keys from its pkgsinfo that the model does not declare.
+    /// </summary>
+    private static string SerializeCatalog(List<PkgsInfo> items)
+    {
+        var withSourceKeys = items.Select(SerializeWithSourceKeys).ToList();
+        if (withSourceKeys.All(yaml => yaml == null))
+            return YamlUtils.SerializeCatalog(new CatalogFile { Items = items });
+
+        // Same line breaks as the serializer, which writes Environment.NewLine.
+        var newline = Environment.NewLine;
+        var catalog = new StringBuilder("items:").Append(newline);
+        for (var n = 0; n < items.Count; n++)
+        {
+            var mapping = withSourceKeys[n] ?? YamlUtils.Serializer.Serialize(items[n]);
+            var lines = mapping.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (lines[i].Length > 0)
+                    catalog.Append(i == 0 ? "  - " : "    ").Append(lines[i]);
+                catalog.Append(newline);
+            }
+        }
+
+        return catalog.ToString();
     }
 
     /// <summary>
@@ -211,7 +351,10 @@ public class CatalogBuilder
             // Null it before hashing: the field is part of the serialized item, so
             // including a previous value would make the hash depend on itself.
             pkg.LoopFingerprint = null;
-            pkg.LoopFingerprint = LoopGuard.ComputeFingerprint(YamlUtils.SerializePkgInfo(pkg));
+            // An item that carries keys the model does not declare is hashed as the
+            // catalog will hold it, so a change to one of those keys clears suppression
+            // too. Every other item hashes exactly as before.
+            pkg.LoopFingerprint = LoopGuard.ComputeFingerprint(SerializeWithSourceKeys(pkg) ?? YamlUtils.SerializePkgInfo(pkg));
         }
     }
 
@@ -339,8 +482,7 @@ public class CatalogBuilder
                 NormalizeLineEndings(item);
             }
 
-            var catalogWrapper = new CatalogFile { Items = items };
-            var yaml = YamlUtils.SerializeCatalog(catalogWrapper);
+            var yaml = SerializeCatalog(items);
 
             File.WriteAllText(outPath, yaml);
 
