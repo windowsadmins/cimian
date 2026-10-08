@@ -15,6 +15,11 @@ updates:
       # FluentAssertions 8 and later needs a paid licence for commercial use.
       - dependency-name: "FluentAssertions"
         update-types: ["version-update:semver-major"]
+      # WiX 7 requires accepting the OSMF licence, so the installer stays on v5.
+      - dependency-name: "WixToolset.*"
+        update-types: ["version-update:semver-major"]
+      # The beta-to-2.0 move is an API migration, done on purpose, not a bump.
+      - dependency-name: "System.CommandLine"
     # A dependency joins the first group whose patterns match, so the narrow
     # groups come before microsoft-system.
     groups:
