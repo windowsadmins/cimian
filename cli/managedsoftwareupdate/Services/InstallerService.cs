@@ -9,7 +9,7 @@ using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.Core;
 using Cimian.Core.Services;
 using Microsoft.Win32;
-using WixToolset.Dtf.WindowsInstaller;
+using Cimian.Core.Msi;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -1167,9 +1167,8 @@ public class InstallerService
     {
         try
         {
-            using var db = new Database(msiPath, DatabaseOpenMode.ReadOnly);
-            var value = db.ExecuteScalar(
-                "SELECT `Value` FROM `Property` WHERE `Property` = 'CIMIAN_PKG_BUILD_INFO'");
+            using var db = MsiDatabase.OpenReadOnly(msiPath);
+            var value = db.GetProperty("CIMIAN_PKG_BUILD_INFO");
             return value != null;
         }
         catch
@@ -2229,7 +2228,7 @@ exit 0
     }
 
     /// <summary>
-    /// Finds installed product via UpgradeCode using DTF's native Windows Installer API.
+    /// Finds installed product via UpgradeCode using the native Windows Installer API.
     /// Replaces the previous packed GUID + registry walking approach.
     /// </summary>
     private static (bool installed, string? version) FindMsiByUpgradeCodeStatic(string upgradeCode)
@@ -2240,17 +2239,17 @@ exit 0
         try
         {
             bool anyProductFound = false;
-            foreach (var installation in ProductInstallation.GetRelatedProducts(upgradeCode))
+            foreach (var productCode in MsiProducts.GetRelatedProducts(upgradeCode))
             {
                 anyProductFound = true;
                 try
                 {
-                    var version = installation.ProductVersion?.ToString();
+                    var version = MsiProducts.GetProductVersion(productCode)?.ToString();
                     if (!string.IsNullOrEmpty(version))
                         return (true, version);
 
                     // Fallback to registry DisplayVersion
-                    var regVersion = FindMsiVersionByProductCode(installation.ProductCode);
+                    var regVersion = FindMsiVersionByProductCode(productCode);
                     if (!string.IsNullOrEmpty(regVersion))
                         return (true, regVersion);
                 }

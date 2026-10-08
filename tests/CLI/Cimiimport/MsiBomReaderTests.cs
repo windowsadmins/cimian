@@ -1,6 +1,7 @@
 using Xunit;
 using Cimian.CLI.Cimiimport.Services;
-using WixToolset.Dtf.WindowsInstaller;
+using Cimian.Core.Msi;
+using Cimian.Tests.Shared;
 
 namespace Cimian.Tests.CLI.Cimiimport;
 
@@ -107,22 +108,9 @@ public class MsiBomReaderTests
 /// </summary>
 public class MsiBomReaderHasInstalledFilesTests : IDisposable
 {
-    private readonly List<string> _temp = new();
+    private readonly TestMsiFactory _msis = new();
 
-    private Database NewMsi()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"bomtest_{Guid.NewGuid():N}.msi");
-        _temp.Add(path);
-        return new Database(path, DatabaseOpenMode.CreateDirect);
-    }
-
-    public void Dispose()
-    {
-        foreach (var p in _temp)
-        {
-            try { if (File.Exists(p)) File.Delete(p); } catch { }
-        }
-    }
+    public void Dispose() => _msis.Dispose();
 
     [Fact]
     public void NoFileTable_IsWrapper()
@@ -130,7 +118,7 @@ public class MsiBomReaderHasInstalledFilesTests : IDisposable
         // The regression: SELECT from a nonexistent table throws, and the catch
         // failed soft to true, so the purest wrapper shape -- no File table at
         // all -- was reported as installing files.
-        using var db = NewMsi();
+        using var db = MsiDatabase.OpenReadOnly(_msis.Create());
 
         Assert.False(MsiBomReader.HasInstalledFiles(db));
     }
@@ -138,8 +126,8 @@ public class MsiBomReaderHasInstalledFilesTests : IDisposable
     [Fact]
     public void EmptyFileTable_IsWrapper()
     {
-        using var db = NewMsi();
-        db.Execute("CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)");
+        using var db = MsiDatabase.OpenReadOnly(_msis.Create(
+            "CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)"));
 
         Assert.False(MsiBomReader.HasInstalledFiles(db));
     }
@@ -147,10 +135,68 @@ public class MsiBomReaderHasInstalledFilesTests : IDisposable
     [Fact]
     public void PopulatedFileTable_IsNotWrapper()
     {
-        using var db = NewMsi();
-        db.Execute("CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)");
-        db.Execute("INSERT INTO `File` (`File`) VALUES ('payload.exe')");
+        using var db = MsiDatabase.OpenReadOnly(_msis.Create(
+            "CREATE TABLE `File` (`File` CHAR(72) NOT NULL PRIMARY KEY `File`)",
+            "INSERT INTO `File` (`File`) VALUES ('payload.exe')"));
 
         Assert.True(MsiBomReader.HasInstalledFiles(db));
+    }
+}
+
+/// <summary>
+/// EnumerateInstalledFiles against a real MSI whose File, Component and
+/// Directory tables mirror what WiX and cimipkg write: short|long names, a
+/// "." DefaultDir, a source:target DefaultDir, a well-known root, a null
+/// Version and a file that is not its component's keypath.
+/// </summary>
+public class MsiBomReaderEnumerateTests : IDisposable
+{
+    private readonly TestMsiFactory _msis = new();
+
+    public void Dispose() => _msis.Dispose();
+
+    private string BuildBomMsi() => _msis.Create(
+        "CREATE TABLE `Directory` (`Directory` CHAR(72) NOT NULL, `Directory_Parent` CHAR(72), `DefaultDir` CHAR(255) NOT NULL LOCALIZABLE PRIMARY KEY `Directory`)",
+        "CREATE TABLE `Component` (`Component` CHAR(72) NOT NULL, `ComponentId` CHAR(38), `Directory_` CHAR(72) NOT NULL, `Attributes` SHORT NOT NULL, `Condition` CHAR(255), `KeyPath` CHAR(72) PRIMARY KEY `Component`)",
+        "CREATE TABLE `File` (`File` CHAR(72) NOT NULL, `Component_` CHAR(72) NOT NULL, `FileName` CHAR(255) NOT NULL LOCALIZABLE, `FileSize` LONG NOT NULL, `Version` CHAR(72), `Language` CHAR(20), `Attributes` SHORT, `Sequence` SHORT NOT NULL PRIMARY KEY `File`)",
+        "INSERT INTO `Directory` (`Directory`, `DefaultDir`) VALUES ('TARGETDIR', 'SourceDir')",
+        "INSERT INTO `Directory` (`Directory`, `Directory_Parent`, `DefaultDir`) VALUES ('ProgramFiles64Folder', 'TARGETDIR', '.')",
+        "INSERT INTO `Directory` (`Directory`, `Directory_Parent`, `DefaultDir`) VALUES ('INSTALLDIR', 'ProgramFiles64Folder', 'MYAPP~1|My App')",
+        "INSERT INTO `Directory` (`Directory`, `Directory_Parent`, `DefaultDir`) VALUES ('BINDIR', 'INSTALLDIR', 'src:bin')",
+        "INSERT INTO `Component` (`Component`, `Directory_`, `Attributes`, `KeyPath`) VALUES ('Main', 'INSTALLDIR', 256, 'main.exe')",
+        "INSERT INTO `Component` (`Component`, `Directory_`, `Attributes`, `KeyPath`) VALUES ('Tools', 'BINDIR', 256, 'readme.txt')",
+        "INSERT INTO `File` (`File`, `Component_`, `FileName`, `FileSize`, `Version`, `Sequence`) VALUES ('main.exe', 'Main', 'MYAPP~1.EXE|MyApp.exe', 5000, '1.2.3.4', 1)",
+        "INSERT INTO `File` (`File`, `Component_`, `FileName`, `FileSize`, `Sequence`) VALUES ('tool.exe', 'Tools', 'tool.exe', 9000, 2)",
+        "INSERT INTO `File` (`File`, `Component_`, `FileName`, `FileSize`, `Sequence`) VALUES ('readme.txt', 'Tools', 'readme.txt', 100, 3)");
+
+    [Fact]
+    public void ResolvesPathsSizesVersionsAndKeyPaths_LargestFirst()
+    {
+        using var db = MsiDatabase.OpenReadOnly(BuildBomMsi());
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+
+        var files = MsiBomReader.EnumerateInstalledFiles(db);
+
+        Assert.Equal(2, files.Count);
+        Assert.Equal(new MsiInstalledFile(Path.Combine(programFiles, "My App", "bin", "tool.exe"), 9000, null, false), files[0]);
+        Assert.Equal(new MsiInstalledFile(Path.Combine(programFiles, "My App", "MyApp.exe"), 5000, "1.2.3.4", true), files[1]);
+    }
+
+    [Fact]
+    public void ExtensionFilterIsApplied()
+    {
+        using var db = MsiDatabase.OpenReadOnly(BuildBomMsi());
+
+        var files = MsiBomReader.EnumerateInstalledFiles(db, [".txt"]);
+
+        Assert.Equal("readme.txt", Path.GetFileName(Assert.Single(files).AbsolutePath));
+    }
+
+    [Fact]
+    public void MissingTables_ReturnsEmpty()
+    {
+        using var db = MsiDatabase.OpenReadOnly(_msis.Create());
+
+        Assert.Empty(MsiBomReader.EnumerateInstalledFiles(db));
     }
 }
