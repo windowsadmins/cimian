@@ -82,7 +82,7 @@ try {
                         Start-Sleep -Seconds 2
                     } catch {
                         Write-Warning "Failed to start existing service, reinstalling: $_"
-                        try { & $cimiwatcherExe uninstall; Start-Sleep -Seconds 2 } catch { }
+                        try { & $cimiwatcherExe remove; Start-Sleep -Seconds 2 } catch { }
                         & $cimiwatcherExe install; Start-Sleep -Seconds 2
                         & $cimiwatcherExe start; Start-Sleep -Seconds 2
                     }
