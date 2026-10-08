@@ -804,4 +804,27 @@ public class UninstallStatusLogTests : IDisposable
         Assert.DoesNotContain("reinstallation required", output);
         Assert.DoesNotContain("installType: install", output);
     }
+
+    [Fact]
+    public void CheckUninstallStatus_PresentButMismatched_DoesNotLogNotPresent()
+    {
+        var path = Path.Combine(_testDir, "present.exe");
+        File.WriteAllText(path, "still here");
+        var item = new CatalogItem
+        {
+            Name = "mismatched" + Guid.NewGuid().ToString("N"),
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = path, Md5Checksum = "00000000000000000000000000000000" }
+            }
+        };
+
+        new StatusService().CheckUninstallStatus(item, _testDir);
+
+        var output = _stdout.ToString();
+        Assert.Contains($"CheckStatus starting item: {item.Name} installType: uninstall", output);
+        Assert.Contains("does not match the catalog item", output);
+        Assert.DoesNotContain("not present, removal complete", output);
+    }
 }
