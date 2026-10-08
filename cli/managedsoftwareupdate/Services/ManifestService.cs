@@ -470,6 +470,12 @@ public class ManifestService
                         SetItemSource(name, sourceManifest, "conditional_optional_installs");
                     }
                 }
+
+                // Nested conditional items are evaluated only under a matching parent.
+                if (conditional.ConditionalItems is { Count: > 0 })
+                {
+                    items.AddRange(ProcessConditionalItems(conditional.ConditionalItems, sourceManifest));
+                }
             }
             else
             {
@@ -621,6 +627,11 @@ public class ManifestService
         
         try
         {
+            // Parse here first so a malformed condition is reported. The engine logs
+            // its own parse failures to a null logger and just returns false, which
+            // left a broken condition indistinguishable from one that did not match.
+            new Cimian.Engine.Predicates.ExpressionParser().Parse(condition);
+
             // Use the sophisticated PredicateEngine for proper parsing and evaluation
             var result = _predicateEngine.EvaluateConditionAsync(condition, _systemFacts!).GetAwaiter().GetResult();
             
