@@ -16,11 +16,20 @@ public class Program
         // Ensure UTF-8 output for emoji support
         Console.OutputEncoding = Encoding.UTF8;
 
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var rootCommand = new RootCommand("Cimian software update trigger utility");
 
         // GUI command
         var guiCommand = new Command("gui", "Update with GUI - ALWAYS shows CimianStatus window when logged in");
-        guiCommand.SetHandler(async () =>
+        guiCommand.SetAction(async (ParseResult _, CancellationToken _) =>
         {
             var elevationService = new ElevationService();
             var triggerService = new TriggerService(elevationService);
@@ -41,11 +50,11 @@ public class Program
                 Environment.Exit(1);
             }
         });
-        rootCommand.AddCommand(guiCommand);
+        rootCommand.Subcommands.Add(guiCommand);
 
         // Headless command
         var headlessCommand = new Command("headless", "Smart headless update (tries service, falls back to direct)");
-        headlessCommand.SetHandler(async () =>
+        headlessCommand.SetAction(async (ParseResult _, CancellationToken _) =>
         {
             var elevationService = new ElevationService();
             var triggerService = new TriggerService(elevationService);
@@ -55,24 +64,25 @@ public class Program
                 Environment.Exit(1);
             }
         });
-        rootCommand.AddCommand(headlessCommand);
+        rootCommand.Subcommands.Add(headlessCommand);
 
         // Debug command
         var debugCommand = new Command("debug", "Run diagnostics to troubleshoot issues");
-        debugCommand.SetHandler(() =>
+        debugCommand.SetAction(_ =>
         {
             Console.WriteLine("🔍 Running diagnostic mode...");
             var diagnosticService = new DiagnosticService();
             diagnosticService.RunDiagnostics();
         });
-        rootCommand.AddCommand(debugCommand);
+        rootCommand.Subcommands.Add(debugCommand);
 
         // Force option with subcommand
         var forceCommand = new Command("--force", "Force direct elevation (skip service attempt)");
-        var forceModeArgument = new Argument<string>("mode", "The mode to use (gui or headless)");
-        forceCommand.AddArgument(forceModeArgument);
-        forceCommand.SetHandler(async (string mode) =>
+        var forceModeArgument = new Argument<string>("mode") { Description = "The mode to use (gui or headless)" };
+        forceCommand.Arguments.Add(forceModeArgument);
+        forceCommand.SetAction(async (ParseResult parseResult, CancellationToken _) =>
         {
+            var mode = parseResult.GetValue(forceModeArgument)!;
             var triggerMode = mode.ToLowerInvariant() switch
             {
                 "gui" => TriggerMode.Gui,
@@ -87,10 +97,10 @@ public class Program
                 Console.Error.WriteLine($"Error running forced update: {result.Error}");
                 Environment.Exit(1);
             }
-        }, forceModeArgument);
-        rootCommand.AddCommand(forceCommand);
+        });
+        rootCommand.Subcommands.Add(forceCommand);
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     /// <summary>

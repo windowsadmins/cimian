@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
   </ItemGroup>
@@ -18,6 +18,10 @@
     <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
     <ProjectReference Include="..\..\shared\engine\Cimian.Engine.csproj" />
     <ProjectReference Include="..\..\shared\infrastructure\Cimian.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cimian.Tests" />
   </ItemGroup>
 
 </Project>

@@ -63,6 +63,15 @@ class Program
 
     private static async Task<int> RunCliAsync(string[] args)
     {
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var serviceManager = new WindowsServiceManager();
 
         // Create root command
@@ -73,61 +82,61 @@ class Program
 
         // install command
         var installCommand = new Command("install", "Install the CimianWatcher Windows service");
-        installCommand.SetHandler(() =>
+        installCommand.SetAction(_ =>
         {
             var success = serviceManager.Install();
             Environment.ExitCode = success ? 0 : 1;
         });
-        rootCommand.AddCommand(installCommand);
+        rootCommand.Subcommands.Add(installCommand);
 
         // remove command
         var removeCommand = new Command("remove", "Remove the CimianWatcher Windows service");
-        removeCommand.SetHandler(() =>
+        removeCommand.SetAction(_ =>
         {
             var success = serviceManager.Remove();
             Environment.ExitCode = success ? 0 : 1;
         });
-        rootCommand.AddCommand(removeCommand);
+        rootCommand.Subcommands.Add(removeCommand);
 
         // start command
         var startCommand = new Command("start", "Start the CimianWatcher Windows service");
-        startCommand.SetHandler(() =>
+        startCommand.SetAction(_ =>
         {
             var success = serviceManager.Start();
             Environment.ExitCode = success ? 0 : 1;
         });
-        rootCommand.AddCommand(startCommand);
+        rootCommand.Subcommands.Add(startCommand);
 
         // stop command
         var stopCommand = new Command("stop", "Stop the CimianWatcher Windows service");
-        stopCommand.SetHandler(() =>
+        stopCommand.SetAction(_ =>
         {
             var success = serviceManager.Stop();
             Environment.ExitCode = success ? 0 : 1;
         });
-        rootCommand.AddCommand(stopCommand);
+        rootCommand.Subcommands.Add(stopCommand);
 
         // pause command
         var pauseCommand = new Command("pause", "Pause the CimianWatcher Windows service");
-        pauseCommand.SetHandler(() =>
+        pauseCommand.SetAction(_ =>
         {
             var success = serviceManager.Pause();
             Environment.ExitCode = success ? 0 : 1;
         });
-        rootCommand.AddCommand(pauseCommand);
+        rootCommand.Subcommands.Add(pauseCommand);
 
         // continue command
         var continueCommand = new Command("continue", "Continue the CimianWatcher Windows service after pause");
-        continueCommand.SetHandler(() =>
+        continueCommand.SetAction(_ =>
         {
             var success = serviceManager.Continue();
             Environment.ExitCode = success ? 0 : 1;
         });
-        rootCommand.AddCommand(continueCommand);
+        rootCommand.Subcommands.Add(continueCommand);
 
         // status command
         var statusCommand = new Command("status", "Show the status of the CimianWatcher Windows service");
-        statusCommand.SetHandler(() =>
+        statusCommand.SetAction(_ =>
         {
             var status = serviceManager.GetStatus();
             if (status == null)
@@ -141,11 +150,11 @@ class Program
                 Environment.ExitCode = 0;
             }
         });
-        rootCommand.AddCommand(statusCommand);
+        rootCommand.Subcommands.Add(statusCommand);
 
         // debug command - runs the file watcher in console mode
         var debugCommand = new Command("debug", "Run the file watcher in console debug mode (not as a service)");
-        debugCommand.SetHandler(async () =>
+        debugCommand.SetAction(async (ParseResult _, CancellationToken _) =>
         {
             Console.WriteLine("Running CimianWatcher in debug mode...");
             Console.WriteLine("Press Ctrl+C to stop");
@@ -176,22 +185,22 @@ class Program
                 await Log.CloseAndFlushAsync();
             }
         });
-        rootCommand.AddCommand(debugCommand);
+        rootCommand.Subcommands.Add(debugCommand);
 
         // service command - internal use when running as Windows service
         var serviceCommand = new Command("service", "Run as Windows service (internal use)")
         {
-            IsHidden = true
+            Hidden = true
         };
-        serviceCommand.SetHandler(async () =>
+        serviceCommand.SetAction(async (ParseResult _, CancellationToken _) =>
         {
             // This should not be reached in normal circumstances
             // as WindowsServiceHelpers.IsWindowsService() should catch this earlier
             await RunAsServiceAsync(Array.Empty<string>());
         });
-        rootCommand.AddCommand(serviceCommand);
+        rootCommand.Subcommands.Add(serviceCommand);
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     private static void ConfigureLogging(bool isService)

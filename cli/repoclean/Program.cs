@@ -12,63 +12,81 @@ public class Program
 
     public static async Task<int> Main(string[] args)
     {
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var rootCommand = new RootCommand("repoclean - Cimian Repository Cleaner")
         {
             Description = "Remove older, unused software items from a Cimian repository"
         };
 
-        var repoUrlOption = new Option<string?>(
-            aliases: ["--repo-url", "-r"],
-            description: "Path to the Cimian repository");
-
-        var keepOption = new Option<int>(
-            aliases: ["--keep", "-k"],
-            description: "Number of versions to keep for each package",
-            getDefaultValue: () => 2);
-
-        var showAllOption = new Option<bool>(
-            aliases: ["--show-all", "-a"],
-            description: "Show all packages, not just those to be deleted");
-
-        var autoOption = new Option<bool>(
-            aliases: ["--auto", "-y"],
-            description: "Automatically delete without prompting");
-
-        var removeOption = new Option<bool>(
-            aliases: ["--remove", "--delete"],
-            description: "Actually perform deletions (default is dry-run)");
-
-        var versionOption = new Option<bool>(
-            aliases: ["-V"],
-            description: "Print version and exit");
-
-        rootCommand.AddOption(repoUrlOption);
-        rootCommand.AddOption(keepOption);
-        rootCommand.AddOption(showAllOption);
-        rootCommand.AddOption(autoOption);
-        rootCommand.AddOption(removeOption);
-        rootCommand.AddOption(versionOption);
-
-        rootCommand.SetHandler(async (context) =>
+        var repoUrlOption = new Option<string?>("--repo-url", "-r")
         {
-            var repoUrl = context.ParseResult.GetValueForOption(repoUrlOption);
-            var keep = context.ParseResult.GetValueForOption(keepOption);
-            var showAll = context.ParseResult.GetValueForOption(showAllOption);
-            var auto = context.ParseResult.GetValueForOption(autoOption);
-            var remove = context.ParseResult.GetValueForOption(removeOption);
-            var showVersion = context.ParseResult.GetValueForOption(versionOption);
+            Description = "Path to the Cimian repository"
+        };
+
+        var keepOption = new Option<int>("--keep", "-k")
+        {
+            Description = "Number of versions to keep for each package",
+            DefaultValueFactory = _ => 2
+        };
+
+        var showAllOption = new Option<bool>("--show-all", "-a")
+        {
+            Description = "Show all packages, not just those to be deleted"
+        };
+
+        var autoOption = new Option<bool>("--auto", "-y")
+        {
+            Description = "Automatically delete without prompting"
+        };
+
+        var removeOption = new Option<bool>("--remove", "--delete")
+        {
+            Description = "Actually perform deletions (default is dry-run)"
+        };
+
+        var versionOption = new Option<bool>("-V")
+        {
+            Description = "Print version and exit"
+        };
+
+        rootCommand.Options.Add(repoUrlOption);
+        rootCommand.Options.Add(keepOption);
+        rootCommand.Options.Add(showAllOption);
+        rootCommand.Options.Add(autoOption);
+        rootCommand.Options.Add(removeOption);
+        rootCommand.Options.Add(versionOption);
+
+        rootCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var exitCode = 0;
+            var repoUrl = parseResult.GetValue(repoUrlOption);
+            var keep = parseResult.GetValue(keepOption);
+            var showAll = parseResult.GetValue(showAllOption);
+            var auto = parseResult.GetValue(autoOption);
+            var remove = parseResult.GetValue(removeOption);
+            var showVersion = parseResult.GetValue(versionOption);
 
             if (showVersion)
             {
                 Console.WriteLine($"repoclean version {Version}");
-                context.ExitCode = 0;
-                return;
+                exitCode = 0;
+                return exitCode;
             }
 
-            context.ExitCode = await RunCleanAsync(repoUrl, keep, showAll, auto, remove);
+            exitCode = await RunCleanAsync(repoUrl, keep, showAll, auto, remove);
+
+            return exitCode;
         });
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     private static async Task<int> RunCleanAsync(

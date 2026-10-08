@@ -11,92 +11,114 @@ class Program
 
     static async Task<int> Main(string[] args)
     {
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var rootCommand = new RootCommand("manifestutil - Cimian Manifest Utility")
         {
             Description = "Manage package deployment manifests and self-service requests"
         };
 
         // Options
-        var listManifestsOption = new Option<bool>(
-            aliases: ["--list-manifests", "-l"],
-            description: "List available manifests");
-
-        var newManifestOption = new Option<string?>(
-            aliases: ["--new-manifest", "-n"],
-            description: "Create a new manifest with the specified name");
-
-        var addPackageOption = new Option<string?>(
-            aliases: ["--add-pkg", "-a"],
-            description: "Package to add to manifest");
-
-        var removePackageOption = new Option<string?>(
-            aliases: ["--remove-pkg", "-r"],
-            description: "Package to remove from manifest");
-
-        var sectionOption = new Option<string>(
-            aliases: ["--section", "-s"],
-            description: "Manifest section (managed_installs, managed_uninstalls, managed_updates, optional_installs)",
-            getDefaultValue: () => "managed_installs");
-
-        var manifestOption = new Option<string?>(
-            aliases: ["--manifest", "-m"],
-            description: "Manifest name to operate on (without .yaml extension)");
-
-        var selfServiceRequestOption = new Option<string?>(
-            aliases: ["--selfservice-request"],
-            description: "Add package to self-service manifest for installation");
-
-        var selfServiceRemoveOption = new Option<string?>(
-            aliases: ["--selfservice-remove"],
-            description: "Remove package from self-service manifest");
-
-        var configOption = new Option<string>(
-            aliases: ["--config", "-c"],
-            description: "Path to Cimian config file",
-            getDefaultValue: () => DefaultConfigPath);
-
-        var versionOption = new Option<bool>(
-            aliases: ["-V"],
-            description: "Print the version and exit");
-
-        rootCommand.AddOption(listManifestsOption);
-        rootCommand.AddOption(newManifestOption);
-        rootCommand.AddOption(addPackageOption);
-        rootCommand.AddOption(removePackageOption);
-        rootCommand.AddOption(sectionOption);
-        rootCommand.AddOption(manifestOption);
-        rootCommand.AddOption(selfServiceRequestOption);
-        rootCommand.AddOption(selfServiceRemoveOption);
-        rootCommand.AddOption(configOption);
-        rootCommand.AddOption(versionOption);
-
-        rootCommand.SetHandler((context) =>
+        var listManifestsOption = new Option<bool>("--list-manifests", "-l")
         {
-            var showVersion = context.ParseResult.GetValueForOption(versionOption);
-            var listManifests = context.ParseResult.GetValueForOption(listManifestsOption);
-            var newManifest = context.ParseResult.GetValueForOption(newManifestOption);
-            var addPackage = context.ParseResult.GetValueForOption(addPackageOption);
-            var removePackage = context.ParseResult.GetValueForOption(removePackageOption);
-            var section = context.ParseResult.GetValueForOption(sectionOption)!;
-            var manifestName = context.ParseResult.GetValueForOption(manifestOption);
-            var selfServiceRequest = context.ParseResult.GetValueForOption(selfServiceRequestOption);
-            var selfServiceRemove = context.ParseResult.GetValueForOption(selfServiceRemoveOption);
-            var configPath = context.ParseResult.GetValueForOption(configOption)!;
+            Description = "List available manifests"
+        };
+
+        var newManifestOption = new Option<string?>("--new-manifest", "-n")
+        {
+            Description = "Create a new manifest with the specified name"
+        };
+
+        var addPackageOption = new Option<string?>("--add-pkg", "-a")
+        {
+            Description = "Package to add to manifest"
+        };
+
+        var removePackageOption = new Option<string?>("--remove-pkg", "-r")
+        {
+            Description = "Package to remove from manifest"
+        };
+
+        var sectionOption = new Option<string>("--section", "-s")
+        {
+            Description = "Manifest section (managed_installs, managed_uninstalls, managed_updates, optional_installs)",
+            DefaultValueFactory = _ => "managed_installs"
+        };
+
+        var manifestOption = new Option<string?>("--manifest", "-m")
+        {
+            Description = "Manifest name to operate on (without .yaml extension)"
+        };
+
+        var selfServiceRequestOption = new Option<string?>("--selfservice-request")
+        {
+            Description = "Add package to self-service manifest for installation"
+        };
+
+        var selfServiceRemoveOption = new Option<string?>("--selfservice-remove")
+        {
+            Description = "Remove package from self-service manifest"
+        };
+
+        var configOption = new Option<string>("--config", "-c")
+        {
+            Description = "Path to Cimian config file",
+            DefaultValueFactory = _ => DefaultConfigPath
+        };
+
+        var versionOption = new Option<bool>("-V")
+        {
+            Description = "Print the version and exit"
+        };
+
+        rootCommand.Options.Add(listManifestsOption);
+        rootCommand.Options.Add(newManifestOption);
+        rootCommand.Options.Add(addPackageOption);
+        rootCommand.Options.Add(removePackageOption);
+        rootCommand.Options.Add(sectionOption);
+        rootCommand.Options.Add(manifestOption);
+        rootCommand.Options.Add(selfServiceRequestOption);
+        rootCommand.Options.Add(selfServiceRemoveOption);
+        rootCommand.Options.Add(configOption);
+        rootCommand.Options.Add(versionOption);
+
+        rootCommand.SetAction(parseResult =>
+        {
+            var exitCode = 0;
+            var showVersion = parseResult.GetValue(versionOption);
+            var listManifests = parseResult.GetValue(listManifestsOption);
+            var newManifest = parseResult.GetValue(newManifestOption);
+            var addPackage = parseResult.GetValue(addPackageOption);
+            var removePackage = parseResult.GetValue(removePackageOption);
+            var section = parseResult.GetValue(sectionOption)!;
+            var manifestName = parseResult.GetValue(manifestOption);
+            var selfServiceRequest = parseResult.GetValue(selfServiceRequestOption);
+            var selfServiceRemove = parseResult.GetValue(selfServiceRemoveOption);
+            var configPath = parseResult.GetValue(configOption)!;
 
             try
             {
-                context.ExitCode = Run(
+                exitCode = Run(
                     showVersion, listManifests, newManifest, addPackage, removePackage,
                     section, manifestName, selfServiceRequest, selfServiceRemove, configPath);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Error: {ex.Message}");
-                context.ExitCode = 1;
+                exitCode = 1;
             }
+
+            return exitCode;
         });
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     private static int Run(

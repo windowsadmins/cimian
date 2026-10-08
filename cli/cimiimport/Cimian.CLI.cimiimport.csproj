@@ -18,12 +18,16 @@
          shared/import/Cimian.Import.csproj so admin UIs (CimianAdmin) can
          reference the import workflow without depending on a self-contained
          executable. -->
-    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\shared\import\Cimian.Import.csproj" />
     <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cimian.Tests" />
   </ItemGroup>
 
 </Project>

@@ -13,139 +13,172 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var rootCommand = new RootCommand("Cimian installer import utility - Import installers into the Cimian repository");
 
         // Arguments
-        var packagePathArg = new Argument<string?>("installerPath", () => null, 
-            "Path to the installer file to import");
-        rootCommand.AddArgument(packagePathArg);
+        var packagePathArg = new Argument<string?>("installerPath")
+        {
+            Description = "Path to the installer file to import",
+            DefaultValueFactory = _ => null
+        };
+        rootCommand.Arguments.Add(packagePathArg);
 
         // Options
-        var installsArrayOption = new Option<string[]>(
-            ["-i", "--installs-array"],
-            "Add a path to final 'installs' array (can be used multiple times)")
-        { AllowMultipleArgumentsPerToken = true };
-
-        var repoPathOption = new Option<string?>(
-            "--repo_path",
-            "Override the Cimian repo path");
-
-        var archOption = new Option<string?>(
-            "--arch",
-            "Override architecture (e.g. x64,arm64)");
-
-        var uninstallerOption = new Option<string?>(
-            "--uninstaller",
-            "Specify an optional uninstaller path");
-
-        var minOSVersionOption = new Option<string?>(
-            "--minimum_os_version",
-            "Minimum Windows version required (e.g. 10.0.19041)");
-
-        var maxOSVersionOption = new Option<string?>(
-            "--maximum_os_version",
-            "Maximum Windows version supported (e.g. 11.0.22000)");
-
-        var minCimianVersionOption = new Option<string?>(
-            "--minimum_cimian_version",
-            "Minimum Cimian agent version required (e.g. 2026.05.01.0000)");
-
-        var preinstallScriptOption = new Option<string?>(
-            "--preinstall-script",
-            "Path to preinstall script");
-
-        var postinstallScriptOption = new Option<string?>(
-            "--postinstall-script",
-            "Path to postinstall script");
-
-        var preuninstallScriptOption = new Option<string?>(
-            "--preuninstall-script",
-            "Path to preuninstall script");
-
-        var postuninstallScriptOption = new Option<string?>(
-            "--postuninstall-script",
-            "Path to postuninstall script");
-
-        var installCheckScriptOption = new Option<string?>(
-            "--install-check-script",
-            "Path to install check script");
-
-        var uninstallCheckScriptOption = new Option<string?>(
-            "--uninstall-check-script",
-            "Path to uninstall check script");
-
-        var configOption = new Option<bool>(
-            "--config",
-            "Run interactive configuration setup and exit");
-
-        var configAutoOption = new Option<bool>(
-            "--config-auto",
-            "Auto-configure with defaults and exit");
-
-        var noInteractiveOption = new Option<bool>(
-            "--nointeractive",
-            "Run with no prompts (use defaults or fail)");
-
-        var emitInstallsOption = new Option<bool>(
-            "--emit-installs",
-            "Print the auto-generated 'installs' array for the installer as YAML to stdout and exit (no repo import)");
-
-        var extractIconOption = new Option<bool>(
-            "--extract-icon",
-            "Enable icon extraction from installer (EXPERIMENTAL)");
-
-        var iconOutputOption = new Option<string?>(
-            "--icon",
-            "Custom icon output path when extraction is enabled");
-
-        var skipIconOption = new Option<bool>(
-            "--skip-icon",
-            "Deprecated: icon extraction is now disabled by default");
-
-        rootCommand.AddOption(installsArrayOption);
-        rootCommand.AddOption(repoPathOption);
-        rootCommand.AddOption(archOption);
-        rootCommand.AddOption(uninstallerOption);
-        rootCommand.AddOption(minOSVersionOption);
-        rootCommand.AddOption(maxOSVersionOption);
-        rootCommand.AddOption(minCimianVersionOption);
-        rootCommand.AddOption(preinstallScriptOption);
-        rootCommand.AddOption(postinstallScriptOption);
-        rootCommand.AddOption(preuninstallScriptOption);
-        rootCommand.AddOption(postuninstallScriptOption);
-        rootCommand.AddOption(installCheckScriptOption);
-        rootCommand.AddOption(uninstallCheckScriptOption);
-        rootCommand.AddOption(configOption);
-        rootCommand.AddOption(configAutoOption);
-        rootCommand.AddOption(noInteractiveOption);
-        rootCommand.AddOption(emitInstallsOption);
-        rootCommand.AddOption(extractIconOption);
-        rootCommand.AddOption(iconOutputOption);
-        rootCommand.AddOption(skipIconOption);
-
-        rootCommand.SetHandler(async (context) =>
+        var installsArrayOption = new Option<string[]>("--installs-array", "-i")
         {
-            var packagePath = context.ParseResult.GetValueForArgument(packagePathArg);
-            var installsArray = context.ParseResult.GetValueForOption(installsArrayOption) ?? [];
-            var repoPath = context.ParseResult.GetValueForOption(repoPathOption);
-            var arch = context.ParseResult.GetValueForOption(archOption);
-            var uninstaller = context.ParseResult.GetValueForOption(uninstallerOption);
-            var minOSVersion = context.ParseResult.GetValueForOption(minOSVersionOption);
-            var maxOSVersion = context.ParseResult.GetValueForOption(maxOSVersionOption);
-            var minCimianVersion = context.ParseResult.GetValueForOption(minCimianVersionOption);
-            var preinstallScript = context.ParseResult.GetValueForOption(preinstallScriptOption);
-            var postinstallScript = context.ParseResult.GetValueForOption(postinstallScriptOption);
-            var preuninstallScript = context.ParseResult.GetValueForOption(preuninstallScriptOption);
-            var postuninstallScript = context.ParseResult.GetValueForOption(postuninstallScriptOption);
-            var installCheckScript = context.ParseResult.GetValueForOption(installCheckScriptOption);
-            var uninstallCheckScript = context.ParseResult.GetValueForOption(uninstallCheckScriptOption);
-            var configRequested = context.ParseResult.GetValueForOption(configOption);
-            var configAuto = context.ParseResult.GetValueForOption(configAutoOption);
-            var noInteractive = context.ParseResult.GetValueForOption(noInteractiveOption);
-            var emitInstalls = context.ParseResult.GetValueForOption(emitInstallsOption);
-            var extractIcon = context.ParseResult.GetValueForOption(extractIconOption);
-            var iconOutput = context.ParseResult.GetValueForOption(iconOutputOption);
-            var skipIcon = context.ParseResult.GetValueForOption(skipIconOption);
+            Description = "Add a path to final 'installs' array (can be used multiple times)",
+            AllowMultipleArgumentsPerToken = true
+        };
+
+        var repoPathOption = new Option<string?>("--repo_path")
+        {
+            Description = "Override the Cimian repo path"
+        };
+
+        var archOption = new Option<string?>("--arch")
+        {
+            Description = "Override architecture (e.g. x64,arm64)"
+        };
+
+        var uninstallerOption = new Option<string?>("--uninstaller")
+        {
+            Description = "Specify an optional uninstaller path"
+        };
+
+        var minOSVersionOption = new Option<string?>("--minimum_os_version")
+        {
+            Description = "Minimum Windows version required (e.g. 10.0.19041)"
+        };
+
+        var maxOSVersionOption = new Option<string?>("--maximum_os_version")
+        {
+            Description = "Maximum Windows version supported (e.g. 11.0.22000)"
+        };
+
+        var minCimianVersionOption = new Option<string?>("--minimum_cimian_version")
+        {
+            Description = "Minimum Cimian agent version required (e.g. 2026.05.01.0000)"
+        };
+
+        var preinstallScriptOption = new Option<string?>("--preinstall-script")
+        {
+            Description = "Path to preinstall script"
+        };
+
+        var postinstallScriptOption = new Option<string?>("--postinstall-script")
+        {
+            Description = "Path to postinstall script"
+        };
+
+        var preuninstallScriptOption = new Option<string?>("--preuninstall-script")
+        {
+            Description = "Path to preuninstall script"
+        };
+
+        var postuninstallScriptOption = new Option<string?>("--postuninstall-script")
+        {
+            Description = "Path to postuninstall script"
+        };
+
+        var installCheckScriptOption = new Option<string?>("--install-check-script")
+        {
+            Description = "Path to install check script"
+        };
+
+        var uninstallCheckScriptOption = new Option<string?>("--uninstall-check-script")
+        {
+            Description = "Path to uninstall check script"
+        };
+
+        var configOption = new Option<bool>("--config")
+        {
+            Description = "Run interactive configuration setup and exit"
+        };
+
+        var configAutoOption = new Option<bool>("--config-auto")
+        {
+            Description = "Auto-configure with defaults and exit"
+        };
+
+        var noInteractiveOption = new Option<bool>("--nointeractive")
+        {
+            Description = "Run with no prompts (use defaults or fail)"
+        };
+
+        var emitInstallsOption = new Option<bool>("--emit-installs")
+        {
+            Description = "Print the auto-generated 'installs' array for the installer as YAML to stdout and exit (no repo import)"
+        };
+
+        var extractIconOption = new Option<bool>("--extract-icon")
+        {
+            Description = "Enable icon extraction from installer (EXPERIMENTAL)"
+        };
+
+        var iconOutputOption = new Option<string?>("--icon")
+        {
+            Description = "Custom icon output path when extraction is enabled"
+        };
+
+        var skipIconOption = new Option<bool>("--skip-icon")
+        {
+            Description = "Deprecated: icon extraction is now disabled by default"
+        };
+
+        rootCommand.Options.Add(installsArrayOption);
+        rootCommand.Options.Add(repoPathOption);
+        rootCommand.Options.Add(archOption);
+        rootCommand.Options.Add(uninstallerOption);
+        rootCommand.Options.Add(minOSVersionOption);
+        rootCommand.Options.Add(maxOSVersionOption);
+        rootCommand.Options.Add(minCimianVersionOption);
+        rootCommand.Options.Add(preinstallScriptOption);
+        rootCommand.Options.Add(postinstallScriptOption);
+        rootCommand.Options.Add(preuninstallScriptOption);
+        rootCommand.Options.Add(postuninstallScriptOption);
+        rootCommand.Options.Add(installCheckScriptOption);
+        rootCommand.Options.Add(uninstallCheckScriptOption);
+        rootCommand.Options.Add(configOption);
+        rootCommand.Options.Add(configAutoOption);
+        rootCommand.Options.Add(noInteractiveOption);
+        rootCommand.Options.Add(emitInstallsOption);
+        rootCommand.Options.Add(extractIconOption);
+        rootCommand.Options.Add(iconOutputOption);
+        rootCommand.Options.Add(skipIconOption);
+
+        rootCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var exitCode = 0;
+            var packagePath = parseResult.GetValue(packagePathArg);
+            var installsArray = parseResult.GetValue(installsArrayOption) ?? [];
+            var repoPath = parseResult.GetValue(repoPathOption);
+            var arch = parseResult.GetValue(archOption);
+            var uninstaller = parseResult.GetValue(uninstallerOption);
+            var minOSVersion = parseResult.GetValue(minOSVersionOption);
+            var maxOSVersion = parseResult.GetValue(maxOSVersionOption);
+            var minCimianVersion = parseResult.GetValue(minCimianVersionOption);
+            var preinstallScript = parseResult.GetValue(preinstallScriptOption);
+            var postinstallScript = parseResult.GetValue(postinstallScriptOption);
+            var preuninstallScript = parseResult.GetValue(preuninstallScriptOption);
+            var postuninstallScript = parseResult.GetValue(postuninstallScriptOption);
+            var installCheckScript = parseResult.GetValue(installCheckScriptOption);
+            var uninstallCheckScript = parseResult.GetValue(uninstallCheckScriptOption);
+            var configRequested = parseResult.GetValue(configOption);
+            var configAuto = parseResult.GetValue(configAutoOption);
+            var noInteractive = parseResult.GetValue(noInteractiveOption);
+            var emitInstalls = parseResult.GetValue(emitInstallsOption);
+            var extractIcon = parseResult.GetValue(extractIconOption);
+            var iconOutput = parseResult.GetValue(iconOutputOption);
+            var skipIcon = parseResult.GetValue(skipIconOption);
 
             // Handle deprecated --skip-icon (warn but ignore)
             if (skipIcon)
@@ -169,14 +202,14 @@ public class Program
                     {
                         configService.ConfigureInteractive(config);
                     }
-                    context.ExitCode = 0;
+                    exitCode = 0;
                 }
                 catch (InvalidOperationException ex)
                 {
                     Console.Error.WriteLine($"❌ {ex.Message}");
-                    context.ExitCode = 1;
+                    exitCode = 1;
                 }
-                return;
+                return exitCode;
             }
 
             // Prompt for package path if not provided
@@ -187,8 +220,8 @@ public class Program
                 if (string.IsNullOrEmpty(packagePath))
                 {
                     Console.WriteLine("❌ No installer path provided; exiting.");
-                    context.ExitCode = 1;
-                    return;
+                    exitCode = 1;
+                    return exitCode;
                 }
             }
 
@@ -218,8 +251,8 @@ public class Program
             if (emitInstalls)
             {
                 var emitService = new ImportService();
-                context.ExitCode = emitService.EmitInstalls(packagePath, config, installsArray.ToList()) ? 0 : 1;
-                return;
+                exitCode = emitService.EmitInstalls(packagePath, config, installsArray.ToList()) ? 0 : 1;
+                return exitCode;
             }
 
             // Check for git repo and pull
@@ -254,21 +287,23 @@ public class Program
                     RunMakeCatalogs(config.RepoPath);
 
                     Console.WriteLine("Import completed successfully.");
-                    context.ExitCode = 0;
+                    exitCode = 0;
                 }
                 else
                 {
-                    context.ExitCode = 0; // User canceled
+                    exitCode = 0; // User canceled
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ERROR] Error in import: {ex.Message}");
-                context.ExitCode = 1;
+                exitCode = 1;
             }
+
+            return exitCode;
         });
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     private static void PrintVersion()

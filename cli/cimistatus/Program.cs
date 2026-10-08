@@ -20,37 +20,47 @@ class Program
 
     static async Task<int> Main(string[] args)
     {
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var rootCommand = new RootCommand("Display Cimian system status information");
 
         // Service subcommand
         var serviceCommand = new Command("service", "Display CimianWatcher service status");
-        serviceCommand.SetHandler(() => ShowServiceStatus());
-        rootCommand.AddCommand(serviceCommand);
+        serviceCommand.SetAction(_ => ShowServiceStatus());
+        rootCommand.Subcommands.Add(serviceCommand);
 
         // Logs subcommand
         var logsCommand = new Command("logs", "Display information about log files");
-        var openOption = new Option<bool>(
-            aliases: new[] { "--open", "-o" },
-            description: "Open logs directory in Explorer");
-        logsCommand.AddOption(openOption);
-        logsCommand.SetHandler((bool open) => ShowLogsInfo(open), openOption);
-        rootCommand.AddCommand(logsCommand);
+        var openOption = new Option<bool>("--open", "-o")
+        {
+            Description = "Open logs directory in Explorer"
+        };
+        logsCommand.Options.Add(openOption);
+        logsCommand.SetAction(parseResult => ShowLogsInfo(parseResult.GetValue(openOption)));
+        rootCommand.Subcommands.Add(logsCommand);
 
         // Config subcommand
         var configCommand = new Command("config", "Display configuration status");
-        configCommand.SetHandler(() => ShowConfigStatus());
-        rootCommand.AddCommand(configCommand);
+        configCommand.SetAction(_ => ShowConfigStatus());
+        rootCommand.Subcommands.Add(configCommand);
 
         // Diagnostics subcommand
         var diagCommand = new Command("diag", "Run diagnostics");
-        diagCommand.AddAlias("diagnostics");
-        diagCommand.SetHandler(() => RunDiagnostics());
-        rootCommand.AddCommand(diagCommand);
+        diagCommand.Aliases.Add("diagnostics");
+        diagCommand.SetAction(_ => RunDiagnostics());
+        rootCommand.Subcommands.Add(diagCommand);
 
         // Root handler - show all status by default
-        rootCommand.SetHandler(() => ShowAllStatus());
+        rootCommand.SetAction(_ => ShowAllStatus());
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     private static void ShowAllStatus()
