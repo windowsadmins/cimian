@@ -1923,7 +1923,7 @@ exit 0
         }
     }
 
-    private async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
+    internal async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
         ProcessStartInfo startInfo,
         string itemName,
         CancellationToken cancellationToken,
