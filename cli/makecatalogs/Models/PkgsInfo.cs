@@ -1,3 +1,4 @@
+using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
 
 namespace Cimian.CLI.Makecatalogs.Models;
@@ -257,6 +258,14 @@ public class PkgsInfo
     /// </summary>
     [YamlIgnore]
     public string FilePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The pkgsinfo as parsed, so makecatalogs can carry keys this model does not
+    /// declare into the catalog, as Munki's makecatalogs does. Without it, a key the
+    /// client reads but this model has not caught up with never reached a client (#153).
+    /// </summary>
+    [YamlIgnore]
+    public YamlMappingNode? Source { get; set; }
 }
 
 /// <summary>

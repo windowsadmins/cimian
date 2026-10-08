@@ -555,6 +555,160 @@ installer:
         Assert.Equal("one\n\ntwo", pkg.Description);
         Assert.Equal("$content = @'\nfirst\n\n\nsecond\n'@", pkg.PreinstallScript);
     }
+
+    private Dictionary<object, object> ReadCatalogItem(string catalog, string name)
+    {
+        var yaml = File.ReadAllText(Path.Combine(_tempDir, "catalogs", catalog + ".yaml"));
+        var root = Cimian.Core.Services.YamlUtils.Deserializer.Deserialize<Dictionary<object, object>>(yaml);
+        return ((List<object>)root["items"])
+            .Cast<Dictionary<object, object>>()
+            .Single(i => (string)i["name"] == name);
+    }
+
+    [Fact]
+    public void Run_CarriesKeysTheModelDoesNotDeclareIntoCatalogs()
+    {
+        CreatePkgInfo("Future-1.0.yaml",
+            "name: Future\n" +
+            "version: 1.0\n" +
+            "catalogs:\n" +
+            "  - Testing\n" +
+            "future_flag: true\n" +
+            "vendor_data:\n" +
+            "  channel: beta\n" +
+            "  rings:\n" +
+            "    - pilot\n" +
+            "    - broad\n");
+
+        var exitCode = _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        Assert.Equal(0, exitCode);
+        var item = ReadCatalogItem("Testing", "Future");
+        Assert.Equal("true", item["future_flag"]);
+        var vendor = (Dictionary<object, object>)item["vendor_data"];
+        Assert.Equal("beta", vendor["channel"]);
+        Assert.Equal(new object[] { "pilot", "broad" }, (List<object>)vendor["rings"]);
+    }
+
+    [Fact]
+    public void Run_CarriesKeysTheClientReadsButTheModelDoesNotDeclare()
+    {
+        // Keys managedsoftwareupdate reads that makecatalogs' model is missing: a
+        // command uninstaller, a registry installs check, the installer_type alias and
+        // the Munki-style installer_item_* keys the client falls back to.
+        CreatePkgInfo("Legacy-1.0.yaml",
+            "name: Legacy\n" +
+            "version: 1.0\n" +
+            "catalogs:\n" +
+            "  - Testing\n" +
+            "installer_type: exe\n" +
+            "installer_item_location: apps/Legacy-1.0.exe\n" +
+            "installer_item_hash: 0123abcd\n" +
+            "installer_item_size: 2048\n" +
+            "uninstaller:\n" +
+            "  - type: ps1\n" +
+            "    command: Remove-Item 'C:\\Program Files\\Legacy' -Recurse\n" +
+            "installs:\n" +
+            "  - type: registry\n" +
+            "    key_path: HKLM\\SOFTWARE\\Legacy\n" +
+            "    version: 1.0\n");
+
+        _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        var item = ReadCatalogItem("Testing", "Legacy");
+        Assert.Equal("exe", item["installer_type"]);
+        Assert.Equal("apps/Legacy-1.0.exe", item["installer_item_location"]);
+        Assert.Equal("0123abcd", item["installer_item_hash"]);
+        Assert.Equal("2048", item["installer_item_size"]);
+        var uninstaller = (Dictionary<object, object>)((List<object>)item["uninstaller"]).Single();
+        Assert.Equal("ps1", uninstaller["type"]);
+        Assert.Equal("Remove-Item 'C:\\Program Files\\Legacy' -Recurse", uninstaller["command"]);
+        var installs = (Dictionary<object, object>)((List<object>)item["installs"]).Single();
+        Assert.Equal("registry", installs["type"]);
+        Assert.Equal("HKLM\\SOFTWARE\\Legacy", installs["key_path"]);
+    }
+
+    [Fact]
+    public void Run_LeavesNotesAndUnderscoreKeysOutOfCatalogs()
+    {
+        // Munki's makecatalogs drops admin notes and any key starting with "_"
+        // (such as _metadata); they are for whoever edits the pkgsinfo, not for clients.
+        CreatePkgInfo("Quiet-1.0.yaml",
+            "name: Quiet\n" +
+            "version: 1.0\n" +
+            "catalogs:\n" +
+            "  - Testing\n" +
+            "notes: ask before upgrading\n" +
+            "_metadata:\n" +
+            "  created_by: someone\n");
+
+        _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        var item = ReadCatalogItem("Testing", "Quiet");
+        Assert.False(item.ContainsKey("notes"));
+        Assert.False(item.ContainsKey("_metadata"));
+    }
+
+    [Fact]
+    public void Run_CarriesUnknownKeysBesideAMultilineScript()
+    {
+        CreatePkgInfo("Scripted-1.0.yaml",
+            "name: Scripted\n" +
+            "version: 1.0\n" +
+            "catalogs:\n" +
+            "  - Testing\n" +
+            "postinstall_script: |\n" +
+            "  Write-Host 'one'\n" +
+            "\n" +
+            "  Write-Host 'two'\n" +
+            "future_script: |\n" +
+            "  $x = 1\n" +
+            "  $y = 2\n");
+
+        _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        var item = ReadCatalogItem("Testing", "Scripted");
+        Assert.Equal("Write-Host 'one'\n\nWrite-Host 'two'\n", item["postinstall_script"]);
+        Assert.Equal("$x = 1\n$y = 2\n", item["future_script"]);
+    }
+
+    [Fact]
+    public void Run_CatalogIsUnchanged_WhenNoPkgsinfoHasUnknownKeys()
+    {
+        CreatePkgInfo("Plain-1.0.yaml",
+            "name: Plain\n" +
+            "version: 1.0\n" +
+            "catalogs:\n" +
+            "  - Testing\n" +
+            "postinstall_script: |\n" +
+            "  Write-Host 'one'\n" +
+            "\n" +
+            "  Write-Host 'two'\n" +
+            "installs:\n" +
+            "  - type: file\n" +
+            "    path: C:\\Program Files\\Plain\\plain.exe\n");
+
+        _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        var items = _builder.ScanRepo(_tempDir);
+        _builder.StampLoopFingerprints(items);
+        var expected = Cimian.Core.Services.YamlUtils.SerializeCatalog(new CatalogFile { Items = items });
+        Assert.Equal(expected, File.ReadAllText(Path.Combine(_tempDir, "catalogs", "Testing.yaml")));
+    }
+
+    [Fact]
+    public void StampLoopFingerprints_ChangesWhenAnUnknownKeyChanges()
+    {
+        CreatePkgInfo("a/Future-1.0.yaml", "name: Future\nversion: 1.0\nfuture_flag: one\n");
+        CreatePkgInfo("b/Future-1.0.yaml", "name: Future\nversion: 1.0\nfuture_flag: two\n");
+        CreatePkgInfo("c/Future-1.0.yaml", "name: Future\nversion: 1.0\n");
+
+        var items = _builder.ScanRepo(_tempDir).OrderBy(i => i.FilePath).ToList();
+        _builder.StampLoopFingerprints(items);
+
+        Assert.NotEqual(items[0].LoopFingerprint, items[1].LoopFingerprint);
+        Assert.NotEqual(items[0].LoopFingerprint, items[2].LoopFingerprint);
+    }
 }
 
 /// <summary>
