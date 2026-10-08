@@ -18,6 +18,8 @@ public static class CimianHttpClientFactory
     /// Creates an HttpClient configured with authentication, optional client certificates and
     /// the AdditionalHttpHeaders setting.
     /// Auth priority: DPAPI registry → Bearer token → Basic auth.
+    /// A certificate file is loaded once per process and shared by every client; see
+    /// <see cref="SharedClientCertificate"/>.
     /// </summary>
     public static HttpClient CreateHttpClient(CimianConfig config, TimeSpan? timeout = null)
     {
@@ -147,36 +149,10 @@ public static class CimianHttpClientFactory
     /// </summary>
     private static X509Certificate2? LoadClientCertificate(CimianConfig config)
     {
-        // Option 1: Certificate file on disk (PEM or PFX)
+        // Option 1: Certificate file on disk (PEM or PFX), loaded once per process
         if (!string.IsNullOrEmpty(config.ClientCertificatePath))
         {
-            if (!File.Exists(config.ClientCertificatePath))
-            {
-                ConsoleLogger.Warn($"Client certificate file not found: {config.ClientCertificatePath}");
-                return null;
-            }
-
-            var ext = Path.GetExtension(config.ClientCertificatePath).ToLowerInvariant();
-
-            // PEM format — separate cert and key files (Munki-style)
-            if (ext is ".pem" or ".crt" or ".cer")
-            {
-                return LoadPemCertificate(config);
-            }
-
-            // PFX/P12 format — cert and key in one file
-            try
-            {
-                return X509CertificateLoader.LoadPkcs12FromFile(
-                    config.ClientCertificatePath,
-                    config.ClientCertificatePassword,
-                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
-            }
-            catch (Exception ex)
-            {
-                ConsoleLogger.Warn($"Failed to load client certificate from {config.ClientCertificatePath}: {ex.Message}");
-                return null;
-            }
+            return SharedClientCertificate.Get(config);
         }
 
         // Option 2: Windows Certificate Store by thumbprint
@@ -261,9 +237,45 @@ public static class CimianHttpClientFactory
     }
 
     /// <summary>
+    /// Reads the certificate file named by ClientCertificatePath (PFX, or PEM with
+    /// ClientKeyPath). Its private key is ephemeral and exportable: Schannel cannot use an
+    /// ephemeral key for client authentication, so <see cref="SharedClientCertificate"/>
+    /// moves it into a named machine key before the certificate is used.
+    /// </summary>
+    internal static X509Certificate2? ReadClientCertificateFile(CimianConfig config)
+    {
+        if (!File.Exists(config.ClientCertificatePath))
+        {
+            ConsoleLogger.Warn($"Client certificate file not found: {config.ClientCertificatePath}");
+            return null;
+        }
+
+        var ext = Path.GetExtension(config.ClientCertificatePath).ToLowerInvariant();
+
+        // PEM format — separate cert and key files (Munki-style)
+        if (ext is ".pem" or ".crt" or ".cer")
+        {
+            return LoadPemCertificate(config);
+        }
+
+        // PFX/P12 format — cert and key in one file
+        try
+        {
+            return X509CertificateLoader.LoadPkcs12FromFile(
+                config.ClientCertificatePath!,
+                config.ClientCertificatePassword,
+                X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+        }
+        catch (Exception ex)
+        {
+            ConsoleLogger.Warn($"Failed to load client certificate from {config.ClientCertificatePath}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Loads a PEM certificate with a separate private key file.
     /// This is the format Munki uses: client.pem + client.key.
-    /// On Windows, re-exports to PFX so the private key works with SslStream.
     /// </summary>
     private static X509Certificate2? LoadPemCertificate(CimianConfig config)
     {
@@ -283,12 +295,7 @@ public static class CimianHttpClientFactory
         {
             var certPem = File.ReadAllText(config.ClientCertificatePath!);
             var keyPem = File.ReadAllText(config.ClientKeyPath);
-            var cert = X509Certificate2.CreateFromPem(certPem, keyPem);
-
-            // On Windows, re-export to PFX so the private key is usable with SslStream
-            var exported = cert.Export(X509ContentType.Pfx);
-            return X509CertificateLoader.LoadPkcs12(exported, null,
-                X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.EphemeralKeySet);
+            return X509Certificate2.CreateFromPem(certPem, keyPem);
         }
         catch (Exception ex)
         {

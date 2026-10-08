@@ -13,17 +13,33 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// runs cost one 304 per icon; a missing repo icon (404) is silently skipped and
 /// the GUI keeps its generated fallback.
 /// </summary>
-public class IconSyncService
+public class IconSyncService : IDisposable
 {
     private const int MaxParallelDownloads = 4;
 
     private readonly HttpClient _httpClient;
     private readonly CimianConfig _config;
+    private readonly bool _ownsHttpClient;
+    private bool _disposed;
 
     public IconSyncService(CimianConfig config, HttpClient? httpClient = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
         _config = config;
+        _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? CimianHttpClientFactory.CreateHttpClient(config, TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>
+    /// Disposes the client this service created. An injected client stays with its caller.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        if (_ownsHttpClient)
+            _httpClient.Dispose();
     }
 
     /// <summary>

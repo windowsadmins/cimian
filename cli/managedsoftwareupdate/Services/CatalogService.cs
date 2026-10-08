@@ -11,15 +11,31 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 /// Service for loading and managing catalogs
 /// Migrated from Go pkg/catalog
 /// </summary>
-public class CatalogService
+public class CatalogService : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly CimianConfig _config;
+    private readonly bool _ownsHttpClient;
+    private bool _disposed;
 
     public CatalogService(CimianConfig config, HttpClient? httpClient = null)
     {
+        ArgumentNullException.ThrowIfNull(config);
         _config = config;
+        _ownsHttpClient = httpClient is null;
         _httpClient = httpClient ?? CimianHttpClientFactory.CreateHttpClient(config);
+    }
+
+    /// <summary>
+    /// Disposes the client this service created. An injected client stays with its caller.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        if (_ownsHttpClient)
+            _httpClient.Dispose();
     }
 
     /// <summary>
