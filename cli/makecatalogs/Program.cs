@@ -13,63 +13,81 @@ class Program
 
     static async Task<int> Main(string[] args)
     {
+        return await CreateRootCommand().Parse(args).InvokeAsync();
+    }
+
+    /// <summary>
+    /// The command line: every command, option and argument, and the action each runs.
+    /// Built separately so tests can parse a line without running anything.
+    /// </summary>
+    internal static RootCommand CreateRootCommand()
+    {
         var rootCommand = new RootCommand("makecatalogs - Cimian Catalog Generator")
         {
             Description = "Scan pkgsinfo directory and generate catalog files"
         };
 
-        var repoPathOption = new Option<string?>(
-            aliases: ["--repo_path", "-repo_path", "-r"],
-            description: "Path to the Cimian repo. If empty, uses config.");
-
-        var skipPayloadCheckOption = new Option<bool>(
-            aliases: ["--skip_payload_check", "-s"],
-            description: "Disable checking for installer/uninstaller files");
-
-        var hashCheckOption = new Option<bool>(
-            aliases: ["--hash_check"],
-            description: "Enable hash and size validation (slow - use when needed)");
-
-        var silentOption = new Option<bool>(
-            aliases: ["--silent", "-q"],
-            description: "Minimize output");
-
-        var tolerateParseErrorsOption = new Option<bool>(
-            aliases: ["--tolerate_parse_errors"],
-            description: "Write catalogs even if some pkgsinfo failed to parse (they are omitted)");
-
-        var versionOption = new Option<bool>(
-            aliases: ["-V"],
-            description: "Print version and exit");
-
-        rootCommand.AddOption(repoPathOption);
-        rootCommand.AddOption(skipPayloadCheckOption);
-        rootCommand.AddOption(hashCheckOption);
-        rootCommand.AddOption(silentOption);
-        rootCommand.AddOption(tolerateParseErrorsOption);
-        rootCommand.AddOption(versionOption);
-
-        rootCommand.SetHandler((context) =>
+        var repoPathOption = new Option<string?>("--repo_path", "-repo_path", "-r")
         {
-            var repoPath = context.ParseResult.GetValueForOption(repoPathOption);
-            var skipPayloadCheck = context.ParseResult.GetValueForOption(skipPayloadCheckOption);
-            var hashCheck = context.ParseResult.GetValueForOption(hashCheckOption);
-            var silent = context.ParseResult.GetValueForOption(silentOption);
-            var tolerateParseErrors = context.ParseResult.GetValueForOption(tolerateParseErrorsOption);
-            var showVersion = context.ParseResult.GetValueForOption(versionOption);
+            Description = "Path to the Cimian repo. If empty, uses config."
+        };
+
+        var skipPayloadCheckOption = new Option<bool>("--skip_payload_check", "-s")
+        {
+            Description = "Disable checking for installer/uninstaller files"
+        };
+
+        var hashCheckOption = new Option<bool>("--hash_check")
+        {
+            Description = "Enable hash and size validation (slow - use when needed)"
+        };
+
+        var silentOption = new Option<bool>("--silent", "-q")
+        {
+            Description = "Minimize output"
+        };
+
+        var tolerateParseErrorsOption = new Option<bool>("--tolerate_parse_errors")
+        {
+            Description = "Write catalogs even if some pkgsinfo failed to parse (they are omitted)"
+        };
+
+        var versionOption = new Option<bool>("-V")
+        {
+            Description = "Print version and exit"
+        };
+
+        rootCommand.Options.Add(repoPathOption);
+        rootCommand.Options.Add(skipPayloadCheckOption);
+        rootCommand.Options.Add(hashCheckOption);
+        rootCommand.Options.Add(silentOption);
+        rootCommand.Options.Add(tolerateParseErrorsOption);
+        rootCommand.Options.Add(versionOption);
+
+        rootCommand.SetAction(parseResult =>
+        {
+            var exitCode = 0;
+            var repoPath = parseResult.GetValue(repoPathOption);
+            var skipPayloadCheck = parseResult.GetValue(skipPayloadCheckOption);
+            var hashCheck = parseResult.GetValue(hashCheckOption);
+            var silent = parseResult.GetValue(silentOption);
+            var tolerateParseErrors = parseResult.GetValue(tolerateParseErrorsOption);
+            var showVersion = parseResult.GetValue(versionOption);
 
             try
             {
-                context.ExitCode = Run(repoPath, skipPayloadCheck, hashCheck, silent, showVersion, tolerateParseErrors);
+                exitCode = Run(repoPath, skipPayloadCheck, hashCheck, silent, showVersion, tolerateParseErrors);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Error: {ex.Message}");
-                context.ExitCode = 1;
+                exitCode = 1;
             }
+
+            return exitCode;
         });
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
     }
 
     private static int Run(string? repoPath, bool skipPayloadCheck, bool hashCheck, bool silent, bool showVersion, bool tolerateParseErrors = false)
