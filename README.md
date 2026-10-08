@@ -306,7 +306,6 @@ The build system uses environment variables for sensitive configuration data suc
 
 2. Edit `.env` with your organization's certificate information:
    ```
-   CIMIAN_CERT_CN=YourOrganization Enterprise Certificate
    CIMIAN_CERT_SUBJECT=YourOrganization
    ```
 
@@ -314,10 +313,12 @@ The build system uses environment variables for sensitive configuration data suc
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `CIMIAN_CERT_CN` | Full certificate common name | `"Contoso Enterprise Certificate"` |
-| `CIMIAN_CERT_SUBJECT` | Certificate subject pattern for auto-detection | `"Contoso"` |
-| `CIMIAN_CERT_THUMBPRINT` | (Optional) Override certificate thumbprint | `"1234567890ABCDEF..."` |
-| `CIMIAN_CERT_STORE` | (Optional) Certificate store location | `"CurrentUser"` or `"LocalMachine"` |
+| `CIMIAN_CERT_SUBJECT` | Subject match for the signing certificate. The newest matching certificate with a private key in `CurrentUser\My`, then `LocalMachine\My`, is used. | `"Contoso"` |
+| `CIMIAN_MSI_KEEP_PDB` | (Optional) Set to `1` to keep `.pdb` files in the MSI payload | `1` |
+| `CIMIAN_MSI_PAYLOAD_SOFT_CAP_MB` | (Optional) MSI payload size that triggers a warning; default 250 | `250` |
+| `CIMIAN_MSI_PAYLOAD_HARD_CAP_MB` | (Optional) MSI payload size that fails the build; default 0 (off) | `400` |
+
+To sign with a specific certificate instead, pass its thumbprint: `.uild.ps1 -Sign -Thumbprint <thumbprint>`.
 
 > **Security Note**: The `.env` file is automatically ignored by git and should never be committed. Always use `.env.example` as a template for new environments.
 

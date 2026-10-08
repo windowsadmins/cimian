@@ -65,8 +65,8 @@ jobs:
         shell: pwsh
         run: |
           # Ship a plain .zip per architecture alongside the .msi/.nupkg so
-          # downstream automation (e.g. cimian-bootstrap-mgmt's repo-sync
-          # step) can grab cimiimport.exe + makecatalogs.exe without
+          # downstream automation (for example, a repo-sync step) can
+          # grab cimiimport.exe + makecatalogs.exe without
           # decompiling an MSI or treating a NuGet package as a zip.
           $datestamp = '${{ steps.version.outputs.datestamp }}'
           foreach ($arch in 'x64','arm64') {
