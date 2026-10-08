@@ -1,8 +1,7 @@
 using System.CommandLine;
 using Cimian.CLI.Makecatalogs.Services;
 using Cimian.Core;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
+using Cimian.Core.Services;
 
 namespace Cimian.CLI.Makecatalogs;
 
@@ -86,7 +85,7 @@ class Program
             repoPath = LoadRepoPathFromConfig();
             if (string.IsNullOrEmpty(repoPath))
             {
-                Console.Error.WriteLine("Error: No repo_path found in config or via --repo_path.");
+                Console.Error.WriteLine("Error: No RepoPath found in Config.yaml, and no --repo_path given.");
                 return 1;
             }
         }
@@ -111,25 +110,12 @@ class Program
 
         try
         {
-            var yaml = File.ReadAllText(DefaultConfigPath);
-            var deserializer = new DeserializerBuilder()
-                .WithNamingConvention(UnderscoredNamingConvention.Instance)
-                .IgnoreUnmatchedProperties()
-                .Build();
-
-            var config = deserializer.Deserialize<ConfigFile>(yaml);
-            return config?.RepoPath;
+            return RepoPathConfig.ReadFile(DefaultConfigPath);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error loading config: {ex.Message}");
             return null;
         }
-    }
-
-    private class ConfigFile
-    {
-        [YamlDotNet.Serialization.YamlMember(Alias = "repo_path")]
-        public string? RepoPath { get; set; }
     }
 }
