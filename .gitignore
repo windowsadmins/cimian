@@ -398,9 +398,6 @@ logs
 *.log
 npm-debug.log*
 
-# Docker test results
-tests/docker/results/
-
 # Claude Code per-checkout state (worktrees, hooks, scheduled task locks).
 # The parent repo tracks its own .claude/ intentionally; this submodule does not.
 .claude/
