@@ -217,7 +217,7 @@ try {
                     Write-Warning "Failed to restart existing service, attempting full reinstall: $_"
                     # Uninstall and reinstall the service
                     try {
-                        & $cimiwatcherExe uninstall
+                        & $cimiwatcherExe remove
                         Start-Sleep -Seconds 2
                     } catch {
                         Write-Warning "Failed to uninstall existing service: $_"

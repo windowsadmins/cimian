@@ -33,8 +33,8 @@ try {
         }
         $cimiwatcherExe = Join-Path $InstallDir "cimiwatcher.exe"
         if (Test-Path $cimiwatcherExe) {
-            try { & $cimiwatcherExe uninstall; Start-Sleep -Seconds 2 }
-            catch { Write-Warning "cimiwatcher uninstall failed: $_" }
+            try { & $cimiwatcherExe remove; Start-Sleep -Seconds 2 }
+            catch { Write-Warning "cimiwatcher remove failed: $_" }
         } else {
             # Fall back to sc.exe if the exe is already gone.
             try { & sc.exe delete CimianWatcher | Out-Null } catch { }
