@@ -158,6 +158,14 @@ public class StatusService
                 var installsResult = CheckInstallsArray(item);
                 if (installsResult.NeedsAction)
                 {
+                    // A removal check reads the same walk the other way round: an item
+                    // that is not on disk is the outcome a managed_uninstalls entry wants.
+                    if (string.Equals(action, "uninstall", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ConsoleLogger.Info($"File verification found the item not present, removal complete item: {item.Name}");
+                        ConsoleLogger.Debug($"CheckStatus indicates nothing left to remove item: {item.Name}");
+                        return installsResult;
+                    }
                     ConsoleLogger.Info($"File verification failed - reinstallation required item: {item.Name}");
                     ConsoleLogger.Debug($"CheckStatus explicitly indicates update required item: {item.Name}");
                     return installsResult;
@@ -337,7 +345,10 @@ public class StatusService
             return CheckUninstallcheckScript(item);
         }
 
-        var installStatus = CheckStatus(item, "install", cachePath);
+        // Detection is the install check, but it runs as an uninstall so its log lines
+        // describe a removal ("not present, removal complete") rather than an install
+        // that has gone missing ("reinstallation required").
+        var installStatus = CheckStatus(item, "uninstall", cachePath);
         var result = new StatusCheckResult
         {
             DetectionMethod = installStatus.DetectionMethod,

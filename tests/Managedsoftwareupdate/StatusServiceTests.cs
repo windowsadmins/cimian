@@ -754,3 +754,54 @@ public class StatusServiceTests
 
     #endregion
 }
+
+/// <summary>
+/// The log lines a managed_uninstalls status check writes. An item that has already been
+/// removed must read as a completed removal, not as an install that needs repeating.
+/// Shares a collection with the other tests that swap Console.Out.
+/// </summary>
+[Collection(ConsoleOutputCollection.Name)]
+public class UninstallStatusLogTests : IDisposable
+{
+    private readonly TextWriter _originalOut = Console.Out;
+    private readonly int _originalVerbosity = Cimian.Core.Services.ConsoleLogger.Verbosity;
+    private readonly StringWriter _stdout = new();
+    private readonly string _testDir = Path.Combine(Path.GetTempPath(), "CimianTests", "UninstallLog", Guid.NewGuid().ToString("N"));
+
+    public UninstallStatusLogTests()
+    {
+        Directory.CreateDirectory(_testDir);
+        Cimian.Core.Services.ConsoleLogger.Verbosity = 3;
+        Console.SetOut(_stdout);
+    }
+
+    public void Dispose()
+    {
+        Console.SetOut(_originalOut);
+        Cimian.Core.Services.ConsoleLogger.Verbosity = _originalVerbosity;
+        try { Directory.Delete(_testDir, recursive: true); } catch { /* Ignore cleanup errors */ }
+    }
+
+    [Fact]
+    public void CheckUninstallStatus_AbsentItem_LogsRemovalCompleteNotReinstall()
+    {
+        var item = new CatalogItem
+        {
+            Name = "removed" + Guid.NewGuid().ToString("N"),
+            Version = "1.0.0",
+            Installs = new List<InstallCheckItem>
+            {
+                new() { Type = "file", Path = Path.Combine(_testDir, "does-not-exist.exe") }
+            }
+        };
+
+        var result = new StatusService().CheckUninstallStatus(item, _testDir);
+
+        var output = _stdout.ToString();
+        Assert.False(result.NeedsAction);
+        Assert.Contains($"CheckStatus starting item: {item.Name} installType: uninstall", output);
+        Assert.Contains("not present, removal complete", output);
+        Assert.DoesNotContain("reinstallation required", output);
+        Assert.DoesNotContain("installType: install", output);
+    }
+}
