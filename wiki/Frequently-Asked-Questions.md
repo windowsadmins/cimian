@@ -25,8 +25,9 @@ path layout. The client validates the URL scheme and accepts only `http` and `ht
 or a `file://` path.
 
 Be aware of what is not supported on that path: no storage-provider signed URLs or SAS
-tokens, no custom request headers, and no request middleware to inject them. Authentication
-is HTTP Basic, a bearer token, or mutual TLS, and nothing else. See
+tokens, and no request middleware to generate them. Authentication is HTTP Basic, a bearer
+token, or mutual TLS. `AdditionalHttpHeaders` in `Config.yaml` can add fixed headers to every
+request. See
 [Securing The Repository](Securing-The-Repository).
 
 ### What happens when the repository is unreachable?
@@ -64,9 +65,11 @@ also a bad idea — each will act on what the other did.
 
 ### Does Cimian manage Windows Updates, or talk to winget?
 
-No to both. Cimian manages the packages you put in your repository. There is a
-`chocolatey` installer type, and anything else can be wrapped in a PowerShell payload, but
-detection and state are Cimian's own — it does not read another manager's inventory.
+No to both. Cimian manages the packages you put in your repository. A `.nupkg` payload is
+installed with sbin-installer first, with Chocolatey as a fallback when Chocolatey is present,
+and there is an explicit `chocolatey` installer type. Anything else can be wrapped in a
+PowerShell payload. Detection and state are Cimian's own — it does not read another
+manager's inventory.
 
 ## Running the client
 
@@ -171,10 +174,10 @@ Most likely one of three things.
 no schema validation anywhere in the chain, and `makecatalogs` will not warn you.
 `unattendend_install: true` parses, publishes, and does nothing.
 
-**The key is real but ignored.** A few keys are written by the authoring tools and carried
-into the catalog while the client has no property for them: `uninstallcheck_script`,
-`identifier`, `installer.arguments` (use `installer.args`), `installer.identity_name`, and
-the top-level `installer_type` scalar (use `installer.type`). See
+**The key is real but ignored.** A few keys are written by the authoring tools while the
+client has no property for them: `identifier`, `installer.arguments` (use `installer.args`)
+and `installer.identity_name` are carried into the catalog and ignored there, and the
+top-level `installer_type` scalar (use `installer.type`) is dropped by `makecatalogs`. See
 [Supported pkgsinfo Keys](Supported-pkgsinfo-Keys), which lists every one of them.
 
 ### Does anything validate my pkgsinfo?

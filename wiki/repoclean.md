@@ -23,7 +23,8 @@ repoclean --repo-url <path> [--keep <n>] [--show-all] [--auto] [--remove] [-V]
 | `--show-all` | `-a` | — | off | List every package, not only those with deletions. |
 | `--auto` | `-y` | — | off | With `--remove`, delete without prompting. |
 | `--remove` | `--delete` | — | off | Actually delete. Without it, nothing is written. |
-| `-V` | — | — | — | Print the version and exit. |
+| `-V` | — | — | — | Print `repoclean version <n>` and exit. |
+| `--version` | — | — | — | Print the build version and exit. |
 | `--help` | — | — | — | Print usage and exit. |
 
 `--repo-url` is required despite its name — it takes a filesystem path, local or
@@ -34,8 +35,6 @@ and no way to omit the path.
 `--keep` must be at least 1. A value below that stops the run with
 `Error: --keep value must be a positive integer`. `--keep 1` keeps only the
 newest version of each package.
-
-There is no `--version` long form; use `-V`.
 
 ## Dry run is the default
 
@@ -63,10 +62,12 @@ watching.
 
 ## What it does
 
-1. Reads every file in `<repo>\manifests` and collects the item names they
-   reference, including names inside `conditional_items`.
+1. Reads every file in `<repo>\manifests` and tries to collect the item names
+   they reference. In practice this finds nothing in a YAML manifest; see
+   [Limitations](#limitations).
 2. Reads every file in `<repo>\pkgsinfo` and records each item's name, version
-   and installer location.
+   and installer location. For a YAML pkgsinfo these three values are the only
+   ones read.
 3. Lists every file under `<repo>\pkgs`.
 4. Groups the pkgsinfo items by package and sorts each group newest version
    first.
@@ -99,20 +100,20 @@ dry run every time.
 
 ## What it never touches
 
-- **Versions a manifest names explicitly.** An item written as
-  `ExampleApp-1.2.3` in a manifest pins that version; it is shown as
-  `(REQUIRED by a manifest)` and kept.
-- **Versions another pkgsinfo requires.** A version named in another item's
-  `requires` list is shown as `(REQUIRED by another pkginfo item)` and kept.
-- **The newest `--keep` versions** of every package, whether or not any manifest
-  mentions the package at all. A package no manifest references is annotated
-  `[not in any manifests]` but is still pruned only to `--keep` versions, never
-  removed entirely.
+- **The newest `--keep` versions** of every package. A package no manifest
+  references is annotated `[not in any manifests]` but is still pruned only to
+  `--keep` versions, never removed entirely.
 - **Everything outside `pkgsinfo\` and `pkgs\`.** Manifests, catalogs, icons and
   anything else in the repo are read at most, never modified or deleted.
 
-An unversioned manifest entry — plain `ExampleApp` — protects nothing beyond the
-normal `--keep` window, because it does not name a version.
+The code also has two further protections, and neither takes effect on a normal
+Cimian repo. A version pinned in a manifest (`ExampleApp-1.2.3`) would be shown as
+`(REQUIRED by a manifest)` and kept, and a version named in another item's
+`requires` would be shown as `(REQUIRED by another pkginfo item)` and kept. The
+first only works for JSON manifests, because YAML manifest lists are never matched;
+the second needs `requires`, which is not read from a YAML pkgsinfo. Do not count
+on either: the `--keep` window is the only protection a pinned version has. For the
+same reason, every package is annotated `[not in any manifests]`.
 
 ## Sample output
 
@@ -130,6 +131,7 @@ Analyzing manifest files...
 Analyzing pkginfo files...
 Analyzing installer items...
 name: ExampleApp
+[not in any manifests]
 versions:
     2.1.0
     2.0.4
@@ -151,7 +153,7 @@ Item variants:           47
 pkginfo items to delete: 3
 pkgs to delete:          3
 pkginfo space savings:   14.6 KB
-pkg space savings:       2.4 GB
+pkg space savings:       0 bytes
                          (Unknown additional pkg space savings from 1 orphaned pkgs)
 
 Run with --remove to actually delete these items.
@@ -159,7 +161,8 @@ Run with --remove to actually delete these items.
 
 Only packages with something to delete are shown; `--show-all` adds the rest.
 "Item variants" is the number of package groups, which is usually lower than the
-number of pkgsinfo files.
+number of pkgsinfo files. "pkg space savings" reads `0 bytes` because the installer
+size is not read from a YAML pkgsinfo.
 
 A `--remove` run prints one line per file:
 
@@ -206,7 +209,7 @@ on a missing download.
 Two habits are worth keeping. Take a backup or a version-control commit of the
 repo before the first `--remove` on it — deletions are immediate and there is no
 undo. And keep `--keep` at or above the number of versions any manifest might pin,
-since only explicitly versioned manifest entries are detected as pinned.
+since manifest pins in YAML manifests are not detected.
 
 ## Exit codes
 
@@ -224,22 +227,28 @@ exits 0.
   `Rebuilding catalogs at <path>...` followed by
   `Catalog rebuild would be performed here...`. No catalog is written. Run
   [makecatalogs](makecatalogs) yourself.
-- **Parsed pkgsinfo fields are not all used.** The analyzer reads the
-  uninstaller payload path, `requires` and `update_for`, but the cleanup pass
-  never consults them. Consequences:
+- **Only three pkgsinfo values are read.** For a YAML pkgsinfo, `repoclean` reads
+  `name`, `version` and `installer.location` with a line scan and nothing else.
+  Consequences:
   - Uninstaller payloads are not registered as referenced, so a standalone
     uninstaller file in `pkgs\` is reported as orphaned and is deleted on a
     `--remove` run.
   - The `(REQUIRED by another pkginfo item)` protection does not apply; a
-    dependency is protected only by the `--keep` window or by an explicitly
-    versioned manifest entry.
+    dependency is protected only by the `--keep` window.
   - Grouping is by package name alone. Two items with the same `name` but
     different `catalogs` or `supported_architectures` share one `--keep` window.
+  - Installer sizes are not read, so the space-savings figure is `0 bytes`.
+- **Manifests are not matched.** Lists in a YAML manifest are never recognised, so
+  manifest pins and the `[not in any manifests]` annotation do not reflect the
+  real manifests.
 - **Orphan matching compares path strings literally.** The `installer.location`
-  in a pkgsinfo is compared with the path as listed on disk without normalising
-  separators, so a repo whose pkgsinfo files use forward slashes can have its
-  payloads reported as orphaned. If the dry run shows an implausible number of
-  orphans, stop; do not pass `--remove`.
+  in a pkgsinfo is compared, case-sensitively, with the path as listed on disk
+  without normalising separators. [cimiimport](cimiimport) writes locations with
+  forward slashes (`/mgmt/ExampleApp-x64-1.2.3.msi`) while the disk listing uses
+  backslashes, so on a repo built by `cimiimport` every payload in a subdirectory of
+  `pkgs\` is reported as orphaned, and a `--remove` run deletes them, including the
+  current versions. If the dry run shows an implausible number of orphans, stop; do
+  not pass `--remove`.
 - A pkgsinfo missing `name` or `version` is skipped, so its payload counts as
   orphaned.
 - Exit codes do not reflect analysis failures.

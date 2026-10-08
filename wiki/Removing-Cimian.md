@@ -72,7 +72,7 @@ touched. That includes:
 | `Config.yaml` | repository URL, client identifier, authentication settings |
 | `Cache\` | downloaded installer payloads, which can be many gigabytes |
 | `catalogs\`, `manifests\`, `icons\` | the last fetched repository content |
-| `logs\` | session logs, `cimiwatcher.log`, self-update logs |
+| `logs\` | session logs, the watcher's daily logs, installer and self-update logs |
 | `reports\` | `state.json`, `sessions.json`, `events.json`, `items.json`, `loop_suppressed.json` |
 | `Receipts\` | per-item install receipts |
 | `sbin\` | `preflight.ps1` and `postflight.ps1` if you deployed them |

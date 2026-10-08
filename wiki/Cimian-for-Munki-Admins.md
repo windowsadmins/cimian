@@ -42,9 +42,10 @@ file named `ExampleApp.yml` is invisible to `makecatalogs` and its package silen
 exist.
 
 Serving is the same idea and simpler: plain HTTP or HTTPS GETs at fixed paths, no server
-component. Cimian supports HTTP Basic, a bearer token, and mutual TLS. It does **not**
-support proxies, extra or custom request headers, Windows Integrated authentication, or any
-storage-provider signed-URL scheme, and it rejects every URL scheme except `http` and
+component. Cimian supports HTTP Basic, a bearer token, and mutual TLS, and
+`AdditionalHttpHeaders` adds fixed headers to every request, much like Munki's setting of the
+same name. It does **not** support proxy configuration, Windows Integrated authentication, or
+any storage-provider signed-URL scheme, and it rejects every URL scheme except `http` and
 `https` — there is no `file://` or UNC repo. See
 [The Cimian Repository](The-Cimian-Repository) and
 [Securing The Repository](Securing-The-Repository).
@@ -63,11 +64,13 @@ Two differences matter.
 
 **Precedence between duplicate entries is by action rank, not by position.** Every
 occurrence of a name across the whole tree collapses to one action, and the ranking is
-`install > uninstall > update > default > optional > profile = app`, independent of the
+`install > uninstall > update > optional > default > profile = app`, independent of the
 order the manifests were read. You cannot demote an item in a child manifest.
 
-**`default_installs` is install-once.** After the first successful install the item is not
-re-enforced and drops off every list, so a user may remove it and it will not return.
+**`default_installs` seeds Self Service once.** As in Munki, the first run that sees a
+default install adds it to the device's self-service selections as an install request, and
+never re-adds it after that, so a user who removes it in Managed Software Center keeps it
+removed.
 
 Full reference: [Manifests](Manifests).
 
@@ -78,11 +81,22 @@ These behave as you expect: `name`, `display_name`, `version`, `description`, `c
 `minimum_os_version`, `maximum_os_version`, `blocking_applications`, `unattended_install`,
 `unattended_uninstall`, `force_install_after_date`, `precache`, `installs`,
 `preinstall_script`, `postinstall_script`, `preuninstall_script`, `postuninstall_script`,
-`installcheck_script`, `restart_action`, and `OnDemand`.
+`installcheck_script`, `uninstallcheck_script`, `restart_action`, and `OnDemand`.
 
 `installcheck_script` keeps Munki's polarity: **exit 0 means the install is needed**, a
 non-zero exit means it is not. Note that this is the inverse of an Intune Win32 detection
 script, so a script reused from there needs its polarity flipped.
+
+`uninstallcheck_script` works the same way for removals: before a managed uninstall runs,
+exit 0 means removal is needed and a non-zero exit skips it. Without one, the item's install
+detection decides whether there is anything to remove.
+
+`force_install_after_date` on `optional_installs` matches Munki 7. A deadline in the pkgsinfo
+does not force-install a title that is only listed under `optional_installs`, and Managed
+Software Center shows no "must be installed by" banner for it. When a user requests the title
+in Self Service, the deadline is still not enforced until some version of it is installed;
+after that it applies to updates as usual. A title on a managed install or update list keeps
+its deadline. This follows `processInstall` in Munki 7's `updatecheck/analyze.swift`.
 
 `OnDemand` is spelled in that exact PascalCase. It is the one key in the schema that is not
 snake_case, and the spelling is load-bearing — `on_demand:` is not recognised.
@@ -227,8 +241,8 @@ within about ten seconds. Any MDM that can write a file can trigger a run. See
 [How Cimian Runs](How-Cimian-Runs) and [cimitrigger](cimitrigger).
 
 **Packaging is a first-class part of the toolchain.** [cimipkg](cimipkg) builds an MSI
-directly from a project directory, with no WiX project and no external toolchain, and can
-also emit a Chocolatey `.nupkg` or an `.intunewin`.
+directly from a project directory, and can also emit a Chocolatey-compatible `.nupkg` or an
+`.intunewin`. The Cimian MSI itself is built by `cimipkg`.
 
 **Apple Software Update integration has no analogue**, and neither does anything that
 depends on it. Windows Update is not managed by Cimian.
@@ -237,13 +251,6 @@ depends on it. Windows Update is not managed by Cimian.
 
 These are real gaps, not stylistic differences. Each one is something a Munki admin will
 reasonably expect and not get.
-
-**`uninstallcheck_script` is accepted and never read.** `makepkginfo` has a flag for it,
-`cimiimport` writes it, and `makecatalogs` carries it into the catalog — but the client has
-no property for it and nothing in the update engine reads it. A removal that should be
-skipped because the software is already gone is not skipped by this key; removal is governed
-only by `uninstallable` and the manifest's `managed_uninstalls`. Do not port these scripts
-expecting them to run.
 
 **`installable_condition` does not exist.** There is no per-package condition key at all.
 Conditions live only in a manifest's `conditional_items`.
@@ -272,16 +279,16 @@ scalar all fail that test today.
 
 **There is no icon importer.** Icons are copied into `icons/` by hand, or extracted by
 `cimiimport --extract-icon`, which is experimental, off by default, and supports only
-`.exe`, `.msi`, `.msix` and `.appx`.
+`.exe`, `.msi`, `.msix`, `.appx` and `.nupkg`.
 
 **`makecatalogs --hash_check` computes MD5** while the client verifies `installer.hash` as
 SHA-256. Since `cimiimport` writes a SHA-256, `--hash_check` reports a mismatch for
 essentially every payload in a normal repo. It is not a usable integrity check.
 
 **Postflight is weaker than Munki's.** It does not run at all in a `--checkonly` session or
-after an unhandled exception, a non-zero exit is logged as a warning and changes nothing,
-and there is no timeout on either preflight or postflight — a hanging script hangs the run
-indefinitely. See [Preflight And Postflight Scripts](Preflight-And-Postflight-Scripts).
+after an unhandled exception, and a non-zero exit is logged as a warning and changes nothing.
+Preflight is stopped after 10 minutes and postflight after 15, so a hanging script delays a
+run rather than blocking it forever. See [Preflight And Postflight Scripts](Preflight-And-Postflight-Scripts).
 
 **`managedsoftwareupdate --quiet` is parsed and never read.** It suppresses nothing.
 
@@ -296,7 +303,7 @@ a normal install. Toast notifications are shown, but the handlers for their acti
 are empty — clicking one does nothing. A custom `sidebar_items` list cannot include the
 History page.
 
-**There is no proxy support.** The client sets no proxy of its own, and no proxy
+**There is no proxy configuration.** The client sets no proxy of its own, and no proxy
 configuration key is read.
 
 ## Porting a repo: the short version

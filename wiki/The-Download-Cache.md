@@ -157,7 +157,8 @@ managedsoftwareupdate --cache-status
 ```
 
 That prints the configured cache path, the file count, the total size in GB, the age of the
-oldest file, and a count of zero-byte files it considers corrupt.
+oldest file, a count of zero-byte files it considers corrupt, and the retention window in
+force.
 
 To see where the space has actually gone, measure per category:
 
@@ -229,7 +230,7 @@ Use it when you know the cache contents are wrong, not as routine housekeeping.
 ## Keys that do not do what their name suggests
 
 - **`UseCache`** is a recognised `Config.yaml` key, defaults to `true`, and is printed by
-  `managedsoftwareupdate --show-config`. **Nothing reads it.** Setting it to `false` does not
+  `managedsoftwareupdate --cache-status`. **Nothing else reads it.** Setting it to `false` does not
   disable caching. Caching is unconditional; the only lever over cached payloads is
   `CacheRetentionDays`.
 - `shared` configuration models carrying keys such as `max_concurrent_downloads`,

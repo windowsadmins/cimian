@@ -15,10 +15,10 @@ The schemas these values live in are in
 |---|---|
 | Detection result, per check | `installed`, `pending`, `error`, `unknown` |
 | Event stream (`events.jsonl`, `events.json`) | Detection values on `status_check` events; `pending`, `completed`, `failed` on `install` events |
-| Item report (`items.json`) | `Installed`, `Pending`, `Warning`, `Error`, `Removed`, `Not Available` |
+| Item report (`items.json`) | `Installed`, `Pending`, `Warning`, `Error`, `Removed`, and `Not Available` in the schema |
 
-The item report is the summarised view, and it is the one most consumers read. Its six
-values are what the rest of this page is organised around. Alongside them the client
+The item report is the summarised view, and it is the one most consumers read. Its values
+are what the rest of this page is organised around. Alongside them the client
 records a `status_reason_code`, which is what actually tells you *why*.
 
 ## Installed
@@ -32,8 +32,8 @@ nothing newer in the catalog — or when an install, update or removal outcome f
 run reported success.
 
 Reason codes that produce it: `file_match`, `registry_match`, `product_code_match`,
-`directory_match`, `hash_match`, `version_match`, `script_confirmed`, `wmi_match`,
-`self_update_current`, `no_checks`, `install_completed`.
+`hash_match`, `version_match`, `script_confirmed`, `self_update_current`, `no_checks`,
+`install_completed`.
 
 Nothing to do. Two caveats:
 
@@ -63,15 +63,13 @@ acting on it.
 | `not_installed` | No trace of the item found | Normal for a new assignment. It installs on the next run |
 | `update_available` | A newer version is in the catalog | Normal |
 | `version_outdated` | The installed version is older than the catalog's | Normal |
-| `version_mismatch` | The installed version differs from what was expected | Normal |
 | `file_missing` | A path in the `installs` array does not exist | Normal, unless it repeats — see the loop section below |
 | `directory_missing` | A directory in the `installs` array does not exist | As above |
 | `registry_missing` | The registry entry named by `check.registry.name` was not found | As above |
 | `product_code_missing` | The MSI product or upgrade code is not registered | As above |
 | `hash_mismatch` | A file exists but does not match the declared checksum | The file on disk is not the file the pkgsinfo describes |
 | `installcheck_needed` | The item's `installcheck_script` exited 0, meaning "install needed" | The script is the authority. If this repeats forever, the script is the bug |
-| `on_demand` | The item is `on_demand: true` | Expected. See below |
-| `dependency_missing` | A `requires` dependency is not installed | It installs first, then the item |
+| `on_demand` | The item is `OnDemand: true` | Expected. See below |
 
 ### Pending because Cimian chose not to act this run
 
@@ -86,30 +84,31 @@ by definition: it is not on the machine.
 | `deferred_install_window` | The current time is outside the item's `install_window` | Nothing. It installs inside the window, or sooner if `force_install_after_date` has passed |
 | `blocking_apps` | One of the item's `blocking_applications` is running | Nothing, unless it never clears. The item is skipped for the whole run and retried on the next one |
 | `deferred_user_active` | An automatic run found a user active, and the item is not marked `unattended_install`, or its `restart_action` would interrupt the session | Nothing. It installs on an unattended run, or mark the item unattended if it is safe to install under a user |
-| `user_deferred` | A user postponed it | Nothing |
-| `pending_reboot` | Windows is waiting for a restart | Restart the machine. Also see the loop section below |
-| `disk_space` | Not enough free space — Cimian wants twice the installer size | Free space on the machine |
-| `network_metered` | The connection is metered and the download is large | Nothing |
-| `admin_hold` | The item is on hold | Nothing, unless you placed the hold |
-| `download_pending` / `download_failed` | The payload has not arrived | See [Troubleshooting](Troubleshooting) |
-| `schedule_waiting` | Waiting for a maintenance window | Nothing |
+| `pending_reboot` | A previous install of this item succeeded and is finalised by a restart, so the reinstall is held back until the machine restarts | Restart the machine. Also see the loop section below |
 
 A machine that reports the same item as `Pending` with `deferred_install_window` every
 hour is behaving correctly. A machine that reports it as `Pending` with `blocking_apps`
 for days is not: the blocking application is never closing, and the item will never
 install.
 
-### Pending because the item is not eligible
+### When the item is not eligible
 
 | Reason code | Meaning | What to do |
 |---|---|---|
-| `architecture_mismatch` | The item does not support this machine's architecture | Nothing, if the assignment is intentional. Otherwise fix the manifest |
-| `os_version_mismatch`, `os_version_too_old`, `os_version_too_new` | The machine falls outside the item's `minimum_os_version` / `maximum_os_version` | Nothing, or widen the range |
+| `os_version_too_old`, `os_version_too_new` | The machine falls outside the item's `minimum_os_version` / `maximum_os_version` | Nothing, or widen the range |
 | `agent_version_too_old` | The running Cimian client is older than the item's `minimum_cimian_version` | Update the client — see [Updating-Cimian](Updating-Cimian) |
+
+These codes are recorded on the item's `status_check` event, with status `skipped`. In
+`items.json` an ineligible item that is not installed reports as `Pending` with
+`not_installed`, and one that is already installed reports as `Installed`.
+
+An item whose `supported_architectures` excludes the machine is dropped when the catalogs
+load, so the client treats it as an item no catalog offers. See
+[Not Available](#not-available).
 
 ### Pending because of an on-demand item
 
-An item marked `on_demand: true` is never tracked as installed. It is checked before
+An item marked `OnDemand: true` is never tracked as installed. It is checked before
 any other rule in the detection cascade and always comes back `pending` with reason
 code `on_demand`, so that it runs every time it is requested. Its `installcheck_script`
 is deliberately not consulted.
@@ -122,12 +121,12 @@ protection for the same reason. Do not alert on it. See
 ## Warning
 
 The item was acted on, or deliberately held back, and needs a human to look at it — but
-nothing failed outright. There are three ways to reach it.
+nothing failed outright. There are four ways to reach it.
 
 ### A package that reported its own warning
 
-An install that succeeded but whose postinstall script emitted a `CIMIAN-WARNING:`
-marker line is recorded as `Warning` rather than `Installed`. The install itself is
+An install that succeeded but whose postinstall script exited with code 2, or emitted a
+`CIMIAN-WARNING:` marker line, is recorded as `Warning` rather than `Installed`. The install itself is
 counted as successful; the message is in `last_warning` and `warning_messages`.
 
 This is how a package says "I installed, but something about the result needs
@@ -146,7 +145,8 @@ stopped retrying it for a while. The status is `Warning` and the reason code is
 The item carries two messages, and they say different things:
 
 - the *reason* — the counting rule that tripped and how long the pause lasts, for
-  example "Rapid-fire loop: 3 installs within 2 hours; paused for 12h";
+  example "Looping install detected: Example App v4.2.1.0 — 3 installs within 2 hours;
+  paused for 12h 0m";
 - the *cause* — what the package's own checks keep finding, for example
   "Needs install because installs[0] file `C:\Program Files\Example App\example.exe`
   not found".
@@ -168,8 +168,8 @@ so the item can be retried immediately.
 & "$env:ProgramFiles\Cimian\managedsoftwareupdate.exe" --clear-loop "Example App"
 ```
 
-Changing the item's install behaviour in the repo clears suppression on its own — the
-client fingerprints the catalog entry and a change to it auto-clears the window. So
+Changing the item's pkgsinfo in the repo clears suppression on its own — the client
+fingerprints the catalog entry and a change to it auto-clears the window. So
 does a client update, once, fleet-wide. Suppression windows also expire by themselves,
 and an item that starts converging retires its own history.
 
@@ -186,6 +186,12 @@ clearing rules.
 An item pulled in by another item's `requires` and then suppressed appears in
 `items.json` in its own right, as `Warning` with `loop_suppressed`, even though it is
 not a manifest entry on that machine.
+
+### A managed update whose check failed
+
+An item listed under `managed_updates` that is installed, but whose status check failed
+this run, is left alone rather than reinstalled on a guess. It is reported as `Warning`
+with the check's own reason and reason code, usually `script_error` or `check_failed`.
 
 ## Error
 
@@ -209,8 +215,7 @@ A failed item is counted in the session's `failures`, and the session ends as
 The item was uninstalled successfully this run, or the manifest asks for its removal
 and it is not present.
 
-Reason codes: `uninstall_confirmed`, `registry_removed`, `file_removed`,
-`script_confirmed_removal`.
+No reason code is recorded for a removal.
 
 Nothing to do. Note that an item can only be removed if Cimian has a way to remove it —
 an `uninstaller` block, an `uninstall_script`, a registered MSI product, an MSIX
@@ -220,12 +225,18 @@ identity, or an entry in Programs and Features it can drive. An item with
 
 ## Not Available
 
-The item cannot be obtained for this machine. In practice this means the manifest names
-something the loaded catalogs do not offer, or offer only for a different architecture.
+`Not Available` is part of the reporting schema, but the current client never writes it.
 
-What to do: confirm the item name spelling in the manifest, confirm the item is in one
-of the catalogs the client is configured to read, and confirm the catalog has been
-regenerated since the pkgsinfo was added. See [Using-Catalogs](Using-Catalogs).
+An item the loaded catalogs do not offer — a misspelled name, a catalog that was not
+regenerated, a catalog the manifest does not name, or an item offered only for a
+different architecture — is skipped during status checking with
+`Item not in catalog: <name>` in the verbose run log. In `items.json` it is currently
+reported as `Installed`, with no reason code and no installed version.
+
+What to do: when an item reports `Installed` with no `installed_version`, confirm the item
+name spelling in the manifest, confirm the item is in one of the catalogs the client
+reads, and confirm the catalog has been regenerated since the pkgsinfo was added. See
+[Using-Catalogs](Using-Catalogs).
 
 ## Statuses that mislead, in one place
 
@@ -247,6 +258,8 @@ installed state, and it is exempt from loop protection.
 
 **An item with `no_checks` is `Installed` on the client's word alone.** Nothing was
 verified. A script-only item with no verification is assumed to have worked.
+
+**An item no catalog offers is `Installed`.** See [Not Available](#not-available).
 
 **`Pending` is also the fallback for anything unrecognised.** If a status value cannot
 be mapped, it becomes `Pending`. Read `status_reason_code` rather than inferring from
@@ -272,7 +285,6 @@ why a check disagrees with reality.
 | `script` | An `installcheck_script`, `version_script` or `check.script` |
 | `managed_installs` | Cimian's own install receipt for the item |
 | `self_update` | The running client version compared against the catalog |
-| `wmi` | A WMI query |
 | `reportmate_usage` | Per-user usage data, used by unused-software removal |
 | `none` | No check ran — the status came from a rule, not a probe |
 

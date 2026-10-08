@@ -22,7 +22,7 @@ on behaviour.
 |---|---|---|---|
 | `name` | string | — | **Required.** The package's identity. Manifests reference it, catalogs are keyed on it, the install receipt is named after it. Matched case-insensitively everywhere. Changing it creates a new package rather than renaming the existing one. |
 | `version` | string | — | **Required.** The other half of the identity, and the value every update decision compares against. Normalised before comparison; an unparseable version compares as equal to everything, so it never triggers an update. See [Version Comparisons](Version-Comparisons). |
-| `catalogs` | list of string | `[]` | Which catalogs `makecatalogs` publishes this item into. Consumed only at catalog-generation time; the client never sees it. An item with no `catalogs` still lands in the always-generated `All` catalog. |
+| `catalogs` | list of string | `[]` | Which catalogs `makecatalogs` publishes this item into. Used only at catalog-generation time; the client ignores it. An item with no `catalogs` still lands in the always-generated `All` catalog. |
 
 `makecatalogs` does not enforce `name` or `version`. A pkgsinfo missing either one parses and
 publishes; the failure surfaces later as an item that no manifest can match, or an item that
@@ -36,7 +36,7 @@ navigation.
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `display_name` | string | unset | Human-readable name shown in Managed Software Center. Falls back to `name`. |
-| `description` | string | unset | Description shown in Managed Software Center. Line endings are normalised and runs of three or more blank lines collapsed. An empty string is dropped entirely when a tool rewrites the file — omit the key instead. |
+| `description` | string | unset | Description shown in Managed Software Center. Line endings are normalised when a tool rewrites the file. |
 | `category` | string | unset | Grouping label in the GUI. Also used as a subdirectory name in the client's download cache. |
 | `developer` | string | unset | Publisher label in the GUI. |
 | `icon_name` | string | unset | Icon filename inside `<repo>/icons/`. When unset the client looks for `<name>.png`. See [Product Icons And Screenshots](Product-Icons-And-Screenshots). |
@@ -48,7 +48,7 @@ These gate whether an item is even considered on a given device.
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `supported_architectures` | list of string | `[]` (all) | Architecture filter, applied when the catalog is loaded — before any manifest matching, so a filtered-out item behaves as if it does not exist. `amd64` and `x86_64` normalise to `x64`. |
-| `minimum_os_version` | string | unset | Minimum Windows version, e.g. `10.0.19045`. Gates the `install`, `update` and `default` actions. |
+| `minimum_os_version` | string | unset | Minimum Windows version, e.g. `10.0.19045`. Gates the `install` and `update` actions. |
 | `maximum_os_version` | string | unset | Maximum Windows version. Same gating. |
 | `minimum_cimian_version` | string | unset | Minimum version of the Cimian agent itself. Same gating. |
 | `requires` | list of string | `[]` | Names of packages that must be installed first. Resolved into the run and installed ahead of this item. A failed dependency aborts this item. See [Dependencies And Update Chains](Dependencies-And-Update-Chains). |
@@ -64,17 +64,17 @@ The `installer:` block describes the payload and how to run it.
 | Key | Type | Default | What it does |
 |---|---|---|---|
 | `installer.location` | string | `""` | Payload path relative to `<repo>/pkgs/`. An absolute `http://` or `https://` URL is also accepted and used as-is. |
-| `installer.type` | string | inferred | Which installation mechanism to use. Recognised: `msi`, `exe`, `msix`, `appx`, `powershell`, `ps1`, `nupkg`, `chocolatey`, `pkg`, `nopkg`, `script`. **Anything unrecognised falls through to the EXE installer.** When blank, the type is inferred from the payload's file extension; with no payload at all it becomes `script`. See [Installer Types](Installer-Types). |
+| `installer.type` | string | inferred | Which installation mechanism to use. Recognised: `msi`, `exe`, `msix`, `appx`, `powershell`, `ps1`, `nupkg`, `chocolatey`, `nopkg`, `script`. `nupkg` tries sbin-installer and falls back to Chocolatey; `chocolatey` goes straight to Chocolatey. **Anything unrecognised falls through to the EXE installer.** When blank, the type is inferred from the payload's file extension; with no payload at all it becomes `script`. See [Installer Types](Installer-Types). |
 | `installer.hash` | string | unset | Expected digest of the payload. The client computes **SHA-256** and refuses a download that does not match, retrying like any other download failure. |
-| `installer.size` | integer | unset | Payload size in bytes. Used for the pre-download size sanity check and the disk-space estimate. |
+| `installer.size` | integer | unset | Payload size in bytes. Used for the disk-space check before download. |
 | `installer.args` | list of string | `[]` | Arguments passed to the installer verbatim. This is the key you want. |
 | `installer.switches` | list of string | `[]` | Windows-style arguments; a leading `/` is added if you omit it. |
 | `installer.flags` | list of string | `[]` | Unix-style arguments; `-` is prefixed for a single character, `--` otherwise, if you omit it. |
 | `installer.subcommand` | string | unset | Emitted before everything else on the composed command line. |
 | `installer.success_codes` | list of integer | unset | Additional process exit codes to treat as success. `0` and `3010` are always successful; MSI removal additionally accepts `1605` and `1614`. |
-| `installer.product_code` | string | unset | MSI ProductCode. A legacy shape — put the identity in `installs[]` instead. Only consulted when `installer.type` is `msi` and no `installs[]` entry resolved. |
+| `installer.product_code` | string | unset | MSI ProductCode. A legacy shape — put the identity in `installs[]` instead. For detection, only consulted when `installer.type` is `msi` and there is no `installs[]` array, script, `check` block or install receipt. Also used to remove the MSI when neither `uninstaller[]` nor an `installs[]` ProductCode exists. |
 | `installer.upgrade_code` | string | unset | MSI UpgradeCode, same legacy status. |
-| `installer.temp_dir` | string | unset | A short extraction directory, to avoid hitting the Windows path-length limit when a bundle unpacks deeply. |
+| `installer.temp_dir` | string | unset | A short extraction directory, passed to sbin-installer as `--temp-dir` to avoid the Windows path-length limit. Only used on the sbin-installer path (`nupkg`, and MSIs built by `cimipkg`). |
 
 The composed command line is `subcommand`, then normalised `switches`, then normalised
 `flags`, then `args`. In practice, use `args` alone and write the arguments exactly as the
@@ -98,8 +98,8 @@ below it runs. Full detail is in
 | `installs` | list of entry | `[]` | The canonical detection mechanism. Each entry is one thing that must be true. **Any single failing entry marks the whole package as needing action.** See [Installs Arrays](Installs-Arrays). |
 | `check.registry.name` | string | unset | Substring matched against `DisplayName` in the uninstall registry, in both the 64-bit and 32-bit views. |
 | `check.registry.version` | string | unset | Only when set does a registry hit also compare the registered `DisplayVersion` against the catalog version. Without it, a registry hit means "installed" regardless of version. |
-| `check.registry.path` | string | unset | An alternate registry path to scan instead of the standard uninstall keys. |
-| `check.registry.value` | string | unset | Registry value name to read. |
+| `check.registry.path` | string | unset | An alternate path under `HKLM` whose subkeys are scanned for a matching `DisplayName`, instead of the standard uninstall key. |
+| `check.registry.value` | string | unset | Parsed, but not used by the client. |
 | `check.file.path` | string | unset | A file whose existence means installed. |
 | `check.file.version` | string | unset | When set, the file's file-version metadata is also compared. |
 | `check.file.hash` | string | unset | When set, the file's **SHA-256** digest is verified. |
@@ -138,15 +138,17 @@ scalar (`|`) so the body survives round-tripping. See
 |---|---|---|---|
 | `preinstall_script` | string | unset | Runs before the installer. A non-zero exit **fails the install** and the installer never runs. |
 | `postinstall_script` | string | unset | Runs after a successful install. A non-zero exit is logged as a warning and does **not** fail the install. Writing a line `CIMIAN-WARNING: <message>` to stdout reports a Warning outcome for the item without failing it, and suppresses the post-install convergence probe. |
-| `install_script` | string | unset | The body executed for `installer.type: nopkg` and `script`. A `nopkg` item with no `install_script` warns and reports success. |
+| `install_script` | string | unset | The body executed for `installer.type: nopkg` and `script`, and ignored for every other type. A `nopkg` item with no `install_script` reports success; it warns only when it has no `preinstall_script` or `postinstall_script` either. |
+| `uninstallcheck_script` | string | unset | Decides whether a `managed_uninstalls` item still needs removing. **Exit 0 means removal is needed**, non-zero means skip. Two-minute timeout; a timeout or error skips removal for that run. Without it, install detection decides, so an item that is already gone is not removed again. |
 | `uninstall_script` | string | unset | Executed to remove the package when no `uninstaller[]` entry is declared. For a script-only package this is the entire removal story — it is also what makes such a package removable at all. |
 | `preuninstall_script` | string | unset | Runs before removal. |
 | `postuninstall_script` | string | unset | Runs after removal. |
 
-Scripts run through `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command`.
-Pre-install, post-install, pre-uninstall and post-uninstall scripts have **no timeout** at
-all. `installcheck_script` has a two-minute default; `version_script` and `check.script` have
-none.
+Scripts run through `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command`
+(Windows PowerShell 5.1, falling back to `pwsh` when it is absent). Pre-install,
+post-install, pre-uninstall and post-uninstall scripts have **no timeout** at all.
+`installcheck_script` and `uninstallcheck_script` have a two-minute default; `version_script`
+and `check.script` have none.
 
 ## Removal
 
@@ -156,9 +158,9 @@ none.
 | `uninstaller` | list of entry | `[]` | Explicit removal instructions. **This is a list, not a single mapping.** Only the first entry is dispatched on. |
 | `uninstaller[].type` | string | — | `msi`, `exe`, `powershell`, `ps1`, `msix`, `appx`. Anything else is treated as `msi`. |
 | `uninstaller[].product_code` | string | — | Required by the `msi` uninstaller. |
-| `uninstaller[].command` | string | — | Required by the `exe` and `powershell` uninstallers. |
+| `uninstaller[].command` | string | — | Required by the `exe` uninstaller (the executable to run) and the `powershell` uninstaller (the inline script to run). |
 | `uninstaller[].identity_name` | string | — | Package identity for `msix`/`appx` removal. |
-| `uninstaller[].location` | string | — | Path relative to `pkgs/`, when removal needs its own payload. `makecatalogs` warns if the file is missing. |
+| `uninstaller[].location` | string | — | Path relative to `pkgs/`. `makecatalogs` warns if the file is missing, but the client neither downloads nor runs it; removal uses `command`, `product_code` or `identity_name`. |
 | `uninstaller[].args` / `.switches` / `.flags` / `.subcommand` | list / string | — | Arguments, composed exactly as on the installer side. |
 | `unused_software_removal_info.removal_days` | integer | unset | Remove the package when no tracked executable has been used for this many days. Zero or negative disables it. |
 | `unused_software_removal_info.paths` | list of string | unset | Absolute executable paths whose usage gates removal. When empty, falls back to `.exe` entries in `installs[]`. |
@@ -173,6 +175,10 @@ Any MSI is removable with or without a declared ProductCode — removal falls ba
 the `UninstallString` out of the registry. An MSIX entry **without** `identity_name` is not
 removable, because there is nothing to synthesise an uninstaller from.
 
+`makecatalogs` does not currently carry `uninstaller[].command` into the catalog, so an `exe` or
+`powershell` uninstaller entry reaches the client without its command and fails. Until that is
+fixed, rely on registry-based removal or `uninstall_script` for those packages.
+
 `unused_software_removal_info` additionally requires `unattended_uninstall: true`. Without
 it the feature does nothing. See [Uninstalling Software](Uninstalling-Software).
 
@@ -180,15 +186,15 @@ it the feature does nothing. See [Uninstalling Software](Uninstalling-Software).
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `blocking_applications` | list of string | `[]` | Process names (not paths, no extension needed). If any is running, the item is **deferred for the whole run**, not retried later in the session. Applies to installs, updates and removals, in every run mode, regardless of whether a user is signed in. See [Blocking Applications](Blocking-Applications). |
+| `blocking_applications` | list of string | `[]` | Process names. A path or `.exe` suffix is reduced to the bare file name before matching. If any is running, the item is **deferred for the whole run**, not retried later in the session. Applies to installs, updates and removals, in every run mode, regardless of whether a user is signed in. See [Blocking Applications](Blocking-Applications). |
 | `unattended_install` | bool | `false` | When `false`, the item is deferred during an `--auto` run while a user is active. Has no effect on an interactive or idle run. |
 | `unattended_uninstall` | bool | `false` | The same, for removal. Also a hard prerequisite for `unused_software_removal_info`. |
 | `restart_action` | string | unset | Recognised values, **case-sensitive**: `RequireRestart`, `RecommendRestart` (both trigger a reboot), `RequireLogout` (triggers a logout), and `RecommendLogout` (no action of its own). All four mark the item as user-interrupting, which defers it in an `--auto` run with an active user. A reboot in auto or bootstrap mode is a `shutdown /r` with a 300-second grace period. |
 | `install_window.start` | string | unset | Start of the permitted install window, e.g. `22:00`. Inclusive. |
 | `install_window.end` | string | unset | End of the window, e.g. `05:00`. Exclusive. A start later than the end means an overnight window and is supported. |
 | `install_window.weekdays` | list of string | unset | `Mon` `Tue` `Wed` `Thu` `Fri` `Sat` `Sun`, case-insensitive. For the after-midnight half of an overnight window, *yesterday's* abbreviation is the one matched. |
-| `force_install_after_date` | datetime | unset | Once this moment has passed, the item installs regardless of `install_window`, and an item that only appears in `optional_installs` is force-installed. See [Force Installs And Deadlines](Force-Installs-And-Deadlines). |
-| `installer_timeout` | integer | unset | Per-item override of the fleet installer timeout, **in seconds**. Must be greater than zero to take effect. The fleet default is 900 seconds. On timeout the process tree is killed. Note that a stale comment in the source describes this field as minutes; the engine treats it as seconds. |
+| `force_install_after_date` | datetime | unset | Once this moment has passed, a managed install or update installs regardless of `install_window`. It is not enforced for a title that appears only in `optional_installs`, and a Self Service request with no version installed yet carries no deadline. See [Force Installs And Deadlines](Force-Installs-And-Deadlines). |
+| `installer_timeout` | integer | unset | Per-item override of the fleet installer timeout, **in seconds**. Must be greater than zero to take effect. The fleet default is 900 seconds (`InstallerTimeout` in `Config.yaml`). On timeout the process tree is killed. |
 | `precache` | bool | `false` | Download the payload proactively, even for an optional item nobody has requested. |
 | `OnDemand` | bool | `false` | **This key is PascalCase, deliberately.** The item is never considered installed, never gets an install receipt, and runs every session. It also bypasses install-loop suppression and skips the convergence probe. It takes precedence over `installcheck_script`, which is therefore never consulted for an OnDemand item. Writing `on_demand:` in snake_case does nothing at all. See [On Demand Items](On-Demand-Items). |
 | `recurring` | bool | `false` | Exempts an idempotent maintenance item from install-loop suppression **without** OnDemand's never-installed, no-receipt semantics. The item still tracks normally. |
@@ -210,16 +216,13 @@ own authoring tools. None of them change what a client does.
 
 | Key | What actually happens |
 |---|---|
-| `uninstallcheck_script` | Written by `cimiimport` and `makepkginfo` (which even exposes `--uninstall-check-script` as a flag) and carried into the catalog by `makecatalogs`. The client has no property for it and nothing in the update engine reads it. Removal is governed entirely by whether the package is removable and by `managed_uninstalls`. |
 | `identifier` | Written by the authoring tools and carried into the catalog. The client has no such property, so it is dropped on load. Package identity is `name`, and only `name`. |
 | `installer.arguments` | Accepted by every authoring tool and by `makecatalogs`, but the client's installer model has no `arguments` property. **Your arguments are silently discarded.** Use `installer.args`. |
 | `installer.identity_name` | Accepted at the `installer:` level and carried into the catalog, but the client reads `identity_name` only from `uninstaller[]` and `installs[]` entries. Setting it on `installer:` does nothing. |
 | `installer_type` (top-level scalar) | Written by `makepkginfo` as a top-level key. `makecatalogs` has no such property, so it is stripped at catalog generation and never reaches a device. The real key is `installer.type`. |
 | `receipts` | Not part of the Cimian schema. It is parsed only by `repoclean`, which reads foreign Munki-shaped pkgsinfo for repo-cleanup purposes. Never read by a client. |
 | `uninstall_method` | Same: a Munki key that only `repoclean` looks at. Removal mechanism is chosen from `uninstaller[]`, `uninstall_script` and `installer.type` — there is no method field. |
-| `installer_item_location` | A Munki key. Not part of the Cimian schema; only `repoclean` parses it. Use `installer.location`. |
-| `installer_item_hash` | Same. Use `installer.hash`. |
-| `installer_item_size` | Same. Use `installer.size`. |
+| `installer_item_location` / `installer_item_hash` / `installer_item_size` | Munki keys. The client would copy them into `installer.location`, `installer.hash` and `installer.size` (size in KB) where the `installer:` block has no value, but `makecatalogs` does not carry them into the catalog, so they never arrive. Use the `installer:` keys. |
 | `uninstaller_item_location` | Same. Use `uninstaller[].location`. |
 | `uninstaller_path` | Was declared by `makepkginfo` and never by anything else, so setting it never did anything. It has been removed, and a regression test asserts it is not written. |
 | `supersedes` | Not a pkgsinfo key. It exists in `cimipkg`'s `build-info.yaml`, where it lists legacy MSI UpgradeCodes to remove at build time. The client has no supersession resolution of any kind. |

@@ -22,13 +22,14 @@ makecatalogs [--repo_path <path>] [--skip_payload_check] [--hash_check]
 | `--repo_path` | `-repo_path`, `-r` | from config | Path to the repo. |
 | `--skip_payload_check` | `-s` | off | Do not check that installer and uninstaller files exist. |
 | `--hash_check` | — | off | Also compare each payload's MD5 hash against the pkgsinfo. Slow on a large repo. Size is checked without it. |
-| `--silent` | `-q` | off | Suppress the per-item and per-catalog progress lines. Warnings and errors still print. |
+| `--silent` | `-q` | off | Suppress the per-item and per-catalog progress lines and the stale-catalog warning. Other warnings and errors still print. |
 | `--tolerate_parse_errors` | — | off | Write catalogs and exit 0 even when some pkgsinfo failed to parse. |
-| `-V` | — | — | Print the version and exit. |
+| `-V` | — | — | Print `makecatalogs version <n>` and exit. |
+| `--version` | — | — | Print the build version and exit. |
 | `--help` | — | — | Print usage and exit. |
 
 `-repo_path` with a single dash is a real alias, kept for compatibility with
-older tooling. There is no `--version` long form; use `-V`.
+older tooling.
 
 ## Finding the repo
 
@@ -36,6 +37,10 @@ With `--repo_path` given, that path is used. Without it, `makecatalogs` reads th
 `repo_path` key from `%ProgramData%\ManagedInstalls\Config.yaml`. If that file
 does not exist, cannot be parsed, or has no `repo_path`, the tool prints an error
 and exits 1 — it never guesses a default.
+
+The key must be spelled `repo_path`. `cimiimport --config` writes `RepoPath`, which
+`makecatalogs` does not read, so a configuration created only by `cimiimport` still needs
+`--repo_path` here.
 
 ```
 makecatalogs --repo_path C:\CimianRepo
@@ -139,8 +144,8 @@ containing that item. Catalog names are matched case-insensitively, so
 item with no `catalogs:` list appears only in `All.yaml`.
 
 Any `.yaml` file already in `<repo>\catalogs` whose name is not a catalog in this
-run is **deleted**, with `WARNING: Removed stale catalog <path>`. Do not keep
-hand-written files in that directory.
+run is **deleted**, with `WARNING: Removed stale catalog <path>` (not printed under
+`--silent`). Do not keep hand-written files in that directory.
 
 A catalog file is a single `items:` list of full pkgsinfo records:
 
@@ -218,7 +223,9 @@ Within `installer:` and each `uninstaller:` entry: `location`, `hash`, `type`,
 `temp_dir`, `product_code`, `upgrade_code`, `identity_name`.
 
 Within each `installs:` entry: `type`, `path`, `md5checksum`, `version`,
-`product_code`, `upgrade_code`, `display_name`, `identity_name`.
+`product_code`, `upgrade_code`, `display_name`, `identity_name`. Note that `key_path`,
+which [cimiimport](cimiimport) writes into `installs` entries and the client can read, is
+not in this list, so it is dropped from the catalogs.
 
 Key names are matched exactly as written, including `OnDemand`, which is
 capitalised where every other key is lower case with underscores.
@@ -290,7 +297,6 @@ where the file sits on disk.
 - Unknown keys are dropped without a warning.
 - `--hash_check` reads every payload in the repo in full; on a large repo
   this reads the whole `pkgs\` tree.
-- There is no `--version` long option, only `-V`.
 
 ## See also
 

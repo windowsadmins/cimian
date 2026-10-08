@@ -46,8 +46,9 @@ authoring tools, which run on an admin workstation. See
 [managedsoftwareupdate](managedsoftwareupdate).
 
 **client identifier** — the manifest name a device asks for. The `ClientIdentifier` setting
-in `Config.yaml` supplies it; if it is unset or 404s, the client falls back through the
-machine name, the BIOS serial, `Orphaned` and `site_default`. Same concept and same name as
+in `Config.yaml` supplies it, unless a client certificate is configured and its CN is used
+instead; if that is unset or 404s, the client falls back through the machine name, the BIOS
+serial, `Orphaned` and `site_default`. Same concept and same name as
 Munki's. See [Client Identifier Resolution](Client-Identifier-Resolution).
 
 **conditional item** — an entry in a manifest's `conditional_items` list: a `condition`
@@ -64,9 +65,10 @@ that still says it needs work has not converged, and is suppressed for a re-prob
 rather than reinstalling on the next run. See
 [Install Loop Prevention](Install-Loop-Prevention).
 
-**default install** — a name in a manifest's `default_installs`. It is installed once if it
-is not already present, and is then never re-enforced: a user may remove it and it does not
-come back. Same meaning as Munki's `default_installs`. See [Manifests](Manifests).
+**default install** — a name in a manifest's `default_installs`. The first run that sees it
+adds it to the user's self-service selections as an install request, and it is never
+re-added after that: a user who removes it in Managed Software Center keeps it removed. Same
+meaning as Munki's `default_installs`. See [Manifests](Manifests).
 
 **deferral** — an item that was going to be acted on but was set aside for this run, by an
 install window, a running blocking application, or the active-user check in an automatic
@@ -78,9 +80,11 @@ manifest tree and surfaced to Managed Software Center for promotion. It is prese
 only and queues nothing; the item must also appear in another list to be actionable. There
 is no per-package `featured` key in a pkgsinfo. See [Featured Items](Featured-Items).
 
-**force install** — `force_install_after_date` in a pkgsinfo. Once that date has passed the
-item installs even outside its install window, and even if it is only offered as an optional
-install. See [Force Installs And Deadlines](Force-Installs-And-Deadlines).
+**force install** — `force_install_after_date` in a pkgsinfo. Once that date has passed a
+managed install or update installs even outside its install window. As in Munki 7, the
+deadline is not enforced for a title that is only listed under `optional_installs`, nor for a
+Self Service request while no version of the title is installed yet. See
+[Force Installs And Deadlines](Force-Installs-And-Deadlines).
 
 **included manifest** — a manifest named in another manifest's `included_manifests`. It is
 fetched under `manifests/`, may itself include others to any depth, and its catalogs and
@@ -168,8 +172,8 @@ unchanged. Only `.yaml` is scanned — a `.yml` file is invisible. See
 
 **preflight and postflight scripts** — optional PowerShell scripts on the endpoint that run
 before and after a session. Preflight may rewrite the repository URL and client identifier,
-which the client re-reads afterwards. Neither has a timeout, and postflight does not run in
-a check-only run or after a crash. See
+which the client re-reads afterwards. Preflight is stopped after 10 minutes and postflight
+after 15, and postflight does not run in a check-only run or after a crash. See
 [Preflight And Postflight Scripts](Preflight-And-Postflight-Scripts).
 
 **receipt** — the client's own record that it installed an item, kept under

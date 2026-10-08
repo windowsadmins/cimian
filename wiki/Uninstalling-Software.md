@@ -7,7 +7,7 @@ client considers it removable at all, how the removal mechanism is chosen, what
 
 ## How an item gets queued for removal
 
-Four paths put an item on the removal list:
+Five paths put an item on the removal list:
 
 - **`managed_uninstalls` in a manifest.** The normal, explicit route. See [Manifests](Manifests).
 - **A conditional item's `managed_uninstalls`.** Same semantics, evaluated per device.
@@ -20,7 +20,13 @@ Four paths put an item on the removal list:
   `unattended_uninstall: true` and the device's usage data shows nobody has run it inside the
   threshold.
 
-All four then go through the same removal machinery.
+All five then go through the same removal machinery.
+
+A `managed_uninstalls` item is only queued while it is still present. If the pkgsinfo has an
+`uninstallcheck_script`, that decides (exit 0 means removal is needed); otherwise the install
+detection does, and an item it reports as not installed is skipped rather than removed again
+every run. A detection error also skips removal for that run. See
+[Scripts In pkgsinfo](Scripts-In-pkgsinfo).
 
 ### Manifest precedence beats intent
 
@@ -28,7 +34,7 @@ Manifest items are deduplicated by name across the whole include tree, and the a
 fixed:
 
 ```
-install > uninstall > update > default > optional > profile = app
+install > uninstall > update > optional > default > profile = app
 ```
 
 **If any manifest in the tree lists the item in `managed_installs`, it will never be uninstalled**,
@@ -102,6 +108,9 @@ Dispatch is on its `type`:
 | anything else | falls through to the `msi` handler |
 
 An `msi` uninstaller entry with no `product_code` fails. An `exe` entry with no `command` fails.
+`makecatalogs` does not currently carry `uninstaller[].command` into the catalog, so `exe` and
+`powershell` uninstaller entries reach the client without it and fail. Until that is fixed, prefer
+`uninstall_script` or the registry fallback for those packages.
 
 **2. `uninstall_script`**, when no `uninstaller:` block is declared. Run as inline PowerShell; a
 non-zero exit fails the removal. See [Scripts In pkgsinfo](Scripts-In-pkgsinfo).
@@ -128,11 +137,11 @@ as success — the product is already gone, which is the desired end state.
 
 ## What runs around the removal
 
-1. `preuninstall_script`, if present. A non-zero exit aborts the removal.
-2. Dependents first: any catalog item whose `requires` names this item is removed before it,
-   recursively, and if a dependent fails to remove, the parent removal is abandoned.
-3. `blocking_applications` are rechecked immediately before the removal. A running blocker skips
+1. Dependents first: any installed catalog item whose `requires` names this item is removed
+   before it, recursively, and if a dependent fails to remove, the parent removal is abandoned.
+2. `blocking_applications` are rechecked immediately before the removal. A running blocker skips
    it for this run. See [Blocking Applications](Blocking-Applications).
+3. `preuninstall_script`, if present. A non-zero exit aborts the removal.
 4. The removal itself.
 5. `postuninstall_script`, **only if the removal succeeded**. A non-zero exit is a warning only.
 6. The item's `ManagedInstalls` receipt is deleted.
@@ -173,7 +182,8 @@ the ARP entry, the MSIX identity or your script, all of which live on the device
 installer from `pkgs/` therefore does not break removal.
 
 What does break removal is deleting the **pkgsinfo**. The item is looked up in the loaded catalog
-by name; if it is not there, the removal logs `Item not found in catalog: <name>` and fails. To
+by name; if it is not there, the client logs `Item not in catalog: <name> (action: uninstall)` at
+detail level and skips it, so nothing is removed. To
 retire a title, keep its pkgsinfo published in a catalog the device loads and move the name into
 `managed_uninstalls`. Only remove the pkgsinfo once every device has reported the removal.
 

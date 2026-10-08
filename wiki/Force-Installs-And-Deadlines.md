@@ -1,10 +1,10 @@
 # Force Installs And Deadlines
 
 `force_install_after_date` puts a deadline on a package. Once the deadline passes, Cimian
-stops honouring the two things that would otherwise let the package sit uninstalled: an
-install window, and a user's choice not to install an optional item. This page covers the
-key's format, exactly what changes when the deadline passes, what the user sees, and — just
-as importantly — the parts of a deadline story that Cimian does not implement.
+stops honouring the package's install window. That is the only thing the deadline changes in
+the client. This page covers the key's format, which manifest lists it applies to, what the
+user sees, and — just as importantly — the parts of a deadline story that Cimian does not
+implement.
 
 ## The key
 
@@ -43,16 +43,34 @@ Write the deadline as a plain local date or date-time and accept that a geograph
 fleet crosses it at different absolute moments. If you need a single global instant, pick the
 date-time in the time zone your fleet is in and give yourself margin.
 
+## Which items the deadline applies to
+
+The deadline follows Munki 7: it is enforced for items the admin requires, and not for items
+the user has only been offered.
+
+| Where the item comes from | Deadline enforced |
+|---|---|
+| `managed_installs` | Yes |
+| `managed_updates`, item already present | Yes |
+| `optional_installs` only, not requested in Self Service | No. The item is not queued, gets no banner, and its Managed Software Center record carries no deadline. |
+| `optional_installs`, requested in Self Service, no version installed yet | No. The request installs it normally, but the deadline neither overrides the install window nor appears in `InstallInfo.yaml`. |
+| `optional_installs`, requested in Self Service, some version already installed | Yes |
+| A `requires` or `update_for` item pulled in only by such a Self Service request, with no version installed | No |
+
+A deadline on an optional title therefore never turns "available if you want it" into
+"mandatory". To make an optional title mandatory by a date, move it to `managed_installs`
+on that date.
+
 ## What changes when the deadline passes
 
-Exactly two things. Both are evaluated on every run.
+One thing, evaluated on every run.
 
 ### It overrides an install window
 
 An item with an [install window](Supported-pkgsinfo-Keys) is normally dropped from the run
-when the current time is outside that window, and is reported as pending with reason code
+when the current time is outside that window, and is reported as deferred with reason code
 `deferred_install_window`. Once `force_install_after_date` is in the past, the item stays in
-the queue and installs regardless of the window, reported with reason code
+the queue and installs regardless of the window, logged with reason code
 `deadline_overrides_window`:
 
 ```
@@ -62,36 +80,18 @@ Installing Example App v4.2.0 despite install_window 02:00-05:00: force_install_
 This applies to installs, updates and removals alike — the window filter covers all three
 lists, and the deadline override is checked in all three.
 
-### It forces an optional install
-
-An item listed in `optional_installs` is normally offered in Managed Software Center and
-installed only if a user asks for it. Once the deadline is in the past, Cimian status-checks
-the item on every run and, if it needs action, queues it as a normal install or update:
-
-```
-    -> force_install_after_date 2026-10-01 has passed, forcing install of optional item Example App
-```
-
-Reason code `force_install_deadline`. Two eligibility gates still apply before the item is
-queued: the item's minimum OS version and its minimum Cimian client version. An ineligible
-item is skipped with the corresponding reason, not forced.
-
-This is the main use of the key. It turns "available if you want it" into "available now,
-mandatory from the first of the month", without you having to edit manifests on the deadline
-day.
-
-### For a plain managed install, the key changes nothing
+### Without an install window, the key changes nothing in the client
 
 An item in `managed_installs` with no install window is already mandatory: it is queued on
-every run until it is installed. Adding `force_install_after_date` to it has no observable
-effect, before or after the date. The key only matters where something else would otherwise
-be holding the install back.
+every run until it is installed. Adding `force_install_after_date` to it changes nothing in
+`managedsoftwareupdate`, before or after the date. It does change what Managed Software
+Center shows, described below.
 
 ## What still stops a past-deadline install
 
-The deadline overrides the install window filter and the optional-item gate. It overrides
-nothing else. In particular, an item whose deadline has passed is still deferred by every one
-of the following:
+The deadline overrides the install window filter. It overrides nothing else. In
+particular, an item whose deadline has passed is still deferred by every one of the
+following:
 
 | Gate | Behaviour with a passed deadline |
 |---|---|
@@ -99,7 +99,7 @@ of the following:
 | Auto mode with an active user, when `unattended_install` is not `true` | Deferred |
 | Auto mode with an active user, when `restart_action` would interrupt the user | Deferred, even with `unattended_install: true` |
 | An open LoopGuard suppression window | Suppressed |
-| Failed dependency, disk space, architecture or OS-version ineligibility | Not installed |
+| Failed dependency, architecture, OS-version or client-version ineligibility | Not installed |
 
 The order matters. The install-window filter runs first, so a deadline item survives it — and
 is then handed to the blocking-application filter and the active-user filter, either of which
@@ -140,9 +140,10 @@ approaches:
 | Past | `This item is past its installation deadline!` |
 
 **A window banner.** The nearest deadline among the session's managed installs and removals
-produces a banner: an "must be installed by" line inside three days, and an "Urgent" line
-inside one day. Outside three days there is no banner. The banner is computed from the
-managed-install and removal lists only, so an *optional* item's deadline does not raise it.
+produces a banner: a "must be installed by" line inside three days, and an "Urgent" line
+inside one day. Outside three days there is no banner. Optional-install records never carry
+a deadline, and neither does a Self Service request that is exempt as described above, so
+neither raises the banner.
 
 **Ordering.** Items with a deadline sort to the top of both the updates and the installs
 lists, nearest deadline first.
@@ -170,8 +171,11 @@ Munki admins reasonably expect:
   [Install Loop Prevention](Install-Loop-Prevention).
 - **The deadline is not enforced by the GUI.** Managed Software Center displays it; the
   installs happen in the normal `managedsoftwareupdate` session.
-- **There is no separate "force install" or "deadline" state in reporting.** A forced item is
-  reported as a normal pending install or update, distinguished only by its reason code.
+- **There is no separate "force install" or "deadline" state in reporting.** A deadline item
+  is reported as a normal pending install or update. The only deadline-specific reason code
+  in use is `deadline_overrides_window`.
+- **The deadline does not force an optional install.** See
+  [Which items the deadline applies to](#which-items-the-deadline-applies-to).
 
 ## Choosing a deadline
 
@@ -179,13 +183,13 @@ Give the fleet enough runs to hit the deadline. The scheduled task runs hourly, 
 one of the deferral gates above can consume runs, so a deadline set for tomorrow on a package
 with blocking applications is a deadline for the machines that happen to be idle.
 
-A workable pattern for a mandatory upgrade is: publish as an optional install with the
-deadline set several weeks out, let people take it on their own schedule, and let the
-deadline pick up the remainder. Mark it `unattended_install: true` so the remainder can
-actually be picked up.
+A deadline is most useful on a `managed_installs` or `managed_updates` item that also has an
+install window: users see the deadline coming in Managed Software Center, the window keeps routine installs out of working hours, and after the deadline the
+window no longer holds the install back. Mark it `unattended_install: true` so an auto run
+with a user present can actually pick it up.
 
-Removing the key later is safe — the item reverts to being optional or window-bound on the
-next catalog refresh — but a package already installed by the deadline stays installed.
+Removing the key later is safe — the item reverts to being window-bound on the next catalog
+refresh — but a package already installed by the deadline stays installed.
 
 ## See also
 

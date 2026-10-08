@@ -4,7 +4,7 @@ This is the complete set of facts a `condition` expression can test. Anything no
 here resolves to nothing, which stringifies to the empty string — so a mistyped fact name
 produces a condition that quietly matches or quietly does not, rather than an error.
 
-Fact names are case-insensitive. For the expression syntax and the operators, see
+Built-in fact names are case-insensitive. Custom fact names (see below) are stored lowercased and looked up exactly as written, so write them in lowercase in a condition. For the expression syntax and the operators, see
 [Conditional-Items](Conditional-Items).
 
 Facts are collected once per run, immediately before conditions are evaluated. If
@@ -27,9 +27,9 @@ is then empty or zero.
 | `domain` | string | `contoso` | `Win32_ComputerSystem.Domain`. On a device that is not directory-joined this holds the workgroup name. |
 | `username` | string | `svc-install` | The account the client is running as, not the interactive user. |
 | `machine_type` | string | `desktop` | One of `laptop`, `desktop`, `virtual`, `server`. Virtualisation is detected from the system manufacturer and model; laptop and server from the chassis type, with the presence of a battery as a secondary laptop indicator. |
-| `machine_model` | string | `Example Desktop 7090` | `Win32_ComputerSystem.Model`. On some vendors this is a product code rather than a readable name — see `model_version`. |
+| `machine_model` | string | `Example Corp Desktop 7090` | `Win32_ComputerSystem.Manufacturer` and `Model` joined with a space (either alone when the other is empty). On some vendors the model is a product code rather than a readable name — see `model_version`. |
 | `model_version` | string | `Example Mini Desktop Gen 2` | `Win32_ComputerSystemProduct.Version`. Empty on vendors that do not populate it. |
-| `joined_type` | string | `hybrid` | One of `workgroup`, `domain`, `entra`, `hybrid`. Derived from `Win32_ComputerSystem` combined with the cloud domain-join registry state. |
+| `joined_type` | string | `hybrid` | One of `workgroup`, `domain`, `entra`, `hybrid`, or `unknown` when collection fails. Derived from `Win32_ComputerSystem.PartOfDomain` combined with the cloud domain-join registry state. The cloud check only runs on a device that is already domain-joined, so a device that is Entra-joined only reports `workgroup`, and `entra` is not reached in practice. |
 | `battery_state` | string | `connected` | One of `connected`, `disconnected`, `unknown`, from `Win32_Battery`. |
 | `date` | string | `2026-01-15` | Today's date in `yyyy-MM-dd`, in the device's **local** time. |
 | `catalogs` | list of strings | `[Production]` | The catalog names contributed by the whole manifest tree. Use with `ANY`, or with `==`, which is a membership test against a list. |
@@ -68,10 +68,10 @@ a singular alias that returns the same list.
 
 | Fact | Type | Example | Source |
 |---|---|---|---|
-| `ram_total_gb` | int | `32` | Total physical memory, rounded to a common size (8, 16, 32, 64, 128). Use this for thresholds, not `totalmemorybytes`. |
-| `ram_type` | string | `DDR5` | From `Win32_PhysicalMemory`. One of `DDR3`, `DDR4`, `DDR5`, `LPDDR4`, `LPDDR5`. Empty when the firmware does not report a recognised type. |
-| `storage_type` | string | `NVMe` | Primary drive media, from `Win32_DiskDrive`. One of `NVMe`, `SSD`, `HDD`. |
-| `storage_capacity_gb` | long | `512` | Primary drive capacity in GB. |
+| `ram_total_gb` | int | `32` | Total physical memory, rounded to the nearest of 2, 4, 8, 16, 32, 64, 128, 256 or 512. Use this for thresholds, not `totalmemorybytes`. |
+| `ram_type` | string | `DDR5` | From `Win32_PhysicalMemory.SMBIOSMemoryType`, inferred from the module speed when the type code is not recognised. One of `DDR`, `DDR2`, `DDR3`, `DDR4`, `DDR5`, `LPDDR4`, `LPDDR5`. Empty when neither gives an answer. |
+| `storage_type` | string | `NVMe` | Media of the largest drive over 1 GB, from `Win32_DiskDrive`. One of `NVMe`, `SSD`, `HDD`; a drive that cannot be classified reports `SSD`. |
+| `storage_capacity_gb` | long | `477` | Capacity of that drive in GB (binary gigabytes, rounded). |
 
 ## Legacy spellings
 
@@ -104,7 +104,7 @@ custom fact.
 Custom facts are supported, and they are supplied by scripts on the device rather than by
 configuration.
 
-At the start of a run the client scans `%ProgramData%\ManagedInstalls\conditions\` — the
+The first time a condition is evaluated in a run, the client scans `%ProgramData%\ManagedInstalls\conditions\` — the
 directory only, not subdirectories — and runs every `.ps1`, `.bat`, `.cmd` and `.exe` it
 finds, in file-name order. Each script's standard output is read as `key=value` lines:
 the text before the first `=` becomes the fact name, lowercased and trimmed, and the rest

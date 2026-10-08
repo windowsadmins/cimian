@@ -112,9 +112,9 @@ normalising them, and the highest version wins. A version string it cannot parse
 as *equal* to everything, which means an unparseable version never triggers an update —
 see [Version Comparisons](Version-Comparisons).
 
-`catalogs` lists which catalogs this item is published into. This key is consumed by
-`makecatalogs` and never reaches the client; the client only ever sees whichever catalog
-files it was told to download. Publishing to `Testing` first and moving to `Production`
+`catalogs` lists which catalogs this item is published into. `makecatalogs` uses it to
+sort items into catalog files; the client ignores the key and only ever sees whichever
+catalog files it was told to download. Publishing to `Testing` first and moving to `Production`
 later is the normal promotion path — see [Promoting Between Catalogs](Promoting-Between-Catalogs).
 
 `installer.location` is the payload path relative to `pkgs/`. `installer.type` tells the
@@ -176,8 +176,9 @@ postinstall_script: |
 Points worth noting in that example. `description` uses a YAML block scalar; Cimian writes
 multi-line strings back in block style, so embedded PowerShell survives a rewrite intact.
 `hash` is a SHA-256 digest of the payload and the client refuses a download that does not
-match it. `blocking_applications` names processes, not paths — if `ExampleApp.exe` is
-running the item is deferred for the whole run rather than retried mid-session; see
+match it. `blocking_applications` is matched against running process names (a path or `.exe`
+suffix is reduced to the bare file name) — if `ExampleApp.exe` is running the item is
+deferred for the whole run rather than retried mid-session; see
 [Blocking Applications](Blocking-Applications). `installer_timeout` is in **seconds**.
 The `key_path` entry adds a second check on top of the MSI registry lookup: even after the
 UpgradeCode resolves, the named executable's file version must be at least the catalog
@@ -226,12 +227,10 @@ makecatalogs --repo_path C:\CimianRepo
 ```
 
 `makecatalogs` exits non-zero if any pkgsinfo failed to parse, so a pipeline cannot publish
-an incomplete catalog on a green exit code. Note that the catalogs are written before that
-check runs — the non-zero exit is a guard, not a rollback, so a failed run leaves partial
-catalogs on disk that you must fix and regenerate.
-
-An empty-string value is dropped on rewrite: `description: ""` does not survive a tool that
-rewrites the file. Omit the key instead.
+an incomplete catalog on a green exit code; `--tolerate_parse_errors` turns that into a
+warning and exits zero. Note that the catalogs are written before that check runs — the
+non-zero exit is a guard, not a rollback, so a failed run leaves catalogs on disk without the
+unparseable packages, which you must fix and regenerate.
 
 ## See also
 

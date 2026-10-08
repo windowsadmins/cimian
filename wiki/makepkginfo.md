@@ -27,10 +27,13 @@ create. Three modes follow from what you pass:
 
 `makepkginfo` refuses to run unless `C:\ProgramData\ManagedInstalls\Config.yaml` exists. If
 it is missing it prints `Error: Config file not found at ...` and exits 1. Outside `--new`
-the file's contents are never used, only its existence — but it must be there.
+the file is parsed but none of its values are used — but it must be there, and a file
+that is not valid YAML fails the run with exit 1.
 
 For `--new`, the config must also carry a repo path, under the key `repo_path`. The error
-message when it is absent says to set `'RepoPath'`; the key the parser reads is `repo_path`.
+message when it is absent says to set `'RepoPath'`; the key the parser reads is `repo_path`. A
+`Config.yaml` written only by `cimiimport --config` has `RepoPath` and no `repo_path`, so
+`--new` fails on it.
 
 ## What it infers, per installer type
 
@@ -131,6 +134,8 @@ All six `*_script` options and `--uninstaller` are silently ignored in files-onl
 
 The `--unused_path` help text says it defaults to the `.exe` entries in `installs`. It does
 not — if you pass no `--unused_path`, the `paths` key is simply omitted.
+
+`--version` and `--help` are also accepted.
 
 Exit code is `0` on success, `1` on a missing config, a missing `--new` name, an
 unconfigured repo path, no input at all, a missing installer file, or any exception.
@@ -310,7 +315,7 @@ the catalogs with [makecatalogs](makecatalogs).
   `installer:` block at all rather than an error.
 - Files-only mode silently drops `--displayname`, `--uninstaller`, `--unattended_uninstall`,
   all six script options and all three `--unused_*` options.
-- `Config.yaml` must exist even though nothing outside `--new` reads it.
+- `Config.yaml` must exist even though nothing outside `--new` uses its values.
 
 ## See also
 

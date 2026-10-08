@@ -74,10 +74,10 @@ Two other paths take part:
 
 ## How a staged update is applied
 
-`CimianWatcher` applies it. The service checks for a pending self-update when it starts,
-and again on every 10-second poll, but only when the machine is idle with respect to
-Cimian: it defers while it is running a triggered update itself, and it defers while any
-`managedsoftwareupdate` process exists at all — including one started by the hourly task
+`CimianWatcher` applies it. When the service starts it applies a pending update straight
+away. After that it checks on every 10-second poll, but only applies the update when the
+machine is idle with respect to Cimian: it defers while it is running a triggered update
+itself, and it defers while any `managedsoftwareupdate` process exists at all — including one started by the hourly task
 or by you at a prompt. Applying an update mid-session would replace
 `managedsoftwareupdate.exe` under a running install and truncate the session.
 
@@ -88,8 +88,8 @@ When it is idle, the service:
    endless retry loop on every restart.
 3. Launches the installer as a fully detached process and exits, so the service is not
    holding its own binary open while it is replaced.
-4. Windows restarts the service afterwards under its automatic recovery configuration, and
-   the new build takes over.
+4. For an MSI, the new build's post-install step starts the service again, and the new
+   build takes over.
 
 For an MSI, the command is a quiet install with a verbose log. `REINSTALLMODE=vamus
 REINSTALL=ALL` is appended **only** when that exact ProductCode is already installed —
@@ -98,9 +98,10 @@ plain install runs and the major upgrade removes the previous build. Passing rep
 properties to an unknown ProductCode produces a maintenance pass that reports success and
 changes nothing, which is exactly how clients get stuck for weeks.
 
-For `pkg` and `nupkg` types the update is handed to the sbin installer at
+For a `nupkg` client package the update is handed to the sbin installer at
 `C:\Program Files\sbin\installer.exe`; if that binary is absent the self-update fails.
-Anything other than `msi`, `pkg` or `nupkg` is refused as an unsupported installer type.
+Publish the MSI as the client item. An installer type the self-update path does not
+support is refused and nothing is installed.
 
 You can also apply a pending update on demand by restarting the service:
 
@@ -222,8 +223,8 @@ Get-Process managedsoftwareupdate -ErrorAction SilentlyContinue
 ```
 
 A hung run — most often a package script with no timeout — blocks self-updates
-indefinitely. Read `C:\ProgramData\ManagedInstalls\logs\cimiwatcher.log` for the
-deferral messages.
+indefinitely. Read the newest `C:\ProgramData\ManagedInstalls\logs\cimiwatcher<yyyyMMdd>.log`
+for the deferral messages.
 
 **Did the installer run and fail?** Read the newest file under
 `C:\ProgramData\ManagedInstalls\logs\selfupdate\`. That is the Windows Installer verbose

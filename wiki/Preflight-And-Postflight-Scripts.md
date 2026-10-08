@@ -32,8 +32,9 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File <script path>
 ```
 
 Windows PowerShell 5.1 at `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` is
-preferred. If it is missing, Cimian falls back to PowerShell 7 (`pwsh.exe`) and then to
-whatever `powershell` resolves to on `PATH`. Write for 5.1 unless you know your fleet.
+preferred. If it is missing, Cimian falls back to PowerShell 7 (`pwsh.exe` under
+`C:\Program Files\PowerShell`) and then to the first `pwsh.exe` on `PATH`. Write for 5.1 unless
+you know your fleet.
 
 The working directory is set to the directory holding the script, and `TERM` is set to
 `xterm-256color` so ANSI colour in your output survives.
@@ -146,19 +147,18 @@ That live stream is *not* written into the session log. The captured output reac
 warning or error text — a successful hook leaves no record of what it printed. If you need a
 durable trace of what a hook did, have the script write its own log file.
 
-## There is no timeout
+## Timeouts
 
-Neither hook has a timeout of any kind. The client waits for the process to exit, with no
-deadline, no cancellation and no kill. **A preflight script that hangs hangs the entire
-run** — no manifests are fetched, nothing installs, and the session stays open until the
-process is killed by something else.
+Preflight is allowed **10 minutes** and postflight **15 minutes**. When the limit is reached
+the client kills the script's whole process tree, including anything it shelled out to, and
+treats the hook as having failed: a timed-out preflight is handled by `PreflightFailureAction`
+like any other non-zero exit, and a timed-out postflight logs a warning. The same limits apply
+to `--preflight-only` and `--postflight-only`.
 
-The hourly scheduled task carries a four-hour execution time limit, so a hung hook on the
-scheduled path is eventually terminated by Task Scheduler rather than by Cimian, and the
-session is left to be marked `aborted` by the next run. A hook invoked any other way can hang
-indefinitely.
+The limits are a safeguard against a script that will never finish, not a performance budget.
+A preflight that runs for nine minutes still delays every install by nine minutes, every run.
 
-Build the timeout into the script. Anything that talks to the network needs its own bound:
+Build a tighter bound into the script. Anything that talks to the network needs its own:
 
 ```powershell
 $job = Start-Job { Invoke-RestMethod -Uri 'https://cimian.example.com/preflight' }
@@ -237,14 +237,14 @@ exit 0
 The full set of report files and their schemas is in
 [Reporting Data Contract](Reporting-Data-Contract).
 
-Do not put a retry loop with no bound in a postflight script. There is no timeout, and a
-reporting endpoint that is down will otherwise pin one `managedsoftwareupdate` process per
-hour until the machine is rebooted.
+Do not put a retry loop with no bound in a postflight script. A reporting endpoint that is
+down will otherwise hold every run open for the full 15-minute limit before the client kills
+the script.
 
 ## Limitations to design around
 
 - No arguments, so no run type, no item list, no session id on the command line.
-- No timeout on either hook.
+- Fixed timeouts of 10 minutes (preflight) and 15 minutes (postflight); not configurable.
 - Successful output is not persisted to the session log.
 - Postflight is skipped in check-only mode, after a crash, and after a preflight abort.
 - `PostflightFailureAction` is accepted and ignored.

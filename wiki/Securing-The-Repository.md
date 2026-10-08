@@ -136,6 +136,23 @@ Both keys must be non-empty or the pair is ignored entirely. The client Base64-e
 clear text in a file on every managed machine — this is the weakest option, and the DPAPI
 mechanism above exists to replace it.
 
+### Extra request headers
+
+A gateway in front of the repository that wants its own header, such as a device or
+tenant key, can be given one with `AdditionalHttpHeaders`:
+
+```yaml
+SoftwareRepoURL: https://cimian.example.com/repo
+AdditionalHttpHeaders:
+  - "X-Repo-Key: REPLACE_WITH_KEY"
+```
+
+These headers are sent in addition to the one `Authorization` header and cannot replace
+it: an entry naming `Authorization` or `User-Agent` is skipped with a warning. Like the
+other settings in the file, a value stored here is plain text. The headers go on every
+request, including to a separate payload host. See
+[Client Configuration](Client-Configuration) for the parsing rules.
+
 ### Confirming which one is in use
 
 ```powershell
@@ -235,7 +252,6 @@ configuration.
 | Not supported | Consequence |
 |---|---|
 | Shared-access-signature tokens and other signed-URL schemes | A repository behind a SAS-only endpoint cannot be used. Object storage works only when fronted by something that serves plain GETs at the repository's path layout. |
-| Arbitrary or extra request headers | There is no `AdditionalHttpHeaders` key and no hook. A repository or gateway that requires a custom header cannot be reached. |
 | Proxy configuration | The client sets no proxy. Requests use whatever the .NET HTTP stack does by default; there is no key to name a proxy, credentials or a bypass list. A proxy model exists in an unused configuration class and is not wired to anything. |
 | Windows Integrated authentication (NTLM, Negotiate, Kerberos) | A repository secured with Windows authentication cannot be reached. |
 | More than one `Authorization` header source at a time | The cascade picks one. A bearer token is never tried when the registry credential is present, even if the registry credential is rejected. |

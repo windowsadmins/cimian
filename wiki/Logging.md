@@ -31,7 +31,7 @@ matter for logging are `logs` and `reports`:
     installs\
     packages\
     selfupdate\
-    cimiwatcher.log
+    cimiwatcher20260305.log
   reports\
     run.log
     sessions.json
@@ -43,7 +43,7 @@ matter for logging are `logs` and `reports`:
 
 `logs` holds the dated session tree and nothing else. Anything that is not a session
 goes into a named subdirectory of its own — `installs`, `packages`, `selfupdate` — with
-`cimiwatcher.log` as the single exception.
+the watcher's daily `cimiwatcher<yyyyMMdd>.log` files as the single exception.
 
 Paths come from `%ProgramData%`, not from a literal `C:\`. A machine with a relocated
 `%ProgramData%` moves the whole tree with it.
@@ -92,8 +92,8 @@ is swallowed — logging never fails a run.
 
 ### install.log and reports\run.log
 
-Both use the same line format: a bracketed local timestamp, a left-padded five
-character level, then the message.
+Both use the same line format: a bracketed local timestamp, the level padded
+to five characters, then the message.
 
 ```
 [2026-03-04 14:15:02] INFO  Cimian managedsoftwareupdate starting (run type: auto)
@@ -228,17 +228,20 @@ verbosity is what gates output.
 
 | Path | Contents |
 |---|---|
-| `logs\installs\` | Verbose `msiexec` and MSIX logs for managed installs, named `<Item>_install.N.log`. The three most recent are kept per item. |
+| `logs\installs\` | Verbose `msiexec` logs for managed installs, named `<Item>_install.N.log`, with the three most recent kept per item (`.1` is the newest). An MSIX install writes `<Item>_msix_install.log`, replaced on each attempt. |
 | `logs\selfupdate\` | Verbose MSI logs from Cimian updating itself, named `selfupdate-yyyyMMdd-HHmmss.log`. |
 | `logs\packages\<Package>\` | Output from package pre/postinstall and uninstall scripts that ran as MSI custom actions, where there is no console to write to. |
-| `logs\cimiwatcher.log` | The watcher service's own rolling log. |
+| `logs\cimiwatcher<yyyyMMdd>.log` | The watcher service's own log, one file per day. |
 
-Package script logs are drained into the session log at the start of the next run,
-capped at 500 lines per package and phase, and the source file is deleted once it has
-been read. A script whose output arrives after the installer exits therefore surfaces
-in the *following* session's `install.log`, not the one that ran it.
+Package script logs are read into the session log as soon as the installer that ran
+them returns, capped at 500 lines per package and phase, and the source file is deleted
+once it has been read. Output that arrives outside a session, such as from an install
+performed outside Cimian or a session that died first, is drained at the start of the
+next run.
 
-`cimiwatcher.log` rolls daily and the watcher keeps its own recent files.
+The watcher starts a new `cimiwatcher<yyyyMMdd>.log` each day and keeps the seven
+newest. Lines are `yyyy-MM-dd HH:mm:ss.fff [LVL] message`. The service also writes to
+the Application event log under the source `CimianWatcher`.
 
 ## Retention
 
@@ -255,8 +258,8 @@ The sweep runs in the background at the start of every session and covers:
 
 Before the sweep, artefacts left at the logs root by older versions are relocated into
 their proper subdirectories, because a file that is rewritten in place never looks old
-enough to expire. Files left at the logs root by third-party scripts are deliberately
-left alone.
+enough to expire. Files left at the logs root by third-party scripts are not relocated;
+they expire on age like any other loose file.
 
 The whole routine is best-effort: a retention failure never fails a run.
 
@@ -345,7 +348,7 @@ Compress-Archive -Path "$env:ProgramData\ManagedInstalls\logs","$env:ProgramData
 
 For an installer failure, add the matching installer log from `logs\installs\`; for a
 Cimian update that did not take, add `logs\selfupdate\`; for a machine where no run is
-happening at all, add `logs\cimiwatcher.log`.
+happening at all, add the newest `logs\cimiwatcher<yyyyMMdd>.log`.
 
 If you can reproduce the problem, a fresh check-only run at high verbosity gives the
 cleanest transcript, and writes a session directory of its own without changing

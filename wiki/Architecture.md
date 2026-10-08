@@ -56,7 +56,8 @@ reaches an installed machine.
 
 Every project targets `net10.0-windows` and publishes self-contained, so a managed
 machine needs no .NET runtime installed. The two graphical projects target
-`net10.0-windows10.0.19041.0` with a platform minimum of 10.0.17763.0. There is no
+`net10.0-windows10.0.19041.0`, and Managed Software Center sets a platform minimum
+of 10.0.17763.0. There is no
 cross-platform target and no x86 runtime identifier; the only architectures are
 `win-x64` and `win-arm64`.
 

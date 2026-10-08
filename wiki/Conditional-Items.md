@@ -73,8 +73,13 @@ Precedence is `NOT`, then `AND`, then `OR`. Use parentheses whenever a mixed exp
 would otherwise be ambiguous to a reader — `a OR b AND c` means `a OR (b AND c)`, which is
 rarely what someone skim-reading the manifest assumes.
 
-`AND`, `OR`, `NOT`, `ANY` and the word forms of the operators are case-insensitive. Fact
-names are case-insensitive too.
+`AND`, `OR`, `NOT`, `ANY` and the word forms of the operators are case-insensitive.
+Built-in fact names are case-insensitive too; custom fact names must be written in
+lowercase, as described in
+[Conditional-Facts-Reference](Conditional-Facts-Reference#custom-facts).
+
+There is no single `=` operator and no `&&` or `||`. A condition written with them does
+not parse, and evaluates as false.
 
 Values may be single-quoted, double-quoted, or bare. **Quote any value containing a space,
 a dot, a hyphen, a backslash or an asterisk.** Bare values are read as runs of letters,
@@ -230,9 +235,10 @@ Three behaviours differ from what the syntax suggests. Each has a working altern
 
 ### `IN` with a bracketed list matches only the first value
 
-`IN` looks like it accepts a list. It does not. Square brackets and commas are not
-recognised by the tokenizer and are discarded, and the operator consumes exactly one value
-token — the remaining tokens are dropped without an error.
+`IN` looks like it accepts a list. It does not. Square brackets, braces and commas are
+not recognised by the tokenizer and are discarded, and the operator consumes exactly one
+value token — the remaining tokens are dropped without an error. A parenthesised list,
+`domain IN ("CORP", "EDU")`, fails to parse instead, so the whole condition is false.
 
 This is **broken**. It tests `domain IN "CORP"` and nothing else:
 

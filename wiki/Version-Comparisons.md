@@ -163,8 +163,8 @@ or `_` is discarded, so do not rely on it to distinguish two releases.
 **Match the shape of what will be compared against it.** If detection reads an MSI
 `DisplayVersion` of `4.2.1.0`, do not write `4.2.1` in the pkgsinfo and expect them to
 differ — they compare equal. Conversely, if the vendor's file version resource is
-`4.2.1.4799` and you write `4.2.1`, the machine will always look newer and the package will
-never upgrade.
+`4.2.1.4799` and you write `4.2.1`, any `4.2.1` build on the machine looks newer than the
+pkgsinfo, so a re-release within `4.2.1` never installs.
 
 **Never write a version the target cannot report.** A version floor is only as precise as
 the value it is compared against, after normalisation. If the vendor stamps

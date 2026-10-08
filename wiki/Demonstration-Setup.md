@@ -211,7 +211,7 @@ Press Enter to accept a default. For this walkthrough:
 | `Location in repo [...]: ` | `\demo` |
 | `Import this item? (y/n) [n]: ` | `y` |
 
-**Only a literal `y` proceeds.** Anything else cancels and exits 0, so a cancelled import
+**Only `y` (in either case) proceeds.** Anything else, including a bare Enter, cancels and exits 0, so a cancelled import
 looks like a successful one to a script.
 
 Do not reach for `--nointeractive` here. The fallback that fills an empty catalog list with
@@ -392,10 +392,13 @@ Delete the client's working data, the repository and the demonstration project:
 Remove-Item -Recurse -Force C:\ProgramData\ManagedInstalls, C:\CimianRepo, C:\CimianDemo
 ```
 
-Confirm nothing is left behind:
+Confirm nothing is left behind. Both commands should print nothing:
 
 ```powershell
 Get-Service CimianWatcher -ErrorAction SilentlyContinue
+```
+
+```powershell
 Get-ScheduledTask -TaskName 'Cimian *' -ErrorAction SilentlyContinue
 ```
 

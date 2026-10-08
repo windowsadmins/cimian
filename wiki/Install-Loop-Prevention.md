@@ -47,15 +47,19 @@ Separately, when the status check reports that an item needs **no** action, Loop
 the package converged and retires whatever history it had accumulated.
 
 On construction each run, LoopGuard loads its saved state and then rebuilds package history
-from the last **7 days** of session event logs, de-duplicated by session so a session is
-never counted twice.
+from the session event logs, de-duplicated by session so a session is never counted twice.
+Only installs inside a **rolling 24-hour window** are kept; older ones are pruned from the
+state, and every counter below is recomputed from what remains.
 
 LoopGuard suppresses installs. It does not fix the package, and it does not report anything
 to the repository. It buys time on the endpoint while you fix the pkgsinfo.
 
 ## Thresholds
 
-Conditions are evaluated in this order and the first match wins.
+Every count in this table is taken over the rolling 24-hour window. An item that legitimately
+reruns now and then — after each OS update, or on a weekly schedule — never accumulates
+toward a threshold, while a genuine loop on an hourly schedule still trips them within the
+day. Conditions are evaluated in this order and the first match wins.
 
 | # | Condition | Suppression window |
 |---|---|---|
@@ -72,8 +76,8 @@ Two details that are easy to get wrong:
 
 - **The 8-or-more tier in rule 2 is not reachable on session count alone.** Rule 2 is a
   ladder: the same version must have been attempted at least 3 times across at least 3
-  distinct sessions before any of 2a, 2b or 2c applies. A package hammered 8 times inside a
-  single session trips rule 1, not rule 2a.
+  distinct sessions within the window before any of 2a, 2b or 2c applies. A package hammered
+  8 times inside a single session trips rule 1, not rule 2a.
 - **Rule 3 discounts legitimate upgrades.** The count used is
   `attempts - (distinct versions - 1)`, because the first attempt at each new version is a
   real upgrade, not a repeat. A package that upgraded through five versions in five attempts
@@ -173,6 +177,11 @@ C:\ProgramData\ManagedInstalls\reports\state.json
 JSON, snake_case, indented, with null fields omitted. The top level is a wrapper so other
 subsystems can add their own sections later; LoopGuard owns the `loop_guard` key.
 
+`attempts` is the source of truth: one entry per counted install inside the 24-hour window,
+with its time, version and session. `attempt_count`, `session_count`, `version_attempts`,
+`recent_timestamps` and `processed_sessions` are derived from it every time state is loaded
+or evaluated.
+
 ```json
 {
   "loop_guard": {
@@ -194,10 +203,18 @@ subsystems can add their own sections later; LoopGuard owns the `loop_guard` key
         "processed_sessions": ["2026-09-03/0300", "2026-09-03/0400"],
         "suppression_cycles": 1,
         "cleared_at": "2026-08-27T11:15:00Z",
-        "pending_restart_since": null,
-        "trigger": "version_outdated",
+        "trigger": {
+          "reason_code": "version_outdated",
+          "detection_method": "file",
+          "detail": "installs[0] file C:\\Program Files\\Example App\\ExampleApp.exe: file version 4.1.0.0 is older than the catalog's 4.2.1.0",
+          "installed_version": "4.1.0.0"
+        },
         "trigger_last_seen": "2026-09-03T04:00:00Z",
-        "trigger_counts": { "version_outdated": 8 }
+        "trigger_counts": { "version_outdated|file|installs[0] file ...": 8 },
+        "attempts": [
+          { "at": "2026-09-03T03:00:00Z", "version": "4.2.1.0", "session": "2026-09-03/0300" },
+          { "at": "2026-09-03T04:00:00Z", "version": "4.2.1.0", "session": "2026-09-03/0400" }
+        ]
       }
     }
   }
@@ -205,7 +222,8 @@ subsystems can add their own sections later; LoopGuard owns the `loop_guard` key
 ```
 
 Package keys are the lowercased item name. `recent_timestamps` keeps the most recent 20
-entries; `trigger_counts` keeps at most 5 distinct triggers.
+entries; `trigger_counts` keeps at most 5 distinct triggers, each keyed by reason code,
+detection method and detail.
 
 An older `reports\loop_state.json` is migrated into this file on first run and then deleted.
 
@@ -222,7 +240,8 @@ and a literal `ClearCommand` of `managedsoftwareupdate --clear-loop <name>`.
 ### Where history comes from
 
 Attempt history is rebuilt each run from `events.jsonl` in the session log directories under
-`C:\ProgramData\ManagedInstalls\logs\`, covering the last 7 days, de-duplicated by session id.
+`C:\ProgramData\ManagedInstalls\logs\`, de-duplicated by session id. Only install events
+inside the 24-hour window are counted; an event with no timestamp is not counted.
 
 ## The catalog fingerprint
 
@@ -274,7 +293,7 @@ Both the whole state and each package carry a `cleared_at` timestamp. When histo
 from the event logs, install events older than the later of those two watermarks are skipped —
 while still marking their session as processed, so they cannot be recounted later.
 
-This is what makes a clear stick. Without it, the 7-day history rebuild on the very next run
+This is what makes a clear stick. Without it, the history rebuild on the very next run
 would re-read the same events that produced the suppression and immediately re-create it, so
 every clear would silently undo itself.
 
@@ -331,14 +350,14 @@ ExampleApp:
   Attempts: 8 across 6 sessions
   Last version: 4.2.1.0
   Catalog fingerprint: a1b2c3d4e5f67890
-  Cycles served: 1
+  Suppression cycles served: 1
   Last attempt: 2026-09-03 04:00
-  Last success: 2026-09-03 04:00
+  Last success: True
   Versions attempted: 4.2.1.0 (8x)
   Needs install because installs[0] file C:\Program Files\Example App\ExampleApp.exe: file version 4.1.0.0 is older than the catalog's 4.2.1.0 [version_outdated, unchanged over all 8 attempts]
   Trigger last seen: 2026-09-03 04:00
   Cache: HIT — C:\ProgramData\ManagedInstalls\Cache\ExampleApp-4.2.1.0.exe
-  Diagnosis: Loop is install/status-check issue, not download
+  Diagnosis: Loop is install/status-check issue, not download (cached installer exists)
   Suppressed until: 2026-09-10 04:00
   Reason: installed 8 times across 6 sessions
 ```

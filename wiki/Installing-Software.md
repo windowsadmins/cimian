@@ -215,8 +215,8 @@ managedsoftwareupdate --checkonly -vv
 Read the output for three things: which manifest resolved (a warning here means the client fell
 through to a fallback or catch-all name — see
 [Client Identifier Resolution](Client-Identifier-Resolution)), that the catalog loaded, and that
-`ExampleApp` is listed as pending. `Item not found in catalog: ExampleApp` means the client's
-catalog does not contain it — the rebuild, the publish, or the download of the catalog itself is
+`ExampleApp` is listed as pending. `Item not in catalog: ExampleApp (action: install)` means the
+client's catalog does not contain it — the rebuild, the publish, or the download of the catalog itself is
 where to look.
 
 Then install. Without a mode flag this is a manual, foreground run:

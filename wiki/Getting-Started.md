@@ -96,8 +96,8 @@ DefaultArch: x64
 
 `SoftwareRepoURL` and `ClientIdentifier` are read by the client; keys are PascalCase and an
 unrecognised key is silently ignored. `RepoPath` and `repo_path` are both needed because the
-authoring tools disagree on the spelling: `cimiimport` and `makepkginfo` read `RepoPath`,
-while `makecatalogs` and `manifestutil` read `repo_path`.
+authoring tools disagree on the spelling: `cimiimport` reads `RepoPath`, while
+`makepkginfo`, `makecatalogs` and `manifestutil` read `repo_path`.
 
 `ClientIdentifier` is the name of the manifest this device asks for, and it is what step 7
 creates. Use whatever you like; `WORKSTATION-01` is a placeholder.

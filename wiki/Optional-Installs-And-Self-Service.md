@@ -102,6 +102,13 @@ and who can withdraw it.
 A user's request does not go through a queue or an approval step, and nothing about it is
 sent back to the repository. It is a per-device file.
 
+`force_install_after_date` follows Munki 7. A deadline in the pkgsinfo does not force-install
+a title that is only listed under `optional_installs`, and MSC shows no deadline for it. When
+a user requests the title and no version of it is installed yet, the deadline is still not
+enforced: it does not override `install_window` and is not shown. Once some version is
+installed, the deadline applies to its updates as usual. A title on a managed install or
+update list keeps its deadline. See [Force Installs And Deadlines](Force-Installs-And-Deadlines).
+
 Managed Software Center triggers a targeted run for the item as soon as the user clicks, so
 the work usually begins within seconds rather than waiting for the next scheduled check.
 
@@ -158,17 +165,8 @@ automatically, and the user can still remove it.
 
 ## Turning self-service off
 
-Set `SkipSelfService: true` in `C:\ProgramData\ManagedInstalls\Config.yaml` and the client
-skips the merge entirely — `SelfServeManifest.yaml` is never read and never cleaned up. Users
-can still click in MSC and their choices are still recorded, but nothing acts on them.
-`optional_installs` items continue to be listed in `InstallInfo.yaml`, so they stay
-browseable. If you want the items gone from the UI, remove them from the manifest instead.
-
-Confirm the effective setting with:
-
-```
-managedsoftwareupdate --show-config
-```
+There is no client setting that turns self-service off. To stop offering an item, remove it
+from `optional_installs`.
 
 ## Worked example
 

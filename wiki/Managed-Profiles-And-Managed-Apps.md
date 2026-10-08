@@ -18,7 +18,8 @@ applications with your MDM directly.
 
 ## What the client actually does
 
-The keys are accepted at manifest level and inside `conditional_items`:
+The keys are accepted at manifest level only. Inside a `conditional_items` entry they are
+not part of the model and are dropped without a warning.
 
 ```yaml
 name: WORKSTATION-01
@@ -70,7 +71,7 @@ session summary.
 
 **They lose every deduplication contest.** If the same name appears both as a
 `managed_profile` and under any other manifest section, the other action wins — `profile` and
-`app` sit at the bottom of the action precedence ladder, below `optional`. So listing a real
+`app` sit at the bottom of the action precedence ladder, below `optional` and `default`. So listing a real
 package name under `managed_apps` as well as `managed_installs` changes nothing; the install
 proceeds.
 
@@ -89,15 +90,16 @@ requesting it, while doing nothing else at all.
 
 ## The pkgsinfo-level keys
 
-`makepkginfo` can write `managed_profiles` and `managed_apps` into a **pkgsinfo** file. Those
-fields go no further: `makecatalogs` does not carry them into a catalog, and the client's
+`makepkginfo`'s pkgsinfo model has `managed_profiles` and `managed_apps` fields, though no
+command-line option sets them. In a **pkgsinfo** file those fields go no further:
+`makecatalogs` does not carry them into a catalog, and the client's
 catalog model has no such field. A pkgsinfo carrying them is valid and the keys are dropped
 in transit.
 
-## What is documented elsewhere and is not true
+## Common misconceptions
 
-An older page in this wiki, `managed-profiles-apps-guide.md`, describes these keys as a
-working Microsoft Graph API integration. Its specific claims do not hold at this release:
+Older documentation described these keys as a working Microsoft Graph API integration. Its
+specific claims do not hold:
 
 | Claim | Reality |
 |---|---|
@@ -107,8 +109,7 @@ working Microsoft Graph API integration. Its specific claims do not hold at this
 | A pipeline reads deployment events from `reports\events.json` | No such events are ever written |
 | Session tracking includes counts of profiles and apps scheduled | The summary counts them only in order to exclude them |
 
-The deduplication and conditional-item behaviour that page describes is real. Everything
-about deployment and reporting is not.
+The deduplication behaviour is real. Everything about deployment and reporting is not.
 
 ## If you need this today
 

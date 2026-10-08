@@ -17,7 +17,7 @@ each installer, not how detection works.
 never reaches a device. Only `installer.type` counts.
 
 If you leave `installer.type` blank, the type is inferred from the payload's file extension:
-`.msi`, `.exe`, `.nupkg`, `.pkg`, `.ps1`, and `.msix`/`.appx`/`.msixbundle`/`.appxbundle`
+`.msi`, `.exe`, `.nupkg`, `.ps1`, and `.msix`/`.appx`/`.msixbundle`/`.appxbundle`
 (all four mapping to `msix`). Anything else infers to `exe`. With no payload at all, the type
 becomes `script`.
 
@@ -25,8 +25,8 @@ If you set `installer.type` to something Cimian does not recognise — including
 `msii` — it does not error. **It falls through to the EXE installer**, which will try to
 execute your payload directly. For an MSI that means launching the `.msi` as if it were a
 program, which fails in a way that does not obviously point at the typo. Recognised values
-are exactly: `msi`, `exe`, `msix`, `appx`, `powershell`, `ps1`, `nupkg`, `chocolatey`, `pkg`,
-`nopkg`, `script`.
+are: `msi`, `exe`, `msix`, `appx`, `powershell`, `ps1`, `nupkg`, `chocolatey`, `nopkg` and
+`script`.
 
 Two behaviours are shared across every type. Exit codes `0` and `3010` always count as
 success, `3010` additionally noting that a reboot is required; you can add more with
@@ -80,6 +80,10 @@ recent kept.
 MSI installs are serialised against each other, and exit code `1618` (another installation is
 already in progress) is retried up to three times with a 30- then 60-second backoff.
 
+An MSI built by `cimipkg` is recognised by a `CIMIAN_PKG_BUILD_INFO` property and, when
+sbin-installer is present on the device and `ForceChocolatey` is not set, is installed through
+sbin-installer instead of a direct `msiexec` call. Vendor MSIs always go to `msiexec`.
+
 **Common failure mode.** Detection that never converges. An MSI package with no `installs[]`
 array and no other detection has nothing to report installed state from, so it reinstalls on
 every run until loop suppression stops it. The other frequent cause is a ProductCode pinned to
@@ -117,8 +121,9 @@ advertise — check the actual `FileVersion` on a test install before pinning it
 is `check.registry.name`, matching a substring of the uninstall-registry `DisplayName`; note
 that without `check.registry.version` a registry hit means "installed" at any version.
 
-**Arguments.** Whatever you put in `installer.args` (plus `switches`, `flags` and
-`subcommand`, if you use them) is passed verbatim to the executable. **If you provide no
+**Arguments.** The command line is built from `installer.subcommand`, then `switches`, then
+`flags`, then `args`. Switches get a `/` prefix and flags a `-` or `--` prefix if they lack
+one; `subcommand` and `args` are passed as written. **If you provide no
 arguments at all, the client appends all six of `/S /silent /quiet /SILENT /VERYSILENT /qn`
 together.** That shotgun works for many installers and is actively harmful for some, which
 treat an unrecognised switch as a fatal argument error or, worse, as a positional path. Always
@@ -213,9 +218,9 @@ not passed. If your script needs inputs, embed them or read them from a configur
 script itself knows about.
 
 **Common failure mode.** No detection declared. Without `installcheck_script`,
-`version_script`, an `installs[]` array or a `check` block, a `powershell` package falls
-through to the receipt-based fallback and reinstalls on a schedule that depends on the
-receipt, not on whether the work is actually done. Second most common: a script that returns
+`version_script`, an `installs[]` array or a `check` block, a `powershell` package is judged
+by its `HKLM\SOFTWARE\ManagedInstalls` receipt alone: it runs until it has a receipt at the
+catalog version, then counts as installed whether or not the work stuck. Second most common: a script that returns
 zero after failing internally, so the install registers as successful and the item reports
 installed while nothing happened.
 
@@ -247,11 +252,12 @@ installs:
 recurring: true
 ```
 
-**Detection.** Whatever you declare. If you declare nothing, a `nopkg` or `script` item falls
-into a special branch of the detection fallback and is **assumed installed**. That is the
-opposite of what happens to an untyped or MSI/EXE item with no detection, which falls through
-to "not installed". So a `nopkg` item with no detection runs once, gets a receipt, and never
-runs again — which is fine when that is what you want, and a silent no-op when it is not.
+**Detection.** Whatever you declare. If you declare nothing, the client first compares the
+`HKLM\SOFTWARE\ManagedInstalls` receipt version against the catalog version. With no receipt,
+a `nopkg` or `script` item (or one with no `installer.type` at all) is **assumed installed**.
+That is the opposite of what happens to an MSI/EXE item with no detection and no receipt, which
+counts as "not installed". So a `nopkg` item with no detection, on a device that has never
+recorded it, never runs at all.
 
 Declare `installs[]`, `installcheck_script` or a `check` block whenever the script's effect
 can be undone by anything outside Cimian.
@@ -273,8 +279,12 @@ while still tracking it normally.
 
 ## .nupkg and Chocolatey
 
-For packages in NuGet form. `nupkg` attempts Cimian's own package installer first and falls
-back to Chocolatey; `chocolatey` goes straight to Chocolatey.
+For packages in NuGet form. `nupkg` tries sbin-installer first and falls back to Chocolatey if
+sbin-installer is missing or fails; `chocolatey` goes straight to Chocolatey. The client looks
+for sbin-installer at `SbinInstallerPath` from `Config.yaml`, then
+`C:\Program Files\sbin\installer.exe` and `C:\Program Files (x86)\sbin\installer.exe`.
+Setting `ForceChocolatey: true` in `Config.yaml` skips sbin-installer and sends every `nupkg` to
+Chocolatey.
 
 ```yaml
 name: ExamplePackage
@@ -295,15 +305,17 @@ installs:
 package actually puts on disk — usually a `file` entry, or an `msi` entry if the package
 wraps an MSI.
 
-**Arguments.** Not taken from `installer.args` on the Chocolatey path. Chocolatey is invoked
-as `choco install <name> --yes --no-progress --force --version=<version>` with the download
+**Arguments.** sbin-installer is called with the package path, `--target` (from
+`SbinInstallerTargetRoot`, default `/`) and `--verbose`, plus `installer.temp_dir` as
+`--temp-dir` and any `installer.flags`. `installer.args` is not used on either path. Chocolatey
+is invoked from `%ProgramData%\chocolatey\bin\choco.exe` as
+`choco install <name> --yes --no-progress --force --version=<version>` with the download
 directory as the source. Note the implication: the Chocolatey package id must equal the
 pkgsinfo `name` exactly, or the install fails to find anything.
 
-**Common failure mode.** Chocolatey is not installed on the device, in which case the fallback
-path reports "Chocolatey is not installed" and the item fails on every run. The `nupkg` type
-depends on either Cimian's package installer being present or Chocolatey being present; on a
-device with neither, nothing installs.
+**Common failure mode.** sbin-installer is absent or fails and Chocolatey is not installed
+either, in which case the fallback reports "Chocolatey is not installed" and the item fails on
+every run.
 
 ## File payloads
 
@@ -314,10 +326,6 @@ The supported way to ship files is to build an MSI with `cimipkg`: put the files
 project's `payload/` directory, set `install_location` in `build-info.yaml` to the
 destination, and import the resulting `.msi` as an ordinary MSI package. Everything in the
 [MSI section](#msi) then applies — detection, arguments, removal and all.
-
-A legacy `.pkg` format also exists, installed by Cimian's own package installer, and is
-recognised as `installer.type: pkg`. It is on the way out and should not be used for anything
-new. Build MSIs.
 
 **Common failure mode** for file payloads is detection: a directory of loose files often has
 no versioned executable to point an `installs[]` entry at. Point the entry at a specific file

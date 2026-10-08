@@ -13,18 +13,21 @@ stamp, `yyyy.MM.dd.HHmm`, and the architecture follows it:
 | Artifact | Name pattern |
 |---|---|
 | Windows Installer package | `Cimian-<yyyy.MM.dd.HHmm>-<arch>.msi` |
-| Chocolatey package | `CimianTools-<arch>.<yy.M.d.HHmm>.nupkg` |
+| NuGet package | `CimianTools-<arch>.<yy.M.d.HHmm>.nupkg` |
 | Raw binary archive | `Cimian-<yyyy.MM.dd.HHmm>-<arch>.zip` |
 
-`<arch>` is `x64` or `arm64`. The MSI is the supported way to install the client; the zip
-exists so repository automation can pick up `cimiimport.exe` and `makecatalogs.exe`
-without cracking an installer, and the nupkg is for sites that already run Chocolatey.
+`<arch>` is `x64` or `arm64`. The MSI is the supported way to install the client; it is
+built by `cimipkg` from the published binaries. The zip exists so repository automation
+can pick up `cimiimport.exe` and `makecatalogs.exe` without cracking an installer. The
+nupkg carries the same payload for the sbin installer, or for Chocolatey where that is
+what a site already runs.
 
 Releases published from the source repository are **unsigned**. If your environment
 requires signed binaries, sign the MSI yourself before distributing it.
 
-An `.intunewin` package is produced only when the build is invoked with `-IntuneWin`, and
-the release workflow does not do that — see [Deploying Cimian With Intune](Deploying-Cimian-With-Intune)
+An `.intunewin` package is produced only when the build is invoked with `-IntuneWin` on a
+machine that has `IntuneWinAppUtil.exe` on its PATH, and the release workflow does not do
+that — see [Deploying Cimian With Intune](Deploying-Cimian-With-Intune)
 for the manual wrapping step.
 
 ## Supported platforms
@@ -33,13 +36,15 @@ for the manual wrapping step.
 - **Windows floor:** Windows 10 1809 (build 17763) is the nominal minimum, which is the
   target platform minimum of the graphical components. Windows Server editions of the
   same generation work for the command-line tools.
-- **.NET runtime:** none required. Every binary is published self-contained and
-  single-file, so the machine does not need any .NET runtime or SDK installed.
+- **.NET runtime:** none required. Every binary is published self-contained, so the
+  machine does not need any .NET runtime or SDK installed. The command-line tools are
+  single-file executables; Managed Software Center ships with its companion files.
 
 ## What the MSI installs
 
-Everything lands in `C:\Program Files\Cimian`. The path is fixed; the installer does not
-offer a directory choice, and passing a directory property does not move it.
+Everything lands in `C:\Program Files\Cimian`. The path is fixed: the installer offers no
+directory choice, and the post-install step and every tool expect that location, so do not
+override the install directory on the command line.
 
 The payload is the whole published tree: the ten command-line tools
 (`managedsoftwareupdate.exe`, `cimiwatcher.exe`, `cimitrigger.exe`, `cimistatus.exe`,
@@ -66,8 +71,8 @@ flag files described in [cimiwatcher](cimiwatcher) every 10 seconds.
 **A scheduled task, `Cimian Managed Software Update Hourly`.** It runs
 `managedsoftwareupdate.exe --auto` as SYSTEM at highest privilege, first firing five
 minutes after registration and repeating every hour indefinitely. It is hidden, wakes the
-machine, starts when available, runs on battery, restarts up to three times at 10-minute
-intervals, and has a four-hour execution time limit — long, because a first run on a
+machine, starts when available, runs only when a network is available, runs on battery,
+restarts up to three times at 10-minute intervals, and has a four-hour execution time limit — long, because a first run on a
 fresh image can pull many gigabytes.
 
 **A scheduled task, `Cimian Watchdog`.** It runs `managedsoftwareupdate.exe --self-check`

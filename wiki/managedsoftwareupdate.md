@@ -73,7 +73,7 @@ every install and uninstall in a session succeeded.
 | `--local-only-manifest` | — | file path | none | Use a local manifest file instead of the server manifest. |
 | `--item` | — | one or more item names | none | Process only the named items. Pass every name after a single flag; the flag is not repeatable. |
 | `--config` | — | file path | `C:\ProgramData\ManagedInstalls\Config.yaml` | Read configuration from a different file. |
-| `--show-config` | — | — | off | Print the effective configuration and exit. |
+| `--show-config` | — | — | off | Print the configuration from the default `Config.yaml`, with any policy values under `HKLM\SOFTWARE\Policies\Cimian` applied, and exit. It ignores `--config`. |
 | `--show-status` | — | — | off | Report progress to a GUI status listener over loopback TCP. |
 | `--status-port` | — | port number | `19847` | Port of that listener. 19847 is [cimistatus](cimistatus); [Managed Software Center](Managed-Software-Center) passes 19848 for itself. |
 | `--no-preflight` | — | — | off | Skip the preflight script. |
@@ -183,8 +183,8 @@ The same, with verbose output for troubleshooting:
 managedsoftwareupdate -vv --checkonly
 ```
 
-Print the configuration the client is actually using, including which repo URL
-and client identifier it resolved:
+Print the configuration the client reads, including the repo URL and client
+identifier after any policy overrides:
 
 ```
 managedsoftwareupdate --show-config

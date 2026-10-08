@@ -18,8 +18,10 @@ You can point `managedsoftwareupdate` at a different file for a single run:
 managedsoftwareupdate --config C:\Temp\test-config.yaml --checkonly
 ```
 
-No other tool honours `--config`; the alternate file applies only to that
-invocation of `managedsoftwareupdate`.
+The alternate file applies only to that invocation. `--show-config`,
+`--cache-status` and `--validate-cache` always read the default file, whatever
+`--config` says. Of the other tools, only `manifestutil` takes `--config`, and it
+reads nothing from the file but `RepoPath`.
 
 If the file does not exist, the client runs with built-in defaults and says
 nothing. If the file exists but cannot be parsed, the client prints
@@ -50,7 +52,7 @@ Defaults below are the values that apply when the key is absent from the file.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `SoftwareRepoURL` | string | none | Base URL of the served Cimian repository. Manifests are fetched from `<repo>/manifests/<name>.yaml`, catalogs from `<repo>/catalogs/<name>.yaml`, icons from `<repo>/icons/`, and packages from `<repo>/pkgs/<location>`. Required; must be `http` or `https`. |
-| `ClientIdentifier` | string | machine name | Name of the primary manifest this device requests. See [Client Identifier Resolution](Client-Identifier-Resolution) for the full fallback chain. |
+| `ClientIdentifier` | string | none | Name of the primary manifest this device requests. When it is unset, resolution moves on to the machine's hostname. See [Client Identifier Resolution](Client-Identifier-Resolution) for the full fallback chain. |
 | `Catalogs` | list of string | `["Production"]` | Catalogs to consult. An empty or absent list means `Production`. Precedence between catalogs is highest-version-wins, not list order. |
 | `ManifestsPath` | string | `%ProgramData%\ManagedInstalls\manifests` | Local directory for downloaded manifests. An explicitly blank value resets to the default. |
 | `CatalogsPath` | string | `%ProgramData%\ManagedInstalls\catalogs` | Local directory for downloaded catalogs. An explicitly blank value resets to the default. |
@@ -65,10 +67,9 @@ not by this file — see [How Cimian Runs](How-Cimian-Runs).
 | `NoPreflight` | bool | `false` | Never run the preflight script. |
 | `NoPostflight` | bool | `false` | Never run the postflight script. |
 | `PreflightFailureAction` | string | `continue` | What to do when preflight exits non-zero. `abort` ends the session as failed and skips everything after it, including postflight. `warn` and any other value log a warning and continue. |
-| `SkipSelfService` | bool | `false` | Ignore the self-service manifest entirely, so user Install/Remove requests from Managed Software Center have no effect. |
 | `AutoRemove` | bool | `false` | Uninstall packages that Cimian installed but that no longer appear in any manifest. Only items that are uninstallable are removed. |
 | `UsageStaleUninstallEnabled` | bool | `true` | Master switch for removing software that a pkgsinfo has marked for unused-software removal. |
-| `UsageStaleUninstallMinimumHistoryDays` | int (days) | `14` | Floor applied to each item's own `minimum_history_days`. An item cannot be removed for disuse with less history than this. |
+| `UsageStaleUninstallMinimumHistoryDays` | int (days) | `14` | Minimum usage history the device must have before an item is removed for disuse, for any item whose pkgsinfo does not set its own `minimum_history_days`. An item's own value replaces this one. |
 | `UsageStaleUninstallMaxSourceStalenessDays` | int (days) | `7` | If the usage telemetry on the device is older than this, the unused-software pass is skipped for the whole run. |
 
 ### Cache and retention
@@ -96,11 +97,16 @@ configurable from this file. See [Logging](Logging).
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `InstallerTimeout` | int (seconds) | `900` | Per-installer timeout. Values below 60 are rejected by validation. |
-| `ForceChocolatey` | bool | `false` | Route installs through Chocolatey rather than the normal installer dispatch. |
+| `InstallerTimeout` | int (seconds) | `900` | Per-installer timeout. A pkgsinfo's own `installer_timeout` replaces it for that item. The file value is used as written; only the policy value has a 60-second floor. |
 | `SbinInstallerPath` | string | none | Explicit path to the sbin installer executable. When unset, Cimian looks in `C:\Program Files\sbin\installer.exe` and then `C:\Program Files (x86)\sbin\installer.exe`. This key is not consulted by the self-update path, which always uses the first of those two literal paths. |
 | `SbinInstallerTargetRoot` | string | `/` | Value passed to the sbin installer's `--target` argument. |
-| `PkgRequireSignature` | bool | `false` | Refuse to install an unsigned `.pkg`. |
+| `ForceChocolatey` | bool | `false` | Never use the sbin installer. A `.nupkg` goes straight to Chocolatey, and a `cimipkg`-built MSI goes to `msiexec`. |
+
+A `.nupkg` payload is installed with the sbin installer when it is present and
+working, and with Chocolatey (`%ProgramData%\chocolatey\bin\choco.exe`) only if the
+sbin installer is missing or fails. An item whose `installer.type` is `chocolatey`
+always goes to Chocolatey. Chocolatey is never installed by the client; if
+`choco.exe` is absent, those installs fail.
 
 ### Install-loop suppression
 
@@ -133,16 +139,47 @@ addition to whichever header is chosen.
 | `ClientKeyPath` | string | none | Private key file to pair with a PEM `ClientCertificatePath`. |
 | `SoftwareRepoCACertificate` | string | none | CA certificate used to validate the repository's TLS certificate. Chain validation is still performed against this root; it is not a blind-accept switch. |
 | `UseClientCertificateCNAsClientIdentifier` | bool | `false` | Use the client certificate's common name as the primary manifest name, ahead of `ClientIdentifier`. |
+| `AdditionalHttpHeaders` | list of string | none | Extra headers sent with every request, each written `Name: value`. See below. |
 
 The Basic credential in the registry is `HKLM\SOFTWARE\Cimian` value
 `AuthHeader`, holding a Base64 blob protected with DPAPI at machine scope. It is
 not settable from `Config.yaml` and not settable by MDM policy. See
 [Securing The Repository](Securing-The-Repository).
 
+`AdditionalHttpHeaders` takes a list, as Munki's setting of the same name does:
+
+```yaml
+AdditionalHttpHeaders:
+  - "X-Client-Serial: ABC123"
+  - "X-Client-Site: example"
+```
+
+Each entry is split at its first colon and trimmed. A later entry for the same
+header replaces an earlier one. An entry with no colon, with a character outside
+printable ASCII, or naming `Authorization` or `User-Agent` is skipped with a
+warning that gives its position but not its value. The headers go on every
+request, including to a payload host named by an absolute `installer.location`.
+`--show-config` prints the header names with their values masked.
+
 Cimian does not implement proxy configuration, Windows Integrated authentication
-(NTLM, Negotiate or Kerberos), shared-access-signature tokens, or arbitrary extra
-request headers. Requests use whatever proxy behaviour the .NET HTTP stack
-applies by default.
+(NTLM, Negotiate or Kerberos), or shared-access-signature tokens. Requests use
+whatever proxy behaviour the .NET HTTP stack applies by default.
+
+### Repository authoring keys
+
+The admin tools read the same `Config.yaml` on the machine where you author the
+repository. The client ignores these keys, and these tools ignore the client's.
+`cimiimport --config` sets them interactively and `cimiimport --config-auto`
+writes defaults; both leave every other key in the file as it was.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `RepoPath` | string | none; `cimiimport` falls back to the git checkout it runs in | Local path of the repository working copy. Read by `cimiimport`, `makepkginfo`, `makecatalogs` and `manifestutil`. |
+| `DefaultCatalog` | string | `Development` | Catalog `cimiimport` offers for a new item when nothing else names one. |
+| `DefaultArch` | string | `x64,arm64` | Architecture `cimiimport` records when the installer does not reveal one. |
+| `OpenImportedYaml` | bool | `true` | Open the new pkgsinfo in an editor after an interactive import. |
+| `CloudProvider` | string | `none` | Written by `cimiimport --config` (`aws`, `azure` or `none`). Nothing reads it. |
+| `CloudBucket` | string | empty | Written by `cimiimport --config`. Nothing reads it. |
 
 ## Precedence: the registry policy override
 
@@ -253,7 +290,7 @@ nothing in the client acts on them.
 | `LocalOnlyManifest` | Only the `--local-only-manifest` flag selects a local manifest. The file value is displayed and otherwise ignored. |
 | `PostflightFailureAction` | A postflight script's non-zero exit always produces a warning and never changes the session result, whatever this is set to. |
 | `UseCache` | Reported by `--cache-status`. The cache is used regardless. |
-| `PreferSbinInstaller` | Not consulted anywhere. |
+| `PreferSbinInstaller` | Not consulted anywhere. The sbin installer is always tried first for a `.nupkg`; `ForceChocolatey` is the only switch. |
 | `LogLevel`, `Verbose`, `Debug` | Written by the `-v` flags and reported, but not read to gate any output. |
 
 Two other artefacts look like configuration and are not. A snake_case sample

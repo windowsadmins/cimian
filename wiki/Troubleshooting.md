@@ -64,7 +64,7 @@ Get-Service CimianWatcher
 ```
 
 ```powershell
-Get-Content "$env:ProgramData\ManagedInstalls\logs\cimiwatcher.log" -Tail 40
+Get-ChildItem "$env:ProgramData\ManagedInstalls\logs\cimiwatcher*.log" | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content -Tail 40
 ```
 
 A stopped or failed service means on-demand triggers do not work, but it does not by
@@ -78,8 +78,8 @@ Get-Process managedsoftwareupdate -ErrorAction SilentlyContinue
 ```
 
 A process that has been running for hours is stuck on an install or a script. Preflight
-and postflight scripts have no timeout at all, so a script that waits for input blocks
-the run indefinitely. Kill the process, then look at the tail of the session's
+is stopped after 10 minutes and postflight after 15, and each installer has its own
+timeout, so a run that is still going after that is worth investigating. Kill the process, then look at the tail of the session's
 `install.log` to see what it was doing.
 
 **Run it by hand.** If the scheduled infrastructure looks healthy, prove the client
@@ -98,8 +98,7 @@ rewritten as `aborted`, with `environment.aborted_reason` naming the item it die
 That name is the lead.
 
 Common causes: the machine reboots on a schedule in the middle of a long install; the
-scheduled task's four-hour execution limit is reached by a very large download; a
-preflight script never returns.
+scheduled task's four-hour execution limit is reached by a very large download.
 
 An aborted run does not write its reports, so the reports directory still describes the
 last run that finished. A machine can look completely healthy in `items.json` and not
@@ -199,7 +198,7 @@ catalog entry. To clear it by hand:
 & "$env:ProgramFiles\Cimian\managedsoftwareupdate.exe" --clear-loop all
 ```
 
-Items marked `on_demand` or `recurring` reinstall every run by design and are exempt
+Items marked `OnDemand` or `recurring` reinstall every run by design and are exempt
 from loop protection. Seeing one repeatedly is not a fault.
 
 See [Install-Loop-Prevention](Install-Loop-Prevention) and
@@ -292,7 +291,7 @@ The three most recent verbose logs are kept per item.
 |---|---|---|
 | `0` | Success | — |
 | `3010` | Success, reboot required | Cimian records this as a success and notes the restart |
-| `1618` | Another installation is in progress | Cimian retries this automatically, three times with backoff. Persistent 1618 means something else on the machine holds the installer mutex — Windows Update, a competing management agent |
+| `1618` | Another installation is in progress | Cimian retries this automatically, up to three attempts with backoff. Persistent 1618 means something else on the machine holds the installer mutex — Windows Update, a competing management agent |
 | `1603` | Generic MSI failure | Read the verbose log. Frequently a pending reboot, a permissions problem on a target path, or a repair of a package whose source is no longer valid |
 | `1605` / `1614` | Product not installed / already uninstalled | Treated as success on an uninstall |
 | Other | Product-specific | Look it up for that installer |
@@ -367,7 +366,7 @@ To restart the watcher without performing an install:
 & "$env:ProgramFiles\Cimian\managedsoftwareupdate.exe" --restart-service
 ```
 
-Only `msi`, `pkg` and `nupkg` payloads can update the client. Anything else is refused.
+Only MSI and `.nupkg` payloads can update the client. Anything else is refused.
 
 See [Updating-Cimian](Updating-Cimian).
 
@@ -515,7 +514,7 @@ A few interactions worth knowing when the source does not explain the outcome:
   than looping. An item can therefore come from a manifest two or three levels below
   the one assigned to the machine.
 - When the same item is declared more than once, one action wins: `install` beats
-  `uninstall`, which beats `update`, which beats `default`, which beats `optional`,
+  `uninstall`, which beats `update`, which beats `optional`, which beats `default`,
   which beats the MDM profile and app actions. Within an equal action the newer version
   wins. So an item you removed from one manifest may still be installed because another
   manifest asks for it more strongly.

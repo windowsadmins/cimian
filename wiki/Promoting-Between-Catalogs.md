@@ -70,18 +70,20 @@ installing anything.
 managedsoftwareupdate --checkonly -vv
 ```
 
-The item should appear in the run's output with a status. To confirm the client really fetched
-a fresh catalog rather than falling back to its cached copy, look at the cached file directly —
-it is overwritten on every successful download:
+The item should appear in the run's output with a status. To confirm what the client
+actually downloaded, look at its local copy of the catalog — the client empties its
+`catalogs` directory at the start of every run, so the file there is always this run's
+download:
 
 ```powershell
 Select-String -Path C:\ProgramData\ManagedInstalls\catalogs\Production.yaml -Pattern '^- name: ExampleApp$'
 ```
 
-`Item not found in catalog: ExampleApp` in the run output means the client's catalog does not
-contain it: either the rebuild did not include it, the publish did not reach the server, or the
-catalog download failed and the client silently used its cached copy from before your change.
-A failed catalog download is logged as a warning followed by `Falling back to local cache`.
+`Item not in catalog: ExampleApp` in the verbose run output means none of the client's
+catalogs contain it: either the rebuild did not include it, the publish did not reach the
+server, or the catalog download failed. A failed catalog download is logged as a warning
+(`Failed to download catalog Production: <status>`); with no local copy left from an earlier
+run, that catalog contributes no items at all for the run.
 
 Once satisfied, let the fleet pick it up on its own schedule.
 
@@ -106,11 +108,9 @@ the device stop hearing about it. To actually reverse an install you need either
 version that supersedes the bad one, or a `managed_uninstalls` entry — see
 [Uninstalling Software](Uninstalling-Software).
 
-There is one trap specific to rollback. If the item you remove was the *only* item in that
-catalog, `makecatalogs` deletes the catalog file, and clients whose manifests still name it get
-a 404 and fall back to the copy they cached on their last successful run — which still contains
-the item you just pulled. Keep at least one item in every catalog a manifest names, or remove
-the catalog from the manifests at the same time.
+If the item you remove was the *only* item in that catalog, `makecatalogs` deletes the catalog
+file, and clients whose manifests still name it get a 404 and log a download warning on every
+run. Remove the catalog from the manifests at the same time, or keep at least one item in it.
 
 ## Pitfalls
 
@@ -160,9 +160,9 @@ is written into the catalog and then ignored.
 Neither failure produces an error anywhere. The pkgsinfo looks right, the catalog builds
 cleanly, and the behaviour you asked for never happens. Two examples that ship today: the
 top-level `installer_type:` scalar is stripped by `makecatalogs` and never reaches a client —
-the real key is `installer.type` — and `uninstallcheck_script`, `identifier` and
-`installer.arguments` are carried into the catalog but the client has no property for any of
-them and never reads them. Use `installer.args`, not `installer.arguments`.
+the real key is `installer.type` — and `identifier` and `installer.arguments` are carried into
+the catalog but the client has no property for either and never reads them. Use
+`installer.args`, not `installer.arguments`.
 
 When you use a key you have not used before, verify it end to end after rebuilding:
 

@@ -113,8 +113,9 @@ files or credential files of any kind.
 
 ## Building and testing before you open a pull request
 
-You need PowerShell 7 or later and the .NET 10 SDK. The build pins preview-quality
-`Microsoft.Extensions` packages, so a stable-only SDK installation will not restore.
+You need PowerShell 7 or later and the .NET 10 SDK at preview quality, which is what
+continuous integration installs; the `cimipkg` submodule pins preview
+`Microsoft.Extensions.Logging` packages.
 
 The three commands continuous integration runs, in order. Run all three locally before proposing
 a change:
@@ -128,11 +129,11 @@ dotnet build CimianTools.sln --configuration Release --no-restore
 ```
 
 ```powershell
-dotnet test tests/Cimian.Tests/Cimian.Tests.csproj --configuration Release --runtime win-x64
+dotnet test tests/Cimian.Tests.csproj --configuration Release --no-build
 ```
 
 That is the whole of CI. It builds and tests; it does not run `build.ps1`, does not produce an
-MSI, and does not run the smoke or container tests.
+MSI, and does not run the smoke test.
 
 To produce runnable binaries, use the build script rather than `dotnet publish` — it forces the
 self-contained, single-file publish settings the tools need, and hand-copies the WinUI 3
@@ -203,7 +204,7 @@ directory of its own without changing anything on the machine:
 
 Then add whichever applies: the matching installer log from `logs\installs\` for an installer
 that failed, `logs\selfupdate\` for a Cimian update that did not take, and
-`logs\cimiwatcher.log` for a machine where no run is happening at all. For a suspected install
+the newest `logs\cimiwatcher<yyyyMMdd>.log` for a machine where no run is happening at all. For a suspected install
 loop, include the loop diagnostics:
 
 ```powershell

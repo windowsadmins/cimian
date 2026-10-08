@@ -93,13 +93,14 @@ any manifest. That is the point: put the base product in the manifest and let th
 
 ## Resolution order
 
-Two separate mechanisms are involved, and they run at different times.
+Three stages are involved, and they run at different times.
 
 ### 1. Classification-phase closure
 
 Once per run, after status checking and before any deferral filtering, the client expands a
 dependency closure. It seeds from **every manifest item whose action is `install` or `update`** —
-manifest intent, not current install state — and walks outward in **both** directions:
+manifest intent, not current install state — except a `managed_updates` item that is not
+installed, which is skipped and pulls nothing in. It walks outward in **both** directions:
 
 - forward along `requires` (an item to its declared dependencies);
 - backward along `update_for` (an item to the patches that declare it).
@@ -112,7 +113,15 @@ to the install queue with its source recorded as `dependency`.
 
 This is what makes a dependency appear in `--checkonly` output even though no manifest names it.
 
-### 2. Install-time recursive walk
+### 2. Install order across the run
+
+Before installing, the client orders the run's install list so that every item comes after the
+items it `requires`, directly or through other catalog items. Otherwise the order is unchanged.
+Every item in the run counts as scheduled, and a scheduled requirement counts as satisfied, so an
+item whose requirement already failed earlier in the run is skipped and recorded as failed rather
+than attempted.
+
+### 3. Install-time recursive walk
 
 During the actual install of each item, a second, recursive algorithm runs:
 
@@ -132,8 +141,8 @@ you wrote them in, and none at all between unrelated items.
 
 ### Removal order is the mirror image
 
-When an item is removed, every catalog item whose `requires` names it is removed **first**,
-recursively. If a dependent fails to remove, the parent removal is abandoned. See
+When an item is removed, every installed catalog item whose `requires` names it is removed
+**first**, recursively. If a dependent fails to remove, the parent removal is abandoned. See
 [Uninstalling Software](Uninstalling-Software).
 
 ## Cycles
@@ -142,10 +151,11 @@ Cycle handling is structural rather than special-cased. The classification closu
 set seeded with the seed names and enqueues a node only when it has not been seen, so a `requires`
 cycle terminates rather than looping. No error is reported; the graph is simply walked once.
 
-The install-time recursive walk has **no visited-set guard at its recursion point**. A live cycle
-reaching that path would recurse without bound. In practice the closure that feeds it is bounded
-and no test exercises a cycle through the install path, but the guard is not there. Do not create
-mutual `requires` relationships.
+The install ordering cannot order a cycle, so it ignores the edge that closes it and returns every
+item once. The install-time walk has no visited set of its own; what stops it is that a scheduled
+item counts as a satisfied requirement, and every item in the run plus each dependency being
+installed is scheduled. Neither path reports the cycle. Do not create mutual `requires`
+relationships.
 
 ## Worked examples
 

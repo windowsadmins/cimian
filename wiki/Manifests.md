@@ -46,10 +46,10 @@ a misspelled key is not an error, it simply has no effect.
 | `managed_uninstalls` | list of strings | `[]` | Remove, and keep removed. Only acts on items that are actually removable. |
 | `managed_updates` | list of strings | `[]` | Patch if present. Never installs an item that is absent — it only upgrades one that is already there. |
 | `optional_installs` | list of strings | `[]` | Offer in Managed Software Center. Nothing is installed until a user asks for it. |
-| `default_installs` | list of strings | `[]` | Install once, if not already installed. After the first successful install the item is not re-enforced and drops off every list — a user may remove it and it will not come back. |
+| `default_installs` | list of strings | `[]` | A one-time Self Service selection, as in Munki 7. The first run that sees a name adds it to the device's self-service manifest, under both `default_installs` and `managed_installs`; later runs see it recorded there and never add it again, so a user who removes the item keeps it removed. The seeded request installs the item only when it is also offered through `optional_installs` — a name listed under `default_installs` alone is seeded but never installed. |
 | `featured_items` | list of strings | `[]` | Presentational only. Collected across the whole manifest tree, de-duplicated case-insensitively, and surfaced to Managed Software Center as the featured set. It queues nothing; an item must also appear in `optional_installs` (or another list) to be actionable. |
 | `conditional_items` | list of mappings | `[]` | Item lists that apply only when a condition matches. See [Conditional-Items](Conditional-Items). |
-| `managed_profiles` | list of strings | `[]` | Recorded and reported as externally managed. **The client performs no action on these** — they are logged as skipped external items. |
+| `managed_profiles` | list of strings | `[]` | Recorded and reported as externally managed. **The client performs no action on these** — they are logged as skipped external items. Not available inside `conditional_items`. |
 | `managed_apps` | list of strings | `[]` | Same as `managed_profiles`: recorded, reported, never acted on. |
 
 Item lists are lists of package names, matched case-insensitively against the catalog.
@@ -94,7 +94,7 @@ Highest rank wins, and the result does **not** depend on the order the manifests
 read:
 
 ```
-install > uninstall > update > default > optional > profile = app
+install > uninstall > update > optional > default > profile = app
 ```
 
 If two occurrences share the same rank, the higher version wins; failing that, the first
@@ -114,10 +114,15 @@ self-service manifest. The merge respects admin intent:
 - A user request for an item the server does not mention adds an install.
 - A user request for an item the server lists as `optional_installs` promotes that entry
   to an install in place.
-- A user request to remove an item whose server action mandates presence — `install`,
-  `uninstall`, `default`, `profile` or `app` — is logged and ignored.
+- A user request for an item the server lists in any other way — for example only under
+  `managed_updates` or `default_installs` — is left alone.
+- A user request to remove an item the server lists as `optional_installs` or
+  `default_installs` flips that entry to a removal. A removal request for an item listed
+  only under `managed_updates` is left alone.
+- A user request of either kind for an item whose server action mandates presence or
+  absence — `install`, `uninstall`, `profile` or `app` — is ignored, and admin policy wins.
 
-`optional` and `update` are deliberately not presence-mandating. That is what makes the
+`optional`, `update` and `default` are deliberately not presence-mandating. That is what makes the
 common pairing of `optional_installs` plus `managed_updates` work: the admin keeps the
 item patched when it is present, and the user stays the authority on whether it is
 present at all.
@@ -186,6 +191,8 @@ included_manifests:
 managed_installs:
   - ExampleImageEditor
   - ExampleVectorEditor
+optional_installs:
+  - ExampleFontManager
 default_installs:
   - ExampleFontManager
 conditional_items:

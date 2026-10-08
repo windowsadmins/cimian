@@ -22,9 +22,11 @@ session reports:
 - a **reason** and a machine-readable **reason code**, plus the **detection method** that
   produced it
 
-An exception thrown anywhere in the cascade is not swallowed. The item ends as status
-`error` with needs-action true and reason code `check_failed`, so a broken check causes an
-install attempt rather than a silent skip.
+An exception that escapes the cascade is not swallowed. The item ends as status `error`
+with needs-action true and reason code `check_failed`, so a broken check causes an install
+attempt rather than a silent skip. The registry, file and status-script gates catch their own
+errors instead: those end as `error` too, but with needs-action false for the registry and
+file checks.
 
 ## Evaluation order
 
@@ -72,7 +74,7 @@ conditional item keys on.
 | `0` | install is needed | `pending`, needs action, reason code `installcheck_needed` |
 | non-zero | install is not needed | `installed`, reason code `script_confirmed` |
 | times out | detection failed | `error`, **needs action false**, reason code `script_error` |
-| throws | detection failed | `error`, needs action true, reason code `check_failed` |
+| throws | detection failed | `error`, needs action true, reason code `script_error` |
 
 The timeout is two minutes and it is a deliberate dead end: a script that hangs never
 causes an install. That is safe, but it also means a slow install-check silently freezes an
@@ -102,8 +104,8 @@ The version script has no timeout.
 
 If the pkgsinfo carries any `installs` entries, every entry is checked. **Any single
 failing entry short-circuits the whole item to needs-action.** If all entries pass, the item
-is `installed` with detection method `installs_array` and a reason of the form
-`All N install checks passed`.
+is `installed` with detection method `installs_array`, reason code `file_match` and the
+reason `Installs array verification passed`.
 
 Each entry type has its own rules, and an entry that declares neither a type nor any
 identity field is an **error**, not a pass. See [Installs Arrays](Installs-Arrays) for the
@@ -137,9 +139,12 @@ renames the product.
 |---|---|
 | path missing | `pending`, needs action, reason code `file_missing`, not an update |
 | exists, no further fields | `installed`, reason code `file_match` |
-| exists, `check.file.version` set and the file's version resource is older | `pending`, needs action, reason code `version_outdated` |
-| exists, `check.file.hash` set and the SHA-256 does not match | `pending`, needs action, reason code `hash_mismatch` |
-| exists and all configured sub-checks pass | `installed`, reason code `file_match` |
+| exists, `check.file.version` set and the file's version resource is older than it | `pending`, needs action, is-update, reason code `update_available` |
+| exists, `check.file.hash` set and the SHA-256 does not match | `pending`, needs action, is-update, reason code `hash_mismatch` |
+| exists and all configured sub-checks pass | `installed`, reason code `file_match`, or `hash_match` when a hash was checked |
+
+The version is compared against `check.file.version` itself, not against the catalog
+`version`. A file with no version resource passes the version sub-check.
 
 `check.file.hash` is SHA-256 only. This is different from the `installs` array, where the
 hash algorithm is inferred from the length of the expected value.
@@ -153,6 +158,8 @@ hash algorithm is inferred from the length of the expected value.
 |---|---|---|
 | `0` | already installed | `installed`, reason code `script_confirmed` |
 | non-zero | not installed | `pending`, needs action, reason code `not_installed` |
+
+Like the version script, the status script has no timeout.
 
 Both script conventions live in the same cascade, with opposite polarity. Naming the wrong
 key is the single most common way to invert a package's behaviour. If in doubt, use
@@ -200,7 +207,7 @@ installer type, and the split is deliberate:
 | `installer.type` | Result |
 |---|---|
 | empty, `nopkg`, `script` | **`installed`**, reason code `no_checks` — a script-only item with no detection is assumed done |
-| `msi`, `exe`, `pkg`, `nupkg`, `copy`, anything else | **`pending`**, needs action, reason code `not_installed` |
+| `msi`, `exe`, `nupkg`, `msix`, `copy`, anything else | **`pending`**, needs action, reason code `not_installed` |
 
 A script-only item with no checks that you expect to run every session will therefore run
 once and never again. Give it `installcheck_script`, `recurring: true`, or `OnDemand: true`
@@ -215,9 +222,9 @@ depending on what you actually want — see [On-Demand Items](On-Demand-Items).
 | `version_script` | 3 | reported version older, or no output | reported version current |
 | `installs` array | 4 | any entry fails | every entry passes |
 | `check.registry.name` | 5 | no display-name match, or version older | match, and version current or unchecked |
-| `check.file.path` | 6 | missing, hash mismatch, or version older | present and sub-checks pass |
+| `check.file.path` | 6 | missing, hash mismatch, or version older than `check.file.version` | present and sub-checks pass |
 | `check.script` | 7 | exit non-zero | exit 0 |
-| nothing, MSI/EXE/pkg payload | 8 then 10 | receipt older, or no receipt | receipt current |
+| nothing, installer payload | 8 then 10 | receipt older, or no receipt | receipt current |
 | nothing, script payload | 8 then 10 | receipt older | receipt current, or no receipt at all |
 
 ## How ties break

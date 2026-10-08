@@ -57,8 +57,10 @@ a script, a set of user settings — use `cimipkg` to build an MSI around it. Se
 
 ## Getting help from a tool
 
-Every tool accepts `--help`. `managedsoftwareupdate` also accepts `-V` and
-`--version`; `makecatalogs`, `manifestutil` and `repoclean` accept `-V` only.
+Every tool except `cimistatus` accepts `--help` and `--version`.
+`managedsoftwareupdate`, `makecatalogs`, `manifestutil` and `repoclean` also accept `-V`.
+`cimistatus` takes no arguments of its own; anything you pass it is ignored and the
+window opens.
 
 Note that flag naming is not consistent across the set. `cimiimport` mixes
 hyphens and underscores (`--postinstall-script` but `--minimum_os_version`),

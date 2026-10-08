@@ -173,10 +173,12 @@ five-minute timer; the hourly task picks the work back up afterwards, still in b
 mode, and continues. When a session finishes with no failed installs or uninstalls, the
 sentinel file is deleted and the machine drops into normal operation on its own.
 
-To watch progress from another session while this is running:
+To watch progress from another session while this is running, follow the run log. Do not
+start a second `managedsoftwareupdate` for this: only one instance runs at a time, and a
+`--checkonly` started alongside offers to kill the running session.
 
-```
-managedsoftwareupdate --checkonly
+```powershell
+Get-Content 'C:\ProgramData\ManagedInstalls\reports\run.log' -Wait -Tail 20
 ```
 
 And to confirm the machine has left bootstrap mode:

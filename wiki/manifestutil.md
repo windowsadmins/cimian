@@ -33,7 +33,8 @@ an editor. Run it with no options and it prints a one-line hint and exits 0.
 | `--selfservice-request` | — | package | — | Add a package to the local self-service manifest. |
 | `--selfservice-remove` | — | package | — | Remove a package from the local self-service manifest. |
 | `--config` | `-c` | path | `%ProgramData%\ManagedInstalls\Config.yaml` | Configuration file to read `repo_path` from. |
-| `-V` | — | — | — | Print the version and exit. |
+| `-V` | — | — | — | Print `manifestutil version <n>` and exit. |
+| `--version` | — | — | — | Print the build version and exit. |
 | `--help` | — | — | — | Print usage and exit. |
 
 `--section` accepts exactly `managed_installs`, `managed_uninstalls`,
@@ -41,12 +42,11 @@ an editor. Run it with no options and it prints a one-line hint and exits 0.
 else is an error and exits 1. There is no `included_manifests` section here — see
 [Including another manifest](#including-another-manifest).
 
-There is no `--version` long form; use `-V`.
-
 ## How it finds the repo
 
 `manifestutil` reads the `repo_path` key from a configuration file and works in
-`<repo_path>\manifests`. The file defaults to
+`<repo_path>\manifests`. The key must be spelled `repo_path`; the `RepoPath` key that
+`cimiimport --config` writes is not read. The file defaults to
 `%ProgramData%\ManagedInstalls\Config.yaml` and can be overridden per invocation
 with `--config`.
 
@@ -187,9 +187,13 @@ backslashes in them are normalised to forward slashes when the file is saved —
 including by `manifestutil` itself, the next time it edits that manifest.
 
 `catalogs:` is likewise not editable through the tool. Both keys survive
-`manifestutil` edits untouched, so it is safe to hand-edit a manifest and keep
-using the tool on its package sections afterwards. See [Manifests](Manifests) for
-what these keys mean and how inclusion resolves.
+`manifestutil` edits untouched. See [Manifests](Manifests) for what these keys mean and
+how inclusion resolves.
+
+Any other key does **not** survive. When `--add-pkg` or `--remove-pkg` saves a manifest,
+the file is rewritten from `name`, the four package sections, `included_manifests` and
+`catalogs` only. `conditional_items` and every other key are dropped without a warning,
+and comments are lost. Edit a manifest that uses any other key by hand.
 
 ## Listing what a manifest resolves to
 
@@ -285,6 +289,8 @@ manifestutil --manifest WORKSTATION-01 --add-pkg ExampleApp
 - No interactive mode. Every action is one command.
 - Only the four package sections are editable. `included_manifests`, `catalogs`,
   `conditional_items` and any other key must be hand-edited.
+- Saving a manifest drops every key except `name`, the four package sections,
+  `included_manifests` and `catalogs`, including `conditional_items`.
 - Items are never validated against catalogs, so misspelled package names are
   accepted.
 - `--list-manifests` does not recurse into subdirectories of `manifests\`.

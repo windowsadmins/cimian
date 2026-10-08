@@ -153,7 +153,7 @@ single-instance check. Wait for the first run to end.
 **The trigger file is still on disk.** If
 `C:\ProgramData\ManagedInstalls\.cimian.bootstrap` or `.cimian.headless` is still
 present a minute after a trigger, the service is not polling. Check the service
-log at `C:\ProgramData\ManagedInstalls\logs\cimiwatcher.log` and the Windows
+log at `C:\ProgramData\ManagedInstalls\logs\cimiwatcher<yyyyMMdd>.log` and the Windows
 Application event log:
 
 ```

@@ -39,7 +39,8 @@ cimiwatcher debug
 | `status` | Print `Service CimianWatcher: <state>`, or `Service CimianWatcher is not installed`. |
 | `debug` | Run the watcher in the foreground as a console program, logging to the console as well as the log file. Ctrl+C stops it. |
 
-There are no options. Unrecognised tokens are an error rather than being ignored.
+There are no options beyond `--help` and `--version`. Unrecognised tokens are an
+error rather than being ignored.
 Every subcommand returns 0 on success and 1 on failure, including `status`, which
 returns 1 when the service is not installed.
 
@@ -144,9 +145,10 @@ started finishes. See [Updating Cimian](Updating-Cimian).
 
 ## Logging
 
-The service writes to `C:\ProgramData\ManagedInstalls\logs\cimiwatcher.log`,
-rolling daily and keeping seven files. The minimum level is Information; framework
-noise is suppressed to Warning.
+The service writes to `C:\ProgramData\ManagedInstalls\logs\`, rolling daily and
+keeping seven files. Because the log rolls daily, the date is part of each file name:
+`cimiwatcher<yyyyMMdd>.log`, for example `cimiwatcher20261007.log`. The minimum level
+is Information; framework noise is suppressed to Warning.
 
 Running as a service it also writes to the Windows Application event log under
 the source `CimianWatcher`. In `debug` mode it writes to the console instead of

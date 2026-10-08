@@ -10,19 +10,18 @@ handling and the complete flag reference.
 ## What it produces
 
 The default output is a **Windows Installer package (`.msi`)** authored directly by
-`cimipkg` — there is no WiX project and no external toolchain beyond `makecab.exe`. The
+`cimipkg`, which calls `makecab.exe` to build the cabinets. The
 MSI is the format the Cimian client installs best: `managedsoftwareupdate` can read its
 ProductCode, UpgradeCode and version back out of the registry, so installs are detectable
 without you writing an installcheck script.
 
-Two other formats are available:
+One other format is available, plus an optional Intune wrapper:
 
 | Flag | Output | Notes |
 |---|---|---|
 | *(none)* | `.msi` | Default. Deterministic UpgradeCode derived from `product.identifier`. |
 | `--nupkg` | `.nupkg` | Chocolatey-compatible. Requires `nuget` on `PATH` or the build fails. |
-| `--pkg` | `.pkg` | Legacy ZIP for the sbin installer. Marked for removal in source; do not use for new packages. |
-| `--intunewin` | `.intunewin` | Produced *in addition* to whichever of the above was built. |
+| `--intunewin` | `.intunewin` | Produced *in addition* to the `.msi` or `.nupkg`. |
 
 `--intunewin` wraps the built package with `IntuneWinAppUtil.exe`. If that tool is not on
 `PATH`, the step is skipped with a warning and **the build still exits 0** — check for the
@@ -67,7 +66,7 @@ both run, in that order, as one script.
 | `postinstall*.ps1` | after the payload is written | `CimianPostinstall` |
 | `uninstall*.ps1` | on uninstall | `CimianUninstall` |
 
-Only `.ps1` is recognised on the MSI path. The `.nupkg` and `.pkg` paths match the exact
+Only `.ps1` is recognised on the MSI path. The `.nupkg` path matches the exact
 name `uninstall.ps1` rather than the glob, and additionally process `.psm1`, `.psd1`,
 `.sh`, `.cmd` and `.bat` files for placeholder substitution.
 
@@ -151,6 +150,7 @@ a typo costs you the setting with no error.
 |---|---|---|---|
 | `install_location` | string | none | Payload destination. Blank makes the package installer-type. |
 | `upgrade_code` | string | none | Explicit MSI UpgradeCode GUID. Omit it and `cimipkg` derives one deterministically from `product.identifier`. |
+| `supersedes` | list of string | none | Extra UpgradeCode GUIDs whose products this MSI removes when it installs, one `Upgrade` table row each. Use it after a `product.identifier` change moved the derived UpgradeCode. A value that is not a GUID fails the build; a listed product that is absent is skipped. |
 | `msi_properties` | map of string to string | none | Written verbatim into the MSI Property table. A `SecureCustomProperties` you supply is unioned with `PREVIOUSVERSIONSINSTALLED` rather than replacing it. |
 | `signing_certificate` | string | none | signtool `/n` subject. Matched as a substring of the certificate subject. |
 | `signing_thumbprint` | string | none | signtool `/sha1` thumbprint. Beats `signing_certificate` when both are set. |
@@ -162,7 +162,6 @@ a typo costs you the setting with no error.
 | `override_uninstall_script` | bool | `false` | `--nupkg` only. Uses `scripts\uninstall.ps1` verbatim instead of the generated uninstall body. |
 | `postinstall_action` | string | none | Accepted values `logout`, `restart`, `reboot`, `shutdown`, `none`. **Emits a log line only — no action is performed.** |
 | `icon` | string | none | nuspec iconUrl only. Not used for the MSI or for Managed Software Center icons. |
-| `signature` | map | none | Output, not input. Written back into a `.pkg`'s embedded `build-info.yaml`. |
 | `category` | string | none | **Accepted and never read.** |
 | `minimum_os_version` | string | none | **Accepted and never read.** |
 | `blocking_applications` | list of string | none | **Accepted and never read.** Blocking applications belong in the pkgsinfo — see [Blocking Applications](Blocking-Applications). |
@@ -290,7 +289,7 @@ the usual way to keep the certificate identity out of a checked-in project.
   as a broken date.
 - **Simple `x`, `x.y`, `x.y.z`, `x.y.z.w`**, padded out to at least three components.
 
-The parsed version is what appears in the output filename. For `--nupkg` and `--pkg` the
+The parsed version is what appears in the output filename. For `--nupkg` the
 normalised form is also written back into the package metadata: date versions lose their
 zero padding (`2026.09.03` becomes `2026.9.3`) and semver build metadata after `+` is
 dropped, because NuGet ignores it.
@@ -310,17 +309,15 @@ See [Version Comparisons](Version-Comparisons).
 ## Flag reference
 
 ```
-cimipkg [<project-directory>] [--verbose] [--pkg] [--nupkg] [--intunewin]
+cimipkg [<project-directory>] [--verbose] [--nupkg] [--intunewin]
         [--env <path>] [--sign-thumbprint <hex>] [--sign-cert <subject>]
         [--skip-import] [--create <path>]
-        [--resign <pkg>] [--resign-cert <name>] [--resign-thumbprint <hex>]
 ```
 
 | Flag | Alias | Argument | Default | Effect |
 |---|---|---|---|---|
 | `<project-directory>` | — | path | `.` | Directory containing `build-info.yaml`. Must exist or the tool exits 1. |
 | `--verbose` | `-v` | no | off | Debug logging, and a stack trace on error. |
-| `--pkg` | — | no | off | Build the legacy `.pkg` ZIP instead of an MSI. Slated for removal. |
 | `--nupkg` | — | no | off | Build a Chocolatey `.nupkg` instead of an MSI. |
 | `--intunewin` | — | no | off | Additionally produce an `.intunewin` from whatever was built. |
 | `--env` | `-e` | path | `<project>\.env` | `.env` file for substitution. |
@@ -328,12 +325,7 @@ cimipkg [<project-directory>] [--verbose] [--pkg] [--nupkg] [--intunewin]
 | `--sign-cert` | — | subject | none | Overrides `signing_certificate`. |
 | `--skip-import` | — | no | off | Suppress the post-build prompt that offers to run `cimiimport`. Use this in CI. |
 | `--create` | `-c` | path | none | Scaffold a new project at the path and exit. Nothing is built. |
-| `--resign` | — | path | none | Re-sign an existing `.pkg` in place and exit. `.pkg` only; there is no MSI re-sign. |
-| `--resign-cert` | — | subject | none | Certificate subject for `--resign`. |
-| `--resign-thumbprint` | — | hex | none | Certificate thumbprint for `--resign`. |
-
-Mode precedence is `--create`, then `--resign`, then build. Format precedence in build mode
-is `--pkg`, then `--nupkg`, then MSI.
+`--create` takes precedence over a build. `--version` and `--help` are also accepted.
 
 Exit codes are `0` on success and `1` for a missing project directory or any unhandled
 error. A failing `cimiimport` launched from the post-build prompt is logged as a warning and
@@ -456,8 +448,7 @@ as above lets [cimiimport](cimiimport) generate that entry for you.
 - `--intunewin` fails open: a missing `IntuneWinAppUtil.exe` produces a warning and a
   successful exit with no `.intunewin` file.
 - `nuget sign` failures during a `--nupkg` build are warnings, not errors.
-- `--resign` works on `.pkg` archives only. There is no in-place re-sign for an MSI;
-  rebuild instead.
+- There is no in-place re-sign for an MSI; rebuild instead.
 - Every build produces a fresh ProductCode. If a pkgsinfo pins a ProductCode in its
   `installs` array, a rebuild of the same version will never match it again and the item
   will reinstall on every run. See [Install Loop Prevention](Install-Loop-Prevention).

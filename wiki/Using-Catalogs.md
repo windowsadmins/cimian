@@ -84,10 +84,12 @@ narrow or replace it. If the entire tree names no catalogs at all, the client fa
 single catalog named `Production`.
 
 Every catalog in the accumulated set is downloaded from `{SoftwareRepoURL}/catalogs/<name>.yaml`
-and cached at `C:\ProgramData\ManagedInstalls\catalogs\<name>.yaml`. If a download fails for any
-reason — 404, auth failure, network error — the client logs a warning and uses the cached copy
-from the last successful run. That is deliberate resilience, and it is also why a catalog you
-accidentally deleted from the repo can appear to keep working on machines that already have it.
+and saved to `C:\ProgramData\ManagedInstalls\catalogs\<name>.yaml`. The client empties that
+directory, and the `manifests` directory beside it, at the start of every run, so nothing
+carries over from a previous run. If a catalog download fails — 404, auth failure, network
+error — the client logs a warning, finds no local copy, and carries on with that catalog
+contributing no items. Items that only that catalog would have supplied are skipped for the
+run as not found in any catalog.
 
 ## When the same item is in two catalogs
 
@@ -191,8 +193,9 @@ published, so:
 - An edit to an existing item has no effect at all. The client reports the item as installed
   and up to date against the old version, and the logs show no error, because from the client's
   point of view nothing changed.
-- A brand-new item that a manifest already lists fails with `Item not found in catalog:
-  ExampleApp` in the run log. The manifest entry is real; the catalog has never heard of it.
+- A brand-new item that a manifest already lists is skipped, with `Item not in catalog:
+  ExampleApp (action: install)` in the verbose run log. The manifest entry is real; the
+  catalog has never heard of it.
 - A deleted pkgsinfo stays deployed.
 
 There is no staleness check and no warning. If a change did not take, regenerating the catalogs
@@ -212,14 +215,15 @@ the catalogs are written *before* that check, so a failed run leaves partial cat
 the exit code is a guard, not a rollback. `--tolerate_parse_errors` skips the bad files and
 exits 0 instead.
 
-Missing payloads are warnings, not failures: `<file> has missing installer => pkgs/<location>`.
-`--skip_payload_check` suppresses the check entirely, and `--hash_check` extends it to compare
-the recorded `installer.size` and `installer.hash` against the file on disk.
+Missing payloads are warnings, not failures: `<file> has missing installer => pkgs/<location>`,
+and the same for a file-based `uninstaller` entry. For a payload that is present, the recorded
+`installer.size` is compared with the file on disk on every run, and a difference is reported
+as `installer size mismatch`. `--skip_payload_check` suppresses all of this, and `--hash_check`
+adds a hash comparison.
 
 `--hash_check` is not usable as a correctness check today. It computes MD5, while
 `installer.hash` holds the SHA-256 digest the client verifies against, so it reports
-`installer hash mismatch` for every item that records a hash. The size comparison in the same
-pass is sound; the hash comparison is not.
+`installer hash mismatch` for every item that records a hash.
 
 `makecatalogs` does **not** validate anything else. A pkgsinfo with no `name`, no `version`, a
 misspelled key, a malformed `installs` entry or a nonsense architecture string parses fine and

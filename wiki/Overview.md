@@ -221,9 +221,9 @@ Stated plainly, because the pull model invites the opposite assumption:
   you can only change what it will do on its next run, and trigger that run locally.
 - Only `http` and `https` are supported. No `file://`, no UNC shares, no object-storage
   protocols, and no proxy configuration.
-- Authentication is HTTP Basic, a bearer token, or mutual TLS. No Windows Integrated
-  authentication, no custom request headers, no signed-URL schemes, and no request
-  middleware.
+- Authentication is HTTP Basic, a bearer token, or mutual TLS. `AdditionalHttpHeaders` can
+  add fixed headers to every request. No Windows Integrated authentication, no signed-URL
+  schemes, and no request middleware.
 - macOS and Linux are not targets. Windows 10 1809 and later, x64 and arm64.
 
 ## See also

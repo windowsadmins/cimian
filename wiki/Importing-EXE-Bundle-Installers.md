@@ -1,7 +1,7 @@
 # Importing EXE Bundle Installers
 
 Many enterprise Windows installers ship as a single `.exe` that internally chains one or more MSI
-payloads plus prerequisites. The most common form is a WiX Burn bundle; InstallShield setup
+payloads plus prerequisites. The most common form is a Burn bundle; InstallShield setup
 launchers and NSIS-wrapped MSI installers behave similarly. These are awkward because the bundle
 registers several Add/Remove Programs entries — or none — so the obvious detection choice is
 usually the wrong one. This page walks through importing one, using a fictional
@@ -20,12 +20,12 @@ usually the wrong one. This page walks through importing one, using a fictional
 
 ## 1. Identify the wrapper
 
-WiX Burn bundles embed a `WixBurn` marker near the start of the PE image. Read the first few
-kilobytes and look for it:
+Burn bundles carry a `Burn` marker near the start of the PE image. Read the first few kilobytes
+and look for it:
 
 ```powershell
 $bytes = [System.IO.File]::ReadAllBytes('C:\staging\ExampleVendorSuite-3.2.1.exe')[0..4095]
-if ([System.Text.Encoding]::ASCII.GetString($bytes) -match 'WixBurn|Burn|Bundle') { 'Burn bundle' }
+if ([System.Text.Encoding]::ASCII.GetString($bytes) -match 'Burn|Bundle') { 'Burn bundle' }
 ```
 
 Another quick tell: if `/?` opens a graphical window rather than printing help to the console, it
@@ -161,15 +161,16 @@ extra entry is so damaging — see section 5.
 Two narrow display-name fallbacks exist for products whose Windows Installer registration is
 unreliable:
 
-- When an `installs` entry declares **neither** `product_code` nor `upgrade_code`, the client
+- When a `type: msi` entry declares **neither** `product_code` nor `upgrade_code`, the client
   searches Add/Remove Programs by the item's `display_name`, falling back to `name`.
 - When the **entry itself** carries a `display_name`, an Add/Remove Programs hit on that name
-  counts as installed. This is opt-in per entry and exists for wrapper MSIs that drop their
-  Windows Installer registration after an in-app self-update.
+  counts as installed once the declared codes have missed. This is opt-in per entry and exists for
+  wrapper MSIs that drop their Windows Installer registration after an in-app self-update.
 
-Neither fallback applies when the entry declares a ProductCode or UpgradeCode. **Declared codes are
-authoritative** and fuzzy matching is deliberately disabled in their presence, so a stale GUID
-fails rather than being papered over by a name match. Name matching is also one-directional — a
+The first fallback never runs when the entry declares a ProductCode or UpgradeCode. **Declared
+codes are authoritative**, and the item-name search is deliberately disabled in their presence, so
+a stale GUID fails rather than being papered over by a name match. Only an explicit entry
+`display_name` relaxes that. Name matching is also one-directional — a
 registry `DisplayName` that contains your search string counts, but not the reverse — so
 `Example Vendor Suite Reader` will never be mistaken for `Example Vendor Suite`.
 

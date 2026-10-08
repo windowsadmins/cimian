@@ -31,11 +31,14 @@ OnDemand: true
 unattended_install: true
 ```
 
-`makepkginfo` sets it with a matching flag:
+`makepkginfo` sets it with a matching flag when it builds a pkgsinfo from an installer:
 
 ```
-makepkginfo --OnDemand --nopkg --name ExampleProvisioningStep
+makepkginfo --OnDemand C:\Downloads\ExampleTool.exe
 ```
+
+`makepkginfo` has no script-only mode, so a `nopkg` item like the one above is written by
+hand.
 
 ## Where it sits in the detection cascade
 
@@ -54,6 +57,7 @@ of `installcheck_script`**:
 | 4 | `check.file` |
 | 5 | `check.script` |
 | 6 | ManagedInstalls receipt |
+| 6.5 | Legacy `installer` block product code or upgrade code |
 | 7 | Fallback by installer type |
 
 An on-demand item short-circuits at 0b with:

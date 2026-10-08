@@ -141,9 +141,9 @@ Every session records one run type, derived from the flags it was given:
 | Run type | Entered by | Behaviour |
 |---|---|---|
 | `bootstrap` | `--bootstrap`, or the presence of `.cimian.bootstrap` at the moment the client starts | Loop suppression is disabled entirely; restart and logout actions are performed rather than merely recommended. Self-clears the bootstrap flag only if every install and uninstall in the session succeeded. |
-| `auto` | `--auto` | The hourly task's mode. Restarts and logouts are performed. Items are deferred when a user is active. |
+| `auto` | `--auto` | The hourly task's mode. Restarts and logouts are performed. While a user is active, items that are not marked unattended, or whose `restart_action` would interrupt the user, are deferred. |
 | `checkonly` | `--checkonly` | Reports what would happen, writes `InstallInfo.yaml`, installs nothing. Postflight does not run. |
-| `installonly` | `--installonly` | Installs pending updates without re-checking status. |
+| `installonly` | `--installonly` | Recorded as the run type only. The flag does not change what the run does: status is checked and items are installed exactly as in a `manual` run. |
 | `manual` | none of the above | A plain interactive run. |
 
 Bootstrap mode has no convergence loop. Each invocation is one session; the
@@ -162,27 +162,37 @@ In order:
 2. Drain package-script output stranded by a previous interrupted run.
 3. Check for administrative rights; abort if absent.
 4. Create the working directories and normalise their casing.
-5. Run the preflight script, then reload configuration and rebuild the repository
+5. Empty the local `catalogs` and `manifests` directories, so nothing from a previous run
+   is reused.
+6. Run the preflight script, then reload configuration and rebuild the repository
    clients, because preflight may have rewritten `SoftwareRepoURL` or
    `ClientIdentifier`. See [Preflight and Postflight Scripts](Preflight-And-Postflight-Scripts).
-6. Fetch the primary manifest and everything it includes, and deduplicate items.
-7. Load the catalogs.
-8. Validate and clean the download cache, and prune entries past their retention
+7. Fetch the primary manifest and everything it includes, evaluate conditional
+   items, merge the self-service manifest, and deduplicate items.
+8. Load the catalogs.
+9. Validate and clean the download cache, and prune entries past their retention
    age.
-9. Check the status of every item and bucket it into install, update, uninstall
-   or loop-suppressed. See [How Cimian Decides What Needs To Be Installed](How-Cimian-Decides-What-Needs-To-Be-Installed).
-10. Apply auto-removal and unused-software removal, if enabled.
-11. Apply the `--item` filter, if given.
-12. Resolve dependencies. A `--checkonly` run stops here, prints its tables,
-    writes `InstallInfo.yaml` and exits 0.
-13. Defer items blocked by an install window, by a running blocking application,
+10. Check the status of every item and bucket it into install, update, uninstall
+    or loop-suppressed. See [How Cimian Decides What Needs To Be Installed](How-Cimian-Decides-What-Needs-To-Be-Installed).
+11. Apply auto-removal and unused-software removal, if enabled.
+12. Apply the `--item` filter, if given.
+13. Resolve dependencies.
+14. Sync icons from the repo for Managed Software Center. A `--checkonly` run
+    stops here: it prints its tables, writes the reports and `InstallInfo.yaml`,
+    and exits 0.
+15. Defer items blocked by an install window, by a running blocking application,
     or by an active user in `--auto` mode. See
     [Blocking Applications](Blocking-Applications) and
     [Force Installs and Deadlines](Force-Installs-And-Deadlines).
-14. Download and install, splitting any Cimian self-update out to be staged
+16. Download optional items marked `precache`.
+17. Download and install, splitting any Cimian self-update out to be staged
     rather than installed inline.
-15. Uninstall.
-16. Write the reports, run the postflight script, then end the session.
+18. Uninstall, and remove satisfied removal requests from the self-service
+    manifest.
+19. Write the reports and `InstallInfo.yaml`, run the postflight script, then end
+    the session.
+20. In `auto` and `bootstrap` runs, perform a restart or logout if a processed item
+    requires one. Restart takes precedence over logout.
 
 A session that crashes with an unhandled exception ends without running
 postflight.

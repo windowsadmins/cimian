@@ -108,13 +108,13 @@ managedsoftwareupdate --show-config
 ```
 
 That prints `ClientIdentifier` alongside the repository URL and the local manifest cache
-path.
+path. A blank `ClientIdentifier` means that step of the chain is skipped.
 
 To see the resolution actually happen, and what it produced, run a verbose check-only
-session. It changes nothing on the device:
+session from an elevated prompt. It changes nothing on the device:
 
 ```powershell
-sudo managedsoftwareupdate -v --checkonly
+managedsoftwareupdate -v --checkonly
 ```
 
 The `MANIFEST RETRIEVAL` section shows each candidate tried and why the chain moved on,
@@ -130,7 +130,7 @@ For testing a manifest before publishing it, the client can be pointed at a file
 bypassing the whole chain:
 
 ```powershell
-sudo managedsoftwareupdate -v --checkonly --local-only-manifest C:\temp\candidate.yaml
+managedsoftwareupdate -v --checkonly --local-only-manifest C:\temp\candidate.yaml
 ```
 
 ## The `Orphaned` manifest as an operational tool

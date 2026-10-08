@@ -58,7 +58,7 @@ Not every field applies to every type. Fields not listed for a type are ignored 
 | `type` | all | `file`, `directory`, `msi`, `msix`, `appx`. Optional when inferable |
 | `path` | `file`, `directory` | Absolute path to check |
 | `md5checksum` | `file` | Expected file hash. The algorithm is inferred from the value's length |
-| `version` | `file`, `msi` | Expected minimum version. Falls back to the item's `version` when omitted |
+| `version` | `file`, `msi`, `msix`, `appx` | Expected minimum version. Falls back to the item's `version` when omitted |
 | `product_code` | `msi` | Windows Installer ProductCode GUID, unique per release |
 | `upgrade_code` | `msi` | Windows Installer UpgradeCode GUID, stable across releases |
 | `display_name` | `msi` | Opt-in Add/Remove Programs display-name fallback for this entry |

@@ -61,18 +61,21 @@ Two shell behaviours change the window automatically:
 
 - **Updates-only mode.** When there is nothing optional to browse, the navigation pane is
   hidden entirely and the app pins itself to the Updates page.
-- **Persistent-reminder mode.** When updates have been pending longer than
-  `aggressive_notification_days` (default 14, set in `preferences.yaml`), the window becomes
-  always-on-top and cannot be minimised. It returns to normal once the pending count reaches
-  zero.
+- **Persistent-reminder mode.** When a pending install or removal has a
+  `force_install_after_date` that has already passed, the window becomes always-on-top,
+  cannot be minimised, and jumps to the Updates page. It returns to normal once the pending
+  count reaches zero. `preferences.yaml` also accepts `aggressive_notification_days`
+  (default 14), but the current build reads it without acting on it.
 
 An administrator can reorder or trim the navigation pane with `sidebar_items` in
 `C:\ProgramData\ManagedInstalls\preferences.yaml`. Only `software`, `categories`, `myitems`
 and `updates` are accepted — History cannot be included in a custom sidebar, though it stays
 reachable in the default list.
 
-`C:\ProgramData\ManagedInstalls\client_resources\branding.yaml` can override the window
-title and the app title text, and name an image used as the pane header.
+`C:\ProgramData\ManagedInstalls\client_resources\branding.yaml` accepts one key,
+`app_title`, which replaces the window title and the app title text. A file named
+`sidebar_header.png` or `sidebar_header.jpg` in the same directory is shown as the pane
+header image.
 
 ## Software
 
@@ -89,8 +92,8 @@ Beside the banner are two tiles: **Featured**, which filters the list to feature
 
 Below that is a row of category filter chips built from the categories actually present, a
 search box, an optional **Featured** grid, and the main "All apps" grid. Each tile shows the
-item's icon, name, and an action button: **Install**, **Remove**, or **Cancel** for a request
-not yet carried out. Clicking a tile opens the item's detail page.
+item's icon, name, and an action button: **Install** (**Update** when a newer version is
+available), **Remove**, or **Cancel** for a request not yet carried out. Clicking a tile opens the item's detail page.
 
 The list contains optional installs only. Items an administrator mandates are not
 browseable here — a user cannot install or remove them from this page.
@@ -135,7 +138,9 @@ per-item stage badge — pending, downloading, downloaded, installing, installed
 removed or failed — streamed from the running client, with the failure reason (for example
 an installer exit code) shown alongside.
 
-Items with a deadline show the deadline and how many days they have been pending.
+Pending managed installs and updates with a `force_install_after_date` show the deadline and
+how many days they have been pending. A title offered only under `optional_installs` carries
+no deadline.
 
 When there is nothing to do the page reads "Your software is up to date." and reminds the
 user that managed software also installs in the background, with those runs listed under
@@ -152,8 +157,8 @@ installed and updated without ever appearing under Updates.
 
 Opened by clicking any tile or row. It shows a **Back** button, the icon, display name,
 developer, a status badge, and the buttons that apply to the item's current state —
-**Install**, **Remove**, **Cancel**. There is a deadline warning when the item has a forced
-install date, plus panels for dependency information and for why an item is unavailable.
+**Install**, **Remove**, **Cancel**. There is a deadline warning when the item is a pending
+managed install with a forced install date, plus panels for dependency information and for why an item is unavailable.
 
 Below the description is an information grid: available update, category, installed version,
 download size, developer, and whether a restart is required.
@@ -244,7 +249,7 @@ uses are:
 | `installer.size` | "Download size" in the detail grid |
 | `restart_action` | The restart warning and detail-grid row |
 | `uninstallable` and the removal mechanism | Whether a Remove button appears |
-| `force_install_after_date` | Deadline text and days-pending |
+| `force_install_after_date` | Deadline text and days-pending, for pending managed installs and updates only |
 
 A worked pkgsinfo for a self-service item:
 

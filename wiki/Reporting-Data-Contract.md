@@ -22,7 +22,6 @@ Everything below lives in `%ProgramData%\ManagedInstalls\reports\`, except
 | `loop_suppressed.json` | Items currently held back by loop protection | Rewritten in full each run, including as an empty array |
 | `state.json` | Loop-protection state the client keeps between runs | Persistent; entries retire when a package converges or is cleared |
 | `run.log` | Plain-text trace of the current or most recent run | Truncated at the start of every session |
-| `latest_run.jsonl` | Copy of the most recent session's `events.jsonl` | Replaced when written |
 | `..\InstallInfo.yaml` | The plan and outcome for the current run, in YAML | Rewritten each run |
 | `..\cimian_selfcheck.json` | Result of the last `--self-check` | Rewritten each check |
 
@@ -79,7 +78,7 @@ from that run's session directory.
 | `packages_handled` | array of string | Item names touched by the run |
 
 `environment` always carries `hostname`, `user`, `os_version`, `architecture`
-(`x64` or `x86`), `process_id`, and `log_version` (currently `"2.0"`), plus the run's
+(`x64` on any 64-bit Windows, arm64 included; `x86` otherwise), `process_id`, and `log_version` (currently `"2.0"`), plus the run's
 own flags: `verbosity`, `bootstrap`, `check_only`, `install_only`, `auto`,
 `show_status`, `skip_preflight`, `skip_postflight`, `manifest_target`,
 `local_manifest`, `client_identifier`. A session closed out as abandoned adds
@@ -132,15 +131,15 @@ A machine whose newest session is `aborted` has not been managed successfully, e
 though `items.json` may still look healthy — those items are from the last run that
 did finish.
 
-## events.json and latest_run.jsonl
+## events.json
 
 `events.json` is an array of event objects gathered from the 10 most recent session
 directories and filtered to those timestamped within the last 48 hours. Sessions
 contribute newest-session-first; events within one session are in the order they were
 written.
 
-`latest_run.jsonl` is a straight copy of the most recent session's `events.jsonl` —
-JSON Lines, one object per line, unindented, same schema.
+The newest session's own `events.jsonl`, in its session directory under `logs\`, has the
+same schema as JSON Lines, one object per line. See [Logging](Logging).
 
 | Field | Type | Notes |
 |---|---|---|

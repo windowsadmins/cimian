@@ -16,8 +16,8 @@ that cancels an in-progress run when a new commit arrives on the same ref.
 The job checks out the repository with submodules, installs .NET SDK 10.0.x at
 preview quality, and then runs three commands: `dotnet restore CimianTools.sln`,
 `dotnet build CimianTools.sln --configuration Release --no-restore`, and
-`dotnet test tests/Cimian.Tests/Cimian.Tests.csproj --configuration Release
---runtime win-x64`. The test results are uploaded as a `.trx` artifact whether the
+`dotnet test tests/Cimian.Tests.csproj --configuration Release --no-build`. The
+test results are uploaded as a `.trx` artifact whether the
 job passes or fails.
 
 NuGet caching is deliberately not used. Cold restore costs roughly a minute and is
@@ -61,12 +61,11 @@ version the build stamps into every artifact.
 | Artifact | Name |
 |---|---|
 | Windows Installer package | `Cimian-<YYYY.MM.DD.HHmm>-<arch>.msi` |
-| Chocolatey package | `CimianTools-<arch>.<YY.M.D.HHmm>.nupkg` |
-| Legacy payload archive | `CimianTools-<arch>-<YYYY.MM.DD.HHmm>.pkg` |
+| NuGet package | `CimianTools-<arch>.<YY.M.D.HHmm>.nupkg` |
 | Raw binary archive | `Cimian-<YYYY.MM.DD.HHmm>-<arch>.zip` |
 
-`<arch>` is `x64` or `arm64`, and both are built. The version in the MSI, `.pkg` and
-zip names is the tag verbatim; the NuGet package uses the shorter `YY.M.D.HHmm`
+`<arch>` is `x64` or `arm64`, and both are built. The version in the MSI and zip
+names is the tag verbatim; the NuGet package uses the shorter `YY.M.D.HHmm`
 form of the same moment, so `2026.01.15.0930` becomes `26.1.15.0930` there.
 
 The zip is not produced by `build.ps1` — the workflow makes it by compressing
@@ -110,12 +109,10 @@ Be explicit about this when you decide whether to trust a release:
 - **CI never runs the smoke test.** `tests/smoke-test.ps1` validates that the built
   executables start, report a version, print help and perform basic operations.
   Nothing runs it automatically, in either workflow.
-- **CI never runs the container tests.** The harness under `tests/docker` is not
-  wired into any workflow.
 - **The release workflow runs no tests at all.** It builds and publishes. Test
   coverage for a release is whatever CI ran on the commit before it was tagged.
-- **Released artifacts are unsigned.** The workflow builds with `-NoSign`, and there
-  is no signing infrastructure in this repository. If your environment requires
+- **Released artifacts are unsigned.** The workflow builds with `-NoSign`, and
+  neither workflow has a signing step. If your environment requires
   signed binaries — and for a system that installs software as SYSTEM, it should —
   you must sign them yourself. Extract the payload, sign the executables and
   libraries, repackage, and sign the MSI. The release notes carry a `signtool`
@@ -130,7 +127,7 @@ minutes, and locally it is comparable.
 Run the unit tests, the way CI does:
 
 ```
-dotnet test tests/Cimian.Tests/Cimian.Tests.csproj --configuration Release --runtime win-x64
+dotnet test tests/Cimian.Tests.csproj --configuration Release
 ```
 
 Reproduce exactly what the release workflow will build:
@@ -143,7 +140,7 @@ Confirm the artifact names carry the tag, which is the same thing the workflow's
 consistency check does:
 
 ```
-Get-ChildItem release -Include *.msi,*.nupkg,*.pkg -Recurse | Select-Object Name, Length
+Get-ChildItem release -Include *.msi,*.nupkg -Recurse | Select-Object Name, Length
 ```
 
 Run the smoke test the workflow will not run:

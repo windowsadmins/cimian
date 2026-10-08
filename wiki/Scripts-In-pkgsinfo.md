@@ -19,16 +19,10 @@ that single fact causes more install loops than anything else in Cimian.
 | `preuninstall_script` | Immediately before removal | Non-zero **aborts the removal** |
 | `uninstall_script` | *Is* the removal, when no `uninstaller:` block is declared | Non-zero fails the removal |
 | `postuninstall_script` | After a **successful** removal | Non-zero logs a warning only |
-| `uninstallcheck_script` | Never | — |
+| `uninstallcheck_script` | Before removing a `managed_uninstalls` item | **0 = removal needed**; non-zero = nothing to remove |
 
 Every one of these is an **inline PowerShell string**, not a path to a file. There is no key that
 points the client at a script on disk; the body travels inside the pkgsinfo and into the catalog.
-
-`uninstallcheck_script` is accepted by `makepkginfo` and `cimiimport`, is written into the
-pkgsinfo, and is carried through into the catalog by `makecatalogs` — but the client has no
-property for it and nothing in `managedsoftwareupdate` ever reads it. **Setting it has no effect
-whatsoever.** Removal is decided by [Uninstalling Software](Uninstalling-Software), not by a check
-script.
 
 ## How a script is invoked
 
@@ -93,6 +87,7 @@ warning is a soft outcome, not a failure. The marker is matched anywhere on a li
 | Hook | Timeout |
 |---|---|
 | `installcheck_script` | **2 minutes**, fixed |
+| `uninstallcheck_script` | **2 minutes**, fixed |
 | `version_script` | **none** |
 | `check.script` | **none** |
 | `preinstall_script` | **none** |
@@ -102,7 +97,7 @@ warning is a soft outcome, not a failure. The marker is matched anywhere on a li
 | `uninstall_script` | **none** |
 | `postuninstall_script` | **none** |
 
-Only `installcheck_script` is bounded. Every other hook can run forever and will hold the whole
+Only `installcheck_script` and `uninstallcheck_script` are bounded. Every other hook can run forever and will hold the whole
 session open while it does. `installer_timeout` (per item, in seconds) bounds the **installer
 process**, not any of these scripts, so it will not rescue a hung `postinstall_script`.
 
@@ -136,7 +131,7 @@ An exception thrown while trying to run the script at all (as distinct from a ti
 status to `error` **with `NeedsAction` true**, so the item is queued. Only the timeout path
 declines to act.
 
-`installcheck_script` is consulted at priority 1 in the detection cascade — after the `on_demand`
+`installcheck_script` is consulted at priority 1 in the detection cascade — after the `OnDemand`
 short-circuit and before `installs[]`. An `OnDemand: true` item never has its installcheck
 consulted at all. See
 [How Cimian Decides What Needs To Be Installed](How-Cimian-Decides-What-Needs-To-Be-Installed).
@@ -154,6 +149,19 @@ version**, and compared against the pkgsinfo `version` using the normal version 
 The script must print the version and nothing else. Any banner, warning or progress text becomes
 part of the "version" string, and an unparseable version compares as equal, so the update never
 happens.
+
+### `uninstallcheck_script`
+
+```
+exit 0        -> removal is needed        (the uninstaller runs)
+exit non-zero -> nothing to remove        (the item is skipped)
+```
+
+Same polarity as `installcheck_script`, applied to removal. It runs only for items being removed
+through `managed_uninstalls`. A timeout or an error running the script skips removal for that run
+rather than uninstalling on a guess. Without an `uninstallcheck_script`, the install detection
+decides: an item that detection says is not installed is not removed again, so its uninstaller
+and `postuninstall_script` do not run every session.
 
 ### `check.script`
 
@@ -189,8 +197,10 @@ before the hook.
 ### `install_script` and `uninstall_script`
 
 For `installer.type: nopkg` or `script` there is no payload; `install_script` is the whole
-install, and a non-zero exit fails it. An empty `install_script` on such an item logs a warning
-and reports success.
+install, and a non-zero exit fails it. An item with an empty `install_script` reports success; a
+warning is logged only when it has no `preinstall_script` or `postinstall_script` either, since a
+`nopkg` item may do all its work in those. `install_script` is ignored for every other installer
+type.
 
 `uninstall_script` is the removal mechanism for script-only packages, and its presence is one of
 the things that makes an item removable at all. See

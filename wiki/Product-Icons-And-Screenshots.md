@@ -95,8 +95,9 @@ what icon extraction produces.
 
 ## When an icon is missing
 
-Nothing breaks. MSC generates a plain 64×64 solid-colour tile, with the colour chosen
-deterministically from the item's name out of a fixed ten-colour palette. The tile carries no
+Nothing breaks. MSC generates a plain 64×64 solid-colour tile, with the colour picked from
+a fixed ten-colour palette by hashing the item's name. The hash is not stable across
+launches, so the same item can get a different colour the next time MSC opens. The tile carries no
 initials and no glyph; the item's name is shown beneath it by the card itself.
 
 A grid of solid-coloured squares therefore means one of four things, in rough order of
@@ -123,8 +124,9 @@ repository:
 <repo>/icons/ExampleDesignSuite.png
 ```
 
-No pkgsinfo edits and no `makecatalogs` run are needed — the icon mirror reads item names,
-not the catalog, and picks up new files on the next check. Publishing icons is a pure content
+No pkgsinfo edits and no `makecatalogs` run are needed — without `icon_name` the icon
+mirror requests `<name>.png` for every item on the manifest, and picks up new files on the
+next check. Publishing icons is a pure content
 change.
 
 If your repository is a git checkout, watch out for a `.gitignore` rule covering `*.png`;
@@ -180,8 +182,8 @@ put the files on the device with your management tooling:
 
 - `C:\ProgramData\ManagedInstalls\branding\branding*.png|jpg|jpeg` — up to three images that
   cross-fade in the hero banner on the Software page.
-- `C:\ProgramData\ManagedInstalls\client_resources\` — the sidebar header image named by
-  `branding.yaml`.
+- `C:\ProgramData\ManagedInstalls\client_resources\sidebar_header.png` (or `.jpg`) — the
+  image shown at the top of the navigation pane.
 
 ## Limitations
 

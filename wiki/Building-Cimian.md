@@ -12,8 +12,9 @@ If you want to understand the code you are about to change, read
 
 - **Windows.** Every project targets `net10.0-windows`, so the build host must be
   Windows. x64 and arm64 hosts both work; there is no x86 build.
-- **.NET SDK 10.0.x, preview quality.** The projects pin preview package versions
-  of `Microsoft.Extensions.*`, so a stable-only SDK feed is not sufficient.
+- **.NET SDK 10.0.x, preview quality.** The `cimipkg` submodule pins
+  `10.0.0-preview.*` versions of its `Microsoft.Extensions.Logging` packages, and
+  continuous integration installs the SDK at preview quality to match.
 - **PowerShell 7 or newer.** `build.ps1` declares `#Requires -Version 7.0` and will
   refuse to run under Windows PowerShell 5.1.
 - **Git**, with submodule support, because `cli/cimipkg` is a submodule.
@@ -55,8 +56,7 @@ From the repository root, in PowerShell 7:
 
 That is the whole pipeline: regenerate the Managed Software Center icon, build the
 solution, publish every tool for both architectures, sign if a certificate is
-configured, then build the MSI, the NuGet package and the `.pkg` for each
-architecture.
+configured, then build the MSI and the NuGet package for each architecture.
 
 `build.ps1` decides on signing without being asked. It reads `CIMIAN_CERT_SUBJECT`
 and `CIMIAN_CERT_CN` from a `.env` file in the repository root — see `.env.example`
@@ -90,8 +90,11 @@ Useful variations:
 accepts `x64`, `arm64` or `both`, which is the default. `-Clean` empties `release\`
 and removes every `bin` and `obj` directory before building. `-PackageOnly` packages
 whatever is already in `release\<arch>` without rebuilding, and `-MsiOnly` and
-`-NupkgOnly` narrow that to one format. `-Configuration` takes `Debug` or `Release`,
-defaulting to `Release`.
+`-NupkgOnly` narrow that to one format. `-SkipMSI` runs the full build but produces
+only the NuGet package. `-Configuration` takes `Debug` or `Release`, defaulting to
+`Release`. `-Thumbprint` signs with a specific certificate instead of the one found
+by subject, and `-SignMSI` signs the MSIs already in `release\` and exits.
+`-IntuneWin` adds a `.intunewin` per architecture after the MSI.
 
 For day-to-day iteration, `-Dev` builds Debug, stops the running Cimian services
 first so binaries are not locked, and forces signing off. Add `-Install` to install
@@ -130,12 +133,10 @@ dotnet build CimianTools.sln --configuration Release
 | `release\x64\` | The complete x64 publish tree: every tool, plus the Managed Software Center application and its companion files. |
 | `release\arm64\` | The same for arm64. |
 | `release\Cimian-<version>-<arch>.msi` | The installer. |
-| `release\CimianTools-<arch>.<version>.nupkg` | The Chocolatey package. |
-| `release\CimianTools-<arch>-<version>.pkg` | A legacy payload archive, also published on releases. |
+| `release\CimianTools-<arch>.<version>.nupkg` | The NuGet package, with the publish tree under `tools\`. |
 
-The version is a calendar stamp. MSI, `.pkg` and zip names use
-`yyyy.MM.dd.HHmm`; the NuGet package uses the shorter `yy.M.d.HHmm` form of the same
-moment. Pin it with `-ReleaseVersion`, which requires the `yyyy.MM.dd.HHmm` form
+The version is a calendar stamp. The MSI name uses `yyyy.MM.dd.HHmm`; the NuGet
+package uses the shorter `yy.M.d.HHmm` form of the same moment. Pin it with `-ReleaseVersion`, which requires the `yyyy.MM.dd.HHmm` form
 exactly:
 
 ```
@@ -156,7 +157,7 @@ The unit tests are xUnit, using Moq and FluentAssertions. This is the command th
 continuous integration workflow runs:
 
 ```
-dotnet test tests/Cimian.Tests/Cimian.Tests.csproj --configuration Release --runtime win-x64
+dotnet test tests/Cimian.Tests.csproj --configuration Release
 ```
 
 They are ordinary in-process unit tests — no machine state is changed, nothing is
@@ -169,10 +170,8 @@ Fixtures under `tests/fixtures` are hand-authored YAML and JSON — catalogs,
 manifests, and simulated system facts. Never add a fixture captured from a real
 machine.
 
-There are two test project files in the tree: `tests/Cimian.Tests.csproj`, which is
-the entry listed in the solution, and `tests/Cimian.Tests/Cimian.Tests.csproj`, which
-is the one the workflow runs and the one that references `cimipkg`. Use the path
-above so you are running what CI runs.
+CI runs the same project after its own `dotnet build` of the solution, adding
+`--no-build` and a `.trx` logger.
 
 ### The smoke test
 
@@ -195,23 +194,18 @@ It auto-detects `release\<arch>` for the host architecture. Point it elsewhere w
 `-BinaryPath`. It is not run by continuous integration, so run it yourself before
 proposing a change that touches argument parsing or a tool's startup path.
 
-### Other harnesses
+### The Managed Software Center harness
 
 `tests/gui-harness/MscHarness.ps1` drives Managed Software Center's self-service
 flows from a terminal by manipulating `SelfServeManifest.yaml` and reading back
 `InstallInfo.yaml`, so GUI behaviour can be exercised without the window. It changes
-state on the machine it runs on.
-
-`tests/docker` builds a Windows Server Core container for comparing outputs between
-two binary sets. It expects a mounted repository and a second, legacy set of
-binaries that this repository no longer produces, so it does not run as-is. Neither
-harness is part of continuous integration.
+state on the machine it runs on, and it is not part of continuous integration.
 
 ## How the MSI is produced
 
-There is no WiX source in this repository. The MSI is authored by `cimipkg.exe` —
-the same tool sites use to package their own software, documented on
-[cimipkg](cimipkg) — from the submodule at `cli/cimipkg`. The build is therefore
+The Cimian MSI is built by `cimipkg.exe` — the same tool sites use to package their
+own software, documented on [cimipkg](cimipkg) — from the submodule at
+`cli/cimipkg`. The build is therefore
 self-hosting: it uses the `cimipkg.exe` it has just built, preferring the host
 architecture's copy.
 
@@ -227,11 +221,12 @@ to keep symbols. The build reports the payload size and warns above 250 MB; set
 `CIMIAN_MSI_PAYLOAD_SOFT_CAP_MB` to move that warning or
 `CIMIAN_MSI_PAYLOAD_HARD_CAP_MB` to a non-zero value to make it fatal. The build
 also copies the MSI support scripts from `build\msi` into the payload and the
-install, upgrade and uninstall custom-action scripts from `build\pkg` into the
-scripts folder, substituting the version into each.
+`preinstall.ps1`, `postinstall.ps1` and `uninstall.ps1` scripts from `build\pkg`
+into the scripts folder, substituting the version into each.
 
-Because the MSI is authored outside this repository, its internal structure —
-product code generation, upgrade table, custom action conditions — is not something
+Because the MSI is authored by `cimipkg`, which lives in its own repository, its
+internal structure — product code generation, upgrade table, custom action
+conditions — is not something
 you can change here. See [Installing Cimian](Installing-Cimian) for the installed
 result.
 

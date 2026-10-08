@@ -119,9 +119,10 @@ without changing the pkgsinfo hash makes every client fail that item. Publish a 
 new path instead.
 
 Authentication is optional and is a client-side concern: HTTP Basic, a bearer token, or mutual
-TLS. Cimian sends no `Authorization` header unless one of those is configured, supports no
-custom or extra request headers, no Windows Integrated authentication, and no storage-provider
-signed-URL scheme. There is also no proxy support — the client sets no proxy of its own. See
+TLS. Cimian sends no `Authorization` header unless one of those is configured. Extra request
+headers can be added with the `AdditionalHttpHeaders` client setting, written `Name: value` as
+in Munki; `Authorization` and `User-Agent` cannot be set that way. There is no Windows
+Integrated authentication and no storage-provider signed-URL scheme. There is also no proxy support — the client sets no proxy of its own. See
 [Securing The Repository](Securing-The-Repository).
 
 ## Create an empty repo
@@ -170,9 +171,9 @@ See [Getting Started](Getting-Started) and [Client Configuration](Client-Configu
 The tools that write into the repo find it through `C:\ProgramData\ManagedInstalls\Config.yaml`
 on the machine you author from, unless you pass a path on the command line.
 
-They do not agree on the key name. `cimiimport` and `makepkginfo` read `RepoPath`;
-`makecatalogs` and `manifestutil` read `repo_path`. Both spellings are ignored silently by the
-tool that does not want them, so a config with only one of them makes half the toolchain report
+They do not agree on the key name. `cimiimport` reads `RepoPath`; `makepkginfo`,
+`makecatalogs` and `manifestutil` read `repo_path`. Each spelling is ignored silently by the
+tools that do not want it, so a config with only one of them makes part of the toolchain report
 that the repo is not configured. Set both to the same value:
 
 ```yaml

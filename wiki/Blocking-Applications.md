@@ -66,15 +66,16 @@ The log line is:
 Deferred: ExampleVendorSuite v3.2.1 (blocking applications running: Suite.exe)
 ```
 
-and the item is recorded with reason code `BlockingApps`. In reports and in Managed Software
+and the item is recorded with reason code `blocking_apps`. In reports and in Managed Software
 Center it shows as **Pending Install**, **Pending Update** or **Pending Removal** — never as
 installed, and never as failed. A deferred item is not a failure and does not count against
 [install-loop prevention](Install-Loop-Prevention).
 
 This differs from Munki, which can present a "quit these applications" dialog and give the user a
 chance to comply. Cimian has no such dialog. If a user keeps the app open, the update keeps
-deferring, quietly, forever. Pair a blocker with `force_install_after_date` when the update must
-eventually land regardless — see [Force Installs And Deadlines](Force-Installs-And-Deadlines).
+deferring, quietly, forever. A passed `force_install_after_date` does not override a blocker
+either: a deadline overrides `install_window`, not `blocking_applications`. See
+[Force Installs And Deadlines](Force-Installs-And-Deadlines).
 
 ## Which process names to list
 
@@ -137,14 +138,10 @@ Get-Process | Select-Object -ExpandProperty ProcessName | Sort-Object -Unique
 The values in that list are exactly what Cimian compares against, so an entry in
 `blocking_applications` must reduce to one of them. Add `.exe` or not — it makes no difference.
 
-To confirm the deferral is what is holding an item back:
-
-```
-managedsoftwareupdate --checkonly -vv
-```
-
-A blocked item is absent from the install table and carries a `blocking applications running`
-line in the session output.
+To confirm the deferral is what is holding an item back, look in the session log of a run that
+would have installed it for the `Deferred: ... (blocking applications running: ...)` line shown
+above; see [Logging](Logging). A `--checkonly` run does not apply the blocker filter, so the item
+still appears in its install table.
 
 ## See also
 

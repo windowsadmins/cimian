@@ -38,6 +38,13 @@ writes the same file from defaults with no prompts. If you pass both, `--config`
 The repo path can also be given per-run with `--repo_path`, which overrides the configured
 value for that invocation only.
 
+The keys are written in PascalCase: `RepoPath`, `CloudProvider`, `CloudBucket`,
+`DefaultCatalog`, `DefaultArch` and `OpenImportedYaml`. Other keys already in the file are
+kept. Note that [makecatalogs](makecatalogs), [makepkginfo](makepkginfo) and
+[manifestutil](manifestutil) look for a lower-case `repo_path` key instead, so the
+`RepoPath` that `--config` writes does not configure them. `cimiimport` passes its repo path
+to `makecatalogs` explicitly, so its own catalog rebuilds are unaffected.
+
 ## What it does, end to end
 
 1. Loads the configuration, applying `--arch` and `--repo_path` overrides.
@@ -144,7 +151,7 @@ cimiimport C:\Downloads\ExampleApp-2026.09.03.msi --emit-installs
 | Flag | Alias | Argument | Effect |
 |---|---|---|---|
 | `<installerPath>` | — | path | The installer to import. Prompted for if omitted. |
-| `--installs-array` | `-i` | path, repeatable | Add an explicit path to the `installs` array. Overrides all automatic generation. |
+| `--installs-array` | `-i` | path, repeatable | Add an explicit path to the `installs` array. Replaces the automatic entry for the installer type; see below. |
 | `--repo_path` | — | path | Override the configured repo path for this run. |
 | `--arch` | — | list | Override the architectures, e.g. `x64,arm64`. |
 | `--uninstaller` | — | path | Import an uninstaller alongside the installer. |
@@ -173,8 +180,9 @@ The hyphenation is inconsistent and is not a typo in this page: script options u
 failure is a warning that does not abort the import. See
 [Product Icons And Screenshots](Product-Icons-And-Screenshots).
 
-Exit codes are `0` on success **and on a user cancel**, and `1` when the installer path is
-missing or blank, or on any exception during import.
+Exit codes are `0` on success **and on a user cancel**, and `1` when no installer path is
+given at the prompt, or on any exception during import. A path that does not exist prints
+`[ERROR] Package '<path>' does not exist` but still exits `0`, the same as a cancel.
 
 ## Metadata extracted per installer type
 
@@ -195,9 +203,16 @@ An MSI built by [cimipkg](cimipkg) carries its own `build-info.yaml` in the
 properties, and `CIMIAN_PKG_FULL_VERSION` replaces the truncated MSI `ProductVersion` — this
 is how a date-based version survives the round trip.
 
+For a cimipkg-built MSI, `cimiimport` also sets a `key_path`: the `key_path` from
+`build-info.yaml` when one is given, otherwise the primary `.exe` picked from the MSI's file
+table (the only `.exe`, else one matching the product name, else the largest). An
+installer-type wrapper gets no automatic `key_path`.
+
 For a third-party MSI with no `build-info.yaml`, `cimiimport` additionally walks the MSI's
 file table and adds up to three `type: file` entries for the largest installed `.exe` files
-that carry a version resource.
+that carry a version resource. If that file table is empty, which is the case for an MSI
+that only wraps an embedded setup program, it records a `display_name` hint instead (see
+below).
 
 Nothing is ever extracted for `category`, `requires`, `update_for`,
 `blocking_applications` or `catalogs`. `unattended_install` and `unattended_uninstall`
@@ -209,20 +224,27 @@ default to `true`.
 
 1. Any `-i` paths you supplied. Each existing file becomes a `type: file` entry with its
    path and an MD5; `.exe` files also get a version. A path that does not exist is skipped
-   with a message.
+   with a message. For a third-party MSI, the file entries read from the MSI are still
+   appended after yours.
 2. `.exe` installer: a single guessed entry at
    `C:\Program Files\<name>\<name>.exe` with the package version. **Verify this** — it is a
    guess and is wrong more often than not.
-3. MSIX with an identity name: one `type: msix` entry.
+3. MSIX with an identity name: one `type: msix` entry carrying `identity_name` and the
+   package version.
 4. A cimipkg installer-type wrapper: if `key_path` was set in the wrapper's `build-info.yaml`,
    one `type: file` entry for that path; otherwise an **empty** array, with a message saying
    the array must describe the wrapped application. The wrapper's own ProductCode identifies
    the wrapper, not the software, so it is deliberately not used.
 5. `.msi` with a ProductCode or UpgradeCode: one `type: msi` entry carrying
-   `product_code`, `upgrade_code`, and a `display_name` derived from the product name with
-   any trailing version token stripped. **No `version` is emitted** — the MSI ProductVersion
-   is truncated and cannot be compared reliably.
+   `product_code` and `upgrade_code`, plus `key_path` for a cimipkg-built MSI. When the MSI
+   has an empty file table, the entry also gets a `display_name` taken from the product name
+   cut off at the first version-shaped token. **No `version` is emitted** — the MSI
+   ProductVersion is truncated and cannot be compared reliably. The third-party file
+   entries described above are appended after it.
 6. Anything else: an empty array, and the `installs` key is omitted entirely.
+
+`key_path` is written into the pkgsinfo, but [makecatalogs](makecatalogs) does not carry it
+into the catalogs today, so clients do not receive it.
 
 An empty `installs` array is a real outcome, not a failure. It means Cimian falls back to its
 receipt for detection, which for an installer-type wrapper means the wrapper's presence
