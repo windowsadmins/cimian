@@ -374,17 +374,8 @@ public class UpdateEngine : IDisposable
                 // preflight sets SoftwareRepoURL, ClientIdentifier, etc.
                 _config = _configService.LoadConfig();
                 
-                // Apply verbosity settings again after reload
-                if (verbosity >= 1)
-                {
-                    _config.Verbose = true;
-                    _config.LogLevel = "INFO";
-                }
-                if (verbosity >= 3)
-                {
-                    _config.Debug = true;
-                    _config.LogLevel = "DEBUG";
-                }
+                // Command-line verbosity still outranks whatever the reload read
+                ConfigurationService.ApplyCommandLineVerbosity(_config, verbosity);
                 
                 // Recreate services with updated config
                 _manifestService = new ManifestService(_config);

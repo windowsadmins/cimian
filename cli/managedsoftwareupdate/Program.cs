@@ -204,18 +204,7 @@ public class Program
 
             // Apply verbosity from command line (use preprocessed _verbosityLevel)
             var effectiveVerbosity = _verbosityLevel > 0 ? _verbosityLevel : (options.Verbose ? 1 : 0);
-            
-            if (effectiveVerbosity >= 1)
-            {
-                config.Verbose = true;
-                config.LogLevel = "INFO";
-            }
-
-            if (effectiveVerbosity >= 3)
-            {
-                config.Debug = true;
-                config.LogLevel = "DEBUG";
-            }
+            ConfigurationService.ApplyCommandLineVerbosity(config, effectiveVerbosity);
 
             // Create and run update engine
             var engine = new UpdateEngine(config);
@@ -270,6 +259,16 @@ public class Program
         Console.WriteLine($"  AuthUser: {(string.IsNullOrEmpty(config.AuthUser) ? "(not set)" : "***")}");
         Console.WriteLine($"  AuthToken: {(string.IsNullOrEmpty(config.AuthToken) ? "(not set)" : "***")}");
         Console.WriteLine($"  AdditionalHttpHeaders: {DescribeAdditionalHttpHeaders(config.AdditionalHttpHeaders)}");
+
+        if (configService.LastLoadSources.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Set in the registry (HKLM\\{SettingsLayers.PolicyRegistryPath} or HKLM\\{SettingsLayers.MachineSettingsRegistryPath}):");
+            foreach (var (name, source) in configService.LastLoadSources.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"  {name}: {source}");
+            }
+        }
 
         return 0;
     }

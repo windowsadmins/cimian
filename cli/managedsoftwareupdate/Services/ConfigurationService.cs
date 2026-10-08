@@ -14,19 +14,41 @@ public class ConfigurationService
 {
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
-    private readonly string? _policyRegistryPath;
+    private readonly Func<IReadOnlyDictionary<string, object>?> _readPolicy;
+    private readonly Func<IReadOnlyDictionary<string, object>?> _readMachineSettings;
+    private readonly bool _requireTrustedFile;
 
-    public ConfigurationService() : this(PolicyRegistryPath)
+    private static readonly Func<IReadOnlyDictionary<string, object>?> NoValues = () => null;
+
+    public ConfigurationService() : this(SettingsLayers.PolicyRegistryPath)
     {
     }
 
     /// <summary>
-    /// Reads policy overrides from <paramref name="policyRegistryPath"/> under HKLM,
-    /// or skips them when it is null, so tests do not pick up the machine's policy.
+    /// Reads policy from <paramref name="policyRegistryPath"/> under HKLM, plus the machine
+    /// settings key and the Config.yaml permission check. Null skips all three, so tests
+    /// read only the file they write and do not pick up the machine's policy.
     /// </summary>
     internal ConfigurationService(string? policyRegistryPath)
+        : this(
+            policyRegistryPath is null ? NoValues : () => SettingsLayers.ReadMachineKey(policyRegistryPath),
+            policyRegistryPath is null ? NoValues : () => SettingsLayers.ReadMachineKey(SettingsLayers.MachineSettingsRegistryPath),
+            requireTrustedFile: policyRegistryPath is not null)
     {
-        _policyRegistryPath = policyRegistryPath;
+    }
+
+    /// <summary>
+    /// Takes the policy and machine settings layers as readers, so tests can supply them
+    /// without writing HKLM.
+    /// </summary>
+    internal ConfigurationService(
+        Func<IReadOnlyDictionary<string, object>?> readPolicy,
+        Func<IReadOnlyDictionary<string, object>?> readMachineSettings,
+        bool requireTrustedFile)
+    {
+        _readPolicy = readPolicy;
+        _readMachineSettings = readMachineSettings;
+        _requireTrustedFile = requireTrustedFile;
         _deserializer = new DeserializerBuilder()
             .WithNamingConvention(PascalCaseNamingConvention.Instance)
             .WithTypeConverter(new HeaderListConverter())
@@ -41,6 +63,14 @@ public class ConfigurationService
     }
 
     /// <summary>
+    /// Where each setting set by a registry layer in the last load came from:
+    /// <see cref="SettingsLayers.PolicySource"/> or <see cref="SettingsLayers.MachineSettingsSource"/>.
+    /// A setting that is absent took its value from Config.yaml or the default.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> LastLoadSources { get; private set; } =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Loads configuration from the default path
     /// </summary>
     public CimianConfig LoadConfig()
@@ -49,96 +79,100 @@ public class ConfigurationService
     }
 
     /// <summary>
-    /// MDM policy overrides delivered by the CimianPrefs Intune profile
-    /// (ADMX-ingested Policy CSP writing to HKLM\SOFTWARE\Policies\Cimian).
-    /// Policy wins over Config.yaml so fleet-wide settings can ship as an
-    /// Intune configuration profile instead of per-device file edits.
-    /// </summary>
-    private const string PolicyRegistryPath = @"SOFTWARE\Policies\Cimian";
-
-    private CimianConfig ApplyPolicyOverrides(CimianConfig config)
-    {
-        if (_policyRegistryPath is null)
-        {
-            return config;
-        }
-
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(_policyRegistryPath, false);
-            if (key == null)
-            {
-                return config;
-            }
-
-            if (key.GetValue("SoftwareRepoURL") is string repoUrl && !string.IsNullOrWhiteSpace(repoUrl))
-            {
-                config.SoftwareRepoURL = repoUrl.Trim();
-            }
-
-            if (key.GetValue("ClientIdentifier") is string clientId && !string.IsNullOrWhiteSpace(clientId))
-            {
-                config.ClientIdentifier = clientId.Trim();
-            }
-
-            // ADMX decimal elements arrive as REG_DWORD; the Policy CSP has also
-            // been observed delivering numerics as strings, so accept both.
-            var timeoutRaw = key.GetValue("InstallerTimeout");
-            var timeout = timeoutRaw switch
-            {
-                int i => i,
-                string s when int.TryParse(s, out var parsed) => parsed,
-                _ => 0
-            };
-            if (timeout >= 60)
-            {
-                config.InstallerTimeout = timeout;
-            }
-
-            // Cache retention is the only lever against superseded multi-gigabyte
-            // payloads filling small system drives; let policy set it fleet-wide.
-            var retentionRaw = key.GetValue("CacheRetentionDays");
-            var retention = retentionRaw switch
-            {
-                int i => i,
-                string s when int.TryParse(s, out var parsed) => parsed,
-                _ => int.MinValue
-            };
-            if (retention != int.MinValue && retention >= 0)
-            {
-                config.CacheRetentionDays = retention;
-            }
-        }
-        catch (Exception ex)
-        {
-            ConsoleLogger.Debug($"Policy override read failed (using Config.yaml values): {ex.Message}");
-        }
-
-        return config;
-    }
-
-    /// <summary>
-    /// Loads configuration from a specific path
+    /// Loads configuration from a specific path. Precedence, highest first: policy
+    /// (HKLM\SOFTWARE\Policies\Cimian, delivered by MDM or Group Policy), machine settings
+    /// (HKLM\SOFTWARE\Cimian\Settings), the file at <paramref name="path"/>, then the
+    /// defaults. Command-line flags are applied over the result by the caller.
     /// </summary>
     public CimianConfig LoadConfig(string path)
     {
+        var config = NormalizePaths(ReadConfigFile(path) ?? GetDefaultConfig());
+        return NormalizePaths(ApplyRegistryLayers(config));
+    }
+
+    /// <summary>
+    /// The file's settings, or null to use the defaults: when it is missing, cannot be
+    /// parsed, or could have been written by someone other than SYSTEM or an administrator.
+    /// </summary>
+    private CimianConfig? ReadConfigFile(string path)
+    {
         if (!File.Exists(path))
         {
-            return ApplyPolicyOverrides(GetDefaultConfig());
+            return null;
+        }
+
+        if (_requireTrustedFile && !ConfigFileGuard.IsTrusted(path, out var reason))
+        {
+            ConsoleLogger.Warn($"Ignoring {path}: {reason}. Only SYSTEM and Administrators may be able to change it; " +
+                               "fix its permissions or set these values by policy.");
+            return null;
         }
 
         try
         {
             var yaml = File.ReadAllText(path);
-            var config = _deserializer.Deserialize<CimianConfig>(yaml);
-            return ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig()));
+            return _deserializer.Deserialize<CimianConfig>(yaml);
         }
         catch (Exception ex)
         {
             ConsoleLogger.Error($"Failed to load configuration from {path}: {ex.Message}");
-            return ApplyPolicyOverrides(GetDefaultConfig());
+            return null;
         }
     }
+
+    /// <summary>
+    /// Applies the machine settings key and then policy over <paramref name="config"/>, so
+    /// policy wins. Fleet-wide settings can ship as an MDM configuration profile instead
+    /// of per-device file edits.
+    /// </summary>
+    private CimianConfig ApplyRegistryLayers(CimianConfig config)
+    {
+        var sources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (source, read) in new[]
+                 {
+                     (SettingsLayers.MachineSettingsSource, _readMachineSettings),
+                     (SettingsLayers.PolicySource, _readPolicy)
+                 })
+        {
+            var applied = SettingsLayers.Apply(config, read(), source, ValidateSetting, ConsoleLogger.Warn);
+            foreach (var name in applied)
+            {
+                sources[name] = source;
+            }
+        }
+        LastLoadSources = sources;
+        return config;
+    }
+
+    /// <summary>
+    /// Applies -v/-vvv for this run. A command-line flag outranks every other source, so
+    /// this runs after <see cref="LoadConfig(string)"/> and again after any reload.
+    /// </summary>
+    public static void ApplyCommandLineVerbosity(CimianConfig config, int verbosity)
+    {
+        if (verbosity >= 1)
+        {
+            config.Verbose = true;
+            config.LogLevel = "INFO";
+        }
+
+        if (verbosity >= 3)
+        {
+            config.Debug = true;
+            config.LogLevel = "DEBUG";
+        }
+    }
+
+    /// <summary>
+    /// Range checks for values from the registry layers; a rejected value leaves the
+    /// lower layer's value in place.
+    /// </summary>
+    internal static string? ValidateSetting(string name, object value) => (name, value) switch
+    {
+        (nameof(CimianConfig.InstallerTimeout), int seconds) when seconds < 60 => "must be at least 60 seconds",
+        (_, int number) when number < 0 => "must not be negative",
+        _ => null
+    };
 
     /// <summary>
     /// An explicit empty string in Config.yaml (older bootstraps wrote
@@ -186,6 +220,12 @@ public class ConfigurationService
 
         var yaml = _serializer.Serialize(config);
         File.WriteAllText(path, yaml);
+
+        // A file written here inherits ProgramData's ACL; give it the one the next load requires.
+        if (_requireTrustedFile && ConfigFileGuard.Lock(path) is { } failure)
+        {
+            ConsoleLogger.Warn(failure);
+        }
     }
 
     /// <summary>
