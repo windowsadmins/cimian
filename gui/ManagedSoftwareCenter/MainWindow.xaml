@@ -41,6 +41,7 @@
                            PaneDisplayMode="Left"
                            OpenPaneLength="200"
                            SelectionChanged="NavView_SelectionChanged"
+                           ItemInvoked="NavView_ItemInvoked"
                            Loaded="NavView_Loaded"
                            PaneOpening="NavView_PaneOpening"
                            PaneClosing="NavView_PaneClosing">
@@ -91,6 +92,20 @@
                        MaxHeight="80"
                        Margin="12,8" />
             </NavigationView.PaneHeader>
+
+            <!-- Munki HelpURL parity: shown when help_url / Policies\Cimian HelpURL is valid http(s) -->
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="HelpNavItem"
+                                    Content="Help"
+                                    Tag="help"
+                                    Visibility="Collapsed"
+                                    SelectsOnInvoked="False"
+                                    AutomationProperties.Name="Open help">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE897;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
 
             <NavigationView.PaneFooter>
                 <StackPanel x:Name="PaneFooterContent" Margin="12,8">

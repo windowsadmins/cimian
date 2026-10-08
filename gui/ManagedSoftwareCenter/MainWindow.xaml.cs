@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Windowing;
+using Windows.System;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 using Cimian.GUI.ManagedSoftwareCenter.Views;
@@ -22,6 +23,9 @@ public sealed record CategoryNavigationRequest(string CategoryName);
 public partial class MainWindow : Window
 {
     public ShellViewModel ViewModel { get; }
+
+    // Populated from preferences.yaml help_url / Policies\Cimian HelpURL when valid http(s).
+    private Uri? _helpUri;
 
     public MainWindow()
     {
@@ -92,10 +96,16 @@ public partial class MainWindow : Window
         });
     }
 
-    private void NavView_Loaded(object sender, RoutedEventArgs e)
+    private async void NavView_Loaded(object sender, RoutedEventArgs e)
     {
-        // Apply custom sidebar configuration from preferences
+        // Ensure preferences.yaml has been read before applying sidebar / HelpURL.
+        // PreferencesService starts a fire-and-forget reload in its ctor; await here
+        // so HelpUrl and SidebarItems are not still null on first paint.
+        var prefs = App.GetService<IPreferencesService>();
+        await prefs.ReloadAsync();
+
         ApplySidebarConfiguration();
+        ApplyHelpConfiguration();
 
         // Apply custom branding
         _ = ApplyBrandingAsync();
@@ -117,10 +127,33 @@ public partial class MainWindow : Window
         if (args.SelectedItem is NavigationViewItem selectedItem)
         {
             var tag = selectedItem.Tag?.ToString();
-            if (!string.IsNullOrEmpty(tag))
+            // Help opens an external URL via ItemInvoked; it is not a navigable page.
+            if (!string.IsNullOrEmpty(tag) && tag != "help")
             {
                 NavigateToPage(tag);
             }
+        }
+    }
+
+    private async void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
+    {
+        if (args.InvokedItemContainer is not NavigationViewItem item ||
+            item.Tag is not string tag ||
+            !string.Equals(tag, "help", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (_helpUri == null)
+            return;
+
+        try
+        {
+            await Launcher.LaunchUriAsync(_helpUri);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to open Help URL: {ex.Message}");
         }
     }
 
@@ -161,6 +194,43 @@ public partial class MainWindow : Window
             if (existingItems.TryGetValue(tag, out var navItem))
                 NavView.MenuItems.Add(navItem);
         }
+    }
+
+    /// <summary>
+    /// Shows the Help footer item when help_url / policy HelpURL is a valid http(s) URL
+    /// (Munki HelpURL parity). Invalid or missing values leave Help hidden.
+    /// </summary>
+    private void ApplyHelpConfiguration()
+    {
+        var prefs = App.GetService<IPreferencesService>();
+        if (!TryCreateHelpUri(prefs.HelpUrl, out var uri) || uri == null)
+        {
+            _helpUri = null;
+            HelpNavItem.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        _helpUri = uri;
+        HelpNavItem.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Accepts only absolute http/https URLs so HelpURL cannot launch arbitrary schemes.
+    /// </summary>
+    internal static bool TryCreateHelpUri(string? helpUrl, out Uri? uri)
+    {
+        uri = null;
+        if (string.IsNullOrWhiteSpace(helpUrl))
+            return false;
+
+        if (!Uri.TryCreate(helpUrl.Trim(), UriKind.Absolute, out var parsed))
+            return false;
+
+        if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps)
+            return false;
+
+        uri = parsed;
+        return true;
     }
 
     /// <summary>

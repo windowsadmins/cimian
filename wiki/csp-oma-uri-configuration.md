@@ -154,6 +154,49 @@ Data type: String
 Value: production,testing,development
 ```
 
+## Managed Software Center Help URL (GUI)
+
+Managed Software Center reads `help_url` from
+`C:\ProgramData\ManagedInstalls\preferences.yaml` and applies a policy override
+from the **Policies** hive (same path agent policy uses today):
+
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+```
+
+| YAML (`preferences.yaml`) | Registry (REG_SZ) | Effect |
+|---|---|---|
+| `help_url` | `HelpURL` | URL opened by the MSC footer **Help** item. **Policy wins over YAML.** Empty string hides Help. |
+
+This matches Munki's `ManagedInstalls` `HelpURL` preference: when set to an
+absolute `http`/`https` URL, Help opens that page in the default browser.
+
+### Example: set Help via policy
+
+```
+Name: Cimian MSC Help URL
+Description: URL opened from Managed Software Center Help (Munki HelpURL parity)
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/HelpURL
+Data type: String
+Value: https://forms.clickup.com/your-it-request-form
+```
+
+Registry preference equivalent:
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: HelpURL
+Type: REG_SZ
+Data: https://forms.clickup.com/your-it-request-form
+```
+
+> **Note:** Presence of the `HelpURL` value name matters. An empty REG_SZ hides
+> Help even if `preferences.yaml` has `help_url`; omitting the value leaves YAML
+> in effect. The OMA-URI path above assumes an ADMX-ingested **CimianPrefs**
+> Policy CSP category (same delivery model as agent keys under
+> `SOFTWARE\Policies\Cimian`). Custom OMA-URIs that write that hive directly
+> also work.
+
 ## Group Policy Deployment
 
 ### Using Administrative Templates
