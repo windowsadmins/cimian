@@ -154,6 +154,65 @@ Data type: String
 Value: production,testing,development
 ```
 
+## Managed Software Center category icons (GUI)
+
+Managed Software Center maps pkginfo `category` names to Segoe MDL2 glyphs. Built-in
+defaults can be extended or overridden via `preferences.yaml` `category_icons`, and
+via the **Policies** hive (same path agent policy uses today):
+
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+```
+
+| YAML (`preferences.yaml`) | Registry | Effect |
+|---|---|---|
+| `category_icons` | `CategoryIcons` | Category name → icon spec. **Policy replaces YAML when present.** |
+
+Icon specs (YAML or policy) accept:
+
+- a built-in key (`utilities`, `browsers`, `security`, `gaming`, …)
+- a Segoe MDL2 hex codepoint (`E90F`, `0xE90F`)
+- a single Unicode glyph character
+
+### Delivery shapes
+
+**1. REG_MULTI_SZ** value named `CategoryIcons` (best for a single OMA-URI / ADMX multiText):
+
+```
+PDF Tools=utilities
+browsers=gaming
+IT Tools=E8FD
+```
+
+Lines may also use `Category: iconSpec`. Empty MULTI_SZ clears overrides (built-ins only).
+
+**2. Subkey** `CategoryIcons` with one REG_SZ per category (Registry Preferences friendly):
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian\CategoryIcons
+Value: PDF Tools
+Type: REG_SZ
+Data: utilities
+```
+
+### Example: MULTI_SZ via CimianPrefs
+
+```
+Name: Cimian MSC Category Icons
+Description: Override/extend MSC category Segoe glyphs (replaces preferences.yaml category_icons)
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/CategoryIcons
+Data type: String (or multi-string when ADMX multiText is used)
+Value:
+PDF Tools=utilities
+browsers=gaming
+```
+
+> **Note:** Presence of the `CategoryIcons` value name **or** the `CategoryIcons`
+> subkey matters. When either is present, it replaces YAML `category_icons`
+> entirely. Omitting both leaves YAML in effect. The OMA-URI path assumes an
+> ADMX-ingested **CimianPrefs** Policy CSP category (same delivery model as
+> agent keys under `SOFTWARE\Policies\Cimian`).
+
 ## Group Policy Deployment
 
 ### Using Administrative Templates

@@ -92,9 +92,13 @@ public partial class MainWindow : Window
         });
     }
 
-    private void NavView_Loaded(object sender, RoutedEventArgs e)
+    private async void NavView_Loaded(object sender, RoutedEventArgs e)
     {
-        // Apply custom sidebar configuration from preferences
+        // Await preferences so category_icons / sidebar_items apply before first paint.
+        // PreferencesService also starts a fire-and-forget reload in its ctor.
+        var prefs = App.GetService<IPreferencesService>();
+        await prefs.ReloadAsync();
+
         ApplySidebarConfiguration();
 
         // Apply custom branding

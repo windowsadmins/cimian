@@ -24,6 +24,13 @@ public interface IPreferencesService
     List<string>? SidebarItems { get; }
 
     /// <summary>
+    /// Resolved category name → Segoe MDL2 glyph overrides from preferences.yaml
+    /// <c>category_icons</c>, replaced by HKLM\SOFTWARE\Policies\Cimian\CategoryIcons
+    /// when that policy value or subkey is present.
+    /// </summary>
+    IReadOnlyDictionary<string, string> CategoryIconGlyphs { get; }
+
+    /// <summary>
     /// Reload preferences from disk
     /// </summary>
     Task ReloadAsync();
