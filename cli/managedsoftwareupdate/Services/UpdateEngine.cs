@@ -88,11 +88,11 @@ public class UpdateEngine : IDisposable
     /// reaches the fleet clears the loop. Only when the catalog predates that field
     /// (older, version-pinned makecatalogs) do we fall back to hashing the
     /// install-behavior fields here — a hand-picked list that misses fixes to
-    /// product_code/upgrade_code, installer switches, blocking_applications and the
-    /// like, which is exactly why the server-side stamp exists.
+    /// product_code/upgrade_code, blocking_applications and the like, which is exactly
+    /// why the server-side stamp exists.
     /// </para>
     /// </summary>
-    private static string ComputeCatalogFingerprint(CatalogItem item)
+    internal static string ComputeCatalogFingerprint(CatalogItem item)
     {
         var sb = new System.Text.StringBuilder(512);
 
@@ -119,6 +119,19 @@ public class UpdateEngine : IDisposable
         sb.Append(item.Installer?.Location ?? "");
         sb.Append('|');
         sb.Append(item.Installer?.Type ?? "");
+        sb.Append('|');
+        // Installer arguments change how the install runs as much as a script edit
+        // does: adding a quiet switch to an installer whose silent run hung is a fix
+        // the loop has to see, or it never retries with it.
+        sb.Append(string.Join('\n', item.Installer?.Switches ?? []));
+        sb.Append(':');
+        sb.Append(string.Join('\n', item.Installer?.Flags ?? []));
+        sb.Append(':');
+        sb.Append(string.Join('\n', item.Installer?.Args ?? []));
+        sb.Append(':');
+        sb.Append(item.Installer?.Subcommand ?? "");
+        sb.Append(':');
+        sb.Append(string.Join(',', item.Installer?.SuccessCodes ?? []));
         sb.Append('|');
         // Serialize installs array — covers path, md5, version, product_code changes
         if (item.Installs?.Count > 0)
