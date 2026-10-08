@@ -119,7 +119,7 @@ public class CatalogBuilder
                         }
                         if (hashCheck && !string.IsNullOrEmpty(pkg.Installer.Hash))
                         {
-                            var actualHash = ComputeMd5Hash(fullPath);
+                            var actualHash = ComputeSha256Hash(fullPath);
                             if (!string.Equals(actualHash, pkg.Installer.Hash, StringComparison.OrdinalIgnoreCase))
                             {
                                 warnings.Add($"{pkg.FilePath} installer hash mismatch: expected {pkg.Installer.Hash}, actual {actualHash}");
@@ -156,7 +156,7 @@ public class CatalogBuilder
                     }
                     if (hashCheck && !string.IsNullOrEmpty(uninst.Hash))
                     {
-                        var actualHash = ComputeMd5Hash(fullPath);
+                        var actualHash = ComputeSha256Hash(fullPath);
                         if (!string.Equals(actualHash, uninst.Hash, StringComparison.OrdinalIgnoreCase))
                         {
                             warnings.Add($"{pkg.FilePath} uninstaller hash mismatch: expected {uninst.Hash}, actual {actualHash}");
@@ -169,12 +169,14 @@ public class CatalogBuilder
         return warnings;
     }
 
-    private static string ComputeMd5Hash(string filePath)
+    // SHA-256, because that is what installer.hash holds: makepkginfo and cimiimport
+    // write it, and the client checks every download against it. This used to be MD5,
+    // which could never equal the recorded value, so --hash_check flagged every item.
+    private static string ComputeSha256Hash(string filePath)
     {
-        using var md5 = System.Security.Cryptography.MD5.Create();
         using var stream = File.OpenRead(filePath);
-        var hash = md5.ComputeHash(stream);
-        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        var hash = System.Security.Cryptography.SHA256.HashData(stream);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     /// <summary>
