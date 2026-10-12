@@ -16,8 +16,7 @@ public static class CimianHttpClientFactory
 {
     /// <summary>
     /// Creates an HttpClient configured with authentication, optional client certificates and
-    /// the AdditionalHttpHeaders setting.
-    /// Auth priority: DPAPI registry → Bearer token → Basic auth.
+    /// the AdditionalHttpHeaders setting. The credential is sent only on https requests.
     /// </summary>
     public static HttpClient CreateHttpClient(CimianConfig config, TimeSpan? timeout = null)
     {
@@ -45,36 +44,46 @@ public static class CimianHttpClientFactory
             }
         }
 
-        var client = new HttpClient(handler)
+        // The credential is attached per request, and only over https, so a plain http
+        // request (a local caching server on port 80, say) never carries it.
+        var authorization = GetAuthorization(config);
+        HttpMessageHandler pipeline = authorization == null
+            ? handler
+            : new HttpsOnlyAuthorizationHandler(authorization, handler);
+
+        var client = new HttpClient(pipeline)
         {
             Timeout = timeout ?? TimeSpan.FromSeconds(60)
         };
-
-        // Auth priority: DPAPI registry → Bearer token → Basic auth
-        var authHeader = AuthService.GetAuthHeader();
-        if (!string.IsNullOrEmpty(authHeader))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", authHeader);
-        }
-        else if (!string.IsNullOrEmpty(config.AuthToken))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", config.AuthToken);
-        }
-        else if (!string.IsNullOrEmpty(config.AuthUser) && !string.IsNullOrEmpty(config.AuthPassword))
-        {
-            var credentials = Convert.ToBase64String(
-                Encoding.UTF8.GetBytes($"{config.AuthUser}:{config.AuthPassword}"));
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", credentials);
-        }
 
         client.DefaultRequestHeaders.Add("User-Agent", "Cimian-ManagedSoftwareUpdate/1.0");
 
         AddAdditionalHeaders(client, config);
 
         return client;
+    }
+
+    /// <summary>
+    /// The repository credential, or null when none is configured.
+    /// Priority: DPAPI registry → Bearer token → Basic auth.
+    /// </summary>
+    internal static AuthenticationHeaderValue? GetAuthorization(CimianConfig config)
+    {
+        var authHeader = AuthService.GetAuthHeader();
+        if (!string.IsNullOrEmpty(authHeader))
+            return new AuthenticationHeaderValue("Basic", authHeader);
+
+        if (!string.IsNullOrEmpty(config.AuthToken))
+            return new AuthenticationHeaderValue("Bearer", config.AuthToken);
+
+        if (!string.IsNullOrEmpty(config.AuthUser) && !string.IsNullOrEmpty(config.AuthPassword))
+        {
+            var credentials = Convert.ToBase64String(
+                Encoding.UTF8.GetBytes($"{config.AuthUser}:{config.AuthPassword}"));
+            return new AuthenticationHeaderValue("Basic", credentials);
+        }
+
+        return null;
     }
 
     /// <summary>

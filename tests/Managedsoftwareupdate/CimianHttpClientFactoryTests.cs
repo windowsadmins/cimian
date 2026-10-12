@@ -102,9 +102,28 @@ public class CimianHttpClientFactoryTests : IDisposable
     {
         var client = CreateClient("authorization: Bearer other");
 
-        var authorization = Assert.Single(HeaderValues(client, "Authorization"));
-        Assert.DoesNotContain("other", authorization);
+        Assert.Empty(HeaderValues(client, "Authorization"));
         Assert.Contains("entry 1", _stdout.ToString());
+    }
+
+    [Fact]
+    public void CreateHttpClient_Credential_IsNotADefaultHeader()
+    {
+        // The credential is added per request, over https only, by HttpsOnlyAuthorizationHandler.
+        var client = CreateClient();
+
+        Assert.Empty(HeaderValues(client, "Authorization"));
+    }
+
+    [Fact]
+    public void GetAuthorization_UserAndPassword_IsBasic()
+    {
+        var config = new CimianConfig { AuthUser = "user", AuthPassword = "pass" };
+
+        var authorization = CimianHttpClientFactory.GetAuthorization(config);
+
+        Assert.NotNull(authorization);
+        Assert.Equal("Basic", authorization.Scheme);
     }
 
     [Fact]
