@@ -102,17 +102,46 @@ public class CimianHttpClientFactoryTests : IDisposable
     {
         var client = CreateClient("authorization: Bearer other");
 
-        Assert.Empty(HeaderValues(client, "Authorization"));
+        Assert.Equal(["Bearer token"], HeaderValues(client, "Authorization"));
         Assert.Contains("entry 1", _stdout.ToString());
     }
 
     [Fact]
-    public void CreateHttpClient_Credential_IsNotADefaultHeader()
+    public void CreateHttpClient_HttpsOnlyOff_SendsCredentialAndHeadersOnEveryRequest()
     {
-        // The credential is added per request, over https only, by HttpsOnlyAuthorizationHandler.
-        var client = CreateClient();
+        var client = CreateClient("X-Client-Id: 9F1E0B6C");
+
+        Assert.Equal(["Bearer token"], HeaderValues(client, "Authorization"));
+        Assert.Equal(["9F1E0B6C"], HeaderValues(client, "X-Client-Id"));
+    }
+
+    [Fact]
+    public void CreateHttpClient_HttpsOnlyOn_LeavesCredentialAndHeadersOffTheDefaults()
+    {
+        // HttpsOnlyHeadersHandler adds them per request, over https only.
+        var config = new CimianConfig
+        {
+            AuthToken = "token",
+            AdditionalHttpHeaders = ["X-Client-Id: 9F1E0B6C"],
+            AdditionalHttpHeadersHttpsOnly = true
+        };
+
+        var client = CimianHttpClientFactory.CreateHttpClient(config);
 
         Assert.Empty(HeaderValues(client, "Authorization"));
+        Assert.Empty(HeaderValues(client, "X-Client-Id"));
+    }
+
+    [Fact]
+    public void Config_AdditionalHttpHeadersHttpsOnly_IsReadFromYaml()
+    {
+        var path = Path.Combine(_testDir, "Config.yaml");
+        File.WriteAllText(path, "AdditionalHttpHeadersHttpsOnly: true\n");
+
+        var config = new ConfigurationService(policyRegistryPath: null).LoadConfig(path);
+
+        Assert.True(config.AdditionalHttpHeadersHttpsOnly);
+        Assert.False(new CimianConfig().AdditionalHttpHeadersHttpsOnly);
     }
 
     [Fact]

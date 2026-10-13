@@ -9,21 +9,21 @@ using Cimian.Core.Services;
 namespace Cimian.Tests.Managedsoftwareupdate;
 
 /// <summary>
-/// Tests for HttpsOnlyAuthorizationHandler - the repository credential goes only on https requests.
+/// Tests for HttpsOnlyHeadersHandler - the credential and additional headers go only on https requests.
 /// </summary>
 [Collection(ConsoleOutputCollection.Name)]
-public class HttpsOnlyAuthorizationHandlerTests : IDisposable
+public class HttpsOnlyHeadersHandlerTests : IDisposable
 {
     private readonly TextWriter _originalOut = Console.Out;
     private readonly int _originalVerbosity = ConsoleLogger.Verbosity;
     private readonly StringWriter _stdout = new();
     private static readonly AuthenticationHeaderValue Credential = new("Basic", "dXNlcjpwYXNz");
 
-    public HttpsOnlyAuthorizationHandlerTests()
+    public HttpsOnlyHeadersHandlerTests()
     {
         Console.SetOut(_stdout);
         ConsoleLogger.Verbosity = 1;
-        HttpsOnlyAuthorizationHandler.ResetHttpSkipLog();
+        HttpsOnlyHeadersHandler.ResetHttpSkipLog();
     }
 
     public void Dispose()
@@ -35,6 +35,7 @@ public class HttpsOnlyAuthorizationHandlerTests : IDisposable
     private sealed class RecordingHandler : HttpMessageHandler
     {
         public List<AuthenticationHeaderValue?> Seen { get; } = [];
+        public List<string?> SeenCustom { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(Send(request, cancellationToken));
@@ -42,6 +43,7 @@ public class HttpsOnlyAuthorizationHandlerTests : IDisposable
         protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Seen.Add(request.Headers.Authorization);
+            SeenCustom.Add(request.Headers.TryGetValues("X-Client-Id", out var values) ? values.Single() : null);
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
     }
@@ -49,7 +51,7 @@ public class HttpsOnlyAuthorizationHandlerTests : IDisposable
     private static (HttpClient Client, RecordingHandler Inner) CreateClient()
     {
         var inner = new RecordingHandler();
-        return (new HttpClient(new HttpsOnlyAuthorizationHandler(Credential, inner)), inner);
+        return (new HttpClient(new HttpsOnlyHeadersHandler(Credential, [new("X-Client-Id", "9F1E0B6C")], inner)), inner);
     }
 
     [Fact]
@@ -73,6 +75,29 @@ public class HttpsOnlyAuthorizationHandlerTests : IDisposable
         await client.GetAsync(url);
 
         Assert.Null(Assert.Single(inner.Seen));
+    }
+
+    [Fact]
+    public async Task AdditionalHeaders_GoOnlyOverHttps()
+    {
+        var (client, inner) = CreateClient();
+
+        await client.GetAsync("https://repo.example.com/a");
+        await client.GetAsync("http://cache.example.com/b");
+
+        Assert.Equal(["9F1E0B6C", null], inner.SeenCustom);
+    }
+
+    [Fact]
+    public async Task NoCredential_StillAddsTheAdditionalHeadersOverHttps()
+    {
+        var inner = new RecordingHandler();
+        var client = new HttpClient(new HttpsOnlyHeadersHandler(null, [new("X-Client-Id", "9F1E0B6C")], inner));
+
+        await client.GetAsync("https://repo.example.com/a");
+
+        Assert.Null(Assert.Single(inner.Seen));
+        Assert.Equal("9F1E0B6C", Assert.Single(inner.SeenCustom));
     }
 
     [Fact]
