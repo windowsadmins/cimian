@@ -112,7 +112,6 @@ public static class CimianHttpClientFactory
     internal static List<KeyValuePair<string, string>> ParseAdditionalHeaders(CimianConfig config)
     {
         var result = new List<KeyValuePair<string, string>>();
-        using var probe = new HttpRequestMessage();
         var entryNumber = 0;
         foreach (var entry in config.AdditionalHttpHeaders ?? [])
         {
@@ -136,7 +135,7 @@ public static class CimianHttpClientFactory
                 continue;
             }
 
-            probe.Headers.Remove(name);
+            using var probe = new HttpRequestMessage();
             if (!probe.Headers.TryAddWithoutValidation(name, value))
             {
                 ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: not a valid request header name");

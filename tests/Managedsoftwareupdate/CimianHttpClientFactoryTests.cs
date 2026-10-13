@@ -102,7 +102,9 @@ public class CimianHttpClientFactoryTests : IDisposable
     {
         var client = CreateClient("authorization: Bearer other");
 
-        Assert.Equal(["Bearer token"], HeaderValues(client, "Authorization"));
+        // The configured credential stays; a device's own registry credential can outrank
+        // AuthToken, so only check the entry did not replace it.
+        Assert.DoesNotContain("Bearer other", HeaderValues(client, "Authorization"));
         Assert.Contains("entry 1", _stdout.ToString());
     }
 
@@ -111,7 +113,7 @@ public class CimianHttpClientFactoryTests : IDisposable
     {
         var client = CreateClient("X-Client-Id: 9F1E0B6C");
 
-        Assert.Equal(["Bearer token"], HeaderValues(client, "Authorization"));
+        Assert.Single(HeaderValues(client, "Authorization"));
         Assert.Equal(["9F1E0B6C"], HeaderValues(client, "X-Client-Id"));
     }
 
