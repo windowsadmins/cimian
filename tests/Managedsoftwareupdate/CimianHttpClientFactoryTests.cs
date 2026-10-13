@@ -102,9 +102,59 @@ public class CimianHttpClientFactoryTests : IDisposable
     {
         var client = CreateClient("authorization: Bearer other");
 
-        var authorization = Assert.Single(HeaderValues(client, "Authorization"));
-        Assert.DoesNotContain("other", authorization);
+        // The configured credential stays; a device's own registry credential can outrank
+        // AuthToken, so only check the entry did not replace it.
+        Assert.DoesNotContain("Bearer other", HeaderValues(client, "Authorization"));
         Assert.Contains("entry 1", _stdout.ToString());
+    }
+
+    [Fact]
+    public void CreateHttpClient_HttpsOnlyOff_SendsCredentialAndHeadersOnEveryRequest()
+    {
+        var client = CreateClient("X-Client-Id: 9F1E0B6C");
+
+        Assert.Single(HeaderValues(client, "Authorization"));
+        Assert.Equal(["9F1E0B6C"], HeaderValues(client, "X-Client-Id"));
+    }
+
+    [Fact]
+    public void CreateHttpClient_HttpsOnlyOn_LeavesCredentialAndHeadersOffTheDefaults()
+    {
+        // HttpsOnlyHeadersHandler adds them per request, over https only.
+        var config = new CimianConfig
+        {
+            AuthToken = "token",
+            AdditionalHttpHeaders = ["X-Client-Id: 9F1E0B6C"],
+            AdditionalHttpHeadersHttpsOnly = true
+        };
+
+        var client = CimianHttpClientFactory.CreateHttpClient(config);
+
+        Assert.Empty(HeaderValues(client, "Authorization"));
+        Assert.Empty(HeaderValues(client, "X-Client-Id"));
+    }
+
+    [Fact]
+    public void Config_AdditionalHttpHeadersHttpsOnly_IsReadFromYaml()
+    {
+        var path = Path.Combine(_testDir, "Config.yaml");
+        File.WriteAllText(path, "AdditionalHttpHeadersHttpsOnly: true\n");
+
+        var config = new ConfigurationService(policyRegistryPath: null).LoadConfig(path);
+
+        Assert.True(config.AdditionalHttpHeadersHttpsOnly);
+        Assert.False(new CimianConfig().AdditionalHttpHeadersHttpsOnly);
+    }
+
+    [Fact]
+    public void GetAuthorization_UserAndPassword_IsBasic()
+    {
+        var config = new CimianConfig { AuthUser = "user", AuthPassword = "pass" };
+
+        var authorization = CimianHttpClientFactory.GetAuthorization(config);
+
+        Assert.NotNull(authorization);
+        Assert.Equal("Basic", authorization.Scheme);
     }
 
     [Fact]
