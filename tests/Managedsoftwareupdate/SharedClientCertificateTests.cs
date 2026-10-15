@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Xunit;
@@ -99,6 +102,80 @@ public class SharedClientCertificateTests : IDisposable
         Assert.NotNull(loaded);
         Assert.True(loaded!.HasPrivateKey);
         Assert.Equal("CN=pem", loaded.Subject);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Get_FileCertificate_CompletesMutualTlsAndDeletesMachineKey(bool pem)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var original = NewCertificate("mtls-client");
+        var certPath = Path.Combine(_testDir, pem ? "mtls.pem" : "mtls.pfx");
+        var keyPath = Path.Combine(_testDir, "mtls.key");
+        var config = new CimianConfig { ClientCertificatePath = certPath };
+        if (pem)
+        {
+            using var originalKey = original.GetRSAPrivateKey()!;
+            File.WriteAllText(certPath, original.ExportCertificatePem());
+            File.WriteAllText(keyPath, originalKey.ExportPkcs8PrivateKeyPem());
+            config.ClientKeyPath = keyPath;
+        }
+        else
+        {
+            File.WriteAllBytes(certPath, original.Export(X509ContentType.Pfx));
+        }
+
+        var certificate = SharedClientCertificate.Get(config);
+        Assert.NotNull(certificate);
+        using var rsa = certificate!.GetRSAPrivateKey();
+        var cng = Assert.IsType<RSACng>(rsa);
+        Assert.True(cng.Key.IsMachineKey);
+        var keyName = cng.Key.KeyName!;
+        Assert.False(cng.Key.IsEphemeral);
+
+        using var serverCertificate = NewCertificate("localhost");
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var token = timeout.Token;
+        var server = Task.Run(async () =>
+        {
+            using var connection = await listener.AcceptTcpClientAsync(token);
+            using var tls = new SslStream(connection.GetStream(), false,
+                (_, remote, _, _) => remote?.GetCertHashString() == original.Thumbprint);
+            await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            {
+                ServerCertificate = serverCertificate,
+                ClientCertificateRequired = true,
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+            }, token);
+            Assert.NotNull(tls.RemoteCertificate);
+            Assert.Equal(original.Thumbprint, tls.RemoteCertificate!.GetCertHashString());
+            await tls.WriteAsync(new byte[] { 42 }, token);
+        }, token);
+
+        using var connection = new TcpClient();
+        await connection.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port, token);
+        using (var tls = new SslStream(connection.GetStream(), false, (_, _, _, _) => true))
+        {
+            await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            {
+                TargetHost = "localhost",
+                ClientCertificates = new X509CertificateCollection { certificate },
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+            }, token);
+            var response = new byte[1];
+            Assert.Equal(1, await tls.ReadAsync(response, token));
+            Assert.Equal(42, response[0]);
+            await server;
+        }
+
+        rsa!.Dispose();
+        SharedClientCertificate.Release();
+        Assert.False(CngKey.Exists(keyName, CngProvider.MicrosoftSoftwareKeyStorageProvider,
+            CngKeyOpenOptions.MachineKey));
     }
 
     [Fact]
