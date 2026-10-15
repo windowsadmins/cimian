@@ -1,5 +1,6 @@
 using Cimian.CLI.Cimiimport.Models;
 using Cimian.Core;
+using Cimian.Core.Services;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -12,11 +13,14 @@ public class ConfigurationService
 {
     public static readonly string ConfigPath = CimianPaths.ConfigYaml;
 
+    private readonly string _configPath;
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
 
-    public ConfigurationService()
+    public ConfigurationService(string? configPath = null)
     {
+        _configPath = configPath ?? ConfigPath;
+
         // Use NullNamingConvention to match Go's PascalCase YAML keys (yaml:"RepoPath" etc.)
         _deserializer = new DeserializerBuilder()
             .WithNamingConvention(NullNamingConvention.Instance)
@@ -36,11 +40,18 @@ public class ConfigurationService
     {
         try
         {
-            if (File.Exists(ConfigPath))
+            if (File.Exists(_configPath))
             {
-                var yaml = File.ReadAllText(ConfigPath);
+                var yaml = File.ReadAllText(_configPath);
                 var config = _deserializer.Deserialize<ImportConfiguration>(yaml);
-                return config ?? GetDefaultConfig();
+                if (config == null)
+                    return GetDefaultConfig();
+
+                // A config written for the other admin tools may only have repo_path.
+                if (string.IsNullOrEmpty(config.RepoPath))
+                    config.RepoPath = RepoPathConfig.Read(yaml) ?? string.Empty;
+
+                return config;
             }
         }
         catch
@@ -56,7 +67,7 @@ public class ConfigurationService
     /// </summary>
     public void SaveConfig(ImportConfiguration config)
     {
-        var configDir = Path.GetDirectoryName(ConfigPath);
+        var configDir = Path.GetDirectoryName(_configPath);
         if (!string.IsNullOrEmpty(configDir) && !Directory.Exists(configDir))
         {
             Directory.CreateDirectory(configDir);
@@ -64,11 +75,11 @@ public class ConfigurationService
 
         // Load existing config to preserve other settings
         Dictionary<string, object>? existingConfig = null;
-        if (File.Exists(ConfigPath))
+        if (File.Exists(_configPath))
         {
             try
             {
-                var existingYaml = File.ReadAllText(ConfigPath);
+                var existingYaml = File.ReadAllText(_configPath);
                 var rawDeserializer = new DeserializerBuilder()
                     .WithNamingConvention(NullNamingConvention.Instance)
                     .Build();
@@ -83,7 +94,10 @@ public class ConfigurationService
         existingConfig ??= new Dictionary<string, object>();
 
         // Update only the fields managed by cimiimport (PascalCase keys matching Go config)
-        existingConfig["RepoPath"] = config.RepoPath;
+        existingConfig[RepoPathConfig.Key] = config.RepoPath;
+        // One key for the repo path: a leftover repo_path would read as a second,
+        // possibly stale, answer to the same question.
+        existingConfig.Remove(RepoPathConfig.LegacyKey);
         existingConfig["CloudProvider"] = config.CloudProvider;
         existingConfig["CloudBucket"] = config.CloudBucket;
         existingConfig["DefaultCatalog"] = config.DefaultCatalog;
@@ -91,7 +105,7 @@ public class ConfigurationService
         existingConfig["OpenImportedYaml"] = config.OpenImportedYaml;
 
         var yaml = _serializer.Serialize(existingConfig);
-        File.WriteAllText(ConfigPath, yaml);
+        File.WriteAllText(_configPath, yaml);
     }
 
     /// <summary>

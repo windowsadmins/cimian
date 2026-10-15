@@ -33,7 +33,9 @@ public class PkgInfoBuilder
     public CimianConfig LoadConfig(string configPath)
     {
         var yaml = File.ReadAllText(configPath);
-        return YamlUtils.Deserializer.Deserialize<CimianConfig>(yaml);
+        var config = YamlUtils.Deserializer.Deserialize<CimianConfig>(yaml) ?? new CimianConfig();
+        config.RepoPath = RepoPathConfig.Read(yaml);
+        return config;
     }
 
     /// <summary>
