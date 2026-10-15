@@ -135,7 +135,9 @@ public class SharedClientCertificateTests : IDisposable
         var keyName = cng.Key.KeyName!;
         Assert.False(cng.Key.IsEphemeral);
 
-        using var serverCertificate = NewCertificate("localhost");
+        using var serverOriginal = NewCertificate("localhost");
+        using var serverCertificate = X509CertificateLoader.LoadPkcs12(
+            serverOriginal.Export(X509ContentType.Pfx), null, X509KeyStorageFlags.MachineKeySet);
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
