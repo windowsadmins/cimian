@@ -2,6 +2,7 @@
 
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Cimian.Core;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 
@@ -20,40 +21,12 @@ public class CategoryGroup
 
 /// <summary>
 /// Category-to-icon glyph mapping, shared by CategoriesPage and SoftwarePage.
+/// Delegates to <see cref="MscCategoryIconResolver"/> (built-ins + preferences.yaml overrides).
 /// </summary>
 public static class CategoryIcons
 {
-    public static string GetGlyph(string category)
-    {
-        return category.ToLowerInvariant() switch
-        {
-            "all" => "",
-            "productivity" => "",
-            "utilities" => "",
-            "developer tools" or "developer" or "dev" or "development" => "",
-            "communication" => "",
-            "design" or "creativity" => "",
-            "media" => "",
-            "entertainment" => "",
-            "business" or "management" => "",
-            "security" or "remediation" => "",
-            "photo & video" => "",
-            "music" => "",
-            "education" => "",
-            "gaming" => "",
-            "docs" or "documents" => "",
-            "plugins" or "extensions" or "addons" => "",
-            "prefs" or "preferences" => "",
-            "printing" => "",
-            "animation" => "",
-            "browsers" or "browser" => "",
-            "modeling" or "cad" => "",
-            "rendering" or "render" => "",
-            "interactive" => "",
-            "video" => "",
-            _ => ""
-        };
-    }
+    public static string GetGlyph(string category) =>
+        MscCategoryIconResolver.Resolve(category);
 }
 
 /// <summary>
