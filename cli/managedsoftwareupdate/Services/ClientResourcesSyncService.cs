@@ -260,8 +260,9 @@ public static class ClientResourcesPathMapper
         if (string.IsNullOrWhiteSpace(entryFullName))
             return null;
 
-        var normalized = entryFullName.Replace('\\', '/').TrimStart('/');
-        if (normalized.Contains("..", StringComparison.Ordinal))
+        var normalized = entryFullName.Replace('\\', '/');
+        if (normalized.StartsWith('/') || normalized.Contains(':') ||
+            normalized.Split('/').Any(segment => segment is "." or ".."))
             return null;
 
         // Munki HTML templates are not used by WinUI MSC.
@@ -317,7 +318,9 @@ public static class ClientResourcesPathMapper
     {
         if (string.IsNullOrWhiteSpace(leaf))
             return false;
-        if (leaf.Contains("..", StringComparison.Ordinal))
+        if (leaf.Contains(':') || leaf.Split('/').Any(segment =>
+                string.IsNullOrWhiteSpace(segment) || segment is "." or ".." ||
+                segment.EndsWith('.') || segment.EndsWith(' ')))
             return false;
         if (leaf.StartsWith('/') || leaf.StartsWith('\\'))
             return false;

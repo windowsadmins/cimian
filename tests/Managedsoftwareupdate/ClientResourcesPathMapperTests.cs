@@ -25,6 +25,13 @@ public class ClientResourcesPathMapperTests
     [InlineData("templates/sidebar_template.html")]
     [InlineData("../secrets.txt")]
     [InlineData("branding/../../evil.txt")]
+    [InlineData("branding/C:/ProgramData/ManagedInstalls/Config.yaml")]
+    [InlineData("client_resources/C:/ProgramData/ManagedInstalls/preflight.ps1")]
+    [InlineData("branding/logo.png:stream")]
+    [InlineData("/branding/logo.png")]
+    [InlineData("branding/./logo.png")]
+    [InlineData("branding/subdir./logo.png")]
+    [InlineData("branding//logo.png")]
     public void MapEntryToLocalPath_skips_unsafe_or_unused_entries(string entry)
     {
         ClientResourcesPathMapper.MapEntryToLocalPath(entry).Should().BeNull();
