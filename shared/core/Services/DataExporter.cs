@@ -717,48 +717,132 @@ public class DataExporter
     #region Configuration
 
     /// <summary>
-    /// Loads the current Cimian configuration for session enhancement
+    /// Loads the current Cimian configuration for session enhancement: the legacy
+    /// preferences.yaml keys, overlaid with the values managedsoftwareupdate actually
+    /// uses (Config.yaml, then machine settings, then policy), so a report names the
+    /// repo and manifest that policy set.
     /// </summary>
     public SessionConfig? LoadCimianConfiguration()
     {
+        var config = new SessionConfig();
+        var found = false;
         var configPath = Path.Combine(CimianPaths.ManagedInstallsRoot, "preferences.yaml");
 
-        if (!File.Exists(configPath))
-            return null;
-
-        try
+        if (File.Exists(configPath))
         {
-            // Simple YAML parsing for key fields
-            var lines = File.ReadAllLines(configPath);
-            var config = new SessionConfig();
-
-            foreach (var line in lines)
+            try
             {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("software_repo_url:"))
-                    config.SoftwareRepoUrl = ExtractYamlValue(trimmed);
-                else if (trimmed.StartsWith("client_identifier:"))
-                    config.ClientIdentifier = ExtractYamlValue(trimmed);
-                else if (trimmed.StartsWith("cache_path:"))
-                    config.CachePath = ExtractYamlValue(trimmed);
-                else if (trimmed.StartsWith("default_catalog:"))
-                    config.DefaultCatalog = ExtractYamlValue(trimmed);
-                else if (trimmed.StartsWith("log_level:"))
-                    config.LogLevel = ExtractYamlValue(trimmed);
-                else if (trimmed.StartsWith("local_only_manifest:"))
-                    config.Manifest = ExtractYamlValue(trimmed);
+                // Simple YAML parsing for key fields
+                foreach (var line in File.ReadAllLines(configPath))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.StartsWith("software_repo_url:"))
+                        config.SoftwareRepoUrl = ExtractYamlValue(trimmed);
+                    else if (trimmed.StartsWith("client_identifier:"))
+                        config.ClientIdentifier = ExtractYamlValue(trimmed);
+                    else if (trimmed.StartsWith("cache_path:"))
+                        config.CachePath = ExtractYamlValue(trimmed);
+                    else if (trimmed.StartsWith("default_catalog:"))
+                        config.DefaultCatalog = ExtractYamlValue(trimmed);
+                    else if (trimmed.StartsWith("log_level:"))
+                        config.LogLevel = ExtractYamlValue(trimmed);
+                    else if (trimmed.StartsWith("local_only_manifest:"))
+                        config.Manifest = ExtractYamlValue(trimmed);
+                }
+                found = true;
             }
-
-            if (string.IsNullOrEmpty(config.Manifest) && !string.IsNullOrEmpty(config.ClientIdentifier))
-                config.Manifest = config.ClientIdentifier;
-
-            return config;
+            catch
+            {
+                // Fall through to the effective settings below
+            }
         }
-        catch
+
+        var effective = LoadEffectiveSettings(
+            CimianPaths.ConfigYaml,
+            SettingsLayers.ReadMachineKey(SettingsLayers.MachineSettingsRegistryPath),
+            SettingsLayers.ReadMachineKey(SettingsLayers.PolicyRegistryPath),
+            requireTrustedFile: true);
+        if (effective is not null)
         {
-            return null;
+            found = true;
+            config.SoftwareRepoUrl = NonBlank(effective.SoftwareRepoURL) ?? config.SoftwareRepoUrl;
+            config.ClientIdentifier = NonBlank(effective.ClientIdentifier) ?? config.ClientIdentifier;
+            config.CachePath = NonBlank(effective.CachePath) ?? config.CachePath;
+            config.LogLevel = NonBlank(effective.LogLevel) ?? config.LogLevel;
+            config.DefaultCatalog = effective.Catalogs?.FirstOrDefault() ?? config.DefaultCatalog;
+            config.Manifest = NonBlank(effective.LocalOnlyManifest) ?? config.Manifest;
         }
+
+        if (!found)
+            return null;
+
+        if (string.IsNullOrEmpty(config.Manifest) && !string.IsNullOrEmpty(config.ClientIdentifier))
+            config.Manifest = config.ClientIdentifier;
+
+        return config;
     }
+
+    /// <summary>
+    /// The Config.yaml keys a report uses, named as they are in Config.yaml and the
+    /// registry, so <see cref="SettingsLayers"/> can apply both registry layers to them.
+    /// </summary>
+    internal sealed class EffectiveSettings
+    {
+        public string? SoftwareRepoURL { get; set; }
+        public string? ClientIdentifier { get; set; }
+        public string? CachePath { get; set; }
+        public string? LogLevel { get; set; }
+        public string? LocalOnlyManifest { get; set; }
+        public List<string>? Catalogs { get; set; }
+    }
+
+    /// <summary>
+    /// Reads <paramref name="configYamlPath"/> (skipped when a non-administrator could
+    /// have written it) and applies machine settings, then policy. Null when no source
+    /// has anything.
+    /// </summary>
+    internal static EffectiveSettings? LoadEffectiveSettings(
+        string configYamlPath,
+        IReadOnlyDictionary<string, object>? machineSettings,
+        IReadOnlyDictionary<string, object>? policy,
+        bool requireTrustedFile)
+    {
+        EffectiveSettings? settings = null;
+
+        if (File.Exists(configYamlPath))
+        {
+            if (requireTrustedFile && !ConfigFileGuard.IsTrusted(configYamlPath, out var reason))
+            {
+                ConsoleLogger.Debug($"Reporting ignores {configYamlPath}: {reason}");
+            }
+            else
+            {
+                try
+                {
+                    settings = new YamlDotNet.Serialization.DeserializerBuilder()
+                        .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.PascalCaseNamingConvention.Instance)
+                        .IgnoreUnmatchedProperties()
+                        .Build()
+                        .Deserialize<EffectiveSettings>(File.ReadAllText(configYamlPath));
+                }
+                catch
+                {
+                    // Unreadable Config.yaml: the registry layers may still say something
+                }
+            }
+        }
+
+        settings ??= new EffectiveSettings();
+        var applied = SettingsLayers.Apply(settings, machineSettings, SettingsLayers.MachineSettingsSource).Count
+                    + SettingsLayers.Apply(settings, policy, SettingsLayers.PolicySource).Count;
+
+        var empty = settings.SoftwareRepoURL is null && settings.ClientIdentifier is null &&
+                    settings.CachePath is null && settings.LogLevel is null &&
+                    settings.LocalOnlyManifest is null && settings.Catalogs is null;
+        return empty && applied == 0 ? null : settings;
+    }
+
+    private static string? NonBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
 
     private static string ExtractYamlValue(string line)
     {

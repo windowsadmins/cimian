@@ -156,6 +156,22 @@ try {
         Write-Warning "Failed to write version to registry: $_"
     }
 
+    # Config.yaml is trusted by the SYSTEM agent, which ignores it when anyone other
+    # than SYSTEM or an administrator could change it. Give an existing one that ACL:
+    # SYSTEM and Administrators full control, Users read, inheritance off.
+    try {
+        $configYaml = "C:\ProgramData\ManagedInstalls\Config.yaml"
+        if (Test-Path -LiteralPath $configYaml -PathType Leaf) {
+            & icacls.exe $configYaml /reset | Out-Null
+            & icacls.exe $configYaml /setowner "*S-1-5-32-544" | Out-Null
+            & icacls.exe $configYaml /inheritance:r /grant:r "*S-1-5-18:F" "*S-1-5-32-544:F" "*S-1-5-32-545:RX" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "icacls exited with $LASTEXITCODE" }
+            Write-Host "Config.yaml permissions set"
+        }
+    } catch {
+        Write-Warning "Failed to set Config.yaml permissions: $_"
+    }
+
     # Start Menu shortcut (idempotent)
     try {
         $startMenuPath = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Cimian"
