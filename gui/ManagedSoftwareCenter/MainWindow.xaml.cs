@@ -21,6 +21,11 @@ public sealed record CategoryNavigationRequest(string CategoryName);
 /// </summary>
 public partial class MainWindow : Window
 {
+    // Match Munki MSC MainMenu.xib minSize (1000x500). PreferredMinimum* is
+    // physical pixels, so these DIPs are scaled by RasterizationScale.
+    private const int MinWindowWidthDip = 1000;
+    private const int MinWindowHeightDip = 500;
+
     public ShellViewModel ViewModel { get; }
 
     public MainWindow()
@@ -40,6 +45,18 @@ public partial class MainWindow : Window
             Math.Min(2100, workArea.Width),
             Math.Min(1170, workArea.Height)));
         CenterOnScreen();
+        ApplyMinimumWindowSize();
+
+        // Re-apply mins when DPI changes (e.g. moving between monitors).
+        if (Content is FrameworkElement root)
+        {
+            root.Loaded += (_, _) =>
+            {
+                ApplyMinimumWindowSize();
+                if (root.XamlRoot != null)
+                    root.XamlRoot.Changed += (_, _) => ApplyMinimumWindowSize();
+            };
+        }
 
         // Get ViewModel from DI
         ViewModel = App.GetService<ShellViewModel>();
@@ -47,6 +64,22 @@ public partial class MainWindow : Window
 
         // Subscribe to ViewModel property changes
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+    }
+
+    /// <summary>
+    /// Prevents the window from being resized below a usable catalog layout.
+    /// </summary>
+    private void ApplyMinimumWindowSize()
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+            return;
+
+        double scale = Content is FrameworkElement { XamlRoot: { } xamlRoot }
+            ? xamlRoot.RasterizationScale
+            : 1.0;
+
+        presenter.PreferredMinimumWidth = (int)Math.Round(MinWindowWidthDip * scale);
+        presenter.PreferredMinimumHeight = (int)Math.Round(MinWindowHeightDip * scale);
     }
 
     // Centers on the work area using the actual window size, clamped so the
