@@ -15,6 +15,9 @@ updates:
       # FluentAssertions 8 and later needs a paid licence for commercial use.
       - dependency-name: "FluentAssertions"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "WixToolset.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.CommandLine"
     # A dependency joins the first group whose patterns match, so the narrow
     # groups come before microsoft-system.
     groups:
