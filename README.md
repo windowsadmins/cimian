@@ -337,7 +337,7 @@ Cimian uses a YAML-based configuration system located at `C:\ProgramData\Managed
 ```yaml
 # Basic Configuration
 software_repo_url: https://cimian.yourdomain.com/
-RepoFormat: yaml  # Optional: yaml (default) or plist
+RepoFormat: yaml
 client_identifier: MyComputer-01
 force_basic_auth: false
 default_arch: x64
