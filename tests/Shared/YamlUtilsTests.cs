@@ -207,6 +207,24 @@ public class YamlUtilsTests
     }
 
     [Fact]
+    public void Scripts_WithConsecutiveBlankLines_RoundTrip_Unchanged()
+    {
+        // Embedded content verified by hash breaks if blank lines are collapsed.
+        const string script = "$content = @'\nfirst\n\n\nsecond\n'@\n";
+
+        var pkg = new PkgsInfo
+        {
+            Name = "Foo",
+            Version = "1.0",
+            PreinstallScript = script,
+        };
+
+        var deserialized = YamlUtils.DeserializePkgInfo<PkgsInfo>(YamlUtils.SerializePkgInfo(pkg));
+        Assert.NotNull(deserialized);
+        Assert.Equal(script, deserialized!.PreinstallScript);
+    }
+
+    [Fact]
     public void Scripts_WithCrlf_NormalizeTo_Lf_BeforeEmit()
     {
         // Windows checkouts of YAML produced by tools that don't normalize

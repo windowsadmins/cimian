@@ -537,6 +537,24 @@ installer:
     }
 
     #endregion
+
+    [Fact]
+    public void StampLoopFingerprints_KeepsScriptBlankLines_CollapsesDescription()
+    {
+        // A script can embed content verified byte-for-byte (a here-string checked
+        // against a SHA-256), so its blank lines must reach the catalog unchanged.
+        var pkg = new PkgsInfo
+        {
+            Name = "App1",
+            Description = "one\n\n\n\ntwo",
+            PreinstallScript = "$content = @'\r\nfirst\r\n\r\n\r\nsecond\r\n'@",
+        };
+
+        _builder.StampLoopFingerprints(new List<PkgsInfo> { pkg });
+
+        Assert.Equal("one\n\ntwo", pkg.Description);
+        Assert.Equal("$content = @'\nfirst\n\n\nsecond\n'@", pkg.PreinstallScript);
+    }
 }
 
 /// <summary>
@@ -563,5 +581,4 @@ public class PkgsInfoTests
         Assert.Null(installer.Type);
         Assert.Null(installer.Size);
     }
-
 }
