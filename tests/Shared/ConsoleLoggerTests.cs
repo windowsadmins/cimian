@@ -13,6 +13,7 @@ namespace Cimian.Tests.Shared;
 /// stdout captured by a scheduler or a wrapper script could not be lined up against
 /// run.log, and a warning and an info line were told apart by colour codes alone.
 /// </remarks>
+[Collection(ConsoleOutputCollection.Name)]
 public class ConsoleLoggerTests : IDisposable
 {
     private const string Stamp = @"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] ";
