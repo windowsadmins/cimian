@@ -44,13 +44,13 @@ public sealed class BrandingService : IBrandingService
 
     public async Task LoadAsync()
     {
+        AppTitle = null;
+        _bannerTitle = null;
+        _bannerTitleExplicit = false;
+        SidebarHeaderImage = null;
+
         try
         {
-            AppTitle = null;
-            _bannerTitle = null;
-            _bannerTitleExplicit = false;
-
-            // Load branding.yaml if it exists
             if (File.Exists(BrandingYamlPath))
             {
                 var content = await File.ReadAllTextAsync(BrandingYamlPath);
@@ -58,8 +58,6 @@ public sealed class BrandingService : IBrandingService
                 if (branding != null)
                 {
                     AppTitle = branding.AppTitle;
-
-                    // Null means the key was absent; non-null (including "") is explicit.
                     if (branding.BannerTitle != null)
                     {
                         _bannerTitle = branding.BannerTitle;
@@ -67,25 +65,19 @@ public sealed class BrandingService : IBrandingService
                     }
                 }
             }
-
-            // Policy wins over YAML when BannerTitle is present under Policies\Cimian.
-            ApplyBannerTitlePolicyOverride();
-
-            ResolvedBannerTitle = MscBannerTitleResolver.Resolve(
-                AppTitle, _bannerTitle, _bannerTitleExplicit);
-            ShowBannerTitle = MscBannerTitleResolver.ShouldShow(ResolvedBannerTitle);
-
-            // Load sidebar header image if present
-            var headerImage = await TryLoadImageAsync("sidebar_header.png")
-                           ?? await TryLoadImageAsync("sidebar_header.jpg");
-            SidebarHeaderImage = headerImage;
         }
         catch
         {
-            // Use defaults if branding can't be loaded
-            ResolvedBannerTitle = MscBannerTitleResolver.DefaultTitle;
-            ShowBannerTitle = true;
+            // Policy still applies when the optional YAML file cannot be read.
         }
+
+        ApplyBannerTitlePolicyOverride();
+        ResolvedBannerTitle = MscBannerTitleResolver.Resolve(
+            AppTitle, _bannerTitle, _bannerTitleExplicit);
+        ShowBannerTitle = MscBannerTitleResolver.ShouldShow(ResolvedBannerTitle);
+
+        SidebarHeaderImage = await TryLoadImageAsync("sidebar_header.png")
+                          ?? await TryLoadImageAsync("sidebar_header.jpg");
     }
 
     /// <summary>
