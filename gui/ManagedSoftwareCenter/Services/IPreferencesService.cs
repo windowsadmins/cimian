@@ -13,7 +13,9 @@ public interface IPreferencesService
     int AggressiveNotificationDays { get; }
 
     /// <summary>
-    /// URL to open when user clicks Help
+    /// URL to open when the user clicks Help (Munki HelpURL parity).
+    /// Sourced from preferences.yaml <c>help_url</c>, overridden by
+    /// HKLM\SOFTWARE\Policies\Cimian\HelpURL when that policy value is present.
     /// </summary>
     string? HelpUrl { get; }
 
@@ -22,6 +24,13 @@ public interface IPreferencesService
     /// Null means use the default set.
     /// </summary>
     List<string>? SidebarItems { get; }
+
+    /// <summary>
+    /// Resolved category name → Segoe MDL2 glyph overrides from preferences.yaml
+    /// <c>category_icons</c>, replaced by HKLM\SOFTWARE\Policies\Cimian\CategoryIcons
+    /// when that policy value or subkey is present.
+    /// </summary>
+    IReadOnlyDictionary<string, string> CategoryIconGlyphs { get; }
 
     /// <summary>
     /// Reload preferences from disk
