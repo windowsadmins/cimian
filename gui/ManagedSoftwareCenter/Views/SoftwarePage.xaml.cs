@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
+using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Views;
@@ -67,6 +68,10 @@ public partial class SoftwarePage : Page
             {
                 // Load branding images first
                 LoadBrandingImages();
+
+                // Resolve hero title from branding.yaml / Policies\Cimian BannerTitle.
+                // LoadAsync is safe to call again (singleton); do not wait on MainWindow.
+                await ApplyBannerTitleAsync();
                 
                 // Start carousel if we have images
                 if (_brandingImagePaths.Count > 1)
@@ -135,6 +140,21 @@ public partial class SoftwarePage : Page
     }
 
     #region Branding Images & Carousel
+
+    /// <summary>
+    /// Applies the resolved hero banner title (default / app_title / banner_title).
+    /// Blank resolved title collapses the overlay so a custom image can stand alone.
+    /// </summary>
+    private async Task ApplyBannerTitleAsync()
+    {
+        var branding = App.GetService<IBrandingService>();
+        await branding.LoadAsync();
+
+        HeroTitleText.Text = branding.ResolvedBannerTitle;
+        var visibility = branding.ShowBannerTitle ? Visibility.Visible : Visibility.Collapsed;
+        HeroTitleText.Visibility = visibility;
+        HeroTitlePanel.Visibility = visibility;
+    }
 
     private void LoadBrandingImages()
     {
