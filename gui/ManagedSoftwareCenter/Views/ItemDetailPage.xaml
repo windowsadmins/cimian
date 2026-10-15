@@ -62,7 +62,7 @@
                         Width="96" Height="96" 
                         CornerRadius="16"
                         VerticalAlignment="Top"
-                        Background="{ThemeResource AccentFillColorDefaultBrush}">
+                        Background="{ThemeResource SubtleFillColorSecondaryBrush}">
                         <Image 
                             Source="{Binding Item.IconImage}"
                             Width="96" Height="96"
