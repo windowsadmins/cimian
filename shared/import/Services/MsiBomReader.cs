@@ -1,4 +1,4 @@
-using WixToolset.Dtf.WindowsInstaller;
+using Cimian.Core.Msi;
 
 namespace Cimian.CLI.Cimiimport.Services;
 
@@ -90,10 +90,10 @@ public static class MsiBomReader
     /// ARP match could mask an install that really is missing. A well-formed
     /// MSI with no File table is not an error condition -- it is the signal.
     /// </remarks>
-    public static bool HasInstalledFiles(Database db)
+    public static bool HasInstalledFiles(MsiDatabase db)
     {
         // Not an error: no File table means the MSI lays down no payload itself.
-        if (!db.Tables.Contains("File"))
+        if (!db.TableExists("File"))
         {
             return false;
         }
@@ -101,7 +101,6 @@ public static class MsiBomReader
         try
         {
             using var view = db.OpenView("SELECT `File` FROM `File`");
-            view.Execute();
             using var record = view.Fetch();
             return record != null;
         }
@@ -118,7 +117,7 @@ public static class MsiBomReader
     /// N or apply name-match heuristics on top of the ordered list.
     /// </summary>
     public static List<MsiInstalledFile> EnumerateInstalledFiles(
-        Database db,
+        MsiDatabase db,
         string[]? extensions = null)
     {
         var exts = extensions ?? [".exe"];
@@ -137,7 +136,6 @@ public static class MsiBomReader
                 "SELECT `File`.`File`, `File`.`FileName`, `File`.`FileSize`, `File`.`Version`, " +
                 "`Component`.`Directory_`, `Component`.`KeyPath` " +
                 "FROM `File`, `Component` WHERE `File`.`Component_` = `Component`.`Component`");
-            view.Execute();
 
             for (var record = view.Fetch(); record != null; record = view.Fetch())
             {
@@ -160,7 +158,7 @@ public static class MsiBomReader
                         continue;
 
                     // FileSize column type is INTEGER, returned as long; the
-                    // DTF .GetInteger() call above narrows to int, fine for
+                    // .GetInteger() call above narrows to int, fine for
                     // files up to 2 GB. For larger files the comparison still
                     // works monotonically (largest wins) even if individual
                     // sizes saturate.
@@ -213,13 +211,12 @@ public static class MsiBomReader
     /// system folders are substituted with their canonical paths; everything
     /// else uses DefaultDir's long-name component.
     /// </summary>
-    private static Dictionary<string, string> BuildDirectoryPathMap(Database db)
+    private static Dictionary<string, string> BuildDirectoryPathMap(MsiDatabase db)
     {
         var directories = new Dictionary<string, (string Parent, string DefaultDir)>(StringComparer.Ordinal);
 
         using (var view = db.OpenView("SELECT `Directory`, `Directory_Parent`, `DefaultDir` FROM `Directory`"))
         {
-            view.Execute();
             for (var record = view.Fetch(); record != null; record = view.Fetch())
             {
                 using (record)

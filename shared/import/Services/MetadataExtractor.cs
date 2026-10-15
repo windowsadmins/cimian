@@ -3,7 +3,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Cimian.CLI.Cimiimport.Models;
-using WixToolset.Dtf.WindowsInstaller;
+using Cimian.Core.Msi;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -85,7 +85,7 @@ public partial class MetadataExtractor
     }
 
     /// <summary>
-    /// Extracts MSI metadata using DTF (direct msi.dll interop).
+    /// Extracts MSI metadata through msi.dll.
     /// For cimipkg-built MSI, also extracts embedded build-info.yaml for full metadata transfer.
     /// </summary>
     private void ExtractMsiMetadata(string packagePath, InstallerMetadata metadata)
@@ -101,10 +101,10 @@ public partial class MetadataExtractor
 
         try
         {
-            using var db = new Database(packagePath, DatabaseOpenMode.ReadOnly);
+            using var db = MsiDatabase.OpenReadOnly(packagePath);
 
             string? ReadProp(string name) {
-                try { return db.ExecuteScalar($"SELECT `Value` FROM `Property` WHERE `Property` = '{name}'")?.ToString(); }
+                try { return db.GetProperty(name); }
                 catch { return null; }
             }
 
@@ -200,7 +200,7 @@ public partial class MetadataExtractor
     ///      append up to 3 file entries by descending FileSize. Caps the array.
     /// All branches fail-soft — a BOM read error leaves metadata unchanged.
     /// </remarks>
-    private void PopulateMsiBom(Database db, InstallerMetadata metadata, PkgBuildInfo? buildInfo)
+    private void PopulateMsiBom(MsiDatabase db, InstallerMetadata metadata, PkgBuildInfo? buildInfo)
     {
         const int ThirdPartyFileCheckCap = 3;
 
