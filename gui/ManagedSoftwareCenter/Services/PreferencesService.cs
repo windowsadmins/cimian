@@ -19,6 +19,7 @@ public class PreferencesService : IPreferencesService
 
     // Same hive as ConfigurationService.ApplyPolicyOverrides (CimianPrefs / Policy CSP).
     private const string PolicyRegistryPath = @"SOFTWARE\Policies\Cimian";
+    private const string HelpUrlPolicyValue = "HelpURL";
     private const string CategoryIconsPolicyName = "CategoryIcons";
 
     private readonly IDeserializer _deserializer;
@@ -86,6 +87,7 @@ public class PreferencesService : IPreferencesService
         }
 
         // Policy replaces YAML category_icons when CategoryIcons is present under Policies\Cimian.
+        ApplyHelpUrlPolicyOverride();
         ApplyCategoryIconsPolicyOverride();
 
         // Push overrides into the shared glyph lookup used by Software/Categories pages.
@@ -164,6 +166,35 @@ public class PreferencesService : IPreferencesService
                 return s.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
             default:
                 return Array.Empty<string>();
+        }
+    }
+
+    private void ApplyHelpUrlPolicyOverride()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(PolicyRegistryPath, writable: false);
+            if (key == null)
+                return;
+
+            // Presence of the value name matters — empty string is still an override.
+            var names = key.GetValueNames();
+            var hasHelpUrl = names.Any(n =>
+                string.Equals(n, HelpUrlPolicyValue, StringComparison.OrdinalIgnoreCase));
+            if (!hasHelpUrl)
+                return;
+
+            var raw = key.GetValue(HelpUrlPolicyValue);
+            HelpUrl = raw switch
+            {
+                string s => s,
+                null => string.Empty,
+                _ => raw.ToString() ?? string.Empty
+            };
+        }
+        catch
+        {
+            // Ignore registry access failures; keep YAML / defaults.
         }
     }
 

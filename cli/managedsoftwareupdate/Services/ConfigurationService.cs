@@ -14,16 +14,28 @@ public class ConfigurationService
 {
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
+    private readonly string? _policyRegistryPath;
 
-    public ConfigurationService()
+    public ConfigurationService() : this(PolicyRegistryPath)
     {
+    }
+
+    /// <summary>
+    /// Reads policy overrides from <paramref name="policyRegistryPath"/> under HKLM,
+    /// or skips them when it is null, so tests do not pick up the machine's policy.
+    /// </summary>
+    internal ConfigurationService(string? policyRegistryPath)
+    {
+        _policyRegistryPath = policyRegistryPath;
         _deserializer = new DeserializerBuilder()
             .WithNamingConvention(PascalCaseNamingConvention.Instance)
+            .WithTypeConverter(new HeaderListConverter())
             .IgnoreUnmatchedProperties()
             .Build();
 
         _serializer = new SerializerBuilder()
             .WithNamingConvention(PascalCaseNamingConvention.Instance)
+            .WithTypeConverter(new HeaderListConverter())
             .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
             .Build();
     }
@@ -44,11 +56,16 @@ public class ConfigurationService
     /// </summary>
     private const string PolicyRegistryPath = @"SOFTWARE\Policies\Cimian";
 
-    private static CimianConfig ApplyPolicyOverrides(CimianConfig config)
+    private CimianConfig ApplyPolicyOverrides(CimianConfig config)
     {
+        if (_policyRegistryPath is null)
+        {
+            return config;
+        }
+
         try
         {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(PolicyRegistryPath, false);
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(_policyRegistryPath, false);
             if (key == null)
             {
                 return config;

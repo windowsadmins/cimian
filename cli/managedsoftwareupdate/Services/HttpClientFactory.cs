@@ -15,8 +15,9 @@ namespace Cimian.CLI.managedsoftwareupdate.Services;
 public static class CimianHttpClientFactory
 {
     /// <summary>
-    /// Creates an HttpClient configured with authentication and optional client certificates.
-    /// Auth priority: DPAPI registry → Bearer token → Basic auth.
+    /// Creates an HttpClient configured with authentication, optional client certificates and
+    /// the AdditionalHttpHeaders setting. With AdditionalHttpHeadersHttpsOnly set, the
+    /// credential and the additional headers go only on https requests.
     /// </summary>
     public static HttpClient CreateHttpClient(CimianConfig config, TimeSpan? timeout = null)
     {
@@ -44,34 +45,123 @@ public static class CimianHttpClientFactory
             }
         }
 
-        var client = new HttpClient(handler)
+        var authorization = GetAuthorization(config);
+        var additionalHeaders = ParseAdditionalHeaders(config);
+
+        // https-only: the credential and additional headers are attached per request, and
+        // only over https, so a plain http request (a local caching server on port 80, say)
+        // never carries them.
+        var httpsOnly = config.AdditionalHttpHeadersHttpsOnly
+            && (authorization != null || additionalHeaders.Count > 0);
+        HttpMessageHandler pipeline = httpsOnly
+            ? new HttpsOnlyHeadersHandler(authorization, additionalHeaders, handler)
+            : handler;
+
+        var client = new HttpClient(pipeline)
         {
             Timeout = timeout ?? TimeSpan.FromSeconds(60)
         };
 
-        // Auth priority: DPAPI registry → Bearer token → Basic auth
+        client.DefaultRequestHeaders.Add("User-Agent", "Cimian-ManagedSoftwareUpdate/1.0");
+
+        if (!httpsOnly)
+        {
+            client.DefaultRequestHeaders.Authorization = authorization;
+            foreach (var (name, value) in additionalHeaders)
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation(name, value);
+            }
+        }
+
+        return client;
+    }
+
+    /// <summary>
+    /// The repository credential, or null when none is configured.
+    /// Priority: DPAPI registry → Bearer token → Basic auth.
+    /// </summary>
+    internal static AuthenticationHeaderValue? GetAuthorization(CimianConfig config)
+    {
         var authHeader = AuthService.GetAuthHeader();
         if (!string.IsNullOrEmpty(authHeader))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", authHeader);
-        }
-        else if (!string.IsNullOrEmpty(config.AuthToken))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", config.AuthToken);
-        }
-        else if (!string.IsNullOrEmpty(config.AuthUser) && !string.IsNullOrEmpty(config.AuthPassword))
+            return new AuthenticationHeaderValue("Basic", authHeader);
+
+        if (!string.IsNullOrEmpty(config.AuthToken))
+            return new AuthenticationHeaderValue("Bearer", config.AuthToken);
+
+        if (!string.IsNullOrEmpty(config.AuthUser) && !string.IsNullOrEmpty(config.AuthPassword))
         {
             var credentials = Convert.ToBase64String(
                 Encoding.UTF8.GetBytes($"{config.AuthUser}:{config.AuthPassword}"));
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic", credentials);
+            return new AuthenticationHeaderValue("Basic", credentials);
         }
 
-        client.DefaultRequestHeaders.Add("User-Agent", "Cimian-ManagedSoftwareUpdate/1.0");
+        return null;
+    }
 
-        return client;
+    /// <summary>
+    /// The usable AdditionalHttpHeaders entries, in order. An entry is split at its first
+    /// colon, and a later entry for the same header replaces an earlier one. Authorization
+    /// belongs to the auth settings above and User-Agent identifies the client, so an entry
+    /// for either is skipped rather than replacing them. So is an entry with a control or
+    /// non-ASCII character in its value: a line break or another control character would be
+    /// written to the wire as it is, and .NET will not send a request that carries a
+    /// non-ASCII one. Warnings give an entry's position, not its value, because a header
+    /// value can be a secret.
+    /// </summary>
+    internal static List<KeyValuePair<string, string>> ParseAdditionalHeaders(CimianConfig config)
+    {
+        var result = new List<KeyValuePair<string, string>>();
+        var entryNumber = 0;
+        foreach (var entry in config.AdditionalHttpHeaders ?? [])
+        {
+            entryNumber++;
+            if (!TrySplitHeader(entry, out var name, out var value))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: expected \"Name: value\"");
+                continue;
+            }
+
+            if (HasInvalidCharacter(name) || HasInvalidCharacter(value))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: a name or value can hold only printable ASCII characters");
+                continue;
+            }
+
+            if (name.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("User-Agent", StringComparison.OrdinalIgnoreCase))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: {name} cannot be set here");
+                continue;
+            }
+
+            using var probe = new HttpRequestMessage();
+            if (!probe.Headers.TryAddWithoutValidation(name, value))
+            {
+                ConsoleLogger.Warn($"Ignoring AdditionalHttpHeaders entry {entryNumber}: not a valid request header name");
+                continue;
+            }
+
+            result.RemoveAll(h => h.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+            result.Add(new(name, value));
+        }
+
+        return result;
+    }
+
+    // Printable ASCII and tab only.
+    private static bool HasInvalidCharacter(string text) => text.Any(c => c > '~' || (c < ' ' && c != '\t'));
+
+    internal static bool TrySplitHeader(string? entry, out string name, out string value)
+    {
+        name = value = string.Empty;
+        var colon = entry?.IndexOf(':') ?? -1;
+        if (entry is null || colon < 0)
+            return false;
+
+        name = entry[..colon].Trim();
+        value = entry[(colon + 1)..].Trim();
+        return name.Length > 0;
     }
 
     /// <summary>

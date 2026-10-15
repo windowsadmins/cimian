@@ -48,7 +48,8 @@ public class SelfServiceManifestService
                 Name = "SelfServeManifest",
                 ManagedInstalls = new List<string>(),
                 ManagedUninstalls = new List<string>(),
-                OptionalInstalls = new List<string>()
+                OptionalInstalls = new List<string>(),
+                DefaultInstalls = new List<string>()
             };
         }
 
@@ -65,6 +66,7 @@ public class SelfServiceManifestService
         manifest.ManagedInstalls ??= new List<string>();
         manifest.ManagedUninstalls ??= new List<string>();
         manifest.OptionalInstalls ??= new List<string>();
+        manifest.DefaultInstalls ??= new List<string>();
 
         return manifest;
     }
@@ -149,4 +151,11 @@ public class SelfServiceManifest
 
     [YamlMember(Alias = "optional_installs")]
     public List<string> OptionalInstalls { get; set; } = new();
+
+    /// <summary>
+    /// Names already offered via manifest <c>default_installs</c> (Munki 7 parity).
+    /// Once recorded, the client will not re-seed into managed_installs.
+    /// </summary>
+    [YamlMember(Alias = "default_installs")]
+    public List<string> DefaultInstalls { get; set; } = new();
 }
