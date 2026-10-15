@@ -74,7 +74,8 @@
                                 Visibility="Collapsed"
                                 Click="CheckNow_Click"
                                 MinWidth="140"
-                                Height="44">
+                                Height="44"
+                                ToolTipService.ToolTip="Check for updates (Ctrl+R)">
                             <StackPanel Orientation="Horizontal">
                                 <FontIcon Glyph="&#xE72C;" FontSize="16"/>
                                 <TextBlock Text="Check Again" Margin="8,0,0,0"/>
@@ -518,7 +519,8 @@
                     MinWidth="140"
                     Height="44"
                     HorizontalAlignment="Center"
-                    Margin="0,16,0,0"/>
+                    Margin="0,16,0,0"
+                    ToolTipService.ToolTip="Check for updates (Ctrl+R)"/>
         </StackPanel>
 
         <!-- Loading Indicator -->

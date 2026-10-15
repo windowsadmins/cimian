@@ -1,0 +1,57 @@
+# Dependabot version updates for NuGet packages and GitHub Actions.
+# Security updates (when enabled in repo settings) can still open sooner
+# than this schedule.
+version: 2
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    ignore:
+      # FluentAssertions 8 and later needs a paid licence for commercial use.
+      - dependency-name: "FluentAssertions"
+        update-types: ["version-update:semver-major"]
+    # A dependency joins the first group whose patterns match, so the narrow
+    # groups come before microsoft-system.
+    groups:
+      test-deps:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+          - "coverlet*"
+      # Windows App SDK updates can break the GUIs, so they get their own PR.
+      windows-app-sdk:
+        patterns:
+          - "Microsoft.WindowsAppSDK"
+      microsoft-system:
+        patterns:
+          - "System.*"
+          - "Microsoft.*"
+        exclude-patterns:
+          - "Microsoft.NET.Test.Sdk"
+          - "Microsoft.WindowsAppSDK"
+      other-nuget:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "System.*"
+          - "Microsoft.*"
+          - "xunit*"
+          - "coverlet*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"

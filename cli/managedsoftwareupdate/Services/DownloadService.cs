@@ -87,6 +87,7 @@ public class DownloadService
         // Perform HEAD request to get file size and check resume support
         long totalBytes = -1;
         bool supportsResume = false;
+        bool headSucceeded = false;
         TimeSpan timeout = TimeSpan.FromMinutes(DefaultTimeoutMinutes);
 
         try
@@ -99,24 +100,23 @@ public class DownloadService
             
             if (headResponse.IsSuccessStatusCode)
             {
+                headSucceeded = true;
                 totalBytes = headResponse.Content.Headers.ContentLength ?? -1;
                 supportsResume = headResponse.Headers.AcceptRanges.Contains("bytes");
-                
-                // Calculate dynamic timeout based on file size
-                if (totalBytes > 0)
+                timeout = GetAttemptTimeout(totalBytes);
+                if (timeout.TotalMinutes > DefaultTimeoutMinutes)
                 {
-                    var calculatedMinutes = 2 + (totalBytes / BytesPerMinuteForTimeout);
-                    if (calculatedMinutes > DefaultTimeoutMinutes)
-                    {
-                        timeout = TimeSpan.FromMinutes(calculatedMinutes);
-                        ConsoleLogger.Detail($"    Large file detected size_mb: {totalBytes / (1024 * 1024)} calculated_timeout_minutes: {calculatedMinutes} supports_resume: {supportsResume}");
-                    }
+                    ConsoleLogger.Detail($"    Large file detected size_mb: {totalBytes / (1024 * 1024)} calculated_timeout_minutes: {timeout.TotalMinutes} supports_resume: {supportsResume}");
                 }
+            }
+            else
+            {
+                ConsoleLogger.Detail($"    HEAD request returned {(int)headResponse.StatusCode}, taking size and resume support from the GET");
             }
         }
         catch (Exception ex)
         {
-            ConsoleLogger.Detail($"    HEAD request failed, proceeding with default timeout: {ex.Message}");
+            ConsoleLogger.Detail($"    HEAD request failed, taking size and resume support from the GET: {ex.Message}");
         }
 
         // Retry loop with resume support
@@ -159,8 +159,43 @@ public class DownloadService
                     startByte = 0;
                     continue; // Retry from beginning
                 }
+
+                // A part that does not start where the partial file ends cannot be appended.
+                if (startByte > 0 && response.StatusCode == System.Net.HttpStatusCode.PartialContent &&
+                    response.Content.Headers.ContentRange is { From: long from } && from != startByte)
+                {
+                    ConsoleLogger.Warn("Range answered from another offset, restarting download from beginning");
+                    File.Delete(tempPath);
+                    startByte = 0;
+                    continue;
+                }
                 
                 response.EnsureSuccessStatusCode();
+
+                // A server may answer a range request with the whole file; start over rather
+                // than append it to the partial one.
+                if (startByte > 0 && response.StatusCode != System.Net.HttpStatusCode.PartialContent)
+                {
+                    ConsoleLogger.Warn("Range ignored by the server, restarting download from beginning");
+                    startByte = 0;
+                }
+
+                // A server that refuses the HEAD, as an address presigned for GET does, still
+                // states the size and range support on the GET. Content-Length is the whole
+                // file's only when the request had no Range header.
+                if (!headSucceeded && startByte == 0)
+                {
+                    totalBytes = response.Content.Headers.ContentLength ?? -1;
+                    supportsResume = response.Headers.AcceptRanges.Contains("bytes");
+
+                    var sizedTimeout = GetAttemptTimeout(totalBytes);
+                    if (sizedTimeout > timeout)
+                    {
+                        timeout = sizedTimeout;
+                        timeoutCts.CancelAfter(timeout);
+                        ConsoleLogger.Detail($"    Large file detected size_mb: {totalBytes / (1024 * 1024)} calculated_timeout_minutes: {timeout.TotalMinutes} supports_resume: {supportsResume}");
+                    }
+                }
 
                 // Get expected size for this response
                 var expectedSize = response.Content.Headers.ContentLength ?? (totalBytes > 0 ? totalBytes - startByte : -1);
@@ -252,6 +287,25 @@ public class DownloadService
         }
         
         return false;
+    }
+
+    /// <summary>
+    /// The time limit for one download attempt: the default, or two minutes plus what the
+    /// assumed minimum speed needs when the file is too large to finish in the default.
+    /// </summary>
+    internal static TimeSpan GetAttemptTimeout(long totalBytes)
+    {
+        var timeout = TimeSpan.FromMinutes(DefaultTimeoutMinutes);
+        if (totalBytes > 0)
+        {
+            var calculatedMinutes = 2 + (totalBytes / BytesPerMinuteForTimeout);
+            if (calculatedMinutes > DefaultTimeoutMinutes)
+            {
+                timeout = TimeSpan.FromMinutes(calculatedMinutes);
+            }
+        }
+
+        return timeout;
     }
 
     /// <summary>

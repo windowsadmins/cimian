@@ -340,10 +340,9 @@ public class LoopGuardTests : IDisposable
     [Fact]
     public void SameVersion_ThreeAttempts_ThreeSessions_SixHourSuppression()
     {
-        // Spread events across days to avoid rapid-fire detection (2-hour window)
-        CreateEventsFile("session1", "EscPkg", "3.0.0", "completed", DateTime.UtcNow.AddDays(-3));
-        CreateEventsFile("session2", "EscPkg", "3.0.0", "completed", DateTime.UtcNow.AddDays(-2));
-        CreateEventsFile("session3", "EscPkg", "3.0.0", "completed", DateTime.UtcNow.AddDays(-1));
+        // Spread 2.5h apart: outside the rapid-fire window, inside the 24h loop window
+        for (int i = 1; i <= 3; i++)
+            CreateEventsFile($"session{i}", "EscPkg", "3.0.0", "completed", SpacedWithinWindow(i));
 
         var guard = CreateGuard();
 
@@ -357,7 +356,7 @@ public class LoopGuardTests : IDisposable
     public void SameVersion_FiveAttempts_TwentyFourHourSuppression()
     {
         for (int i = 1; i <= 5; i++)
-            CreateEventsFile($"session{i}", "EscPkg5", "3.0.0", "completed", DateTime.UtcNow.AddDays(-6 + i));
+            CreateEventsFile($"session{i}", "EscPkg5", "3.0.0", "completed", SpacedWithinWindow(i));
 
         var guard = CreateGuard();
 
@@ -371,7 +370,7 @@ public class LoopGuardTests : IDisposable
     public void SameVersion_EightAttempts_CappedSuppression()
     {
         for (int i = 1; i <= 8; i++)
-            CreateEventsFile($"session{i}", "EscPkg8", "3.0.0", "completed", DateTime.UtcNow.AddDays(-8 + i));
+            CreateEventsFile($"session{i}", "EscPkg8", "3.0.0", "completed", SpacedWithinWindow(i));
 
         var guard = CreateGuard();
 
@@ -382,6 +381,124 @@ public class LoopGuardTests : IDisposable
         reason.Should().Contain("paused for 7d");
         reason.Should().NotContain("indefinite");
         guard.GetPackageState("EscPkg8")!.SuppressedUntil.Should().BeCloseTo(DateTime.UtcNow.AddDays(7), TimeSpan.FromMinutes(2));
+    }
+
+    #endregion
+
+    #region Rolling Window
+
+    [Fact]
+    public void SpacedReruns_OncePerDayForTenDays_DoNotTrip()
+    {
+        // An item that legitimately reruns daily (or after each OS update) is not a loop.
+        for (int day = 9; day >= 0; day--)
+            CreateEventsFile($"daily{day}", "DailyPkg", "1.0.0", "completed", DateTime.UtcNow.AddDays(-day).AddHours(-1));
+
+        var guard = CreateGuard();
+
+        guard.ShouldSuppress("DailyPkg", "1.0.0").Suppress.Should().BeFalse();
+        var state = guard.GetPackageState("DailyPkg")!;
+        state.AttemptCount.Should().Be(1);
+        state.SessionCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void LoadState_PrunesLifetimeCountersWrittenBeforeTheWindow()
+    {
+        // State written by an older client: lifetime totals for a package that has run
+        // once a day for ten days. Loaded as-is, it reads as an 8+ install loop.
+        var sessions = Enumerable.Range(0, 10)
+            .Select(d => DateTime.UtcNow.AddDays(-d).ToString("yyyy-MM-dd") + "/0900")
+            .ToArray();
+        var json = JsonSerializer.Serialize(new
+        {
+            loop_guard = new
+            {
+                packages = new Dictionary<string, object>
+                {
+                    ["weeklypkg"] = new
+                    {
+                        package_name = "WeeklyPkg",
+                        attempt_count = 10,
+                        session_count = 10,
+                        last_version = "1.0.0",
+                        last_attempt = DateTime.UtcNow.AddDays(-1),
+                        version_attempts = new Dictionary<string, int> { ["1.0.0"] = 10 },
+                        recent_timestamps = Enumerable.Range(1, 10).Select(d => DateTime.UtcNow.AddDays(-d)).ToArray(),
+                        processed_sessions = sessions
+                    }
+                }
+            }
+        });
+        File.WriteAllText(_statePath, json);
+
+        var guard = CreateGuard();
+
+        guard.ShouldSuppress("WeeklyPkg", "1.0.0").Suppress.Should().BeFalse();
+        var state = guard.GetPackageState("WeeklyPkg")!;
+        state.AttemptCount.Should().Be(0);
+        state.SessionCount.Should().Be(0);
+        state.VersionAttempts.Should().BeEmpty();
+        state.ProcessedSessions.Should().BeEmpty();
+        state.RecentTimestamps.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void RapidFire_StillTrips_AfterSpacedHistory()
+    {
+        for (int day = 9; day >= 1; day--)
+            CreateEventsFile($"daily{day}", "BurstPkg", "1.0.0", "completed", DateTime.UtcNow.AddDays(-day));
+
+        var guard = CreateGuard();
+        guard.ShouldSuppress("BurstPkg", "1.0.0").Suppress.Should().BeFalse();
+
+        guard.RecordAttempt("BurstPkg", "1.0.0", true);
+        guard.RecordAttempt("BurstPkg", "1.0.0", true);
+        guard.RecordAttempt("BurstPkg", "1.0.0", true);
+
+        var (suppress, reason) = guard.ShouldSuppress("BurstPkg", "1.0.0");
+        suppress.Should().BeTrue();
+        reason.Should().Contain("3 installs within 2 hours");
+    }
+
+    [Fact]
+    public void PersistedAttempts_OutsideTheWindow_ArePrunedOnLoad()
+    {
+        var guard = CreateGuard();
+        foreach (var session in new[] { "0900", "1000" })
+        {
+            guard.SetCurrentSession(Path.Combine(_logsDir, "2026-01-01", session));
+            guard.RecordAttempt("AgePkg", "1.0.0", true);
+        }
+
+        // Age the recorded installs past the window, as if the next run came days later.
+        var state = guard.GetPackageState("AgePkg")!;
+        foreach (var attempt in state.Attempts)
+            attempt.At = DateTime.UtcNow.AddDays(-2);
+        // Any save persists the aged entries; the reload is what must prune them.
+        guard.RecordAttempt("Other", "1.0.0", true);
+
+        var reloaded = CreateGuard().GetPackageState("AgePkg")!;
+        reloaded.Attempts.Should().BeEmpty();
+        reloaded.AttemptCount.Should().Be(0);
+        reloaded.SessionCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void FingerprintChange_ClearsSuppressionTrippedInsideTheWindow()
+    {
+        var before = LoopGuard.ComputeFingerprint("1.0.0|old");
+        var after = LoopGuard.ComputeFingerprint("1.0.0|fixed");
+        var guard = CreateGuard();
+        for (var i = 0; i < 3; i++)
+            guard.RecordAttempt("FixPkg", "1.0.0", true, before);
+        guard.ShouldSuppress("FixPkg", "1.0.0", before).Suppress.Should().BeTrue();
+
+        var (suppress, reason) = guard.ShouldSuppress("FixPkg", "1.0.0", after);
+
+        suppress.Should().BeFalse();
+        reason.Should().Contain("Auto-cleared");
+        guard.GetPackageState("FixPkg")!.Attempts.Should().BeEmpty();
     }
 
     #endregion
@@ -1083,6 +1200,12 @@ public class LoopGuardTests : IDisposable
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// The i-th of a series of installs 2.5 hours apart, ending half an hour ago: never
+    /// three inside the 2-hour rapid-fire window, and up to nine inside the 24-hour loop window.
+    /// </summary>
+    private static DateTime SpacedWithinWindow(int i) => DateTime.UtcNow.AddHours(-0.5 - 2.5 * (9 - i));
 
     /// <summary>
     /// Creates a mock events.jsonl file in the day-nested log directory structure

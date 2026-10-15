@@ -13,7 +13,9 @@ public interface IPreferencesService
     int AggressiveNotificationDays { get; }
 
     /// <summary>
-    /// URL to open when user clicks Help
+    /// URL to open when the user clicks Help (Munki HelpURL parity).
+    /// Sourced from preferences.yaml <c>help_url</c>, overridden by
+    /// HKLM\SOFTWARE\Policies\Cimian\HelpURL when that policy value is present.
     /// </summary>
     string? HelpUrl { get; }
 
