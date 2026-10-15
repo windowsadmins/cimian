@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
+using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Views;
@@ -67,6 +68,10 @@ public partial class SoftwarePage : Page
             {
                 // Load branding images first
                 LoadBrandingImages();
+
+                // Resolve hero title from branding.yaml / Policies\Cimian BannerTitle.
+                // LoadAsync is safe to call again (singleton); do not wait on MainWindow.
+                await ApplyBannerTitleAsync();
                 
                 // Start carousel if we have images
                 if (_brandingImagePaths.Count > 1)
@@ -135,6 +140,21 @@ public partial class SoftwarePage : Page
     }
 
     #region Branding Images & Carousel
+
+    /// <summary>
+    /// Applies the resolved hero banner title (default / app_title / banner_title).
+    /// Blank resolved title collapses the overlay so a custom image can stand alone.
+    /// </summary>
+    private async Task ApplyBannerTitleAsync()
+    {
+        var branding = App.GetService<IBrandingService>();
+        await branding.LoadAsync();
+
+        HeroTitleText.Text = branding.ResolvedBannerTitle;
+        var visibility = branding.ShowBannerTitle ? Visibility.Visible : Visibility.Collapsed;
+        HeroTitleText.Visibility = visibility;
+        HeroTitlePanel.Visibility = visibility;
+    }
 
     private void LoadBrandingImages()
     {
@@ -299,31 +319,58 @@ public partial class SoftwarePage : Page
     {
         if (sender is Button button && button.Tag is string category)
         {
-            _selectedCategory = category;
-            ViewModel.SelectedCategory = category;
-            
-            // Update header
-            SectionHeader.Text = category == "All" ? "All apps" : category;
-            
-            // Update button styles
-            foreach (var child in CategoryPillsPanel.Children)
+            SelectCategory(category);
+        }
+    }
+
+    /// <summary>
+    /// Selects a category pill, updates the All-apps section header, and syncs pill styles.
+    /// </summary>
+    private void SelectCategory(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category))
+            category = "All";
+
+        _selectedCategory = category;
+        ViewModel.SelectedCategory = category;
+
+        // The Featured section has its own heading; this header is always the main app list.
+        SectionHeader.Text = IsAllCategory(category) ? "All apps" : category;
+
+        foreach (var child in CategoryPillsPanel.Children)
+        {
+            if (child is Button btn)
             {
-                if (child is Button btn)
-                {
-                    var isSelected = (string?)btn.Tag == category;
-                    btn.Style = isSelected
-                        ? (Style)this.Resources["CategoryPillButtonSelected"]
-                        : (Style)this.Resources["CategoryPillButton"];
-                }
+                var isSelected = (string?)btn.Tag == category;
+                btn.Style = isSelected
+                    ? (Style)this.Resources["CategoryPillButtonSelected"]
+                    : (Style)this.Resources["CategoryPillButton"];
             }
         }
+
+        // Featured is an All-only strip; hide it when browsing a specific category.
+        UpdateFeaturedSectionVisibility();
     }
 
     private void FeaturedButton_Click(object sender, TappedRoutedEventArgs e)
     {
-        _selectedCategory = "All";
-        ViewModel.SelectedCategory = "All";
-        SectionHeader.Text = "Featured";
+        // Banner "Featured" tile: jump to the Featured section on the Software page.
+        // Do not relabel the All-apps list — Featured already has its own heading above it.
+        SelectCategory("All");
+
+        // Defer scroll until after Featured becomes visible and layout runs (e.g. coming
+        // from a category where the section was collapsed).
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (FeaturedSection.Visibility != Visibility.Visible)
+                return;
+
+            FeaturedSection.StartBringIntoView(new BringIntoViewOptions
+            {
+                AnimationDesired = true,
+                VerticalAlignmentRatio = 0.0 // Pin the Featured heading near the top of the viewport
+            });
+        });
     }
 
     private void UpdatesButton_Click(object sender, TappedRoutedEventArgs e)
@@ -336,6 +383,22 @@ public partial class SoftwarePage : Page
 
     #region UI State Management
 
+    private static bool IsAllCategory(string? category) =>
+        string.IsNullOrEmpty(category) ||
+        string.Equals(category, "All", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Featured items only belong on the All browse view — not under category filters.
+    /// </summary>
+    private void UpdateFeaturedSectionVisibility()
+    {
+        var showFeatured = ViewModel.HasFeaturedItems
+            && !ViewModel.IsLoading
+            && IsAllCategory(_selectedCategory ?? ViewModel.SelectedCategory);
+
+        FeaturedSection.Visibility = showFeatured ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateUIState()
     {
         LoadingIndicator.IsActive = ViewModel.IsLoading;
@@ -344,7 +407,7 @@ public partial class SoftwarePage : Page
         var hasItems = ViewModel.Items?.Count > 0;
         SoftwareGrid.Visibility = hasItems && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         EmptyState.Visibility = !hasItems && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
-        FeaturedSection.Visibility = ViewModel.HasFeaturedItems && !ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+        UpdateFeaturedSectionVisibility();
         
         if (!hasItems)
         {
@@ -371,9 +434,10 @@ public partial class SoftwarePage : Page
                     BuildCategoryPills();
                     break;
                 case nameof(ViewModel.SelectedCategory):
-                    SectionHeader.Text = ViewModel.SelectedCategory == "All" || string.IsNullOrEmpty(ViewModel.SelectedCategory) 
-                        ? "All apps" 
+                    SectionHeader.Text = IsAllCategory(ViewModel.SelectedCategory)
+                        ? "All apps"
                         : ViewModel.SelectedCategory;
+                    UpdateFeaturedSectionVisibility();
                     break;
             }
         });

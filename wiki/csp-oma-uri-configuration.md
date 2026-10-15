@@ -154,6 +154,156 @@ Data type: String
 Value: production,testing,development
 ```
 
+## Managed Software Center Help URL (GUI)
+
+Managed Software Center reads `help_url` from
+`C:\ProgramData\ManagedInstalls\preferences.yaml` and applies a policy override
+from the **Policies** hive (same path agent policy uses today):
+
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+```
+
+| YAML (`preferences.yaml`) | Registry (REG_SZ) | Effect |
+|---|---|---|
+| `help_url` | `HelpURL` | URL opened by the MSC footer **Help** item. **Policy wins over YAML.** Empty string hides Help. |
+
+This matches Munki's `ManagedInstalls` `HelpURL` preference: when set to an
+absolute `http`/`https` URL, Help opens that page in the default browser.
+
+### Example: set Help via policy
+
+```
+Name: Cimian MSC Help URL
+Description: URL opened from Managed Software Center Help (Munki HelpURL parity)
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/HelpURL
+Data type: String
+Value: https://forms.clickup.com/your-it-request-form
+```
+
+Registry preference equivalent:
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: HelpURL
+Type: REG_SZ
+Data: https://forms.clickup.com/your-it-request-form
+```
+
+> **Note:** Presence of the `HelpURL` value name matters. An empty REG_SZ hides
+> Help even if `preferences.yaml` has `help_url`; omitting the value leaves YAML
+> in effect. The OMA-URI path above assumes an ADMX-ingested **CimianPrefs**
+> Policy CSP category (same delivery model as agent keys under
+> `SOFTWARE\Policies\Cimian`). Custom OMA-URIs that write that hive directly
+> also work.
+
+## Managed Software Center category icons (GUI)
+
+Managed Software Center maps pkginfo `category` names to Segoe MDL2 glyphs. Built-in
+defaults can be extended or overridden via `preferences.yaml` `category_icons`, and
+via the **Policies** hive (same path agent policy uses today):
+
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+```
+
+| YAML (`preferences.yaml`) | Registry | Effect |
+|---|---|---|
+| `category_icons` | `CategoryIcons` | Category name → icon spec. **Policy replaces YAML when present.** |
+
+Icon specs (YAML or policy) accept:
+
+- a built-in key (`utilities`, `browsers`, `security`, `gaming`, …)
+- a Segoe MDL2 hex codepoint (`E90F`, `0xE90F`)
+- a single Unicode glyph character
+
+### Delivery shapes
+
+**1. REG_MULTI_SZ** value named `CategoryIcons` (best for a single OMA-URI / ADMX multiText):
+
+```
+PDF Tools=utilities
+browsers=gaming
+IT Tools=E8FD
+```
+
+Lines may also use `Category: iconSpec`. Empty MULTI_SZ clears overrides (built-ins only).
+
+**2. Subkey** `CategoryIcons` with one REG_SZ per category (Registry Preferences friendly):
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian\CategoryIcons
+Value: PDF Tools
+Type: REG_SZ
+Data: utilities
+```
+
+### Example: MULTI_SZ via CimianPrefs
+
+```
+Name: Cimian MSC Category Icons
+Description: Override/extend MSC category Segoe glyphs (replaces preferences.yaml category_icons)
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/CategoryIcons
+Data type: String (or multi-string when ADMX multiText is used)
+Value:
+PDF Tools=utilities
+browsers=gaming
+```
+
+> **Note:** Presence of the `CategoryIcons` value name **or** the `CategoryIcons`
+> subkey matters. When either is present, it replaces YAML `category_icons`
+> entirely. Omitting both leaves YAML in effect. The OMA-URI path assumes an
+> ADMX-ingested **CimianPrefs** Policy CSP category (same delivery model as
+> agent keys under `SOFTWARE\Policies\Cimian`).
+
+## Managed Software Center branding (GUI)
+
+The MSC WinUI app reads branding from
+`C:\ProgramData\ManagedInstalls\client_resources\branding.yaml` and applies a
+policy override for the Software-page hero heading from the **Policies** hive
+(same path agent policy uses today):
+
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+```
+
+| YAML (`branding.yaml`) | Registry (REG_SZ) | Effect |
+|---|---|---|
+| `app_title` | *(not policy-backed)* | Window / title-bar name; also feeds the hero title when `banner_title` is unset |
+| `banner_title` | `BannerTitle` | Software hero overlay text. **Policy wins over YAML.** Empty string hides the overlay. |
+
+Hero title precedence:
+
+1. Explicit `banner_title` / `BannerTitle` (including blank → hide)
+2. Else non-empty `app_title`
+3. Else `"Managed Software Center"`
+
+### Example: hide the hero text via policy
+
+```
+Name: Cimian MSC Banner Title
+Description: Override or blank the Software page hero heading
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/BannerTitle
+Data type: String
+Value: (empty string to hide, or custom text such as "Unchained Software")
+```
+
+Registry preference equivalent:
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: BannerTitle
+Type: REG_SZ
+Data:   (empty = hide overlay)
+```
+
+> **Note:** Presence of the `BannerTitle` value name matters. An empty REG_SZ is
+> a deliberate hide; omitting the value leaves YAML / `app_title` / default in
+> effect. The OMA-URI path above assumes an ADMX-ingested **CimianPrefs**
+> Policy CSP category (same delivery model as agent keys under
+> `SOFTWARE\Policies\Cimian`). Custom OMA-URIs that write that hive directly
+> also work.
+
 ## Group Policy Deployment
 
 ### Using Administrative Templates
