@@ -272,6 +272,7 @@ public class Program
         Console.WriteLine($"  AuthUser: {(string.IsNullOrEmpty(config.AuthUser) ? "(not set)" : "***")}");
         Console.WriteLine($"  AuthToken: {(string.IsNullOrEmpty(config.AuthToken) ? "(not set)" : "***")}");
         Console.WriteLine($"  AdditionalHttpHeaders: {DescribeAdditionalHttpHeaders(config.AdditionalHttpHeaders)}");
+        Console.WriteLine($"  AdditionalHttpHeadersHttpsOnly: {config.AdditionalHttpHeadersHttpsOnly}");
 
         return 0;
     }
