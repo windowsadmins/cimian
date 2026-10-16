@@ -544,6 +544,16 @@ public class DownloadService
         if (!File.Exists(markerPath))
             return false;
 
+        // The marker vouches for the file only if both could have been written by nothing
+        // but SYSTEM or an administrator. Otherwise a user could plant an installer and a
+        // marker naming the catalog hash, and SYSTEM would install it without hashing it.
+        if (!ManagedInstallsSecurity.IsSafeToExecute(localPath, out var fileReason)
+            || !ManagedInstallsSecurity.IsSafeToExecute(markerPath, out fileReason))
+        {
+            ConsoleLogger.Detail($"    Not trusting verification marker, re-hashing: {fileReason}");
+            return false;
+        }
+
         try
         {
             var parts = File.ReadAllText(markerPath).Trim().Split('|');

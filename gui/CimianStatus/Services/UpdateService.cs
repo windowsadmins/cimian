@@ -95,9 +95,8 @@ namespace Cimian.Status.Services
                 });
 
                 // Choose the appropriate bootstrap flag file
-                var bootstrapFlagPath = withGui 
-                    ? @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap"
-                    : @"C:\ProgramData\ManagedInstalls\.cimian.headless";
+                // The triggers folder is the one place under ManagedInstalls a standard user can write.
+                var bootstrapFlagPath = Cimian.Core.Services.TriggerRequests.NewRequestPath(withGui);
                 
                 var managedInstallsPath = Path.GetDirectoryName(bootstrapFlagPath);
 

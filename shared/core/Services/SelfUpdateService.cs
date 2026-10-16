@@ -56,6 +56,26 @@ public static class SelfUpdateService
     }
 
     /// <summary>
+    /// True when only SYSTEM or an administrator could have written the self-update flag
+    /// and the installer it names. The watcher runs that installer as SYSTEM, and before
+    /// ManagedInstalls was locked down any user could create the flag.
+    /// </summary>
+    internal static bool IsTrustedRequest(string flagFile, string installerPath, out string? reason)
+    {
+        if (!ManagedInstallsSecurity.IsSafeToExecute(flagFile, out reason))
+        {
+            reason = $"self-update flag: {reason}";
+            return false;
+        }
+        if (!ManagedInstallsSecurity.IsSafeToExecute(installerPath, out reason))
+        {
+            reason = $"installer: {reason}";
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Schedules a self-update to be performed on next service restart
     /// </summary>
     public static bool ScheduleSelfUpdate(string itemName, string version, string installerType, string localFile)
@@ -131,6 +151,13 @@ public static class SelfUpdateService
         if (!File.Exists(metadata.LocalFile))
         {
             log($"Installer file not found: {metadata.LocalFile}");
+            ClearSelfUpdateFlag();
+            return false;
+        }
+
+        if (!IsTrustedRequest(SelfUpdateFlagFile, metadata.LocalFile, out var untrusted))
+        {
+            log($"Refusing self-update: {untrusted}");
             ClearSelfUpdateFlag();
             return false;
         }
@@ -231,6 +258,13 @@ public static class SelfUpdateService
         if (!File.Exists(metadata.LocalFile))
         {
             ConsoleLogger.Error($"Installer file not found: {metadata.LocalFile}");
+            ClearSelfUpdateFlag();
+            return false;
+        }
+
+        if (!IsTrustedRequest(SelfUpdateFlagFile, metadata.LocalFile, out var untrusted))
+        {
+            ConsoleLogger.Error($"Refusing self-update: {untrusted}");
             ClearSelfUpdateFlag();
             return false;
         }
@@ -567,23 +601,45 @@ public static class SelfUpdateService
         return false;
     }
 
-    private static bool PerformRollback()
+    private static bool PerformRollback() => PerformRollback(SelfUpdateBackupDir, CimianInstallDir);
+
+    /// <summary>
+    /// Copies the backup in <paramref name="backupDir"/> back over <paramref name="installDir"/>.
+    /// Every file is checked before anything is copied: one that anybody but SYSTEM or
+    /// Administrators could have changed refuses the whole rollback, since skipping it would
+    /// leave a mix of the two versions and copying it would run a user's file as SYSTEM.
+    /// </summary>
+    internal static bool PerformRollback(string backupDir, string installDir)
     {
         try
         {
-            if (!Directory.Exists(SelfUpdateBackupDir))
+            if (!Directory.Exists(backupDir))
             {
                 ConsoleLogger.Warn("No backup directory found for rollback");
                 return false;
             }
 
-            ConsoleLogger.Info("Rolling back to previous version...");
-
-            // Copy backup files back to install directory
-            foreach (var file in Directory.GetFiles(SelfUpdateBackupDir))
+            // The backup is copied into Program Files and run as SYSTEM.
+            if (!ManagedInstallsSecurity.IsAdminOnly(backupDir, out var untrusted))
             {
-                var destFile = Path.Combine(CimianInstallDir, Path.GetFileName(file));
-                File.Copy(file, destFile, overwrite: true);
+                ConsoleLogger.Error($"Refusing rollback: {untrusted}");
+                return false;
+            }
+
+            var files = Directory.GetFiles(backupDir);
+            foreach (var file in files)
+            {
+                if (!ManagedInstallsSecurity.IsSafeToExecute(file, out var fileReason))
+                {
+                    ConsoleLogger.Error($"Refusing rollback: {fileReason}. Nothing was copied.");
+                    return false;
+                }
+            }
+
+            ConsoleLogger.Info("Rolling back to previous version...");
+            foreach (var file in files)
+            {
+                File.Copy(file, Path.Combine(installDir, Path.GetFileName(file)), overwrite: true);
             }
 
             ConsoleLogger.Info("Rollback completed");

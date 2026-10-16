@@ -41,6 +41,9 @@ public class ManifestService
     /// <summary>Opens the SelfServeManifest.yaml to merge; tests open a temp file instead.</summary>
     internal Func<SelfServiceManifestService> CreateSelfServeManifestService { get; init; } = () => new SelfServiceManifestService();
 
+    /// <summary>Where users' Self Service drop files are taken in from; tests point it elsewhere.</summary>
+    internal string SelfServiceDropDir { get; init; } = CimianPaths.SelfServiceDropDir;
+
     public ManifestService(CimianConfig config, HttpClient? httpClient = null)
     {
         _config = config;
@@ -123,11 +126,24 @@ public class ManifestService
     /// <summary>
     /// Loads a local-only manifest from a file path
     /// </summary>
-    public List<ManifestItem> LoadLocalOnlyManifest(string manifestPath)
+    public List<ManifestItem> LoadLocalOnlyManifest(string manifestPath) =>
+        LoadLocalOnlyManifest(manifestPath,
+            requireTrusted: ManagedInstallsSecurity.IsUnder(manifestPath, CimianPaths.ManagedInstallsRoot));
+
+    /// <summary>
+    /// Loads a local-only manifest. With <paramref name="requireTrusted"/>, one that anyone
+    /// but SYSTEM or Administrators could have written is refused.
+    /// </summary>
+    internal List<ManifestItem> LoadLocalOnlyManifest(string manifestPath, bool requireTrusted)
     {
         if (!File.Exists(manifestPath))
         {
             throw new FileNotFoundException($"Local manifest file not found: {manifestPath}");
+        }
+
+        if (requireTrusted && !ManagedInstallsSecurity.IsSafeToExecute(manifestPath, out var reason))
+        {
+            throw new UnauthorizedAccessException($"Refusing local manifest {manifestPath}: {reason}");
         }
 
         var yaml = File.ReadAllText(manifestPath);
@@ -533,13 +549,7 @@ public class ManifestService
     /// </summary>
     private void LoadCustomConditions()
     {
-        if (!Directory.Exists(ConditionsDir)) return;
-
-        var scripts = Directory.GetFiles(ConditionsDir)
-            .Where(f => Path.GetExtension(f).ToLowerInvariant() is ".ps1" or ".bat" or ".cmd" or ".exe")
-            .OrderBy(f => f);
-
-        foreach (var script in scripts)
+        foreach (var script in ConditionScripts(ConditionsDir))
         {
             try
             {
@@ -606,6 +616,38 @@ public class ManifestService
             ConsoleLogger.Info($"    Loaded {_systemFacts.CustomFacts.Count} custom condition(s)");
     }
     
+    /// <summary>
+    /// The condition scripts in <paramref name="dir"/>, in the order they run. A script that
+    /// anyone but SYSTEM or Administrators could have written is skipped: these run as SYSTEM.
+    /// </summary>
+    internal static List<string> ConditionScripts(string dir)
+    {
+        if (!Directory.Exists(dir)) return new List<string>();
+
+        var scripts = new List<string>();
+        foreach (var script in Directory.GetFiles(dir)
+            .Where(f => Path.GetExtension(f).ToLowerInvariant() is ".ps1" or ".bat" or ".cmd" or ".exe")
+            .OrderBy(f => f))
+        {
+            // One someone is holding open would silently drop its facts and change what
+            // conditional items evaluate to, so it stops the run instead.
+            if (!ManagedInstallsSecurity.TryProbeRead(script, out var unreadable))
+            {
+                throw new InvalidOperationException($"Condition script {unreadable}");
+            }
+
+            if (ManagedInstallsSecurity.IsSafeToExecute(script, out var reason))
+            {
+                scripts.Add(script);
+            }
+            else
+            {
+                ConsoleLogger.Warn($"Skipping condition script {script}: {reason}");
+            }
+        }
+        return scripts;
+    }
+
     /// <summary>
     /// Evaluates a condition using the PredicateEngine for proper NSPredicate-style parsing
     /// Supports complex expressions with OR/AND/NOT operators, parentheses, and nested conditions
@@ -778,14 +820,15 @@ public class ManifestService
     }
     
     /// <summary>
-    /// Merges the user-writable SelfServeManifest into the manifest item list.
-    /// `managed_installs` entries promote a matching optional item to action=install, or add a
-    /// new install item if no server manifest references it. `managed_uninstalls` entries
-    /// flip the action to uninstall (or add a new uninstall item).
+    /// Takes in users' Self Service drop files, then merges the protected SelfServeManifest
+    /// (written only by SYSTEM and Administrators) into the manifest item list.
+    /// `managed_installs` entries promote a matching optional item to action=install; a name
+    /// that no manifest offers as an optional install is ignored. `managed_uninstalls` entries
+    /// flip an offered optional or default install to uninstall; any other removal is refused.
     ///
-    /// Runs on every check, as Munki's processSelfServeManifest does. The user
-    /// entries persist in SelfServeManifest.yaml until the user cancels the request; once the
-    /// software is installed, normal status checks suppress further action.
+    /// Runs on every check, as Munki's processSelfServeManifest does. A user's choices
+    /// persist in SelfServeManifest.yaml until the user cancels them through a new drop
+    /// file; once the software is installed, normal status checks suppress further action.
     /// </summary>
     internal async Task MergeSelfServeManifestAsync(List<ManifestItem> items)
     {
@@ -794,6 +837,23 @@ public class ManifestService
         {
             var svc = CreateSelfServeManifestService();
             selfServe = await svc.LoadAsync();
+
+            // Munki 7 copy model: take in each user's drop file, then delete it. Only the
+            // protected copy is ever read for decisions. Skipped when no manifest resolved,
+            // so a failed fetch never discards users' choices as "not offered".
+            if (items.Count > 0 && Directory.Exists(SelfServiceDropDir))
+            {
+                var offered = new HashSet<string>(
+                    items.Where(i => string.Equals(i.Action, "optional", StringComparison.OrdinalIgnoreCase)).Select(i => i.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                var firstSeen = SelfServiceSeenStore.Load();
+                if (SelfServiceRequests.Ingest(SelfServiceDropDir, selfServe, offered, firstSeen,
+                        DateTime.UtcNow, message => ConsoleLogger.Info($"    SelfServe: {message}")))
+                {
+                    await svc.SaveAsync(selfServe);
+                }
+                SelfServiceSeenStore.Save(firstSeen);
+            }
         }
         catch (Exception ex)
         {
@@ -811,6 +871,7 @@ public class ManifestService
     /// </summary>
     internal void MergeSelfServeInto(List<ManifestItem> items, SelfServiceManifest selfServe)
     {
+        _refusedSelfServeRemovals.Clear();
         if (selfServe.ManagedInstalls.Count == 0 && selfServe.ManagedUninstalls.Count == 0)
         {
             return;
@@ -839,15 +900,11 @@ public class ManifestService
             var matches = items.Where(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
             if (matches.Count == 0)
             {
-                items.Add(new ManifestItem
-                {
-                    Name = name,
-                    Action = "install",
-                    SourceManifest = selfServeSource,
-                    IsSelfServe = true
-                });
-                SetItemSource(name, selfServeSource, "managed_installs");
-                ConsoleLogger.Debug($"SelfServe: added install request item: {name}");
+                // Only items this device is offered as optional_installs can be
+                // requested (Munki 7 processSelfServeManifest). SelfServeManifest.yaml
+                // is written by the user, and SYSTEM installs what it lists, so a
+                // name that no manifest offers must never reach the install list.
+                ConsoleLogger.Info($"SelfServe: ignoring install request for {name}; it is not an optional install for this device");
             }
             else if (!matches.Any(IsPresenceMandating))
             {
@@ -871,6 +928,10 @@ public class ManifestService
             // leave it alone — admin policy wins.
         }
 
+        // Removals follow Munki 7 processRemoval: only an item this device is offered as
+        // an optional or default install, and that no admin policy requires, can be removed by a user.
+        // Offering it is the admin's opt-in to user removal; the engine then checks it is in
+        // the catalog, removable (not uninstallable: false) and installed.
         foreach (var name in selfServe.ManagedUninstalls)
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
@@ -878,14 +939,7 @@ public class ManifestService
             var matches = items.Where(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
             if (matches.Count == 0)
             {
-                items.Add(new ManifestItem
-                {
-                    Name = name,
-                    Action = "uninstall",
-                    SourceManifest = selfServeSource
-                });
-                SetItemSource(name, selfServeSource, "managed_uninstalls");
-                ConsoleLogger.Debug($"SelfServe: added uninstall request item: {name}");
+                RefuseSelfServeRemoval(name, "it is not offered to this device");
             }
             else if (!matches.Any(IsPresenceMandating))
             {
@@ -899,30 +953,52 @@ public class ManifestService
                 {
                     optional.Action = "uninstall";
                     optional.PromotedFromOptional = true;
+                    optional.IsSelfServeRemoval = true;
                     SetItemSource(name, selfServeSource, "managed_uninstalls");
                     ConsoleLogger.Debug($"SelfServe: flipped optional to uninstall item: {name} originalSource: {optional.SourceManifest}");
                 }
                 else
                 {
+                    // A default_installs item is a one-time seed the user owns afterwards, so
+                    // its removal is honoured too, still subject to the engine's catalog,
+                    // uninstallable and installed checks.
                     var target = matches.FirstOrDefault(i =>
                         string.Equals(i.Action, "default", StringComparison.OrdinalIgnoreCase));
                     if (target != null)
                     {
                         target.Action = "uninstall";
                         target.PromotedFromOptional = false;
+                        target.IsSelfServeRemoval = true;
                         SetItemSource(name, selfServeSource, "managed_uninstalls");
                         ConsoleLogger.Debug($"SelfServe: flipped default to uninstall item: {name} originalSource: {target.SourceManifest}");
                     }
-                    // Pure managed_updates: leave alone (same as before).
+                    else
+                    {
+                        RefuseSelfServeRemoval(name, "it is not offered as an optional install");
+                    }
                 }
             }
             else if (!matches.Any(i => string.Equals(i.Action, "uninstall", StringComparison.OrdinalIgnoreCase)))
             {
                 var blocking = matches.First(IsPresenceMandating);
                 // install / profile / app from server policy — admin wins.
-                ConsoleLogger.Info($"SelfServe: ignoring uninstall request for {name}; admin policy requires {blocking.Action} (source: {blocking.SourceManifest})");
+                RefuseSelfServeRemoval(name, $"admin policy requires {blocking.Action} (source: {blocking.SourceManifest})");
             }
         }
+    }
+
+    /// <summary>
+    /// Self Service removals refused this run, with the reason. The engine drops them from
+    /// SelfServeManifest.yaml so they are not retried every run.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> RefusedSelfServeRemovals => _refusedSelfServeRemovals;
+
+    private readonly Dictionary<string, string> _refusedSelfServeRemovals = new(StringComparer.OrdinalIgnoreCase);
+
+    private void RefuseSelfServeRemoval(string name, string reason)
+    {
+        _refusedSelfServeRemovals[name] = reason;
+        ConsoleLogger.Info($"SelfServe: refusing removal request for {name}: {reason}");
     }
 
     private List<ManifestItem> ConvertToManifestItems(ManifestFile manifest, string sourceManifest)

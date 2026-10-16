@@ -40,13 +40,15 @@ public class TriggerServiceTests : IDisposable
     [Fact]
     public void GuiBootstrapFile_HasCorrectPath()
     {
-        Assert.Equal(@"C:\ProgramData\ManagedInstalls\.cimian.bootstrap", TriggerService.GuiBootstrapFile);
+        Assert.Equal(@"C:\ProgramData\ManagedInstalls\triggers", Path.GetDirectoryName(TriggerService.GuiBootstrapFile));
+        Assert.StartsWith(".cimian.bootstrap.", Path.GetFileName(TriggerService.GuiBootstrapFile));
     }
 
     [Fact]
     public void HeadlessBootstrapFile_HasCorrectPath()
     {
-        Assert.Equal(@"C:\ProgramData\ManagedInstalls\.cimian.headless", TriggerService.HeadlessBootstrapFile);
+        Assert.Equal(@"C:\ProgramData\ManagedInstalls\triggers", Path.GetDirectoryName(TriggerService.HeadlessBootstrapFile));
+        Assert.StartsWith(".cimian.headless.", Path.GetFileName(TriggerService.HeadlessBootstrapFile));
     }
 
     [Fact]

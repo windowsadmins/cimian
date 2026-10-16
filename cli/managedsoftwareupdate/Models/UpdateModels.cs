@@ -390,6 +390,12 @@ public class ManifestItem
     /// way to tell user intent from admin intent after the merge.
     /// </summary>
     public bool IsSelfServe { get; set; }
+
+    /// <summary>
+    /// True when a Self Service removal request turned this offered optional item into an
+    /// uninstall. The engine still checks it is in the catalog, removable and installed.
+    /// </summary>
+    public bool IsSelfServeRemoval { get; set; }
     public string InstallerLocation { get; set; } = string.Empty;
     public List<string> SupportedArch { get; set; } = new();
     public List<string> ManagedInstalls { get; set; } = new();

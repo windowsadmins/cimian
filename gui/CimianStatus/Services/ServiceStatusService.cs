@@ -160,8 +160,7 @@ namespace Cimian.Status.Services
                 diagnostics.AppendLine();
                 diagnostics.AppendLine("✓ Service appears to be running normally.");
                 diagnostics.AppendLine("If updates aren't working, check the bootstrap trigger files:");
-                diagnostics.AppendLine("  - C:\\ProgramData\\ManagedInstalls\\.cimian.bootstrap");
-                diagnostics.AppendLine("  - C:\\ProgramData\\ManagedInstalls\\.cimian.headless");
+                diagnostics.AppendLine($"  - {Cimian.Core.CimianPaths.TriggersDir}");
             }
 
             // Check current user context

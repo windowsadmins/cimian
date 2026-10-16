@@ -521,68 +521,59 @@ public class ScriptService
     /// <summary>
     /// Runs the preflight script if it exists
     /// </summary>
-    public async Task<(bool Success, string Output)> RunPreflightAsync(
+    public Task<(bool Success, string Output)> RunPreflightAsync(
         CancellationToken cancellationToken = default)
     {
         // Check multiple possible locations (matching Go behavior)
-        var possiblePaths = new[]
-        {
-            CimianPaths.PreflightScriptInstall,
-            CimianPaths.PreflightScript
-        };
-
-        string? preflightPath = null;
-        foreach (var path in possiblePaths)
-        {
-            if (File.Exists(path))
-            {
-                preflightPath = path;
-                break;
-            }
-        }
-        
-        if (preflightPath == null)
-        {
-            return (true, "No preflight script found");
-        }
-
-        ConsoleLogger.Info($"Executing preflight script: {preflightPath}");
-
-        using var deadline = CreateDeadline(cancellationToken, PreflightTimeout);
-        return await ExecuteScriptFileAsync(preflightPath, deadline.Token);
+        return RunFlightScriptAsync("preflight",
+            new[] { CimianPaths.PreflightScriptInstall, CimianPaths.PreflightScript },
+            PreflightTimeout, cancellationToken);
     }
 
     /// <summary>
     /// Runs the postflight script if it exists
     /// </summary>
-    public async Task<(bool Success, string Output)> RunPostflightAsync(
+    public Task<(bool Success, string Output)> RunPostflightAsync(
         CancellationToken cancellationToken = default)
     {
         // Check multiple possible locations (matching Go behavior)
-        var possiblePaths = new[]
-        {
-            CimianPaths.PostflightScriptInstall,
-            CimianPaths.PostflightScript
-        };
+        return RunFlightScriptAsync("postflight",
+            new[] { CimianPaths.PostflightScriptInstall, CimianPaths.PostflightScript },
+            PostflightTimeout, cancellationToken);
+    }
 
-        string? postflightPath = null;
-        foreach (var path in possiblePaths)
+    /// <summary>
+    /// Runs the first of <paramref name="candidates"/> that exists.
+    /// </summary>
+    internal async Task<(bool Success, string Output)> RunFlightScriptAsync(
+        string kind, IEnumerable<string> candidates, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var scriptPath = candidates.FirstOrDefault(File.Exists);
+        if (scriptPath == null)
         {
-            if (File.Exists(path))
-            {
-                postflightPath = path;
-                break;
-            }
-        }
-        
-        if (postflightPath == null)
-        {
-            return (true, "No postflight script found");
+            return (true, $"No {kind} script found");
         }
 
-        ConsoleLogger.Info($"Executing postflight script: {postflightPath}");
+        // Held open by someone: fails like a refused script, but says what happened.
+        if (!ManagedInstallsSecurity.TryProbeRead(scriptPath, out var unreadable))
+        {
+            var message = $"Could not run {kind} script: {unreadable}";
+            ConsoleLogger.Error(message);
+            return (false, message);
+        }
 
-        using var deadline = CreateDeadline(cancellationToken, PostflightTimeout);
-        return await ExecuteScriptFileAsync(postflightPath, deadline.Token);
+        // This runs as SYSTEM. A script a standard user could have written or replaced is
+        // refused, and the refusal counts as a failed script (Munki does the same).
+        if (!ManagedInstallsSecurity.IsSafeToExecute(scriptPath, out var reason))
+        {
+            var message = $"Refusing to run {kind} script {scriptPath}: {reason}";
+            ConsoleLogger.Error(message);
+            return (false, message);
+        }
+
+        ConsoleLogger.Info($"Executing {kind} script: {scriptPath}");
+
+        using var deadline = CreateDeadline(cancellationToken, timeout);
+        return await ExecuteScriptFileAsync(scriptPath, deadline.Token);
     }
 }

@@ -43,6 +43,11 @@ public class ConfigurationService
                 return config ?? GetDefaultConfig();
             }
         }
+        catch (UnauthorizedAccessException)
+        {
+            // Not readable without elevation: say so, rather than carry on with defaults.
+            throw new UnauthorizedAccessException(Cimian.Core.Services.ManagedInstallsSecurity.ConfigNeedsElevation);
+        }
         catch
         {
             // Return defaults on error

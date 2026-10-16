@@ -200,9 +200,16 @@ class Program
         Console.Write("  Catalogs:         ");
         if (Directory.Exists(catalogsDir))
         {
-            var catalogs = Directory.GetFiles(catalogsDir, "*.yaml").Length +
-                          Directory.GetFiles(catalogsDir, "*.plist").Length;
-            Console.WriteLine("[OK] " + catalogs + " file(s)");
+            try
+            {
+                var catalogs = Directory.GetFiles(catalogsDir, "*.yaml").Length +
+                              Directory.GetFiles(catalogsDir, "*.plist").Length;
+                Console.WriteLine("[OK] " + catalogs + " file(s)");
+            }
+            catch (UnauthorizedAccessException)
+            {
+                Console.WriteLine("[--] readable by administrators only");
+            }
         }
         else
         {
@@ -260,10 +267,13 @@ class Program
 
         // 2. Bootstrap files
         Console.WriteLine("[*] Checking bootstrap trigger files...");
-        var bootstrapFile = Path.Combine(ManagedInstallsPath, ".cimian.bootstrap");
-        var headlessFile = Path.Combine(ManagedInstallsPath, ".cimian.headless");
+        var pendingRequests = Directory.Exists(Cimian.Core.CimianPaths.TriggersDir)
+            ? Directory.GetFiles(Cimian.Core.CimianPaths.TriggersDir)
+                .Where(Cimian.Core.Services.TriggerRequests.IsRequestFile).ToList()
+            : new List<string>();
 
-        if (File.Exists(bootstrapFile))
+        if (pendingRequests.Any(Cimian.Core.Services.TriggerRequests.IsGuiRequest)
+            || File.Exists(Cimian.Core.CimianPaths.BootstrapFlagFile))
         {
             Console.WriteLine("   [!] Bootstrap trigger exists (may be waiting for service)");
         }
@@ -272,7 +282,8 @@ class Program
             Console.WriteLine("   [OK] No pending bootstrap trigger");
         }
 
-        if (File.Exists(headlessFile))
+        if (pendingRequests.Any(r => !Cimian.Core.Services.TriggerRequests.IsGuiRequest(r))
+            || File.Exists(Cimian.Core.CimianPaths.HeadlessFlagFile))
         {
             Console.WriteLine("   [!] Headless trigger exists (may be waiting for service)");
         }

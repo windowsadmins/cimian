@@ -15,6 +15,7 @@ public class ConfigurationService
     private readonly IDeserializer _deserializer;
     private readonly ISerializer _serializer;
     private readonly string? _policyRegistryPath;
+    private readonly Microsoft.Win32.RegistryKey _policyHive;
 
     public ConfigurationService() : this(PolicyRegistryPath)
     {
@@ -25,8 +26,18 @@ public class ConfigurationService
     /// or skips them when it is null, so tests do not pick up the machine's policy.
     /// </summary>
     internal ConfigurationService(string? policyRegistryPath)
+        : this(policyRegistryPath, Microsoft.Win32.Registry.LocalMachine)
+    {
+    }
+
+    /// <summary>
+    /// Reads policy overrides from <paramref name="policyRegistryPath"/> under
+    /// <paramref name="policyHive"/>, so tests can supply policy without writing HKLM.
+    /// </summary>
+    internal ConfigurationService(string? policyRegistryPath, Microsoft.Win32.RegistryKey policyHive)
     {
         _policyRegistryPath = policyRegistryPath;
+        _policyHive = policyHive;
         _deserializer = new DeserializerBuilder()
             .WithNamingConvention(PascalCaseNamingConvention.Instance)
             .WithTypeConverter(new HeaderListConverter())
@@ -65,7 +76,7 @@ public class ConfigurationService
 
         try
         {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(_policyRegistryPath, false);
+            using var key = _policyHive.OpenSubKey(_policyRegistryPath, false);
             if (key == null)
             {
                 return config;
@@ -120,11 +131,130 @@ public class ConfigurationService
     /// <summary>
     /// Loads configuration from a specific path
     /// </summary>
-    public CimianConfig LoadConfig(string path)
+    public CimianConfig LoadConfig(string path) =>
+        LoadConfig(path, requireTrusted: ManagedInstallsSecurity.IsUnder(path, CimianPaths.ManagedInstallsRoot));
+
+    /// <summary>
+    /// Loads the ManagedInstalls configuration or stops the run. It never falls back to
+    /// defaults: without MDM policy they point at an example repository, and a user who
+    /// could make the load fail (by holding the file open, say) could otherwise steer
+    /// every run there.
+    /// </summary>
+    private CimianConfig LoadTrustedConfig(string path)
+    {
+        // Read first, so "held open" and "untrusted" are reported as what they are.
+        string yaml;
+        try
+        {
+            yaml = File.ReadAllText(path);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new ConfigurationRefusedException(ManagedInstallsSecurity.ConfigNeedsElevation);
+        }
+        catch (IOException ex)
+        {
+            throw new ConfigurationRefusedException($"Could not read configuration {path}: {ex.Message}");
+        }
+
+        if (!ManagedInstallsSecurity.IsSafeToExecute(path, out var reason))
+        {
+            throw new ConfigurationRefusedException($"Refusing configuration {path}: {reason}");
+        }
+
+        try
+        {
+            var config = _deserializer.Deserialize<CimianConfig>(yaml);
+            return ConstrainCachePath(ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig())));
+        }
+        catch (ConfigurationRefusedException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new ConfigurationRefusedException($"Configuration {path} could not be parsed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The ManagedInstalls Config.yaml is missing: never written, or moved to quarantine    /// by the permissions repair because someone other than an administrator owned it. The
+    /// run goes on only when MDM policy names the repository itself; the built-in defaults
+    /// point at an example repository and are never used in its place.
+    /// </summary>
+    private CimianConfig LoadWithoutTrustedConfig(string path)
+    {
+        var config = ApplyPolicyOverrides(GetDefaultConfig());
+        if (PolicyNamesRepository())
+        {
+            ConsoleLogger.Warn($"{path} is missing; running on the settings MDM policy supplies");
+            return config;
+        }
+
+        throw new ConfigurationRefusedException(
+            $"{path} is missing, and MDM policy does not set SoftwareRepoURL. Not running on the built-in defaults. " +
+            $"If the permissions repair moved it, it is in {CimianPaths.QuarantineDir}; restore it with SYSTEM or Administrators as its owner.");
+    }
+
+    private bool PolicyNamesRepository()
+    {
+        if (_policyRegistryPath is null) return false;
+        try
+        {
+            using var key = _policyHive.OpenSubKey(_policyRegistryPath, false);
+            return key?.GetValue("SoftwareRepoURL") is string repoUrl && !string.IsNullOrWhiteSpace(repoUrl);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// SYSTEM installs what it downloads into CachePath, so it is checked here and nowhere
+    /// changed. Inside ManagedInstalls only Cache\ or a folder in it is a cache. Outside, a
+    /// folder is used only when it already exists, is not a system or shared folder, and is
+    /// protected and closed to everyone but SYSTEM and Administrators up to the volume root.
+    /// Anything else falls back to Cache\ with a warning.
+    /// </summary>
+    internal static CimianConfig ConstrainCachePath(CimianConfig config)
+    {
+        var cachePath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(config.CachePath));
+        var isDefault = string.Equals(cachePath, CimianPaths.CacheDir, StringComparison.OrdinalIgnoreCase);
+        if (isDefault || ManagedInstallsSecurity.IsUnder(cachePath, CimianPaths.CacheDir))
+        {
+            return config;
+        }
+
+        string? reason;
+        if (string.Equals(cachePath, CimianPaths.ManagedInstallsRoot, StringComparison.OrdinalIgnoreCase)
+            || ManagedInstallsSecurity.IsUnder(cachePath, CimianPaths.ManagedInstallsRoot))
+        {
+            reason = "inside ManagedInstalls only Cache\\ is a cache";
+        }
+        else
+        {
+            ManagedInstallsSecurity.IsUsableExternalCache(cachePath, out reason);
+        }
+
+        if (reason != null)
+        {
+            ConsoleLogger.Warn($"Not using CachePath {config.CachePath}: {reason}. Using {CimianPaths.CacheDir} instead.");
+            config.CachePath = CimianPaths.CacheDir;
+        }
+        return config;
+    }
+
+    internal CimianConfig LoadConfig(string path, bool requireTrusted)
     {
         if (!File.Exists(path))
         {
-            return ApplyPolicyOverrides(GetDefaultConfig());
+            return requireTrusted ? LoadWithoutTrustedConfig(path) : ApplyPolicyOverrides(GetDefaultConfig());
+        }
+
+        if (requireTrusted)
+        {
+            return LoadTrustedConfig(path);
         }
 
         try
@@ -268,3 +398,9 @@ public class ConfigurationService
         }
     }
 }
+
+/// <summary>
+/// The ManagedInstalls configuration could not be used. The run stops rather than carry on
+/// with defaults.
+/// </summary>
+public sealed class ConfigurationRefusedException(string message) : Exception(message);

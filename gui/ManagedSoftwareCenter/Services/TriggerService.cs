@@ -15,7 +15,9 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 /// </summary>
 public class TriggerService : ITriggerService, IDisposable
 {
-    private const string BootstrapFlagFile = @"C:\ProgramData\ManagedInstalls\.cimian.bootstrap";
+    // The triggers folder is the one place under ManagedInstalls a standard user can write.
+    // One request file per window, so no other user can block or rewrite it.
+    private readonly string BootstrapFlagFile = TriggerRequests.NewRequestPath(gui: true);
     // Tell the engine to report progress to MSC's own listener (ProgressServer.Port)
     // instead of the default 19847 used by the login-window CimianStatus, so the
     // two never collide. Appended to every --show-status run MSC triggers.

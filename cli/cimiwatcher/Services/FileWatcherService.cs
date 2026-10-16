@@ -14,14 +14,25 @@ public class FileWatcherService : BackgroundService
 {
     private static readonly string BootstrapFlagFile = CimianPaths.BootstrapFlagFile;
     private static readonly string HeadlessFlagFile = CimianPaths.HeadlessFlagFile;
+    // Where user-context tools (Managed Software Center, cimitrigger, CimianStatus) put
+    // one file per request; the root files above are writable only by administrators.
+    private static readonly string TriggersDir = CimianPaths.TriggersDir;
     private static readonly string CimianExePath = CimianPaths.ManagedSoftwareUpdateExe;
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan UnremovableRequestRetry = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan RepairRetryInterval = TimeSpan.FromMinutes(5);
 
     private readonly ILogger<FileWatcherService> _logger;
     private readonly object _lock = new();
     
     private DateTime _lastSeenGUI = DateTime.MinValue;
     private DateTime _lastSeenHeadless = DateTime.MinValue;
+    // Requests that could not be removed (held open by their writer, say). Skipped for a
+    // while so one stuck file cannot hold up everyone else's.
+    private readonly Dictionary<string, DateTime> _skipUntil = new(StringComparer.OrdinalIgnoreCase);
+    // When this watcher first saw each pending request; the queue order.
+    private readonly Dictionary<string, DateTime> _firstSeen = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime? _lastUserRunStart;
     private bool _isPaused;
 
     // 1 while a triggered managedsoftwareupdate process is running. New flag
@@ -31,9 +42,45 @@ public class FileWatcherService : BackgroundService
     // it) and is consumed on the first poll after the current run exits.
     private int _updateRunning;
 
+    // Run requests are not acted on until a permissions repair has succeeded in this
+    // service's lifetime, whichever installer (or none) put this build here.
+    private readonly Func<Action<string>, bool> _repair;
+    private bool _permissionsSecured;
+    private DateTime _nextRepairAttempt = DateTime.MinValue;
+
     public FileWatcherService(ILogger<FileWatcherService> logger)
+        : this(logger, log => ManagedInstallsSecurity.Repair(log, deep: false))
+    {
+    }
+
+    internal FileWatcherService(ILogger<FileWatcherService> logger, Func<Action<string>, bool> repair)
     {
         _logger = logger;
+        _repair = repair;
+    }
+
+    /// <summary>
+    /// True once ManagedInstalls has been secured. Until then a repair is tried at most
+    /// every few minutes, and run requests wait.
+    /// </summary>
+    internal bool EnsurePermissions(DateTime utcNow)
+    {
+        if (_permissionsSecured) return true;
+        if (utcNow < _nextRepairAttempt) return false;
+
+        _permissionsSecured = _repair(message => _logger.LogInformation("Permissions: {Message}", message));
+        if (_permissionsSecured)
+        {
+            _logger.LogInformation("ManagedInstalls permissions verified; accepting run requests");
+        }
+        else
+        {
+            _nextRepairAttempt = utcNow + RepairRetryInterval;
+            _logger.LogError(
+                "ManagedInstalls permissions could not be secured; holding run requests and retrying in {Minutes} minutes",
+                RepairRetryInterval.TotalMinutes);
+        }
+        return _permissionsSecured;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -46,6 +93,7 @@ public class FileWatcherService : BackgroundService
         _logger.LogInformation("Monitoring bootstrap files:");
         _logger.LogInformation("  GUI: {BootstrapFile}", BootstrapFlagFile);
         _logger.LogInformation("  Headless: {HeadlessFile}", HeadlessFlagFile);
+        _logger.LogInformation("  User requests: {TriggersDir}", TriggersDir);
         _logger.LogInformation("Poll interval: {Interval} seconds", PollInterval.TotalSeconds);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -54,7 +102,12 @@ public class FileWatcherService : BackgroundService
             {
                 if (!_isPaused)
                 {
-                    CheckBootstrapFiles(stoppingToken);
+                    if (EnsurePermissions(DateTime.UtcNow))
+                    {
+                        CheckBootstrapFiles(stoppingToken);
+                    }
+                    // A staged self-update has its own trust checks, and is how a fixed
+                    // build arrives, so it is not held back.
                     ApplyStagedSelfUpdateIfIdle();
                 }
                 
@@ -151,6 +204,130 @@ public class FileWatcherService : BackgroundService
         // Check headless bootstrap file
         CheckFlagFile(HeadlessFlagFile, "Headless", withGUI: false, 
             ref _lastSeenHeadless, cancellationToken);
+
+        CheckUserRequests(cancellationToken);
+    }
+
+    /// <summary>
+    /// Consumes the oldest request in the triggers folder. Each request is its own file,
+    /// acted on once and then removed, so the root flags' change-time tracking does not apply.
+    /// </summary>
+    private void CheckUserRequests(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!Directory.Exists(TriggersDir)) return;
+
+            var now = DateTime.UtcNow;
+            PendingRequest? next;
+            List<PendingRequest> superseded;
+            lock (_lock)
+            {
+                var present = new HashSet<string>(
+                    Directory.EnumerateFiles(TriggersDir).Where(TriggerRequests.IsRequestFile),
+                    StringComparer.OrdinalIgnoreCase);
+                PruneTracking(_firstSeen, _skipUntil, present, now);
+                foreach (var path in present)
+                {
+                    _firstSeen.TryAdd(path, now);
+                }
+
+                if (!IsUserRunDue(_lastUserRunStart, now)) return;
+
+                var pending = BuildPending(
+                    present.Where(p => !_skipUntil.ContainsKey(p)),
+                    p => ManagedInstallsSecurity.TryGetOwner(p)?.Value,
+                    p => _firstSeen[p]);
+                (next, superseded) = SelectNext(pending);
+            }
+
+            foreach (var old in superseded)
+            {
+                try
+                {
+                    File.Delete(old.Path);
+                    _logger.LogInformation("Dropped an older request from {Owner}; a newer one replaces it", old.Owner);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Could not drop an older request from {Owner}: {Error}", old.Owner, ex.Message);
+                    lock (_lock) { _skipUntil[old.Path] = now + UnremovableRequestRetry; }
+                }
+            }
+
+            if (next == null) return;
+
+            if (Interlocked.CompareExchange(ref _updateRunning, 1, 0) != 0)
+            {
+                _logger.LogDebug("User request waiting for the current update to finish");
+                return;
+            }
+
+            lock (_lock) { _lastUserRunStart = now; }
+            var request = next.Value;
+            var withGUI = TriggerRequests.IsGuiRequest(request.Path);
+            var updateType = withGUI ? "GUI" : "Headless";
+            _logger.LogInformation("{UpdateType} user request detected - triggering update", updateType);
+            _ = Task.Run(() => TriggerBootstrapUpdateAsync(request.Path, updateType, withGUI,
+                requireTrustedOwner: false, cancellationToken), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking user requests");
+        }
+    }
+
+    /// <summary>A request waiting in triggers\, with when this watcher first saw it.</summary>
+    internal readonly record struct PendingRequest(string Path, string Owner, DateTime FirstSeen);
+
+    /// <summary>
+    /// Queue entries for request files. A file whose owner cannot be read is left out until
+    /// it can be: giving it a place of its own would let anyone who can make an owner
+    /// unreadable hold more than one place.
+    /// </summary>
+    internal static List<PendingRequest> BuildPending(IEnumerable<string> paths, Func<string, string?> ownerOf,
+        Func<string, DateTime> firstSeen) =>
+        paths.Select(p => (Path: p, Owner: ownerOf(p)))
+            .Where(x => x.Owner != null)
+            .Select(x => new PendingRequest(x.Path, x.Owner!, firstSeen(x.Path)))
+            .ToList();
+
+    /// <summary>Shortest gap between the starts of two user-requested runs.</summary>
+    internal static readonly TimeSpan MinUserRunInterval = TimeSpan.FromSeconds(20);
+
+    internal static bool IsUserRunDue(DateTime? lastStart, DateTime now) =>
+        lastStart == null || now - lastStart.Value >= MinUserRunInterval;
+
+    /// <summary>
+    /// Picks the next request fairly. Each owner has one place in the queue, set by when
+    /// the watcher first saw any of their requests (file times belong to the file's owner
+    /// and can be backdated). Their newest request is the one that runs; older ones are
+    /// returned to be dropped, so no user can hold more than one place.
+    /// </summary>
+    internal static (PendingRequest? Next, List<PendingRequest> Superseded) SelectNext(IEnumerable<PendingRequest> pending)
+    {
+        var owners = pending
+            .GroupBy(r => r.Owner, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderBy(r => r.FirstSeen).ThenBy(r => r.Path, StringComparer.OrdinalIgnoreCase).ToList())
+            .OrderBy(g => g[0].FirstSeen)
+            .ToList();
+
+        var superseded = owners.SelectMany(g => g.Take(g.Count - 1)).ToList();
+        return owners.Count == 0 ? (null, superseded) : (owners[0][^1], superseded);
+    }
+
+    /// <summary>Forgets files that are gone and skips that have expired, so tracking stays bounded.</summary>
+    internal static void PruneTracking(Dictionary<string, DateTime> firstSeen, Dictionary<string, DateTime> skipUntil,
+        ISet<string> present, DateTime now)
+    {
+        foreach (var gone in firstSeen.Keys.Where(k => !present.Contains(k)).ToList())
+        {
+            firstSeen.Remove(gone);
+        }
+        foreach (var done in skipUntil.Where(kv => kv.Value <= now || !present.Contains(kv.Key)).Select(kv => kv.Key).ToList())
+        {
+            skipUntil.Remove(done);
+        }
     }
 
     private void CheckFlagFile(string flagFile, string updateType, bool withGUI,
@@ -182,8 +359,8 @@ public class FileWatcherService : BackgroundService
                 lastSeen = modTime;
 
                 // Trigger update in background
-                _ = Task.Run(() => TriggerBootstrapUpdateAsync(flagFile, updateType, withGUI, cancellationToken),
-                    cancellationToken);
+                _ = Task.Run(() => TriggerBootstrapUpdateAsync(flagFile, updateType, withGUI,
+                    requireTrustedOwner: true, cancellationToken), cancellationToken);
             }
         }
         catch (Exception ex)
@@ -193,13 +370,13 @@ public class FileWatcherService : BackgroundService
     }
 
     private async Task TriggerBootstrapUpdateAsync(string flagFile, string updateType, bool withGUI,
-        CancellationToken cancellationToken)
+        bool requireTrustedOwner, CancellationToken cancellationToken)
     {
         // The caller claimed _updateRunning; release it on every exit path so
         // the next poll can consume a queued flag file.
         try
         {
-            await RunBootstrapUpdateAsync(flagFile, updateType, withGUI, cancellationToken);
+            await RunBootstrapUpdateAsync(flagFile, updateType, withGUI, requireTrustedOwner, cancellationToken);
         }
         finally
         {
@@ -208,7 +385,7 @@ public class FileWatcherService : BackgroundService
     }
 
     private async Task RunBootstrapUpdateAsync(string flagFile, string updateType, bool withGUI,
-        CancellationToken cancellationToken)
+        bool requireTrustedOwner, CancellationToken cancellationToken)
     {
         lock (_lock)
         {
@@ -222,29 +399,32 @@ public class FileWatcherService : BackgroundService
 
         _logger.LogInformation("Starting {UpdateType} bootstrap update process", updateType);
 
-        // Read flag file content for optional custom arguments
-        // If the file contains an "Args:" line, use those arguments instead of defaults.
-        // This allows the MSC GUI to request specific modes (--checkonly, --installonly)
-        // without the service guessing.
+        // Read flag file content for optional custom arguments. An "Args:" line lets the
+        // MSC GUI request specific modes (--checkonly, --installonly) without the service
+        // guessing. Requests are written by the signed-in user and the run below is SYSTEM:
+        // the file is read once through a checked handle, and only allow-listed arguments
+        // get through. A request that cannot be read or is refused does not run at all.
         string? customArgs = null;
         bool suppressCimistatus = false;
-        try
+        bool rejected = false;
+        if (ManagedInstallsSecurity.TryReadRequest(flagFile, requireTrustedOwner, out var content, out var readProblem))
         {
-            var content = await File.ReadAllTextAsync(flagFile, cancellationToken);
-            foreach (var line in content.Split('\n'))
+            switch (TriggerRequests.Parse(content!, out customArgs, out var refusal))
             {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("Args:", StringComparison.OrdinalIgnoreCase))
-                {
-                    customArgs = trimmed.Substring("Args:".Length).Trim();
+                case TriggerRequestKind.Custom:
                     suppressCimistatus = true; // caller manages its own UI
                     _logger.LogInformation("Custom args from flag file: {Args}", customArgs);
-                }
+                    break;
+                case TriggerRequestKind.Refused:
+                    rejected = true;
+                    _logger.LogWarning("Refusing {UpdateType} request: {Reason}", updateType, refusal);
+                    break;
             }
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogWarning(ex, "Could not read flag file content, using defaults");
+            rejected = true;
+            _logger.LogWarning("Refusing {UpdateType} request: {Reason}", updateType, readProblem);
         }
 
         // Delete the flag file immediately after reading it, BEFORE launching MSU.
@@ -260,7 +440,17 @@ public class FileWatcherService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not delete {UpdateType} flag file early", updateType);
+            _logger.LogWarning(ex, "Could not delete {UpdateType} flag file early; skipping it for now", updateType);
+            lock (_lock)
+            {
+                _skipUntil[flagFile] = DateTime.UtcNow + UnremovableRequestRetry;
+            }
+            rejected = true;
+        }
+
+        if (rejected)
+        {
+            return;
         }
 
         try
