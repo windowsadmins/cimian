@@ -172,66 +172,6 @@ function Write-BuildLog {
 
 #endregion
 
-#region Chocolatey and Tool Installation Functions
-
-function Install-Chocolatey {
-    if (Test-Command "choco") {
-        Write-BuildLog "Chocolatey is already installed" "SUCCESS"
-        return $true
-    }
-    
-    Write-BuildLog "Installing Chocolatey..." "INFO"
-    try {
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        
-        # Refresh PATH
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        
-        if (Test-Command "choco") {
-            Write-BuildLog "Chocolatey installed successfully" "SUCCESS"
-            return $true
-        }
-    }
-    catch {
-        Write-BuildLog "Failed to install Chocolatey: $_" "ERROR"
-    }
-    return $false
-}
-
-function Install-NuGetCli {
-    if (Test-Command "nuget") {
-        Write-BuildLog "nuget.exe is already installed" "SUCCESS"
-        return $true
-    }
-    
-    Write-BuildLog "Installing nuget.commandline via Chocolatey..." "INFO"
-    
-    if (-not (Install-Chocolatey)) {
-        Write-BuildLog "Cannot install nuget.commandline - Chocolatey installation failed" "ERROR"
-        return $false
-    }
-    
-    try {
-        & choco install nuget.commandline --yes --no-progress | Out-Null
-        
-        # Refresh PATH
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
-        
-        if (Test-Command "nuget") {
-            Write-BuildLog "nuget.commandline installed successfully" "SUCCESS"
-            return $true
-        }
-    }
-    catch {
-        Write-BuildLog "Failed to install nuget.commandline: $_" "ERROR"
-    }
-    return $false
-}
-
-#endregion
-
 # Load environment variables from .env file if it exists
 function Import-DotEnv {
     param([string]$Path = ".env")
@@ -257,7 +197,6 @@ Import-DotEnv
 # checkout via .env (see .env.example). An empty subject would match every cert
 # in the store, so signing is skipped rather than guessed at -- see
 # Get-SigningCertThumbprint.
-$Global:EnterpriseCertCN = $env:CIMIAN_CERT_CN ?? ''
 $Global:EnterpriseCertSubject = $env:CIMIAN_CERT_SUBJECT ?? ''
 
 # Script constants
@@ -351,7 +290,7 @@ function Get-SigningCertThumbprint {
     # matches every certificate holding a private key -- signing with whatever
     # happened to sort first is worse than not signing. Bail out instead.
     if ([string]::IsNullOrWhiteSpace($Global:EnterpriseCertSubject)) {
-        Write-BuildLog "No signing certificate configured. Set CIMIAN_CERT_SUBJECT (and CIMIAN_CERT_CN) in .env -- see .env.example." "WARNING"
+        Write-BuildLog "No signing certificate configured. Set CIMIAN_CERT_SUBJECT in .env, or pass -Thumbprint -- see .env.example." "WARNING"
         return $null
     }
 
@@ -530,9 +469,12 @@ function Invoke-SignNuget {
     
     $tsa = 'http://timestamp.digicert.com'
     
+    $storeLocation = if (Test-Path "Cert:\CurrentUser\My\$Thumbprint") { 'CurrentUser' } else { 'LocalMachine' }
+
     & nuget.exe sign $NupkgPath `
         -CertificateStoreName My `
-        -CertificateSubjectName $Global:EnterpriseCertCN `
+        -CertificateStoreLocation $storeLocation `
+        -CertificateFingerprint $Thumbprint `
         -Timestamper $tsa
     
     if ($LASTEXITCODE) {
@@ -1052,7 +994,11 @@ function Build-NuGetPackage {
     $nuspecContent = (Get-Content $nuspecTemplate -Raw) -replace '\{\{VERSION\}\}', $Version.Semantic
     [System.IO.File]::WriteAllText($nuspecPath, $nuspecContent, [System.Text.Encoding]::UTF8)
 
-    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
+    # nuget pack names the file with the normalized version, which drops leading
+    # zeros from each part (26.10.8.0241 becomes 26.10.8.241). Use the same name
+    # here so the nuget.exe path finds its own output before 10:00.
+    $nupkgVersion = ($Version.Semantic -split '\.' | ForEach-Object { if ($_ -match '^\d+$') { [string][long]$_ } else { $_ } }) -join '.'
+    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$nupkgVersion.nupkg"
 
     # Method 1: Try using nuget.exe directly (simplest, most reliable)
     if (Test-Command "nuget") {
