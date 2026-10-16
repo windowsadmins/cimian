@@ -4,6 +4,7 @@ using Cimian.Core.Models;
 using Cimian.Core.Services;
 using Xunit;
 using YamlDotNet.Serialization;
+using ClientModels = Cimian.CLI.managedsoftwareupdate.Models;
 
 namespace Cimian.Tests.Shared;
 
@@ -322,6 +323,84 @@ public class YamlUtilsTests
         // registration on every call.
         Assert.Same(YamlUtils.Serializer, YamlUtils.Serializer);
         Assert.Same(YamlUtils.Deserializer, YamlUtils.Deserializer);
+    }
+
+    // ─── Plist format: Deserialize* read a plist ─────
+
+    [Fact]
+    public void AsYaml_BinaryPlist_ThrowsWithItsOwnMessage()
+    {
+        var ex = Assert.Throws<PlistFormatException>(() => YamlUtils.AsYaml("bplist00\u0000\u0001", RepoFileKind.Manifest));
+        Assert.Contains("binary plist", ex.Message);
+    }
+
+    [Fact]
+    public void DeserializePkgInfo_Plist_ConvertsBeforeBinding()
+    {
+        var plist = PlistUtilsTests.Plist(PlistUtilsTests.PkgInfoPlistBody);
+        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(plist);
+
+        Assert.Equal("ExampleApp", pkg!.Name);
+        Assert.Equal("1.10", pkg.Version);
+        Assert.Equal("$x = 1\nif ($x -eq 1) { exit 0 }\nexit 1\n", pkg.InstallCheckScript);
+        Assert.Equal("tester", pkg.Metadata!["created_by"]?.ToString());
+        Assert.Equal("tester", YamlUtils.ExtractMetadataBlock(plist)!["created_by"]?.ToString());
+    }
+
+    [Fact]
+    public void DeserializePkgInfo_Yaml_ReadsAsBefore()
+    {
+        const string yaml = "name: Plain\nversion: '1.0'\nunattended_install: false\n";
+        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(yaml);
+        Assert.Equal("Plain", pkg!.Name);
+        Assert.Equal("1.0", pkg.Version);
+        Assert.False(pkg.UnattendedInstall);
+    }
+
+    [Fact]
+    public void DeserializePkgInfo_RealUnderVersion_ReadsAsText()
+    {
+        var plist = PlistUtilsTests.Header + "<plist version=\"1.0\"><dict><key>name</key><string>A</string><key>version</key><real>1.10</real></dict></plist>\n";
+        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(plist)!;
+        Assert.Equal("1.10", pkg.Version);
+    }
+
+    [Fact]
+    public void DeserializeManifest_Plist_KeepsEveryListAndTheConditionText()
+    {
+        var body = """
+            <dict>
+                <key>name</key><string>PILOT12345</string>
+                <key>catalogs</key><array><string>Production</string></array>
+                <key>included_manifests</key><array><string>common/allsites-optional</string></array>
+                <key>managed_installs</key><array><string>7zip</string><string>vlc</string></array>
+                <key>conditional_items</key>
+                <array><dict>
+                    <key>condition</key><string>hostname == "PILOT12345"</string>
+                    <key>managed_installs</key><array><string>greenshot</string></array>
+                </dict></array>
+            </dict>
+            """;
+        var manifest = YamlUtils.DeserializeManifest<ClientModels.ManifestFile>(PlistUtilsTests.Plist(body));
+
+        Assert.NotNull(manifest);
+        Assert.Equal(new List<string> { "7zip", "vlc" }, manifest!.ManagedInstalls);
+        Assert.Equal(new List<string> { "common/allsites-optional" }, manifest.IncludedManifests);
+        Assert.Single(manifest.ConditionalItems!);
+        Assert.Equal("hostname == \"PILOT12345\"", manifest.ConditionalItems![0].Condition);
+    }
+
+    [Fact]
+    public void DeserializeCatalog_PlistBareArray_ReadsTheItems()
+    {
+        var catalog = YamlUtils.DeserializeCatalog<ClientModels.CatalogWrapper>(PlistUtilsTests.Plist("<array><dict><key>name</key><string>A</string></dict></array>"));
+        Assert.Equal("A", Assert.Single(catalog!.Items).Name);
+    }
+
+    [Fact]
+    public void DeserializeManifest_PlistThatIsAnArray_Throws()
+    {
+        Assert.Throws<PlistFormatException>(() => YamlUtils.DeserializeManifest<ClientModels.ManifestFile>(PlistUtilsTests.Plist("<array/>")));
     }
 
     // ─── Round-trip stability on real deployment fixtures ──────────────────

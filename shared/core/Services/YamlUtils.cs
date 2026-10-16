@@ -55,6 +55,18 @@ public static class YamlUtils
     private const string MetadataKey = "_metadata";
 
     /// <summary>
+    /// The YAML text of a repository file in either encoding: a plist is converted,
+    /// YAML is returned as it is. The pkginfo, manifest and catalog Deserialize methods
+    /// below start here, so callers never need to know which form a file holds. A
+    /// client's local files (Config.yaml, InstallInfo.yaml) stay YAML and do not pass
+    /// through this.
+    /// A binary plist goes to the plist reader too, which says it is a binary plist,
+    /// instead of the YAML parser failing on it.
+    /// </summary>
+    public static string AsYaml(string text, RepoFileKind kind)
+        => PlistUtils.LooksLikePlist(text) || PlistUtils.IsBinaryPlist(text) ? PlistUtils.ToYaml(text, kind) : text;
+
+    /// <summary>
     /// Serializes a pkginfo to the canonical Cimian form:
     /// name → display_name → version → (alphabetical) → _metadata last.
     /// Matches the pre-consolidation cimiimport SerializePkgsInfoWithKeyOrder
@@ -89,6 +101,7 @@ public static class YamlUtils
 
     public static T? DeserializePkgInfo<T>(string yaml) where T : class
     {
+        yaml = AsYaml(yaml, RepoFileKind.PkgInfo);
         var pkg = Deserializer.Deserialize<T>(yaml);
         if (pkg is null) return null;
 
@@ -116,6 +129,7 @@ public static class YamlUtils
 
     public static T? DeserializeManifest<T>(string yaml) where T : class
     {
+        yaml = AsYaml(yaml, RepoFileKind.Manifest);
         var m = Deserializer.Deserialize<T>(yaml);
         if (m != null) NormalizeIncludedManifestPaths(m);
         return m;
@@ -129,7 +143,7 @@ public static class YamlUtils
         => Serializer.Serialize(catalog);
 
     public static T? DeserializeCatalog<T>(string yaml) where T : class
-        => Deserializer.Deserialize<T>(yaml);
+        => Deserializer.Deserialize<T>(AsYaml(yaml, RepoFileKind.Catalog));
 
     /// <summary>
     /// Serializes InstallInfo.yaml — the state file managedsoftwareupdate writes
@@ -151,6 +165,14 @@ public static class YamlUtils
     public static Dictionary<string, object?>? ExtractMetadataBlock(string yaml)
     {
         if (string.IsNullOrWhiteSpace(yaml)) return null;
+        try
+        {
+            yaml = AsYaml(yaml, RepoFileKind.PkgInfo);
+        }
+        catch (PlistFormatException)
+        {
+            return null;   // a malformed plist, like malformed YAML below: no metadata
+        }
 
         var stream = new YamlStream();
         try

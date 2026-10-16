@@ -1,6 +1,7 @@
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core.Services;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
@@ -218,6 +219,20 @@ AdditionalHttpHeaders: {value}
         Assert.Empty(config.AdditionalHttpHeaders);
     }
 
+    [Fact]
+    public void LoadConfig_RepoFormat_ReadsTheKey()
+    {
+        File.WriteAllText(_testConfigPath, @"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: plist
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal("plist", config.RepoFormat);
+        Assert.Equal(RepoFormat.Plist, config.RepositoryFormat);
+    }
+
     #endregion
 
     #region GetDefaultConfig Tests
@@ -394,6 +409,23 @@ AdditionalHttpHeaders: {value}
         var errors = _service.ValidateConfig(config);
 
         Assert.Contains(errors, e => e.Contains("InstallerTimeout"));
+    }
+
+    private static CimianConfig ConfigWithRepoFormat(string? repoFormat) => new() { RepoFormat = repoFormat };
+
+    [Fact]
+    public void ValidateConfig_UnusableRepoFormat_ReportsErrorAndReadsAsYaml()
+    {
+        Assert.Equal(RepoFormat.Yaml, ConfigWithRepoFormat(null).RepositoryFormat);
+        Assert.Equal(RepoFormat.Plist, ConfigWithRepoFormat(" Plist ").RepositoryFormat);
+        Assert.Null(ConfigWithRepoFormat("plist").RepoFormatProblem);
+
+        var typo = ConfigWithRepoFormat("plists");
+        Assert.NotNull(typo.RepoFormatProblem);
+        Assert.Equal(RepoFormat.Yaml, typo.RepositoryFormat);
+
+        var errors = _service.ValidateConfig(typo);
+        Assert.Contains(errors, e => e.StartsWith("RepoFormat"));
     }
 
     #endregion
