@@ -172,7 +172,7 @@ function Repair-CimianWatcherService {
         if ($Diagnostics.ServiceExists) {
             Write-DiagnosticOutput "Uninstalling existing CimianWatcher service..." "Info"
             try {
-                & $cimiwatcherExe uninstall
+                & $cimiwatcherExe remove
                 Start-Sleep -Seconds 3
                 Write-DiagnosticOutput "Service uninstalled successfully" "Success"
             } catch {
