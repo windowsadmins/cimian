@@ -1,14 +1,33 @@
 # CimianTools preinstall
 #
-# Fires only on upgrade/reinstall — cimipkg conditions this CA with
-# `PREVIOUSVERSIONSINSTALLED OR (Installed AND NOT (REMOVE="ALL"))`, so it does
-# NOT run on fresh install (no prior version to tear down) nor on uninstall
-# (handled by uninstall.ps1). The phase guard below is defensive: if a human
-# runs this script outside an MSI session, $env:CIMIAN_PHASE will be empty
-# and we treat that as "force run" so dev work isn't gated on the env var.
+# cimipkg runs this as the immediate CimianPreinstall custom action on every
+# install, before InstallValidate and before any payload file is laid down; it
+# does not run on uninstall (handled by uninstall.ps1). A non-zero exit fails
+# the install, so the free-space guard below stops an install that would
+# otherwise die part-way through with msiexec 112. If a human runs this script
+# outside an MSI session, $env:CIMIAN_PHASE is empty and everything runs.
 $ErrorActionPreference = 'Stop'
 
 Write-Host "CimianTools preinstall: phase=$($env:CIMIAN_PHASE) version=$($env:CIMIAN_VERSION)" -ForegroundColor Green
+
+# Refuse to install with less than 1.5 GB free on the system drive. The payload
+# alone is a few hundred MB, and a drive that fills mid-install leaves a
+# half-copied tree and a rollback that can itself fail. A probe error is not a
+# reason to block, so only a successful reading below the floor stops us.
+$minFreeMB = 1500
+$systemDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
+try {
+    $drive = [System.IO.DriveInfo]::new($systemDrive)
+    if (-not $drive.IsReady) { throw "drive is not ready" }
+    $freeMB = [math]::Floor($drive.AvailableFreeSpace / 1MB)
+    Write-Host "Free space on ${systemDrive}: $freeMB MB (minimum $minFreeMB MB)"
+    if ($freeMB -lt $minFreeMB) {
+        Write-Host "Insufficient disk space on ${systemDrive}: $freeMB MB free. CimianTools requires at least $minFreeMB MB free. Free some space and run the installer again."
+        exit 112
+    }
+} catch {
+    Write-Warning "Could not read free space on ${systemDrive}, continuing: $_"
+}
 
 if ($env:CIMIAN_PHASE -eq 'fresh') {
     Write-Host "Fresh install detected — nothing to tear down, exiting."
