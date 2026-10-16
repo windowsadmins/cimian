@@ -1923,7 +1923,7 @@ exit 0
         }
     }
 
-    private async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
+    internal async Task<(bool Success, string Output)> RunProcessWithTimeoutAsync(
         ProcessStartInfo startInfo,
         string itemName,
         CancellationToken cancellationToken,
@@ -1999,11 +1999,18 @@ exit 0
             {
                 output.AppendLine($"Note: exit code {exitCode} is declared a success code for this installer");
             }
-            if (exitCode == 0 || exitCode == 3010 || declaredSuccess) // 3010 = reboot required
+            // 3010 (ERROR_SUCCESS_REBOOT_REQUIRED) and 1641 (ERROR_SUCCESS_REBOOT_INITIATED)
+            // are both documented Windows success codes: the install worked, and a restart
+            // is required or has already been started.
+            if (exitCode == 0 || exitCode == 3010 || exitCode == 1641 || declaredSuccess)
             {
                 if (exitCode == 3010)
                 {
                     output.AppendLine("Note: A reboot is required to complete the installation");
+                }
+                else if (exitCode == 1641)
+                {
+                    output.AppendLine("Note: The installer has started a reboot to complete the installation");
                 }
                 return (true, output.ToString());
             }
