@@ -2024,8 +2024,24 @@ exit 0
     /// Returns (true, "") if verification passes or no installs array is defined; otherwise
     /// (false, &lt;installer-type-specific reason&gt;) so callers can surface accurate error messages.
     /// </summary>
-    private (bool Ok, string Reason) VerifyInstallationBeforeRegistry(CatalogItem item)
+    internal (bool Ok, string Reason) VerifyInstallationBeforeRegistry(CatalogItem item)
     {
+        // A version_script decides whether the item is installed in the status check,
+        // so it decides here too. Checking the installs array instead reported every
+        // update as failed whenever the array and the script disagreed. An
+        // installcheck_script still outranks it, as it does in the status check.
+        if (string.IsNullOrEmpty(item.InstallcheckScript) && !string.IsNullOrEmpty(item.VersionScript))
+        {
+            var script = StatusService.CheckVersionScript(item);
+            if (script.Status == "installed")
+            {
+                ConsoleLogger.Debug($"Installation verification via version_script successful for {item.Name}: {script.InstalledVersion}");
+                return (true, "");
+            }
+            ConsoleLogger.Warn($"Verification failed for {item.Name}: {script.Reason}");
+            return (false, script.Reason);
+        }
+
         if (item.Installs.Count == 0)
         {
             // No installs array - skip verification for backward compatibility
