@@ -1,4 +1,5 @@
 using Xunit;
+using Cimian.Core.Services;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
 
@@ -407,6 +408,69 @@ public class InstallerServiceTests
         };
 
         Assert.False(item.IsUninstallable());
+    }
+
+    #endregion
+
+    #region Uninstall Session Events
+
+    // Every uninstall path writes the same started/completed/failed events from the
+    // public UninstallAsync. Before, only the MSIX path wrote any, so a removal-only run
+    // through msi/exe/powershell left no action events and reported as idle.
+
+    private static string[] UninstallEventStatuses(SessionLogger logger, string itemName) =>
+        logger.RecordedEvents
+            .Where(e => e.EventType == "install" && e.PackageName == itemName)
+            .Select(e =>
+            {
+                Assert.Equal("uninstall", e.Action);
+                return e.Status;
+            })
+            .ToArray();
+
+    [Theory]
+    [InlineData("none")]
+    [InlineData("msi")]
+    [InlineData("exe")]
+    [InlineData("powershell")]
+    [InlineData("msix")]
+    public async Task UninstallAsync_Failure_LogsStartedAndFailedOnce(string type)
+    {
+        using var logger = new SessionLogger();
+        _service.SetSessionLogger(logger);
+        var item = new CatalogItem
+        {
+            Name = $"UninstallEventFail_{Guid.NewGuid():N}",
+            Version = "1.0.0",
+            Uninstaller = type == "none"
+                ? []
+                : [new UninstallerInfo { Type = type }]
+        };
+
+        var (success, _) = await _service.UninstallAsync(item);
+
+        Assert.False(success);
+        Assert.Equal(new[] { "started", "failed" }, UninstallEventStatuses(logger, item.Name));
+    }
+
+    [Fact]
+    public async Task UninstallAsync_PowerShellSuccess_LogsStartedAndCompleted()
+    {
+        using var logger = new SessionLogger();
+        _service.SetSessionLogger(logger);
+        var item = new CatalogItem
+        {
+            Name = $"UninstallEventOk_{Guid.NewGuid():N}",
+            Version = "1.0.0",
+            Uninstaller = [
+                new UninstallerInfo { Type = "powershell", Command = "Write-Output 'Uninstalled'" }
+            ]
+        };
+
+        var (success, _) = await _service.UninstallAsync(item);
+
+        Assert.True(success);
+        Assert.Equal(new[] { "started", "completed" }, UninstallEventStatuses(logger, item.Name));
     }
 
     #endregion

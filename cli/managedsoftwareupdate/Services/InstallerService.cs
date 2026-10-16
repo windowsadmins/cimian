@@ -701,9 +701,49 @@ public class InstallerService
     /// <summary>
     /// Uninstalls a catalog item
     /// </summary>
+    /// <remarks>
+    /// The uninstall started/completed/failed events are written here rather than inside
+    /// each installer-type implementation, so every removal path — msi, exe, powershell,
+    /// msix, uninstall_script and the registry fallback — reports the same events, and a
+    /// new type cannot be added without them. Reporting counts these events by action and
+    /// status, so a removal-only run that wrote none looked identical to an idle run.
+    /// </remarks>
     public async Task<(bool Success, string Output)> UninstallAsync(
         CatalogItem item,
         CancellationToken cancellationToken = default)
+    {
+        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "started",
+            $"Uninstalling {item.Name}");
+
+        (bool Success, string Output) result;
+        try
+        {
+            result = await UninstallCoreAsync(item, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed",
+                $"Uninstall of {item.Name} threw an exception", ex.Message);
+            throw;
+        }
+
+        if (result.Success)
+        {
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "completed",
+                $"Successfully uninstalled {item.Name}");
+        }
+        else
+        {
+            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed",
+                result.Output);
+        }
+
+        return result;
+    }
+
+    private async Task<(bool Success, string Output)> UninstallCoreAsync(
+        CatalogItem item,
+        CancellationToken cancellationToken)
     {
         ConsoleLogger.Info($"Uninstalling {item.Name}...");
 
@@ -1795,9 +1835,6 @@ try {{
         UninstallerInfo uninstaller,
         CancellationToken cancellationToken)
     {
-        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "started",
-            $"Uninstalling MSIX {item.Name}");
-
         // Resolve PackageFullName: prefer the value stored at install time in registry.
         var packageFullName = ReadManagedInstallsValue(item.Name, "PackageFullName");
 
@@ -1837,7 +1874,6 @@ if ($pkg) {{ Write-Output $pkg.PackageName }}
         if (string.IsNullOrEmpty(packageFullName) && string.IsNullOrEmpty(identityName))
         {
             var errorMsg = $"MSIX uninstall failed: unable to resolve PackageFullName or IdentityName for {item.Name}";
-            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed", errorMsg);
             return (false, errorMsg);
         }
 
@@ -1896,12 +1932,10 @@ exit 0
         if (!success)
         {
             var errorMsg = $"MSIX uninstall failed: {output.Trim()}";
-            _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "failed", errorMsg);
             return (false, errorMsg);
         }
 
-        _sessionLogger?.LogInstall(item.Name, item.Version, "uninstall", "completed",
-            $"MSIX removed: {packageFullName ?? identityName}");
+        _sessionLogger?.Log("INFO", $"MSIX removed: {packageFullName ?? identityName}");
         return (true, output);
     }
 

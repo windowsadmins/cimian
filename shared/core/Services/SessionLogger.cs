@@ -50,6 +50,11 @@ public class SessionLogger : IDisposable
     private StreamWriter? _eventsFile;     // events.jsonl
 
     private readonly ConcurrentQueue<LogEvent> _events = new();
+
+    /// <summary>
+    /// The events logged so far in this session, for tests.
+    /// </summary>
+    internal IReadOnlyCollection<LogEvent> RecordedEvents => _events;
     private SessionData _sessionData = new();
     private bool _disposed;
 
