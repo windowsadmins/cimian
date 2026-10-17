@@ -78,17 +78,27 @@ public class CatalogBuilder
     /// </summary>
     private static IEnumerable<string> EnumeratePkgsInfoFiles(string pkgsInfoDir)
     {
-        foreach (var file in Directory.EnumerateFiles(pkgsInfoDir, "*", SearchOption.AllDirectories))
+        var directories = new Stack<string>();
+        directories.Push(pkgsInfoDir);
+        while (directories.TryPop(out var directory))
         {
-            var relative = Path.GetRelativePath(pkgsInfoDir, file);
-            if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(part => part.StartsWith('.')))
-                continue;
-
-            var extension = Path.GetExtension(file);
-            if (extension.Equals(".yaml", StringComparison.OrdinalIgnoreCase) ||
-                extension.Equals(".yml", StringComparison.OrdinalIgnoreCase))
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
             {
-                yield return file;
+                if (Path.GetFileName(entry).StartsWith('.'))
+                    continue;
+
+                if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0)
+                {
+                    directories.Push(entry);
+                    continue;
+                }
+
+                var extension = Path.GetExtension(entry);
+                if (extension.Equals(".yaml", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".yml", StringComparison.OrdinalIgnoreCase))
+                {
+                    yield return entry;
+                }
             }
         }
     }
