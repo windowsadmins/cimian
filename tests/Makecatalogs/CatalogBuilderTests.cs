@@ -107,6 +107,56 @@ catalogs: []
     }
 
     [Fact]
+    public void ScanRepo_SkipsFilesWhoseNameStartsWithADot()
+    {
+        CreatePkgInfo("util/7zip-1.0.yaml", "name: 7zip\nversion: 1.0\n");
+        // AppleDouble sidecar a Mac writes beside a file on an SMB share: binary, not YAML
+        File.WriteAllBytes(Path.Combine(_tempDir, "pkgsinfo", "util", "._7zip-1.0.yaml"),
+            new byte[] { 0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00 });
+        CreatePkgInfo(".hidden.yaml", "name: Hidden\nversion: 1.0\n");
+
+        var items = _builder.ScanRepo(_tempDir);
+
+        Assert.Equal(new[] { "7zip" }, items.Select(i => i.Name));
+        Assert.Empty(_builder.ParseErrors);
+    }
+
+    [Fact]
+    public void ScanRepo_SkipsFoldersWhoseNameStartsWithADot()
+    {
+        CreatePkgInfo("apps/App-1.0.yaml", "name: App\nversion: 1.0\n");
+        CreatePkgInfo(".git/App-0.9.yaml", "name: App\nversion: 0.9\n");
+        CreatePkgInfo("apps/.snapshots/App-0.8.yaml", "name: App\nversion: 0.8\n");
+
+        var items = _builder.ScanRepo(_tempDir);
+
+        Assert.Equal(new[] { "1.0" }, items.Select(i => i.Version));
+    }
+
+    [Fact]
+    public void ScanRepo_ReadsYmlFiles()
+    {
+        CreatePkgInfo("apps/Tool-1.0.yaml", "name: Tool\nversion: 1.0\n");
+        CreatePkgInfo("apps/Other-2.0.yml", "name: Other\nversion: 2.0\n");
+
+        var items = _builder.ScanRepo(_tempDir);
+
+        Assert.Equal(new[] { "Other", "Tool" }, items.Select(i => i.Name).Order());
+    }
+
+    [Fact]
+    public void Run_DotfileBesidePkgsinfo_DoesNotFailTheRun()
+    {
+        CreatePkgInfo("util/7zip-1.0.yaml", "name: 7zip\nversion: 1.0\ncatalogs:\n  - Testing\n");
+        File.WriteAllBytes(Path.Combine(_tempDir, "pkgsinfo", "util", "._7zip-1.0.yaml"),
+            new byte[] { 0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00 });
+
+        var exitCode = _builder.Run(_tempDir, skipPayloadCheck: true, silent: true);
+
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
     public void ScanRepo_ThrowsForMissingDirectory()
     {
         var nonExistentPath = Path.Combine(_tempDir, "nonexistent");
