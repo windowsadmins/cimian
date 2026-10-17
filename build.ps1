@@ -328,8 +328,10 @@ function Clean-OldPackages {
     
     foreach ($arch in @('x64', 'arm64')) {
         # IntuneWin packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-*-$arch.intunewin"
         Remove-OldFiles -Directory $OutputDirectory -Pattern "Cimian-*-$arch.intunewin"
         # MSI packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-*-$arch.msi"
         Remove-OldFiles -Directory $OutputDirectory -Pattern "Cimian-*-$arch.msi"
         # NuGet packages
         Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch.*.nupkg"
@@ -989,7 +991,7 @@ function Build-MsiPackage {
             if (Test-Path $buildDir) {
                 $createdMsiFiles = Get-ChildItem -Path $buildDir -Filter "*.msi"
                 foreach ($msiFile in $createdMsiFiles) {
-                    $expectedName = "Cimian-$releaseVersion-$Architecture.msi"
+                    $expectedName = "CimianTools-$releaseVersion-$Architecture.msi"
                     $targetPath = "release\$expectedName"
                     Copy-Item $msiFile.FullName $targetPath -Force
                     Write-BuildLog "MSI package: $expectedName ($([math]::Round($msiFile.Length / 1MB, 2)) MB)" "SUCCESS"
@@ -1339,14 +1341,14 @@ function Build-IntuneWinPackage {
         return $null
     }
     
-    $msiFile = Join-Path $OutputDir "Cimian-$($Version.Full)-$Architecture.msi"
+    $msiFile = Join-Path $OutputDir "CimianTools-$($Version.Full)-$Architecture.msi"
     
     if (-not (Test-Path $msiFile)) {
         Write-BuildLog "MSI file not found for $Architecture - cannot create IntuneWin package" "WARNING"
         return $null
     }
     
-    $intunewinOutput = Join-Path $OutputDir "Cimian-$($Version.Full)-$Architecture.intunewin"
+    $intunewinOutput = Join-Path $OutputDir "CimianTools-$($Version.Full)-$Architecture.intunewin"
     
     # Remove existing
     if (Test-Path $intunewinOutput) {
@@ -1789,10 +1791,10 @@ try {
         Enter-DevelopmentMode
         
         $currentArch = if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") { "x64" } else { "arm64" }
-        $msiToInstall = Join-Path $OutputDir "Cimian-$($version.Full)-$currentArch.msi"
+        $msiToInstall = Join-Path $OutputDir "CimianTools-$($version.Full)-$currentArch.msi"
         
         if (-not (Test-Path $msiToInstall)) {
-            $msiToInstall = Get-ChildItem -Path $OutputDir -Filter "Cimian-*-$currentArch.msi" | Select-Object -First 1
+            $msiToInstall = Get-ChildItem -Path $OutputDir -Filter "CimianTools-*-$currentArch.msi" | Select-Object -First 1
             if ($msiToInstall) { $msiToInstall = $msiToInstall.FullName }
         }
         
