@@ -1274,41 +1274,8 @@ public class InstallerService
     /// </summary>
     private string? _lastResolvedMsixPackageFullName;
 
-    /// <summary>
-    /// Installs an MSIX/APPX package (or .msixbundle/.appxbundle) using
-    /// Add-AppxProvisionedPackage -Online, which provisions the package at the OS
-    /// image level. Works from both elevated admin and SYSTEM contexts (DISM-based
-    /// operation) and matches the enterprise deployment model used by Intune.
-    ///
-    /// The install script performs a preflight check against both Appx stores
-    /// (per-user via Get-AppxPackage -AllUsers and provisioned via
-    /// Get-AppxProvisionedPackage -Online) before calling the install cmdlet,
-    /// to handle three real-world scenarios:
-    ///
-    ///   1. Higher version already installed → emit SKIP, return success
-    ///      ("never downgrade" policy; StatusService detection should normally
-    ///      catch this first, but this preflight is a safety net).
-    ///   2. Older per-user install blocks provisioning of the catalog version
-    ///      (classic 0x80070490 "Element not found" failure mode when a vendor
-    ///      like Slack auto-updates itself) → run Remove-AppxPackage -AllUsers
-    ///      for the identity first, then provision.
-    ///   3. Nothing installed → provision directly.
-    ///
-    /// Known limitation: currently-signed-in users won't see the app until next
-    /// login; new user profiles get it automatically. This is acceptable for
-    /// Cimian's daemon-style deployment model. Per-user-install removal preserves
-    /// the app's data directory under %LOCALAPPDATA%\Packages\&lt;PackageFamilyName&gt;
-    /// so user settings survive the remediation.
-    /// </summary>
-    private async Task<(bool Success, string Output)> InstallMsixAsync(
-        CatalogItem item,
-        string localFile,
-        CancellationToken cancellationToken)
+    internal static string BuildMsixInstallScript(CatalogItem item, string localFile, string logPath)
     {
-        _lastResolvedMsixPackageFullName = null;
-        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started",
-            $"Installing MSIX {item.Name} via Add-AppxProvisionedPackage");
-
         // Look up the package Identity.Name from the installs-array entry that
         // cimiimport emits. This is used for the preflight query; without it we
         // can't identify the package to clean up older per-user installs.
@@ -1317,7 +1284,6 @@ public class InstallerService
             || string.Equals(i.Type, "appx", StringComparison.OrdinalIgnoreCase));
         var identityName = msixInstallEntry?.IdentityName ?? "";
 
-        var logPath = Path.Combine(InstallLogsDir, $"{item.Name}_msix_install.log");
         var escapedPath = localFile.Replace("'", "''");
         var escapedLog = logPath.Replace("'", "''");
         var escapedIdentity = identityName.Replace("'", "''");
@@ -1330,7 +1296,7 @@ public class InstallerService
         //   OK|<PackageFullName>    — new install or upgrade succeeded
         //   SKIP|<PackageFullName>  — newer version already present, no action
         //   ERROR|<message>         — install failed
-        var installScript = $@"
+        return $@"
 $ErrorActionPreference = 'Stop'
 $logFile = '{escapedLog}'
 $identity = '{escapedIdentity}'
@@ -1390,7 +1356,26 @@ try {{
     $result = Add-AppxProvisionedPackage -Online -PackagePath '{escapedPath}' -SkipLicense
     if ($result) {{
         $result | Out-File -FilePath $logFile -Append -Encoding utf8
-        Write-Output ""OK|$($result.PackageName)""
+        # DISM normally returns ImageObject (Path/Online/RestartNeeded), not
+        # the provisioned package. Resolve the identity from the image after install.
+        $packageName = [string]$result.PackageName
+        if ($identity) {{
+            $provisioned = Get-AppxProvisionedPackage -Online -ErrorAction Stop |
+                Where-Object DisplayName -eq $identity |
+                Sort-Object {{ [System.Version]$_.Version }} -Descending |
+                Select-Object -First 1
+            if (-not $provisioned -or [string]::IsNullOrWhiteSpace($provisioned.PackageName)) {{
+                throw ""No provisioned package found after installing identity '$identity'""
+            }}
+            if ($catalogVerStr -and [System.Version]$provisioned.Version -lt [System.Version]$catalogVerStr) {{
+                throw ""Provisioned version $($provisioned.Version) is older than requested $catalogVerStr""
+            }}
+            $packageName = $provisioned.PackageName
+        }}
+        if ([string]::IsNullOrWhiteSpace($packageName)) {{
+            throw 'Cannot resolve provisioned PackageName; re-import the MSIX to include installs.identity_name'
+        }}
+        Write-Output ""OK|$packageName""
         exit 0
     }} else {{
         $msg = 'Add-AppxProvisionedPackage returned no result'
@@ -1405,6 +1390,45 @@ try {{
     exit 1
 }}
 ";
+    }
+
+    /// <summary>
+    /// Installs an MSIX/APPX package (or .msixbundle/.appxbundle) using
+    /// Add-AppxProvisionedPackage -Online, which provisions the package at the OS
+    /// image level. Works from both elevated admin and SYSTEM contexts (DISM-based
+    /// operation) and matches the enterprise deployment model used by Intune.
+    ///
+    /// The install script performs a preflight check against both Appx stores
+    /// (per-user via Get-AppxPackage -AllUsers and provisioned via
+    /// Get-AppxProvisionedPackage -Online) before calling the install cmdlet,
+    /// to handle three real-world scenarios:
+    ///
+    ///   1. Higher version already installed → emit SKIP, return success
+    ///      ("never downgrade" policy; StatusService detection should normally
+    ///      catch this first, but this preflight is a safety net).
+    ///   2. Older per-user install blocks provisioning of the catalog version
+    ///      (classic 0x80070490 "Element not found" failure mode when a vendor
+    ///      like Slack auto-updates itself) → run Remove-AppxPackage -AllUsers
+    ///      for the identity first, then provision.
+    ///   3. Nothing installed → provision directly.
+    ///
+    /// Known limitation: currently-signed-in users won't see the app until next
+    /// login; new user profiles get it automatically. This is acceptable for
+    /// Cimian's daemon-style deployment model. Per-user-install removal preserves
+    /// the app's data directory under %LOCALAPPDATA%\Packages\&lt;PackageFamilyName&gt;
+    /// so user settings survive the remediation.
+    /// </summary>
+    private async Task<(bool Success, string Output)> InstallMsixAsync(
+        CatalogItem item,
+        string localFile,
+        CancellationToken cancellationToken)
+    {
+        _lastResolvedMsixPackageFullName = null;
+        _sessionLogger?.LogInstall(item.Name, item.Version, "install", "started",
+            $"Installing MSIX {item.Name} via Add-AppxProvisionedPackage");
+
+        var logPath = Path.Combine(InstallLogsDir, $"{item.Name}_msix_install.log");
+        var installScript = BuildMsixInstallScript(item, localFile, logPath);
 
         var (success, output) = await _scriptService.ExecuteScriptAsync(installScript, cancellationToken);
 
@@ -2134,14 +2158,11 @@ exit 0
 
                 case "msix":
                 case "appx":
-                    // InstallMsixAsync already captured the PackageFullName from
-                    // Add-AppxProvisionedPackage output into _lastResolvedMsixPackageFullName.
-                    // A non-empty value means the provisioning command returned a registration.
-                    // This is cheaper than a second Get-AppxProvisionedPackage round-trip and
-                    // avoids making VerifyInstallationBeforeRegistry async.
+                    // InstallMsixAsync resolves the provisioned package after DISM
+                    // succeeds and retains its PackageName for verification/registry tracking.
                     if (string.IsNullOrEmpty(_lastResolvedMsixPackageFullName))
                     {
-                        const string reason = "Add-AppxProvisionedPackage did not return a PackageFullName";
+                        const string reason = "Provisioned MSIX PackageName was not resolved";
                         ConsoleLogger.Warn($"Verification failed for {item.Name}: {reason}");
                         return (false, reason);
                     }
