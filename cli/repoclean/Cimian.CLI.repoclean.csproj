@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
     <ProjectReference Include="..\..\shared\engine\Cimian.Engine.csproj" />
     <ProjectReference Include="..\..\shared\infrastructure\Cimian.Infrastructure.csproj" />
+    <ProjectReference Include="..\makecatalogs\Cimian.CLI.makecatalogs.csproj" />
   </ItemGroup>
 
 </Project>

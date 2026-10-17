@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Cimian.CLI.Repoclean;
 
@@ -22,7 +23,7 @@ public class PackageInfo
     public long ItemSize { get; set; }
     public string PackagePath { get; set; } = string.Empty;
     public long PackageSize { get; set; }
-    public string UninstallPackagePath { get; set; } = string.Empty;
+    public List<string> UninstallPackagePaths { get; set; } = new();
     public long UninstallPackageSize { get; set; }
     public List<string> Catalogs { get; set; } = new();
     public List<string> Requires { get; set; } = new();
@@ -34,6 +35,10 @@ public class PackageInfo
     public string InstallableCondition { get; set; } = string.Empty;
     public string UninstallMethod { get; set; } = string.Empty;
     public List<Receipt> Receipts { get; set; } = new();
+
+    /// <summary>Every payload under pkgs/ this item points at: its installer and each uninstaller.</summary>
+    public IEnumerable<string> PayloadPaths =>
+        new[] { PackagePath }.Concat(UninstallPackagePaths).Where(p => !string.IsNullOrEmpty(p));
 }
 
 public class Receipt
