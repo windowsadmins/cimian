@@ -111,6 +111,8 @@ All binaries are built for both x64 and arm64 architectures and installed to `C:
 
 ## Repository Structure
 
+See [runtime architecture and contribution boundaries](docs/runtime-architecture.md) for the models, status application, progress transport and update-process boundaries used by the client.
+
 A typical Cimian repository follows this structure:
 
 ```
