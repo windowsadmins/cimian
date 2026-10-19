@@ -447,6 +447,22 @@ public partial class SoftwarePage : Page
 
     #region Event Handlers
 
+    private void SelectApps_Click(object sender, RoutedEventArgs e)
+    {
+        var selecting = SelectAppsButton.IsChecked == true;
+        SoftwareGrid.IsItemClickEnabled = !selecting;
+        SoftwareGrid.SelectionMode = selecting ? ListViewSelectionMode.Multiple : ListViewSelectionMode.None;
+        if (!selecting) SoftwareGrid.SelectedItems.Clear();
+    }
+
+    private void SoftwareGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Installed/current, unavailable and already-pending items are not selectable.
+        foreach (var item in e.AddedItems.OfType<InstallableItem>().Where(item => !item.ShowInstallAction).ToArray())
+            SoftwareGrid.SelectedItems.Remove(item);
+        ViewModel.SetInstallSelection(SoftwareGrid.SelectedItems.OfType<InstallableItem>());
+    }
+
     private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
     {
         if (args.Reason == AutoSuggestionBoxTextChangeReason.UserInput)

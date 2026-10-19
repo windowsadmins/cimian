@@ -79,6 +79,9 @@ public partial class App : Application
         services.AddTransient<ItemDetailViewModel>();
         services.AddTransient<ProgressViewModel>();
         
+#if HUB_UI_TEST
+        HubUiFixture.Configure(services);
+#endif
         _services = services.BuildServiceProvider();
     }
 

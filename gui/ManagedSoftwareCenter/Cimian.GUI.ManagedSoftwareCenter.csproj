@@ -41,6 +41,19 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260209005" />
   </ItemGroup>
 
+  <!-- Opt-in, compile-time-only GUI fixture. Never enabled in release builds. -->
+  <PropertyGroup Condition="'$(HubUiTest)' == 'true'">
+    <DefineConstants>$(DefineConstants);HUB_UI_TEST</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(HubUiTest)' == 'true'">
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <Compile Include="../ManagedSoftwareCenter.Tests/HubUiFixture.cs" Link="HubUiFixture.cs" />
+  </ItemGroup>
+  <Target Name="RejectReleaseUiFixture" BeforeTargets="PrepareForBuild"
+          Condition="'$(HubUiTest)' == 'true' And '$(Configuration)' != 'Debug'">
+    <Error Text="HubUiTest is a simulated-install fixture and is permitted only in Debug builds." />
+  </Target>
+
   <ItemGroup>
     <ProjectReference Include="..\..\shared\core\Cimian.Core.csproj" />
     <ProjectReference Include="..\..\shared\infrastructure\Cimian.Infrastructure.csproj" />

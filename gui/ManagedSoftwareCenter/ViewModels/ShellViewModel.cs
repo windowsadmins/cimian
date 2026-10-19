@@ -523,9 +523,10 @@ public partial class ShellViewModel : ObservableObject
             IsProgressIndeterminate = true;
             CanStopInstall = false;
 
-            // Bring the Updates page forward so the user sees the pending item
-            // and its progress regardless of which page they clicked Install on.
-            RequestNavigate("updates");
+            // Self-service requests must not interrupt browsing or discard a
+            // multi-app selection. Explicit broad operations still open Updates.
+            if (!_triggerService.IsItemScopedOperation)
+                RequestNavigate("updates");
         }
         else
         {

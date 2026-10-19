@@ -22,6 +22,71 @@ public partial class SoftwareViewModel : ObservableObject
     private readonly IAlertService _alertService;
 
     private List<InstallableItem> _allItems = [];
+    private List<InstallableItem> _selectedInstallItems = [];
+
+    public string InstallSelectedLabel => $"Install selected ({_selectedInstallItems.Count})";
+
+    public void SetInstallSelection(IEnumerable<InstallableItem> items)
+    {
+        _selectedInstallItems = items.Where(item => item.ShowInstallAction)
+            .DistinctBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        OnPropertyChanged(nameof(InstallSelectedLabel));
+        InstallSelectedCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanInstallSelected() => _selectedInstallItems.Count > 0 && !IsLoading;
+
+    [RelayCommand(CanExecute = nameof(CanInstallSelected))]
+    private async Task InstallSelectedAsync()
+    {
+        // Snapshot before dialogs: filtering or a catalog refresh may replace the grid.
+        var selected = _selectedInstallItems.ToArray();
+        var requested = new List<string>();
+        var failed = new List<string>();
+        foreach (var selection in selected)
+        {
+            // Re-resolve against the current authorized catalog, never a stale selection.
+            var item = _allItems.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, selection.Name, StringComparison.OrdinalIgnoreCase));
+            if (item == null || !item.ShowInstallAction) continue;
+            var alert = item.Installed ? item.PreupgradeAlert : item.PreinstallAlert;
+            if (alert != null && !await _alertService.ShowAlertAsync(alert,
+                    item.Installed ? "Upgrade Alert" : "Install Alert")) continue;
+            if (!await CheckBlockingAppsAsync(item)) continue;
+            // A refresh while an alert was open may withdraw or replace the offer.
+            if (!_allItems.Contains(item) || !item.ShowInstallAction) continue;
+            try
+            {
+                await _selfServiceService.AddInstallRequestAsync(item.Name);
+                item.Status = ItemStatus.InstallRequested;
+                item.UserRequested = true;
+                requested.Add(item.Name);
+            }
+            catch
+            {
+                failed.Add(item.GetDisplayName());
+            }
+        }
+
+        SetInstallSelection([]);
+        ApplyFilters();
+        if (requested.Count > 0)
+        {
+            try
+            {
+                // Persist all approved requests before starting one targeted batch.
+                await _triggerService.TriggerInstallItemsAsync(requested);
+            }
+            catch
+            {
+                await _alertService.ShowInfoAsync("Could not start installation",
+                    "Your requests are saved. Open Updates to retry the pending installations.");
+            }
+        }
+        if (failed.Count > 0)
+            await _alertService.ShowInfoAsync("Some requests could not be saved",
+                "Please select and retry: " + string.Join(", ", failed));
+    }
 
     [ObservableProperty]
     public partial ObservableCollection<InstallableItem> Items { get; set; } = [];
@@ -36,6 +101,7 @@ public partial class SoftwareViewModel : ObservableObject
     public partial string SearchText { get; set; } = string.Empty;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(InstallSelectedCommand))]
     public partial bool IsLoading { get; set; }
 
     [ObservableProperty]
@@ -136,6 +202,8 @@ public partial class SoftwareViewModel : ObservableObject
 
     private void ApplyFilters()
     {
+        // Selection is scoped to the visible grid; never install hidden selections.
+        SetInstallSelection([]);
         var filtered = _allItems.AsEnumerable();
 
         // Apply category filter
@@ -228,6 +296,10 @@ public partial class SoftwareViewModel : ObservableObject
         item.Status = ItemStatus.InstallRequested;
         item.UserRequested = true;
 
+        // We now stay on Software: refresh the tile immediately, not after the
+        // watcher consumes the request, so a saved request cannot look unqueued.
+        ApplyFilters();
+
         // Targeted, preflight-skipping trigger — fast feedback for the just-clicked item.
         await _triggerService.TriggerInstallItemAsync(item.Name);
 
@@ -249,6 +321,8 @@ public partial class SoftwareViewModel : ObservableObject
 
         // Update item status
         item.Status = ItemStatus.RemovalRequested;
+
+        ApplyFilters();
 
         // Targeted, preflight-skipping trigger — fast feedback for the just-clicked item.
         await _triggerService.TriggerInstallItemAsync(item.Name, asRemoval: true);

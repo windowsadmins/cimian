@@ -293,6 +293,12 @@
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                            Margin="8,0,0,0"
                            VerticalAlignment="Center" />
+                <ToggleButton x:Name="SelectAppsButton" Content="Select apps"
+                              Margin="16,0,0,0" Click="SelectApps_Click"
+                              AutomationProperties.Name="Select multiple apps to install" />
+                <Button Content="{Binding InstallSelectedLabel}"
+                        Command="{Binding InstallSelectedCommand}"
+                        Margin="8,0,0,0" />
             </StackPanel>
 
             <!-- Loading indicator -->
@@ -325,6 +331,7 @@
                       IsItemClickEnabled="True"
                       ItemClick="OnItemClick"
                       SelectionMode="None"
+                      SelectionChanged="SoftwareGrid_SelectionChanged"
                       Margin="20,0,20,24"
                       MinHeight="200">
                 <GridView.ItemTemplate>
