@@ -14,6 +14,31 @@ public class CimianConfig
     [YamlMember(Alias = "ClientIdentifier")]
     public string ClientIdentifier { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The format of the repository's catalogs and manifests: "yaml" (the default) or
+    /// "plist". With plist the client asks for catalogs and manifests without an
+    /// extension (Munki's layout) and parses the XML plist. The cache stays YAML either
+    /// way.
+    /// </summary>
+    [YamlMember(Alias = "RepoFormat")]
+    public string? RepoFormat { get; set; }
+
+    /// <summary>
+    /// <see cref="RepoFormat"/> as an enum value: Yaml or Plist. The value is checked
+    /// when the configuration loads, so an unknown one never reaches a run.
+    /// </summary>
+    [YamlIgnore]
+    public Cimian.Core.Services.RepoFormat RepositoryFormat
+        => Cimian.Core.Services.RepoFormatParser.Parse(RepoFormat);
+
+    /// <summary>The RepoFormat line of --show-config: the form in use.</summary>
+    internal string DescribeRepoFormat()
+    {
+        if (string.IsNullOrWhiteSpace(RepoFormat))
+            return "yaml (not set)";
+        return Cimian.Core.Services.RepoFormatParser.Name(RepositoryFormat);
+    }
+
     [YamlMember(Alias = "CachePath")]
     public string CachePath { get; set; } = CimianPaths.CacheDir;
 

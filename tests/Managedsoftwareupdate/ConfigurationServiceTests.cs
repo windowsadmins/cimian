@@ -1,6 +1,7 @@
 using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
+using Cimian.Core.Services;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
@@ -216,6 +217,88 @@ AdditionalHttpHeaders: {value}
 
         Assert.Equal("https://test.example.com", config.SoftwareRepoURL);
         Assert.Empty(config.AdditionalHttpHeaders);
+    }
+
+    [Fact]
+    public void LoadConfig_RepoFormat_ReadsTheKey()
+    {
+        File.WriteAllText(_testConfigPath, @"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: plist
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal("plist", config.RepoFormat);
+        Assert.Equal(RepoFormat.Plist, config.RepositoryFormat);
+    }
+
+    [Theory]
+    [InlineData("YAML")]
+    [InlineData("yaml")]
+    public void LoadConfig_RepoFormat_AcceptsAnyCase(string repoFormat)
+    {
+        File.WriteAllText(_testConfigPath, $@"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: {repoFormat}
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(repoFormat, config.RepoFormat);
+        Assert.Equal(RepoFormat.Yaml, config.RepositoryFormat);
+    }
+
+    [Fact]
+    public void LoadConfig_MissingRepoFormat_ReadsTheKeyAsYaml()
+    {
+        File.WriteAllText(_testConfigPath, @"
+SoftwareRepoURL: https://test.example.com
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Null(config.RepoFormat);
+        Assert.Equal(RepoFormat.Yaml, config.RepositoryFormat);
+    }
+
+    [Theory]
+    [InlineData("\"\"")]
+    [InlineData("\"  \"")]
+    public void LoadConfig_BlankRepoFormat_ReadsTheKeyAsYaml(string repoFormat)
+    {
+        File.WriteAllText(_testConfigPath, $@"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: {repoFormat}
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(RepoFormat.Yaml, config.RepositoryFormat);
+    }
+
+    [Fact]
+    public void LoadConfig_UnusableRepoFormat_StopsTheRun()
+    {
+        File.WriteAllText(_testConfigPath, @"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: plsit
+");
+
+        var ex = Assert.Throws<ConfigurationRefusedException>(() => _service.LoadConfig(_testConfigPath));
+
+        Assert.Contains("plsit", ex.Message);
+    }
+
+    [Fact]
+    public void RequireKnownRepoFormat_UnusableValue_StopsTheRun()
+    {
+        var config = new CimianConfig { RepoFormat = "plsit" };
+
+        var ex = Assert.Throws<ConfigurationRefusedException>(
+            () => ConfigurationService.RequireKnownRepoFormat(config, "Config.yaml"));
+
+        Assert.Contains("plsit", ex.Message);
     }
 
     #endregion

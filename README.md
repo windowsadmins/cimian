@@ -338,6 +338,7 @@ Cimian uses a YAML-based configuration system located at `C:\ProgramData\Managed
 ```yaml
 # Basic Configuration
 software_repo_url: https://cimian.yourdomain.com/
+RepoFormat: yaml
 client_identifier: MyComputer-01
 force_basic_auth: false
 default_arch: x64
@@ -368,6 +369,12 @@ use_tls_verification: true
 proxy_server: ""
 custom_user_agent: "Cimian/1.0"
 ```
+
+### Repository Format
+
+A client can read a repository kept as XML plists in Munki's layout: catalogs and manifests without an extension, a catalog as a bare array, with the same keys as the YAML form. YAML stays the default. Such a repository is served by a Munki-style repository server; no Cimian tool writes one yet.
+
+- **`RepoFormat`** (client, optional): `yaml` or `plist`. Without the key the client reads YAML. With `plist`, `managedsoftwareupdate` requests `catalogs/<name>` and `manifests/<name>` without `.yaml`. An included manifest is asked for by its exact name, as Munki does. Downloaded plists are converted to YAML before they are cached, so the cache stays YAML and the reports read it as before; Config.yaml and InstallInfo.yaml are YAML in either case. A catalog or manifest in the other form than `RepoFormat` names is refused, with a message that names the setting. Any other value stops the run with an error that names it; `--show-config` shows the form in use.
 
 ### Configuration Management
 
