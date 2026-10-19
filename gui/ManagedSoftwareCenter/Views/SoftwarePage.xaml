@@ -124,10 +124,11 @@
                 <Border x:Name="HeroBanner"
                         Grid.Column="0"
                         CornerRadius="12"
-                        Margin="0,0,12,0">
+                        Margin="0,0,12,0"
+                        Tapped="HeroBanner_Tapped">
                     <Grid>
-                        <!-- Gradient background (fallback when no image) -->
-                        <Border CornerRadius="12">
+                        <!-- Gradient background (fallback when no image); follows the branded accent -->
+                        <Border x:Name="HeroGradientBorder" CornerRadius="12">
                             <Border.Background>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                     <GradientStop Color="#1a5fb4" Offset="0"/>
@@ -137,11 +138,8 @@
                         </Border>
                         
                         <!-- Carousel images container -->
-                        <Grid x:Name="CarouselContainer">
-                            <Image x:Name="BannerImage1" Stretch="UniformToFill" Opacity="1" />
-                            <Image x:Name="BannerImage2" Stretch="UniformToFill" Opacity="0" />
-                            <Image x:Name="BannerImage3" Stretch="UniformToFill" Opacity="0" />
-                        </Grid>
+                        <!-- Slides are added in code from branding.yaml banners or branding* images -->
+                        <Grid x:Name="CarouselContainer" />
                         
                         <!-- Banner content overlay (text from branding.yaml / CSP BannerTitle) -->
                         <StackPanel x:Name="HeroTitlePanel"
@@ -161,9 +159,6 @@
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Bottom"
                                     Margin="0,0,0,16">
-                            <Ellipse x:Name="Indicator1" Width="8" Height="8" Fill="White" Margin="4,0" Opacity="1" />
-                            <Ellipse x:Name="Indicator2" Width="8" Height="8" Fill="White" Margin="4,0" Opacity="0.5" />
-                            <Ellipse x:Name="Indicator3" Width="8" Height="8" Fill="White" Margin="4,0" Opacity="0.5" />
                         </StackPanel>
                     </Grid>
                 </Border>

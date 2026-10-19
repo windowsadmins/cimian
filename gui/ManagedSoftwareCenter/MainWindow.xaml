@@ -25,10 +25,21 @@
               Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
+            <!-- Branding logo (branding.yaml logo / Policies\Cimian Logo) -->
+            <Image x:Name="AppTitleLogo"
+                   Grid.Column="0"
+                   Height="20"
+                   MaxWidth="120"
+                   Stretch="Uniform"
+                   VerticalAlignment="Center"
+                   Margin="16,0,0,0"
+                   Visibility="Collapsed"
+                   AutomationProperties.AccessibilityView="Raw"/>
             <TextBlock x:Name="AppTitleText"
-                       Grid.Column="0"
+                       Grid.Column="1"
                        Text="Managed Software Center"
                        Style="{StaticResource CaptionTextBlockStyle}"
                        VerticalAlignment="Center"

@@ -10,6 +10,8 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
+using Cimian.Core.Branding;
+using Microsoft.UI.Xaml.Automation;
 using Cimian.GUI.ManagedSoftwareCenter.Models;
 using Cimian.GUI.ManagedSoftwareCenter.Services;
 using Cimian.GUI.ManagedSoftwareCenter.ViewModels;
@@ -27,30 +29,16 @@ public partial class SoftwarePage : Page
     // Carousel state
     private readonly DispatcherTimer _carouselTimer;
     private int _currentSlide = 0;
-    private readonly Image[] _bannerImages = new Image[3];
-    private readonly Ellipse[] _indicators = new Ellipse[3];
-    private readonly List<string> _brandingImagePaths = new();
+    private readonly List<Image> _bannerImages = new();
+    private readonly List<Ellipse> _indicators = new();
+    private IReadOnlyList<ResolvedBanner> _banners = [];
     private string? _selectedCategory;
-    
-    // Branding paths (like Munki's WebResources)
-    private static readonly string[] BrandingSearchPaths = new[]
-    {
-        @"C:\ProgramData\ManagedInstalls\branding"
-    };
 
     public SoftwarePage()
     {
         ViewModel = App.GetService<SoftwareViewModel>();
         InitializeComponent();
         DataContext = ViewModel;
-        
-        // Initialize carousel references
-        _bannerImages[0] = BannerImage1;
-        _bannerImages[1] = BannerImage2;
-        _bannerImages[2] = BannerImage3;
-        _indicators[0] = Indicator1;
-        _indicators[1] = Indicator2;
-        _indicators[2] = Indicator3;
         
         // Setup carousel timer (7.5 seconds like Munki)
         _carouselTimer = new DispatcherTimer
@@ -66,15 +54,11 @@ public partial class SoftwarePage : Page
         {
             try
             {
-                // Load branding images first
-                LoadBrandingImages();
-
-                // Resolve hero title from branding.yaml / Policies\Cimian BannerTitle.
-                // LoadAsync is safe to call again (singleton); do not wait on MainWindow.
-                await ApplyBannerTitleAsync();
+                // Resolve hero title, accent and banners from branding.yaml / Policies\Cimian.
+                await ApplyBrandingAsync();
                 
                 // Start carousel if we have images
-                if (_brandingImagePaths.Count > 1)
+                if (_banners.Count > 1)
                 {
                     _carouselTimer.Start();
                 }
@@ -142,86 +126,104 @@ public partial class SoftwarePage : Page
     #region Branding Images & Carousel
 
     /// <summary>
-    /// Applies the resolved hero banner title (default / app_title / banner_title).
-    /// Blank resolved title collapses the overlay so a custom image can stand alone.
+    /// Applies the hero title (default / app_title / banner_title), the accent gradient
+    /// behind it, and the banner slides. A blank title collapses the overlay so a custom
+    /// image can stand alone.
     /// </summary>
-    private async Task ApplyBannerTitleAsync()
+    private async Task ApplyBrandingAsync()
     {
         var branding = App.GetService<IBrandingService>();
-        await branding.LoadAsync();
+        var current = branding.Reload();
 
-        HeroTitleText.Text = branding.ResolvedBannerTitle;
-        var visibility = branding.ShowBannerTitle ? Visibility.Visible : Visibility.Collapsed;
+        HeroTitleText.Text = current.BannerTitle;
+        var visibility = current.ShowBannerTitle ? Visibility.Visible : Visibility.Collapsed;
         HeroTitleText.Visibility = visibility;
         HeroTitlePanel.Visibility = visibility;
+
+        if (BrandingTheme.HeroGradient(current.Accent) is { } gradient)
+            HeroGradientBorder.Background = gradient;
+
+        await LoadBannersAsync(branding, current.Banners);
     }
 
-    private void LoadBrandingImages()
+    /// <summary>
+    /// Builds one slide per banner, as Munki's showcase does. Slides with a link make the
+    /// banner clickable while they are showing.
+    /// </summary>
+    private async Task LoadBannersAsync(IBrandingService branding, IReadOnlyList<ResolvedBanner> banners)
     {
-        _brandingImagePaths.Clear();
-        
-        // Search for branding images in known paths
-        foreach (var basePath in BrandingSearchPaths)
+        CarouselContainer.Children.Clear();
+        CarouselIndicators.Children.Clear();
+        _bannerImages.Clear();
+        _indicators.Clear();
+        _currentSlide = 0;
+
+        var loaded = new List<ResolvedBanner>();
+        foreach (var banner in banners)
         {
-            if (!Directory.Exists(basePath)) continue;
-            
-            // Look for branding*.jpg, branding*.png
-            var imageFiles = Directory.GetFiles(basePath, "branding*.*")
-                .Where(f => f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                           f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
-                           f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(f => f)
-                .Take(3)
-                .ToList();
-            
-            if (imageFiles.Count > 0)
+            var bitmap = await branding.LoadImageAsync(banner.ImagePath);
+            if (bitmap == null)
             {
-                _brandingImagePaths.AddRange(imageFiles);
-                break; // Use first directory that has images
+                System.Diagnostics.Debug.WriteLine($"Failed to load branding image: {banner.ImagePath}");
+                continue;
             }
-        }
-        
-        // Load images into Image controls
-        for (int i = 0; i < _bannerImages.Length; i++)
-        {
-            if (i < _brandingImagePaths.Count)
+
+            var index = loaded.Count;
+            var image = new Image
             {
-                try
-                {
-                    var bitmap = new BitmapImage(new Uri(_brandingImagePaths[i], UriKind.Absolute));
-                    _bannerImages[i].Source = bitmap;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Failed to load branding image: {ex.Message}");
-                }
-            }
+                Source = bitmap,
+                Stretch = Stretch.UniformToFill,
+                Opacity = index == 0 ? 1 : 0,
+            };
+            AutomationProperties.SetName(image, banner.Link != null
+                ? $"Banner {index + 1}, opens {banner.Link.Uri}"
+                : $"Banner {index + 1}");
+            CarouselContainer.Children.Add(image);
+            _bannerImages.Add(image);
+
+            var dot = new Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = new SolidColorBrush(Microsoft.UI.Colors.White),
+                Margin = new Thickness(4, 0, 4, 0),
+            };
+            dot.Tapped += (_, e) =>
+            {
+                e.Handled = true;
+                ShowSlide(index);
+            };
+            CarouselIndicators.Children.Add(dot);
+            _indicators.Add(dot);
+
+            loaded.Add(banner);
         }
-        
-        // Update indicator visibility based on image count
+
+        _banners = loaded;
         UpdateCarouselIndicators();
-        
-        System.Diagnostics.Debug.WriteLine($"Loaded {_brandingImagePaths.Count} branding images");
+        System.Diagnostics.Debug.WriteLine($"Loaded {_banners.Count} branding images");
     }
 
     private void CarouselTimer_Tick(object? sender, object e)
     {
-        if (_brandingImagePaths.Count < 2) return;
-        
-        // Calculate next slide
-        int nextSlide = (_currentSlide + 1) % Math.Min(_brandingImagePaths.Count, 3);
-        
-        // Animate transition
-        AnimateToSlide(nextSlide);
-        
-        _currentSlide = nextSlide;
+        if (_banners.Count < 2) return;
+        AnimateToSlide((_currentSlide + 1) % _banners.Count);
+    }
+
+    /// <summary>Jumps to a slide and restarts the timer, so a chosen slide stays up.</summary>
+    private void ShowSlide(int index)
+    {
+        if (index < 0 || index >= _banners.Count || index == _currentSlide) return;
+        _carouselTimer.Stop();
+        AnimateToSlide(index);
+        if (_banners.Count > 1) _carouselTimer.Start();
     }
 
     private void AnimateToSlide(int slideIndex)
     {
         var duration = TimeSpan.FromMilliseconds(500);
         
-        for (int i = 0; i < _bannerImages.Length; i++)
+        for (int i = 0; i < _bannerImages.Count; i++)
         {
             var targetOpacity = (i == slideIndex) ? 1.0 : 0.0;
             var storyboard = new Storyboard();
@@ -236,21 +238,42 @@ public partial class SoftwarePage : Page
             storyboard.Children.Add(animation);
             storyboard.Begin();
         }
-        
+
+        _currentSlide = slideIndex;
         UpdateCarouselIndicators();
     }
 
     private void UpdateCarouselIndicators()
     {
-        int imageCount = Math.Min(_brandingImagePaths.Count, 3);
-        
         // Hide indicators if only one image or none
-        CarouselIndicators.Visibility = imageCount > 1 ? Visibility.Visible : Visibility.Collapsed;
+        CarouselIndicators.Visibility = _banners.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         
-        for (int i = 0; i < _indicators.Length; i++)
+        for (int i = 0; i < _indicators.Count; i++)
         {
-            _indicators[i].Visibility = i < imageCount ? Visibility.Visible : Visibility.Collapsed;
             _indicators[i].Opacity = (i == _currentSlide) ? 1.0 : 0.5;
+        }
+    }
+
+    /// <summary>
+    /// Opens the showing slide's link: cimian:// (or a translated munki://) navigates inside
+    /// the app, http(s) opens the default browser.
+    /// </summary>
+    private async void HeroBanner_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (_currentSlide >= _banners.Count || _banners[_currentSlide].Link is not { } link)
+            return;
+
+        e.Handled = true;
+        try
+        {
+            if (link.Kind == BrandingLinkKind.Internal)
+                App.HandleProtocolActivation(link.Uri);
+            else
+                await Windows.System.Launcher.LaunchUriAsync(link.Uri);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to open banner link {link.Uri}: {ex.Message}");
         }
     }
 

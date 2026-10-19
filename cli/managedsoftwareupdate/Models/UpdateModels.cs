@@ -14,6 +14,20 @@ public class CimianConfig
     [YamlMember(Alias = "ClientIdentifier")]
     public string ClientIdentifier { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Where client_resources zips are downloaded from, as in Munki's setting of the same
+    /// name. Unset means <c>SoftwareRepoURL/client_resources</c>.
+    /// </summary>
+    [YamlMember(Alias = "ClientResourceURL")]
+    public string? ClientResourceURL { get; set; }
+
+    /// <summary>
+    /// The client_resources zip to use ahead of the identity-based names, as in Munki's
+    /// setting of the same name. <c>.zip</c> is added when it has no extension.
+    /// </summary>
+    [YamlMember(Alias = "ClientResourcesFilename")]
+    public string? ClientResourcesFilename { get; set; }
+
     [YamlMember(Alias = "CachePath")]
     public string CachePath { get; set; } = CimianPaths.CacheDir;
 

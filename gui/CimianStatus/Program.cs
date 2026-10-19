@@ -81,6 +81,7 @@ namespace Cimian.Status
             // This must happen before creating any Window, otherwise XAML resources won't be available
             var app = new App();
             app.InitializeComponent();
+            app.ApplyBranding();
             
             // Now set the main window from DI container (after App.xaml resources are loaded)
             app.MainWindow = host.Services.GetRequiredService<MainWindow>();

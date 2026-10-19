@@ -40,6 +40,10 @@ public partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
+        // Title and icon come from branding before the window is shown, so the taskbar
+        // never flashes the default name or icon.
+        ApplyWindowIdentity(App.GetService<IBrandingService>().Current);
+
         // Set window size (capped to the work area) and center on screen
         var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
@@ -267,7 +271,29 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Loads and applies custom client branding (app title, sidebar header image).
+    /// Window title, title-bar text and taskbar icon. The icon is the branded
+    /// app_icon (.ico) when one is set, else the app's own.
+    /// </summary>
+    private void ApplyWindowIdentity(Cimian.Core.Branding.MscBranding branding)
+    {
+        Title = branding.WindowTitle;
+        AppTitleText.Text = branding.WindowTitle;
+
+        var icon = branding.AppIconPath
+                   ?? Path.Combine(AppContext.BaseDirectory, "Assets", "msc.ico");
+        try
+        {
+            if (File.Exists(icon))
+                AppWindow.SetIcon(icon);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to set window icon {icon}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Loads and applies custom client branding (title, logo, sidebar header image).
     /// </summary>
     private async Task ApplyBrandingAsync()
     {
@@ -276,17 +302,15 @@ public partial class MainWindow : Window
 
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!string.IsNullOrEmpty(branding.AppTitle))
-            {
-                Title = branding.AppTitle;
-                AppTitleText.Text = branding.AppTitle;
-            }
+            ApplyWindowIdentity(branding.Current);
 
-            if (branding.SidebarHeaderImage != null)
-            {
-                SidebarHeaderImage.Source = branding.SidebarHeaderImage;
-                SidebarHeaderImage.Visibility = Visibility.Visible;
-            }
+            AppTitleLogo.Source = branding.LogoImage;
+            AppTitleLogo.Visibility = branding.LogoImage != null ? Visibility.Visible : Visibility.Collapsed;
+
+            SidebarHeaderImage.Source = branding.SidebarHeaderImage;
+            SidebarHeaderImage.Visibility = branding.SidebarHeaderImage != null
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         });
     }
 

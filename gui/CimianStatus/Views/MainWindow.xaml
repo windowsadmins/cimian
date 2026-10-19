@@ -98,13 +98,14 @@
                     HorizontalAlignment="Left"
                     VerticalAlignment="Center">
                 <Border.Effect>
-                    <DropShadowEffect Color="{StaticResource AccentColor}" 
+                    <DropShadowEffect Color="{DynamicResource AccentColor}" 
                                     Direction="270" 
                                     ShadowDepth="0" 
                                     BlurRadius="12" 
                                     Opacity="0.3"/>
                 </Border.Effect>
-                <Image Source="../Assets/cimian.png" 
+                <Image x:Name="LogoImage"
+                       Source="../Assets/cimian.png" 
                        Width="64" Height="64"
                        RenderOptions.BitmapScalingMode="HighQuality"/>
             </Border>
