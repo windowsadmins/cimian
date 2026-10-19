@@ -233,6 +233,74 @@ RepoFormat: plist
         Assert.Equal(RepoFormat.Plist, config.RepositoryFormat);
     }
 
+    [Theory]
+    [InlineData("YAML")]
+    [InlineData("yaml")]
+    public void LoadConfig_RepoFormat_AcceptsAnyCase(string repoFormat)
+    {
+        File.WriteAllText(_testConfigPath, $@"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: {repoFormat}
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(repoFormat, config.RepoFormat);
+        Assert.Equal(RepoFormat.Yaml, config.RepositoryFormat);
+    }
+
+    [Fact]
+    public void LoadConfig_MissingRepoFormat_ReadsTheKeyAsYaml()
+    {
+        File.WriteAllText(_testConfigPath, @"
+SoftwareRepoURL: https://test.example.com
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Null(config.RepoFormat);
+        Assert.Equal(RepoFormat.Yaml, config.RepositoryFormat);
+    }
+
+    [Theory]
+    [InlineData("\"\"")]
+    [InlineData("\"  \"")]
+    public void LoadConfig_BlankRepoFormat_ReadsTheKeyAsYaml(string repoFormat)
+    {
+        File.WriteAllText(_testConfigPath, $@"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: {repoFormat}
+");
+
+        var config = _service.LoadConfig(_testConfigPath);
+
+        Assert.Equal(RepoFormat.Yaml, config.RepositoryFormat);
+    }
+
+    [Fact]
+    public void LoadConfig_UnusableRepoFormat_StopsTheRun()
+    {
+        File.WriteAllText(_testConfigPath, @"
+SoftwareRepoURL: https://test.example.com
+RepoFormat: plsit
+");
+
+        var ex = Assert.Throws<ConfigurationRefusedException>(() => _service.LoadConfig(_testConfigPath));
+
+        Assert.Contains("plsit", ex.Message);
+    }
+
+    [Fact]
+    public void RequireKnownRepoFormat_UnusableValue_StopsTheRun()
+    {
+        var config = new CimianConfig { RepoFormat = "plsit" };
+
+        var ex = Assert.Throws<ConfigurationRefusedException>(
+            () => ConfigurationService.RequireKnownRepoFormat(config, "Config.yaml"));
+
+        Assert.Contains("plsit", ex.Message);
+    }
+
     #endregion
 
     #region GetDefaultConfig Tests
@@ -409,23 +477,6 @@ RepoFormat: plist
         var errors = _service.ValidateConfig(config);
 
         Assert.Contains(errors, e => e.Contains("InstallerTimeout"));
-    }
-
-    private static CimianConfig ConfigWithRepoFormat(string? repoFormat) => new() { RepoFormat = repoFormat };
-
-    [Fact]
-    public void ValidateConfig_UnusableRepoFormat_ReportsErrorAndReadsAsYaml()
-    {
-        Assert.Equal(RepoFormat.Yaml, ConfigWithRepoFormat(null).RepositoryFormat);
-        Assert.Equal(RepoFormat.Plist, ConfigWithRepoFormat(" Plist ").RepositoryFormat);
-        Assert.Null(ConfigWithRepoFormat("plist").RepoFormatProblem);
-
-        var typo = ConfigWithRepoFormat("plists");
-        Assert.NotNull(typo.RepoFormatProblem);
-        Assert.Equal(RepoFormat.Yaml, typo.RepositoryFormat);
-
-        var errors = _service.ValidateConfig(typo);
-        Assert.Contains(errors, e => e.StartsWith("RepoFormat"));
     }
 
     #endregion

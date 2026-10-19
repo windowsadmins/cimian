@@ -24,44 +24,16 @@ public class CimianConfig
     public string? RepoFormat { get; set; }
 
     /// <summary>
-    /// <see cref="RepoFormat"/> as an enum value: Yaml or Plist. Any other value is read as
-    /// YAML, with a warning in the run log, so a typo does not end a run half way.
+    /// <see cref="RepoFormat"/> as an enum value: Yaml or Plist. The value is checked
+    /// when the configuration loads, so an unknown one never reaches a run.
     /// </summary>
     [YamlIgnore]
     public Cimian.Core.Services.RepoFormat RepositoryFormat
-        => RepoFormatProblem == null ? Cimian.Core.Services.RepoFormatParser.Parse(RepoFormat) : Cimian.Core.Services.RepoFormat.Yaml;
+        => Cimian.Core.Services.RepoFormatParser.Parse(RepoFormat);
 
-    /// <summary>Why <see cref="RepoFormat"/> is not usable, or null when it is.</summary>
-    [YamlIgnore]
-    public string? RepoFormatProblem
-    {
-        get
-        {
-            try
-            {
-                Cimian.Core.Services.RepoFormatParser.Parse(RepoFormat);
-                return null;
-            }
-            catch (ArgumentException)
-            {
-                return $"RepoFormat '{RepoFormat}' is not yaml or plist";
-            }
-        }
-    }
-
-    /// <summary>
-    /// The warning a run logs for an unusable <see cref="RepoFormat"/>, or null. Without it a
-    /// typo would only show as missing catalogs and manifests.
-    /// </summary>
-    [YamlIgnore]
-    internal string? RepoFormatWarning
-        => RepoFormatProblem is { } problem ? $"{problem}: reading the repository as YAML" : null;
-
-    /// <summary>The RepoFormat line of --show-config: the form in use, and why when it is not the value given.</summary>
+    /// <summary>The RepoFormat line of --show-config: the form in use.</summary>
     internal string DescribeRepoFormat()
     {
-        if (RepoFormatProblem != null)
-            return $"yaml ('{RepoFormat}' is not yaml or plist)";
         if (string.IsNullOrWhiteSpace(RepoFormat))
             return "yaml (not set)";
         return Cimian.Core.Services.RepoFormatParser.Name(RepositoryFormat);

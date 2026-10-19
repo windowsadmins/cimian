@@ -325,12 +325,60 @@ public class YamlUtilsTests
         Assert.Same(YamlUtils.Deserializer, YamlUtils.Deserializer);
     }
 
-    // ─── Plist format: Deserialize* read a plist ─────
+    // ─── Plist format: the configured form decides, not the content ──────
+
+    [Fact]
+    public void AsYaml_PlistInPlistForm_ConvertsThePlist()
+    {
+        var plist = PlistUtilsTests.Plist(PlistUtilsTests.PkgInfoPlistBody);
+        var yaml = YamlUtils.AsYaml(plist, RepoFileKind.PkgInfo, RepoFormat.Plist);
+
+        Assert.Contains("name: ExampleApp", yaml);
+        Assert.Contains("display_name: Example App", yaml);
+    }
+
+    [Fact]
+    public void AsYaml_YamlInYamlForm_IsReturnedUnchanged()
+    {
+        const string yaml = "name: Foo\nversion: '1.0'\n";
+        var text = YamlUtils.AsYaml(yaml, RepoFileKind.PkgInfo, RepoFormat.Yaml);
+
+        Assert.Equal(yaml, text);
+    }
+
+    [Fact]
+    public void AsYaml_PlistInYamlForm_IsRefused()
+    {
+        var plist = PlistUtilsTests.Plist(PlistUtilsTests.PkgInfoPlistBody);
+
+        var ex = Assert.Throws<InvalidDataException>(
+            () => YamlUtils.AsYaml(plist, RepoFileKind.PkgInfo, RepoFormat.Yaml));
+        Assert.Equal("The file is a plist, but RepoFormat is yaml", ex.Message);
+    }
+
+    [Fact]
+    public void AsYaml_YamlInPlistForm_IsRefused()
+    {
+        const string yaml = "name: Foo\nversion: '1.0'\n";
+
+        var ex = Assert.Throws<InvalidDataException>(
+            () => YamlUtils.AsYaml(yaml, RepoFileKind.PkgInfo, RepoFormat.Plist));
+        Assert.Equal("The file is not an XML plist, but RepoFormat is plist", ex.Message);
+    }
+
+    [Fact]
+    public void AsYaml_BinaryPlistInYamlForm_IsRefused()
+    {
+        var ex = Assert.Throws<InvalidDataException>(
+            () => YamlUtils.AsYaml("bplist00\u0000\u0001", RepoFileKind.Manifest, RepoFormat.Yaml));
+        Assert.Equal("The file is a plist, but RepoFormat is yaml", ex.Message);
+    }
 
     [Fact]
     public void AsYaml_BinaryPlist_ThrowsWithItsOwnMessage()
     {
-        var ex = Assert.Throws<PlistFormatException>(() => YamlUtils.AsYaml("bplist00\u0000\u0001", RepoFileKind.Manifest));
+        var ex = Assert.Throws<PlistFormatException>(
+            () => YamlUtils.AsYaml("bplist00\u0000\u0001", RepoFileKind.Manifest, RepoFormat.Plist));
         Assert.Contains("binary plist", ex.Message);
     }
 
@@ -338,13 +386,14 @@ public class YamlUtilsTests
     public void DeserializePkgInfo_Plist_ConvertsBeforeBinding()
     {
         var plist = PlistUtilsTests.Plist(PlistUtilsTests.PkgInfoPlistBody);
-        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(plist);
+        var yaml = YamlUtils.AsYaml(plist, RepoFileKind.PkgInfo, RepoFormat.Plist);
+        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(yaml);
 
         Assert.Equal("ExampleApp", pkg!.Name);
         Assert.Equal("1.10", pkg.Version);
         Assert.Equal("$x = 1\nif ($x -eq 1) { exit 0 }\nexit 1\n", pkg.InstallCheckScript);
         Assert.Equal("tester", pkg.Metadata!["created_by"]?.ToString());
-        Assert.Equal("tester", YamlUtils.ExtractMetadataBlock(plist)!["created_by"]?.ToString());
+        Assert.Equal("tester", YamlUtils.ExtractMetadataBlock(yaml)!["created_by"]?.ToString());
     }
 
     [Fact]
@@ -361,7 +410,8 @@ public class YamlUtilsTests
     public void DeserializePkgInfo_RealUnderVersion_ReadsAsText()
     {
         var plist = PlistUtilsTests.Header + "<plist version=\"1.0\"><dict><key>name</key><string>A</string><key>version</key><real>1.10</real></dict></plist>\n";
-        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(plist)!;
+        var yaml = YamlUtils.AsYaml(plist, RepoFileKind.PkgInfo, RepoFormat.Plist);
+        var pkg = YamlUtils.DeserializePkgInfo<PkgsInfo>(yaml)!;
         Assert.Equal("1.10", pkg.Version);
     }
 
@@ -381,7 +431,8 @@ public class YamlUtilsTests
                 </dict></array>
             </dict>
             """;
-        var manifest = YamlUtils.DeserializeManifest<ClientModels.ManifestFile>(PlistUtilsTests.Plist(body));
+        var manifestYaml = YamlUtils.AsYaml(PlistUtilsTests.Plist(body), RepoFileKind.Manifest, RepoFormat.Plist);
+        var manifest = YamlUtils.DeserializeManifest<ClientModels.ManifestFile>(manifestYaml);
 
         Assert.NotNull(manifest);
         Assert.Equal(new List<string> { "7zip", "vlc" }, manifest!.ManagedInstalls);
@@ -393,14 +444,18 @@ public class YamlUtilsTests
     [Fact]
     public void DeserializeCatalog_PlistBareArray_ReadsTheItems()
     {
-        var catalog = YamlUtils.DeserializeCatalog<ClientModels.CatalogWrapper>(PlistUtilsTests.Plist("<array><dict><key>name</key><string>A</string></dict></array>"));
+        var plist = PlistUtilsTests.Plist("<array><dict><key>name</key><string>A</string></dict></array>");
+        var yaml = YamlUtils.AsYaml(plist, RepoFileKind.Catalog, RepoFormat.Plist);
+        var catalog = YamlUtils.DeserializeCatalog<ClientModels.CatalogWrapper>(yaml);
         Assert.Equal("A", Assert.Single(catalog!.Items).Name);
     }
 
     [Fact]
-    public void DeserializeManifest_PlistThatIsAnArray_Throws()
+    public void AsYaml_ManifestPlistThatIsAnArray_Throws()
     {
-        Assert.Throws<PlistFormatException>(() => YamlUtils.DeserializeManifest<ClientModels.ManifestFile>(PlistUtilsTests.Plist("<array/>")));
+        var ex = Assert.Throws<PlistFormatException>(() => YamlUtils.AsYaml(
+            PlistUtilsTests.Plist("<array/>"), RepoFileKind.Manifest, RepoFormat.Plist));
+        Assert.Contains("must hold a dictionary", ex.Message);
     }
 
     // ─── Round-trip stability on real deployment fixtures ──────────────────

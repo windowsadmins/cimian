@@ -72,8 +72,8 @@ public class ManifestServiceRepoFormatTests : IDisposable
     {
         var pc = ManifestPlist(new[] { "A" }, includes: new[] { "Core", "groups/Lab", "sub-manifest.12.staff" });
         var core = ManifestPlist(new[] { "B" }, catalogs: new[] { "Production", "Testing" });
-        var lab = "managed_installs:\n- C\n";   // a YAML answer on a plist address is read too
         var staff = ManifestPlist(new[] { "D" });
+        var lab = ManifestPlist(new[] { "C" });
         var handler = new StubHandler(url =>
             url.EndsWith("/manifests/PC01") ? (HttpStatusCode.OK, pc)
             : url.EndsWith("/manifests/Core") ? (HttpStatusCode.OK, core)
@@ -122,15 +122,16 @@ public class ManifestServiceRepoFormatTests : IDisposable
     }
 
     [Fact]
-    public async Task GetManifestItemsAsync_YamlFormat_RemovesOneSuffixFromIncludesAndAddsYaml()
+    public async Task GetManifestItemsAsync_YamlFormat_RemovesEveryLowerCaseYamlFromIncludes()
     {
-        const string pc = "managed_installs:\n- A\nincluded_manifests:\n- Core.YAML\n- Lab.plist\n- groups\\Win.yaml\n";
+        const string pc = "managed_installs:\n- A\nincluded_manifests:\n- Core.YAML\n- Core.plist\n- groups\\Win.yaml\n- a.yaml.b\n";
 
         var urls = await RequestedUrlsAsync(null, "PC01.yaml", pc);
 
-        Assert.Contains("https://repo.example.test/cimian/manifests/Core.yaml", urls);
-        Assert.Contains("https://repo.example.test/cimian/manifests/Lab.yaml", urls);
+        Assert.Contains("https://repo.example.test/cimian/manifests/Core.YAML.yaml", urls);
+        Assert.Contains("https://repo.example.test/cimian/manifests/Core.plist.yaml", urls);
         Assert.Contains("https://repo.example.test/cimian/manifests/groups/Win.yaml", urls);
+        Assert.Contains("https://repo.example.test/cimian/manifests/a.b.yaml", urls);
     }
 
     [Fact]
@@ -153,5 +154,42 @@ public class ManifestServiceRepoFormatTests : IDisposable
         Assert.Equal(
             new[] { "https://repo.example.test/cimian/manifests/PC01.yaml", "https://repo.example.test/cimian/manifests/Core.yaml" },
             urls);
+    }
+
+    [Fact]
+    public async Task GetManifestItemsAsync_PlistServedToYamlClient_IsNotRead()
+    {
+        var handler = new StubHandler(url =>
+            url.EndsWith("/manifests/PC01.yaml") ? (HttpStatusCode.OK, ManifestPlist(new[] { "A" })) : (HttpStatusCode.NotFound, ""));
+        var config = ClientConfig(null);
+        var service = new ManifestService(config, new HttpClient(handler))
+        {
+            CreateSelfServeManifestService = () => new SelfServiceManifestService(Path.Combine(_tempDir, "SelfServeManifest.yaml")),
+        };
+
+        var items = await service.GetManifestItemsAsync();
+
+        Assert.Empty(items);
+        Assert.Contains("https://repo.example.test/cimian/manifests/PC01.yaml", handler.RequestedUrls);
+        Assert.False(File.Exists(Path.Combine(config.ManifestsPath, "PC01.yaml")));
+    }
+
+    [Fact]
+    public async Task GetManifestItemsAsync_YamlServedToPlistClient_IsNotRead()
+    {
+        const string yaml = "managed_installs:\n- A\n";
+        var handler = new StubHandler(url =>
+            url.EndsWith("/manifests/PC01") ? (HttpStatusCode.OK, yaml) : (HttpStatusCode.NotFound, ""));
+        var config = ClientConfig("plist");
+        var service = new ManifestService(config, new HttpClient(handler))
+        {
+            CreateSelfServeManifestService = () => new SelfServiceManifestService(Path.Combine(_tempDir, "SelfServeManifest.yaml")),
+        };
+
+        var items = await service.GetManifestItemsAsync();
+
+        Assert.Empty(items);
+        Assert.Contains("https://repo.example.test/cimian/manifests/PC01", handler.RequestedUrls);
+        Assert.False(File.Exists(Path.Combine(config.ManifestsPath, "PC01.yaml")));
     }
 }

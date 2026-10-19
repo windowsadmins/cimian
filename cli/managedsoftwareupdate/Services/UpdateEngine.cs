@@ -2680,10 +2680,6 @@ public class UpdateEngine : IDisposable
         LogInfo($"Client Identifier: {_config.ClientIdentifier}");
         LogInfo("================================================================================");
         Log();
-        if (_config.RepoFormatWarning is { } repoFormatWarning)
-        {
-            ConsoleLogger.Warn(repoFormatWarning);
-        }
     }
     
     /// <summary>

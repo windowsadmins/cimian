@@ -147,4 +147,37 @@ public class CatalogServiceRepoFormatTests : IDisposable
         Assert.Equal("https://repo.example.test/cimian/catalogs/Production.yaml", Assert.Single(handler.RequestedUrls));
         Assert.Equal("A", Assert.Single(items).Name);
     }
+
+    [Fact]
+    public async Task DownloadCatalogAsync_PlistServedToYamlClient_FallsBackToTheCachedCopy()
+    {
+        var served = PlistHeader + "<plist version=\"1.0\"><array><dict><key>name</key><string>A</string></dict></array></plist>\n";
+        var handler = new StubHandler(url => url.EndsWith("/catalogs/Production.yaml") ? (HttpStatusCode.OK, served) : (HttpStatusCode.NotFound, ""));
+        var config = ClientConfig(null);
+        var cachePath = Path.Combine(config.CatalogsPath, "Production.yaml");
+        Directory.CreateDirectory(config.CatalogsPath);
+        await File.WriteAllTextAsync(cachePath, "items:\n- name: Z\n  version: '1.0'\n");
+        var cached = await File.ReadAllTextAsync(cachePath);
+
+        var items = await new CatalogService(config, new HttpClient(handler)).DownloadCatalogAsync("Production");
+
+        Assert.Equal("Z", Assert.Single(items).Name);
+        Assert.Equal(cached, await File.ReadAllTextAsync(cachePath));
+    }
+
+    [Fact]
+    public async Task DownloadCatalogAsync_YamlServedToPlistClient_FallsBackToTheCachedCopy()
+    {
+        var handler = new StubHandler(url => url.EndsWith("/catalogs/Production") ? (HttpStatusCode.OK, "items:\n- name: A\n  version: '1.0'\n") : (HttpStatusCode.NotFound, ""));
+        var config = ClientConfig("plist");
+        var cachePath = Path.Combine(config.CatalogsPath, "Production.yaml");
+        Directory.CreateDirectory(config.CatalogsPath);
+        await File.WriteAllTextAsync(cachePath, "items:\n- name: Z\n  version: '1.0'\n");
+        var cached = await File.ReadAllTextAsync(cachePath);
+
+        var items = await new CatalogService(config, new HttpClient(handler)).DownloadCatalogAsync("Production");
+
+        Assert.Equal("Z", Assert.Single(items).Name);
+        Assert.Equal(cached, await File.ReadAllTextAsync(cachePath));
+    }
 }

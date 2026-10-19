@@ -10,7 +10,6 @@ namespace Cimian.Core.Services;
 public static class RepoPaths
 {
     private const string YamlExtension = ".yaml";
-    private const string PlistExtension = ".plist";
 
     /// <summary>name.yaml, or name without an extension for a plist.</summary>
     public static string CatalogFileName(string name, RepoFormat format)
@@ -19,17 +18,4 @@ public static class RepoPaths
     /// <summary>name.yaml, or name without an extension for a plist.</summary>
     public static string ManifestFileName(string name, RepoFormat format)
         => format == RepoFormat.Plist ? name : name + YamlExtension;
-
-    /// <summary>
-    /// The name without one .yaml or .plist suffix, in any letter case. A name
-    /// with neither is returned as it is.
-    /// </summary>
-    public static string StripSuffix(string name)
-    {
-        if (name.EndsWith(YamlExtension, StringComparison.OrdinalIgnoreCase))
-            return name[..^YamlExtension.Length];
-        if (name.EndsWith(PlistExtension, StringComparison.OrdinalIgnoreCase))
-            return name[..^PlistExtension.Length];
-        return name;
-    }
 }

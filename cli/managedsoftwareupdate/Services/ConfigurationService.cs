@@ -165,7 +165,8 @@ public class ConfigurationService
         try
         {
             var config = _deserializer.Deserialize<CimianConfig>(yaml);
-            return ConstrainCachePath(ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig())));
+            return RequireKnownRepoFormat(
+                ConstrainCachePath(ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig()))), path);
         }
         catch (ConfigurationRefusedException)
         {
@@ -245,6 +246,23 @@ public class ConfigurationService
         return config;
     }
 
+    /// <summary>
+    /// A RepoFormat other than yaml or plist stops the run: the client would ask for every
+    /// catalog and manifest in the wrong form, and a warning alone is easy to miss.
+    /// </summary>
+    internal static CimianConfig RequireKnownRepoFormat(CimianConfig config, string path)
+    {
+        try
+        {
+            RepoFormatParser.Parse(config.RepoFormat);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new ConfigurationRefusedException($"Configuration {path}: {ex.Message}");
+        }
+        return config;
+    }
+
     internal CimianConfig LoadConfig(string path, bool requireTrusted)
     {
         if (!File.Exists(path))
@@ -257,17 +275,20 @@ public class ConfigurationService
             return LoadTrustedConfig(path);
         }
 
+        CimianConfig config;
         try
         {
             var yaml = File.ReadAllText(path);
-            var config = _deserializer.Deserialize<CimianConfig>(yaml);
-            return ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig()));
+            config = _deserializer.Deserialize<CimianConfig>(yaml);
         }
         catch (Exception ex)
         {
             ConsoleLogger.Error($"Failed to load configuration from {path}: {ex.Message}");
             return ApplyPolicyOverrides(GetDefaultConfig());
         }
+
+        return RequireKnownRepoFormat(
+            ApplyPolicyOverrides(NormalizePaths(config ?? GetDefaultConfig())), path);
     }
 
     /// <summary>
@@ -361,11 +382,6 @@ public class ConfigurationService
         if (config.InstallerTimeout < 60)
         {
             errors.Add("InstallerTimeout must be at least 60 seconds");
-        }
-
-        if (config.RepoFormatProblem is { } repoFormatProblem)
-        {
-            errors.Add(repoFormatProblem);
         }
 
         return errors;
