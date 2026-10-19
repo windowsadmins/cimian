@@ -62,6 +62,18 @@ try {
         $env:PATH = "$target;$env:PATH"
     }
 
+    # Lock down ManagedInstalls before the watcher starts. Without this it inherits the
+    # ProgramData ACL, which lets any user add files that SYSTEM then trusts. Runs on
+    # every install and upgrade so an existing machine is repaired too.
+    Write-Host "Securing ManagedInstalls permissions..."
+    & (Join-Path $InstallDir "managedsoftwareupdate.exe") --repair-permissions | ForEach-Object { Write-Host "  $_" }
+    if ($LASTEXITCODE -ne 0) {
+        # Not fatal: failing here would roll an upgrade back to a build without these
+        # fixes. CimianWatcher holds every run request until its own repair succeeds,
+        # and each managedsoftwareupdate run repairs again before reading anything.
+        Write-Warning "managedsoftwareupdate --repair-permissions exited $LASTEXITCODE; some items under ManagedInstalls could not be secured. CimianWatcher will hold run requests until a repair succeeds."
+    }
+
     # Install or restart CimianWatcher service. Idempotent across all phases:
     #  - Service missing      -> install + start.
     #  - Service Stopped/etc. -> Start-Service.

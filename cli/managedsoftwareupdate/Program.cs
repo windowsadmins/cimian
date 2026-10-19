@@ -40,9 +40,18 @@ public class Program
         // Parse command line arguments
         var parseResult = Parser.Default.ParseArguments<Options>(processedArgs);
         
-        return await parseResult.MapResult(
-            async (Options opts) => await RunAsync(opts),
-            errors => Task.FromResult(1));
+        try
+        {
+            return await parseResult.MapResult(
+                async (Options opts) => await RunAsync(opts),
+                errors => Task.FromResult(1));
+        }
+        catch (ConfigurationRefusedException ex)
+        {
+            ConsoleLogger.Error(ex.Message);
+            ConsoleLogger.Error("Stopping: managedsoftwareupdate does not run without a trusted, readable configuration.");
+            return 1;
+        }
     }
 
     /// <summary>
@@ -83,6 +92,14 @@ public class Program
 
     private static async Task<int> RunAsync(Options options)
     {
+        // Re-check ManagedInstalls before anything here reads from it (Config.yaml first).
+        // The installer runs the full repair; this shallow pass catches what changed since.
+        // It does nothing unless running as SYSTEM or an elevated administrator.
+        if (!options.RepairPermissions)
+        {
+            ManagedInstallsSecurity.Repair(message => ConsoleLogger.Info($"Permissions: {message}"), deep: false);
+        }
+
         // Handle special flags that exit immediately
         if (options.ShowConfig)
         {
@@ -105,17 +122,17 @@ public class Program
 
         if (options.CacheStatus)
         {
-            return ShowCacheStatus();
+            return WithCacheAccess(ShowCacheStatus);
         }
 
         if (options.ValidateCache)
         {
-            return ValidateCache();
+            return WithCacheAccess(ValidateCache);
         }
 
         if (options.CleanCache)
         {
-            return CleanCache();
+            return WithCacheAccess(CleanCache);
         }
 
         // Handle loop guard flags
@@ -157,6 +174,11 @@ public class Program
         if (options.SelfCheck)
         {
             return SelfCheck();
+        }
+
+        if (options.RepairPermissions)
+        {
+            return RepairPermissions();
         }
 
         // Handle preflight-only: run preflight and exit
@@ -360,6 +382,23 @@ public class Program
         else
         {
             ConsoleLogger.Error("Postflight script failed");
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// Cache\ is open only to SYSTEM and Administrators. Say so plainly rather than
+    /// failing with a stack trace when someone runs a cache command without elevation.
+    /// </summary>
+    private static int WithCacheAccess(Func<int> command)
+    {
+        try
+        {
+            return command();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine("The download cache is readable only by SYSTEM and administrators. Run this from an elevated prompt.");
             return 1;
         }
     }
@@ -667,6 +706,21 @@ public class Program
             ConsoleLogger.Error($"Error restarting service: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// --repair-permissions: run by the installer on every install and upgrade, as SYSTEM or
+    /// an elevated administrator. Walks all of ManagedInstalls and any CachePath outside it;
+    /// see ManagedInstallsSecurity. Exits 1 when something security-critical could not be
+    /// secured.
+    /// </summary>
+    private static int RepairPermissions()
+    {
+        var ok = ManagedInstallsSecurity.Repair(Console.WriteLine, deep: true);
+        Console.WriteLine(ok
+            ? "[repair-permissions] ManagedInstalls permissions are in place"
+            : "[repair-permissions] ManagedInstalls could not be secured; see the ERROR lines above and the Application event log (source Cimian)");
+        return ok ? 0 : 1;
     }
 
     /// <summary>
@@ -1122,6 +1176,9 @@ public class Options
 
     [Option("self-check", Required = false, HelpText = "Verify Cimian installation health and exit (used by the Watchdog scheduled task)")]
     public bool SelfCheck { get; set; }
+
+    [Option("repair-permissions", Required = false, HelpText = "Reset the permissions on ManagedInstalls and exit (run by the installer)")]
+    public bool RepairPermissions { get; set; }
 
     // Cache management flags
     [Option("validate-cache", Required = false, HelpText = "Validate cache integrity and remove corrupt files")]

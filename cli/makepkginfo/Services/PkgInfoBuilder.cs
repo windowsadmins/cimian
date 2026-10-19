@@ -32,7 +32,15 @@ public class PkgInfoBuilder
     /// </summary>
     public CimianConfig LoadConfig(string configPath)
     {
-        var yaml = File.ReadAllText(configPath);
+        string yaml;
+        try
+        {
+            yaml = File.ReadAllText(configPath);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw new UnauthorizedAccessException(Cimian.Core.Services.ManagedInstallsSecurity.ConfigNeedsElevation);
+        }
         return YamlUtils.Deserializer.Deserialize<CimianConfig>(yaml);
     }
 

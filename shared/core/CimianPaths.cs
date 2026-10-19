@@ -43,6 +43,24 @@ public static class CimianPaths
     public static readonly string FactsDir       = Path.Combine(ManagedInstallsRoot, "facts");
     public static readonly string SelfUpdateBackupDir = Path.Combine(ManagedInstallsRoot, "SelfUpdateBackup");
 
+    /// <summary>
+    /// The one folder standard users may add files to: run requests from Managed Software
+    /// Center, cimitrigger and CimianStatus. See <see cref="Services.ManagedInstallsSecurity"/>.
+    /// </summary>
+    public static readonly string TriggersDir    = Path.Combine(ManagedInstallsRoot, "triggers");
+
+    /// <summary>
+    /// Self Service drop files: each signed-in user's choices, taken in and deleted by
+    /// managedsoftwareupdate. Users may add files here and change only their own.
+    /// </summary>
+    public static readonly string SelfServiceDropDir = Path.Combine(ManagedInstallsRoot, "selfservice");
+
+    /// <summary>When SYSTEM first saw each Self Service drop file; see Services.SelfServiceSeenStore.</summary>
+    public static readonly string SelfServiceSeenFile = Path.Combine(ManagedInstallsRoot, "selfservice.seen.json");
+
+    /// <summary>Where a permissions repair moves files it found planted in places SYSTEM executes from.</summary>
+    public static readonly string QuarantineDir  = Path.Combine(ManagedInstallsRoot, "quarantine");
+
     // ── Persisted hardware facts ─────────────────────────────────────────────
     /// <summary>
     /// Last known display adapter identity, keyed by PCI hardware ID. Windows only
@@ -59,6 +77,16 @@ public static class CimianPaths
     public static readonly string BootstrapFlagFile  = Path.Combine(ManagedInstallsRoot, ".cimian.bootstrap");
     public static readonly string HeadlessFlagFile   = Path.Combine(ManagedInstallsRoot, ".cimian.headless");
     public static readonly string SelfUpdateFlagFile = Path.Combine(ManagedInstallsRoot, ".cimian.selfupdate");
+
+    // Run requests from user-context tools go in TriggersDir, one file per request; see
+    // Services.TriggerRequests. The root flag files above are for administrators and SYSTEM.
+
+    // ── Files standard users write ───────────────────────────────────────────
+    /// <summary>Last time CimianStatus ran an update; written in place by the signed-in user.</summary>
+    public static readonly string LastRunTimeFile   = Path.Combine(ManagedInstallsRoot, "LastRunTime.txt");
+
+    /// <summary>Where Managed Software Center logged crashes before it moved to %LOCALAPPDATA%.</summary>
+    public static readonly string LegacyMscCrashLog = Path.Combine(ManagedInstallsRoot, "msc_crash.log");
 
     // ── Log subdirectories ───────────────────────────────────────────────────
     // The logs root holds the dated session tree (logs\YYYY-MM-DD\HHMM\) and nothing

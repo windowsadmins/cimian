@@ -24,6 +24,32 @@ public class FileWatcherServiceTests
     }
 
     [Fact]
+    public void RequestsWait_UntilAPermissionsRepairHasSucceeded()
+    {
+        // Fail closed: whatever installed this build, run requests from users are not
+        // acted on while ManagedInstalls may still be writable by them.
+        var attempts = 0;
+        var repairWorks = false;
+        var service = new FileWatcherService(_mockLogger.Object, _ => { attempts++; return repairWorks; });
+        var start = DateTime.UtcNow;
+
+        Assert.False(service.EnsurePermissions(start));
+        Assert.Equal(1, attempts);
+
+        // Not retried on every 10-second poll.
+        Assert.False(service.EnsurePermissions(start.AddSeconds(10)));
+        Assert.Equal(1, attempts);
+
+        repairWorks = true;
+        Assert.True(service.EnsurePermissions(start.AddMinutes(6)));
+        Assert.Equal(2, attempts);
+
+        // Once secured, requests flow without repairing on every poll.
+        Assert.True(service.EnsurePermissions(start.AddMinutes(7)));
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
     public void Pause_SetsIsPausedFlag()
     {
         _service.Pause();

@@ -63,7 +63,11 @@ public class SelfServeAlwaysProcessedTests : IDisposable
             managed_uninstalls:
               - VLC
             """);
-        var service = new ManifestService(LoadLegacyConfig()) { CreateSelfServeManifestService = () => new Cimian.Core.Services.SelfServiceManifestService(_selfServePath) };
+        var service = new ManifestService(LoadLegacyConfig())
+        {
+            CreateSelfServeManifestService = () => new Cimian.Core.Services.SelfServiceManifestService(_selfServePath),
+            SelfServiceDropDir = Path.Combine(_testDir, "selfservice"),
+        };
         var items = new List<ManifestItem>
         {
             new() { Name = "Firefox", Action = "optional", SourceManifest = "Staff" },

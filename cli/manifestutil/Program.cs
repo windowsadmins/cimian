@@ -191,18 +191,12 @@ class Program
     {
         Console.WriteLine($"Adding package '{packageName}' to self-service manifest...");
 
-        var selfService = new SelfServiceManifestService();
-        var added = selfService.AddToInstalls(packageName);
+        // Same path as Managed Software Center: the request goes to this user's drop file,
+        // and managedsoftwareupdate takes it into the protected self-service manifest.
+        var selfService = Cimian.Core.Services.SelfServiceManifestService.ForSignedInUser();
+        selfService.AddInstallRequestAsync(packageName).GetAwaiter().GetResult();
 
-        if (added)
-        {
-            Console.WriteLine($"Successfully added '{packageName}' to self-service manifest");
-        }
-        else
-        {
-            Console.WriteLine($"Package '{packageName}' is already in self-service manifest");
-        }
-
+        Console.WriteLine($"Requested '{packageName}'");
         Console.WriteLine("Package will be processed on next 'managedsoftwareupdate' run.");
         return 0;
     }
@@ -211,18 +205,11 @@ class Program
     {
         Console.WriteLine($"Removing package '{packageName}' from self-service manifest...");
 
-        var selfService = new SelfServiceManifestService();
-        var removed = selfService.RemoveFromInstalls(packageName);
+        var selfService = Cimian.Core.Services.SelfServiceManifestService.ForSignedInUser();
+        selfService.RemoveRequestAsync(packageName).GetAwaiter().GetResult();
 
-        if (removed)
-        {
-            Console.WriteLine($"Successfully removed '{packageName}' from self-service manifest");
-        }
-        else
-        {
-            Console.WriteLine($"Package '{packageName}' was not in self-service manifest");
-        }
-
+        Console.WriteLine($"Withdrew the request for '{packageName}'");
+        Console.WriteLine("This takes effect on next 'managedsoftwareupdate' run.");
         return 0;
     }
 

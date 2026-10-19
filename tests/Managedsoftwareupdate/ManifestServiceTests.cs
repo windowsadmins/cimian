@@ -6,6 +6,7 @@ using Xunit;
 using Cimian.CLI.managedsoftwareupdate.Models;
 using Cimian.CLI.managedsoftwareupdate.Services;
 using Cimian.Core;
+using Cimian.Core.Services;
 
 namespace Cimian.Tests.Managedsoftwareupdate;
 
@@ -289,6 +290,119 @@ public class ManifestServiceTests
             u => u.Contains("/manifests/Orphaned.yaml", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(handler.RequestedUrls,
             u => u.Contains("/manifests/site_default.yaml", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_IgnoresInstallRequestForItemNotOfferedAsOptional()
+    {
+        var service = CreateService();
+        var items = new List<ManifestItem>
+        {
+            new() { Name = "Firefox", Action = "optional", SourceManifest = "Staff" },
+        };
+        var selfServe = new SelfServiceManifest { ManagedInstalls = ["AdminOnlyTool"] };
+
+        service.MergeSelfServeInto(items, selfServe);
+
+        Assert.DoesNotContain(items, i => string.Equals(i.Name, "AdminOnlyTool", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("optional", Assert.Single(items).Action);
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_PromotesOfferedOptionalToInstall()
+    {
+        var service = CreateService();
+        var items = new List<ManifestItem>
+        {
+            new() { Name = "Firefox", Action = "optional", SourceManifest = "Staff" },
+        };
+        var selfServe = new SelfServiceManifest { ManagedInstalls = ["firefox"] };
+
+        service.MergeSelfServeInto(items, selfServe);
+
+        var entry = Assert.Single(items);
+        Assert.Equal("install", entry.Action);
+        Assert.True(entry.IsSelfServe);
+        Assert.Equal("Staff", entry.SourceManifest);
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_IgnoresInstallRequestForUpdateOnlyItem()
+    {
+        var service = CreateService();
+        var items = new List<ManifestItem>
+        {
+            new() { Name = "Zoom", Action = "update", SourceManifest = "Staff" },
+        };
+        var selfServe = new SelfServiceManifest { ManagedInstalls = ["Zoom"] };
+
+        service.MergeSelfServeInto(items, selfServe);
+
+        var entry = Assert.Single(items);
+        Assert.Equal("update", entry.Action);
+        Assert.False(entry.IsSelfServe);
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_RemovalOfAnOfferedOptional_IsPassedOnForTheEngineToCheck()
+    {
+        var service = CreateService();
+        var items = new List<ManifestItem>
+        {
+            new() { Name = "Firefox", Action = "optional", SourceManifest = "Staff" },
+        };
+
+        service.MergeSelfServeInto(items, new SelfServiceManifest { ManagedUninstalls = ["Firefox"] });
+
+        var entry = items.Single(i => i.Name == "Firefox");
+        Assert.Equal("uninstall", entry.Action);
+        Assert.True(entry.IsSelfServeRemoval);
+        Assert.Empty(service.RefusedSelfServeRemovals);
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_RemovalOfAnItemNotOffered_IsRefused()
+    {
+        // Munki 7 only removes what the user could have chosen; on Windows the admin opts
+        // an item into user removal by offering it in optional_installs.
+        var service = CreateService();
+        var items = new List<ManifestItem>();
+
+        service.MergeSelfServeInto(items, new SelfServiceManifest { ManagedUninstalls = ["SecurityAgent"] });
+
+        Assert.Empty(items);
+        Assert.Contains("SecurityAgent", service.RefusedSelfServeRemovals.Keys);
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_RemovalOfAManagedUpdatesOnlyItem_IsRefused()
+    {
+        var service = CreateService();
+        var items = new List<ManifestItem>
+        {
+            new() { Name = "Zoom", Action = "update", SourceManifest = "Staff" },
+        };
+
+        service.MergeSelfServeInto(items, new SelfServiceManifest { ManagedUninstalls = ["Zoom"] });
+
+        Assert.Equal("update", Assert.Single(items).Action);
+        Assert.Contains("Zoom", service.RefusedSelfServeRemovals.Keys);
+    }
+
+    [Fact]
+    public void MergeSelfServeInto_RemovalOfAnAdminMandatedInstall_IsRefused()
+    {
+        var service = CreateService();
+        var items = new List<ManifestItem>
+        {
+            new() { Name = "Chrome", Action = "optional", SourceManifest = "Staff" },
+            new() { Name = "Chrome", Action = "install", SourceManifest = "Core" },
+        };
+
+        service.MergeSelfServeInto(items, new SelfServiceManifest { ManagedUninstalls = ["Chrome"] });
+
+        Assert.DoesNotContain(items, i => i.Action == "uninstall");
+        Assert.Contains("Chrome", service.RefusedSelfServeRemovals.Keys);
     }
 
     /// <summary>

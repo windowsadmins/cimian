@@ -460,6 +460,44 @@ public class DownloadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadFileAsync_PlantedFileAndMarkerAnyUserCouldWrite_AreNotTrusted()
+    {
+        // A standard user plants an installer of their own plus a marker that claims it
+        // matches the catalog hash. The marker must not stand in for hashing, or SYSTEM
+        // installs the planted file.
+        var genuine = "the real installer";
+        var genuinePath = WriteCachedFile("genuine.tmp", genuine);
+        var catalogHash = DownloadService.CalculateSHA256(genuinePath);
+        File.Delete(genuinePath);
+
+        var path = WriteCachedFile("planted.msi", "attacker payload!!");
+        var info = new FileInfo(path);
+        File.WriteAllText(MarkerFor(path), $"{catalogHash}|{info.Length}|{info.LastWriteTimeUtc.Ticks}");
+
+        var service = new DownloadService(_testConfig, new HttpClient(new FixedContentHandler(genuine)));
+        var result = await service.DownloadFileAsync("https://test.example.com/repo/pkgs/planted.msi", path, catalogHash);
+
+        Assert.True(result);
+        Assert.Equal(genuine, File.ReadAllText(path));
+    }
+
+    private sealed class FixedContentHandler(string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(request.Method == HttpMethod.Head ? string.Empty : body),
+            };
+            if (request.Method == HttpMethod.Head)
+            {
+                response.Content.Headers.ContentLength = System.Text.Encoding.UTF8.GetByteCount(body);
+            }
+            return Task.FromResult(response);
+        }
+    }
+
+    [Fact]
     public void ValidateAndCleanCache_RemovesOrphanedVerificationMarkers()
     {
         var kept = WriteCachedFile("present.msi", "content");

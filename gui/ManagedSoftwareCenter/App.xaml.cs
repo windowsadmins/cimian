@@ -46,7 +46,10 @@ public partial class App : Application
         var services = new ServiceCollection();
         
         // Services
-        services.AddSingleton<ISelfServiceManifestService, SelfServiceManifestService>();
+        // The signed-in user's choices go to their own drop file; managedsoftwareupdate
+        // (SYSTEM) takes it into the protected SelfServeManifest.yaml.
+        services.AddSingleton<ISelfServiceManifestService>(sp =>
+            SelfServiceManifestService.ForSignedInUser(sp.GetService<Microsoft.Extensions.Logging.ILogger<SelfServiceManifestService>>()));
         services.AddSingleton<IInstallInfoService, InstallInfoService>();
         services.AddSingleton<IProgressPipeClient, ProgressServer>();  // TCP server for Go reporter
         services.AddSingleton<INotificationService, NotificationService>();
@@ -193,9 +196,8 @@ public partial class App : Application
     {
         try
         {
-            var logPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "ManagedInstalls", "msc_crash.log");
+            var logPath = Program.LogPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
             File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n");
         }
         catch { }

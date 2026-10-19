@@ -173,13 +173,13 @@ public class DiagnosticService
             }
         }
 
-        // Try to write a test file
-        var testFile = Path.Combine(dir, ".cimian.test");
+        // Try to write a test file where user-context run requests go
+        var testFile = Path.Combine(CimianPaths.TriggersDir, ".cimian.test");
         try
         {
             File.WriteAllText(testFile, "test");
             File.Delete(testFile);
-            Console.WriteLine($"   ✅ Write access confirmed: {dir}");
+            Console.WriteLine($"   ✅ Write access confirmed: {CimianPaths.TriggersDir}");
             return true;
         }
         catch (Exception ex)

@@ -870,10 +870,12 @@ public class UpdateEngine : IDisposable
                 uninstallOutcomes = await PerformUninstallsAsync(toUninstall, cancellationToken);
                 uninstallSuccess = uninstallOutcomes.All(o => o.Success);
 
-                // Consume satisfied self-serve removal requests so they are not
-                // re-queued and shown as pending every run (clean_up_managed_uninstalls).
-                await CleanUpSelfServeUninstallsAsync(uninstallOutcomes);
             }
+
+            // Consume satisfied self-serve removal requests so they are not re-queued and
+            // shown as pending every run (clean_up_managed_uninstalls). Refused ones and
+            // ones with nothing to remove are dropped too, so this runs with no uninstalls.
+            await CleanUpSelfServeUninstallsAsync(uninstallOutcomes);
 
             // Runs the postflight script once the session's reports are on disk, so
             // whatever it hands to the reporting client is this session's state.
@@ -1152,6 +1154,11 @@ public class UpdateEngine : IDisposable
             
             if (!catalogMap.TryGetValue(key, out var catalogItem))
             {
+                if (item.IsSelfServeRemoval)
+                {
+                    DecideSelfServeRemoval(null, () => false, out var notInCatalog);
+                    RecordSelfServeRemoval(item.Name, notInCatalog);
+                }
                 // Go behavior: items not in catalog with action=install are new installs
                 // But we need the catalog item for installation - log this discrepancy
                 ConsoleLogger.Detail($"    Item not in catalog: {item.Name} (action: {item.Action})");
@@ -1407,6 +1414,23 @@ public class UpdateEngine : IDisposable
                     break;
 
                 case "uninstall":
+                    if (item.IsSelfServeRemoval)
+                    {
+                        // Munki 7 processRemoval: in the catalog, removable, and installed.
+                        var decision = DecideSelfServeRemoval(catalogItem,
+                            () => _statusService.CheckUninstallStatus(catalogItem, _config.CachePath).NeedsAction,
+                            out var selfServeReason);
+                        if (decision == SelfServeRemovalDecision.Remove)
+                        {
+                            toUninstall.Add(catalogItem);
+                        }
+                        else
+                        {
+                            RecordSelfServeRemoval(item.Name, selfServeReason);
+                        }
+                        break;
+                    }
+
                     if (catalogItem.IsUninstallable())
                     {
                         // Check before removing: an item that is already gone would
@@ -2519,9 +2543,15 @@ public class UpdateEngine : IDisposable
     {
         try
         {
+            // Empty the folder rather than recreate it, so it keeps the permissions repair's
+            // SYSTEM and Administrators only ACL: a user able to open a catalog could hold it.
             if (Directory.Exists(_config.CatalogsPath))
             {
-                Directory.Delete(_config.CatalogsPath, true);
+                foreach (var entry in new DirectoryInfo(_config.CatalogsPath).EnumerateFileSystemInfos())
+                {
+                    if (entry is DirectoryInfo dir && (dir.Attributes & FileAttributes.ReparsePoint) == 0) dir.Delete(true);
+                    else entry.Delete();
+                }
             }
             Directory.CreateDirectory(_config.CatalogsPath);
             LogDebug($"Cleaned and recreated directory dirPath: {_config.CatalogsPath}");
@@ -3742,6 +3772,41 @@ public class UpdateEngine : IDisposable
     }
 
     /// <summary>
+    /// What the engine does with a Self Service removal request (Munki 7 processRemoval).
+    /// </summary>
+    internal static SelfServeRemovalDecision DecideSelfServeRemoval(CatalogItem? catalogItem,
+        Func<bool> needsRemoval, out string reason)
+    {
+        if (catalogItem == null)
+        {
+            reason = "it is not in the catalog";
+            return SelfServeRemovalDecision.Refused;
+        }
+        if (!catalogItem.IsUninstallable())
+        {
+            reason = "it is uninstallable: false, or has no way to be removed";
+            return SelfServeRemovalDecision.Refused;
+        }
+        if (!needsRemoval())
+        {
+            reason = "it is not installed";
+            return SelfServeRemovalDecision.NothingToDo;
+        }
+        reason = string.Empty;
+        return SelfServeRemovalDecision.Remove;
+    }
+
+    // Self Service removals that were refused or had nothing to do this run; dropped from
+    // SelfServeManifest.yaml at the end so they are not retried every run.
+    private readonly Dictionary<string, string> _settledSelfServeRemovals = new(StringComparer.OrdinalIgnoreCase);
+
+    private void RecordSelfServeRemoval(string name, string reason)
+    {
+        _settledSelfServeRemovals[name] = reason;
+        LogInfo($"Self-serve: not removing {name}: {reason}");
+    }
+
+    /// <summary>
     /// Consumes self-serve removal requests that have been satisfied: once the
     /// uninstaller for an item the user asked to remove has succeeded, its name is
     /// dropped from SelfServeManifest.managed_uninstalls. Without this a completed
@@ -3757,6 +3822,8 @@ public class UpdateEngine : IDisposable
         var removed = uninstallOutcomes
             .Where(o => o.Success)
             .Select(o => o.Name)
+            .Concat(_settledSelfServeRemovals.Keys)
+            .Concat(_manifestService.RefusedSelfServeRemovals.Keys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (removed.Count == 0) return;
 
@@ -4139,4 +4206,12 @@ public class UpdateEngine : IDisposable
     }
 
     #endregion
+}
+
+/// <summary>Outcome of the engine's Self Service removal gate.</summary>
+internal enum SelfServeRemovalDecision
+{
+    Remove,
+    NothingToDo,
+    Refused,
 }

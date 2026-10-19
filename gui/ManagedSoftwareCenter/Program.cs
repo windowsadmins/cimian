@@ -7,9 +7,11 @@ namespace Cimian.GUI.ManagedSoftwareCenter;
 
 public static class Program
 {
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-        "ManagedInstalls", "msc_crash.log");
+    // Per user: Managed Software Center runs as the signed-in user, who cannot write
+    // ManagedInstalls.
+    internal static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Cimian", "msc_crash.log");
 
     [STAThread]
     static void Main(string[] args)
@@ -57,7 +59,11 @@ public static class Program
 
     private static void Log(string message)
     {
-        try { File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n"); }
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n");
+        }
         catch { }
     }
 }

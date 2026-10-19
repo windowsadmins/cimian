@@ -3,6 +3,7 @@ using System.Text;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using Cimian.CLI.managedsoftwareupdate.Models;
+using Cimian.Core;
 using Cimian.Core.Services;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -126,12 +127,31 @@ public class CatalogService
     /// <summary>
     /// Loads catalog from local file
     /// </summary>
-    public List<CatalogItem> LoadLocalCatalog(string path)
+    public List<CatalogItem> LoadLocalCatalog(string path) =>
+        LoadLocalCatalog(path, requireTrusted: ManagedInstallsSecurity.IsUnder(path, CimianPaths.ManagedInstallsRoot));
+
+    /// <summary>
+    /// Loads a catalog from disk. With <paramref name="requireTrusted"/>, a file that anyone
+    /// but SYSTEM or Administrators could have written is ignored.
+    /// </summary>
+    internal List<CatalogItem> LoadLocalCatalog(string path, bool requireTrusted)
     {
         if (!File.Exists(path))
         {
             ConsoleLogger.Debug($"    Local catalog not found: {path}");
             return new List<CatalogItem>();
+        }
+
+        if (requireTrusted && !ManagedInstallsSecurity.IsSafeToExecute(path, out var reason))
+        {
+            ConsoleLogger.Warn($"Ignoring local catalog {path}: {reason}");
+            return new List<CatalogItem>();
+        }
+
+        // Held open by someone: stop this run rather than carry on with an empty catalog.
+        if (!ManagedInstallsSecurity.TryProbeRead(path, out var unreadable))
+        {
+            throw new CatalogUnavailableException($"Catalog {unreadable}. Skipping this run; the next one will retry.");
         }
 
         try
@@ -865,3 +885,6 @@ public class CatalogService
 
     #endregion
 }
+
+/// <summary>A local catalog exists but cannot be read right now; the run stops and retries later.</summary>
+public sealed class CatalogUnavailableException(string message) : Exception(message);

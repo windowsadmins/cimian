@@ -1,4 +1,5 @@
 using Cimian.Core;
+using Cimian.Core.Services;
 using CimianTools.CimiTrigger.Models;
 
 namespace CimianTools.CimiTrigger.Services;
@@ -11,8 +12,9 @@ public class TriggerService
     /// <summary>
     /// Bootstrap flag file paths.
     /// </summary>
-    public static readonly string GuiBootstrapFile = CimianPaths.BootstrapFlagFile;
-    public static readonly string HeadlessBootstrapFile = CimianPaths.HeadlessFlagFile;
+    // One request file per run of this process, so no other user can block or rewrite it.
+    public static readonly string GuiBootstrapFile = TriggerRequests.NewRequestPath(gui: true);
+    public static readonly string HeadlessBootstrapFile = TriggerRequests.NewRequestPath(gui: false);
 
     private readonly ElevationService _elevationService;
 
