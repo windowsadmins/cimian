@@ -1656,6 +1656,10 @@ try {
             $certStore = $certInfo.Store
             Write-BuildLog "Enterprise certificate auto-detected: $actualThumbprint" "SUCCESS"
         }
+        elseif ($Sign) {
+            # An explicit -Sign must not quietly produce unsigned binaries.
+            throw "-Sign was given but no signing certificate was found. Set CIMIAN_CERT_SUBJECT in .env (see .env.example), or pass -Thumbprint."
+        }
         else {
             Write-BuildLog "No enterprise certificate found - binaries will be unsigned" "WARNING"
             $shouldSign = $false
@@ -1763,8 +1767,13 @@ try {
         
         # MSI packages (unless skipped)
         if (-not $SkipMSI -and -not $NupkgOnly -and -not $PkgOnly) {
+            $failedMsiArchs = @()
             foreach ($arch in $archs) {
                 $msiPath = Build-MsiPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint -CertStore $certStore
+                if (-not $msiPath) { $failedMsiArchs += $arch }
+            }
+            if ($failedMsiArchs.Count -gt 0) {
+                throw "MSI package failed for: $($failedMsiArchs -join ', ')"
             }
         }
         
