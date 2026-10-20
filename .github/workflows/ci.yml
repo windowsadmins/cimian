@@ -46,7 +46,7 @@ jobs:
 
       - name: Test
         shell: pwsh
-        run: dotnet test tests/Cimian.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+        run: dotnet test tests/Cimian.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults -- RunConfiguration.TreatNoTestsAsError=true
 
       - name: Upload test results
         if: always()
