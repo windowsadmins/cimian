@@ -69,7 +69,7 @@ public class ScriptService
     private static readonly Regex AnsiEscape = new(
         @"\x1B\[[0-9;]*[A-Za-z]", RegexOptions.Compiled);
 
-    private static string? ExtractWarningMarker(string output)
+    internal static string? ExtractWarningMarker(string output)
     {
         if (string.IsNullOrEmpty(output)) return null;
         var clean = AnsiEscape.Replace(output, string.Empty);
