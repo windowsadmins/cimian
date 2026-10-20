@@ -160,7 +160,11 @@ public class ItemStageConverter : IValueConverter
     // allocating a fresh SolidColorBrush per Convert call was needless GC churn.
     private static readonly SolidColorBrush GreenBrush = new(Windows.UI.Color.FromArgb(255, 16, 124, 16));
     private static readonly SolidColorBrush RedBrush = new(Windows.UI.Color.FromArgb(255, 209, 52, 56));
-    private static readonly SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 0, 120, 212));
+    // The accent follows branding (accent_color / AccentColor policy), which is applied
+    // before any window loads, so it is read once on first use.
+    private static SolidColorBrush? s_accentBrush;
+    private static SolidColorBrush AccentBrush =>
+        s_accentBrush ??= new(Cimian.GUI.ManagedSoftwareCenter.Services.BrandingTheme.AccentColor);
     private static readonly SolidColorBrush GrayBrush = new(Windows.UI.Color.FromArgb(255, 110, 110, 110));
 
     public object Convert(object value, Type targetType, object parameter, string language)

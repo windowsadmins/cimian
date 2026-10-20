@@ -1,15 +1,13 @@
 # Cimian CSP OMA-URI Configuration Guide
 
-> **Status note (verified 2026-05-29):** The current `ConfigurationService` in
-> `cli/managedsoftwareupdate/Services/ConfigurationService.cs` loads
-> configuration exclusively from the YAML file at
-> `C:\ProgramData\ManagedInstalls\Config.yaml`. When that file is missing it
-> falls back to a hard-coded default object, **not** to registry/CSP values.
-> The CSP/OMA-URI registry fallback described in this document is a
-> deployment pattern and design target rather than a feature implemented in
-> source today. The registry path and OMA-URI examples below are guidance
-> for how policy could be pre-staged via Intune/GPO so that an external
-> tool (or a future Cimian release) can materialize Config.yaml from it.
+> **Status note (2026-10-19):** `managedsoftwareupdate` reads `Config.yaml` and
+> then applies these values from `HKLM\SOFTWARE\Policies\Cimian` over it:
+> `SoftwareRepoURL`, `ClientIdentifier`, `InstallerTimeout` and
+> `CacheRetentionDays` (`ConfigurationService.ApplyPolicyOverrides`). Managed
+> Software Center and CimianStatus read `HelpURL`, `CategoryIcons` and the
+> branding values described below from the same key. Other settings in this
+> guide are still a deployment pattern: deliver them as registry values and have
+> a provisioning script write `Config.yaml` from them.
 
 ## Overview
 
@@ -22,11 +20,11 @@ runs for the first time.
 
 ## Configuration Priority (as implemented today)
 
-1. **Primary (and only) source read by managedsoftwareupdate**:
-   `C:\ProgramData\ManagedInstalls\Config.yaml` (YAML file)
-2. **If the file is missing**: built-in defaults are used (placeholder
-   `SoftwareRepoURL`, machine name as `ClientIdentifier`, `Production`
-   catalog). The process does **not** read the registry today.
+1. **Policy** under `HKLM\SOFTWARE\Policies\Cimian`, for `SoftwareRepoURL`,
+   `ClientIdentifier`, `InstallerTimeout` and `CacheRetentionDays`.
+2. **`C:\ProgramData\ManagedInstalls\Config.yaml`** for everything else.
+3. **If `Config.yaml` is missing**, a run stops unless policy sets
+   `SoftwareRepoURL`.
 
 ## Intended CSP-staging Flow
 
@@ -258,10 +256,9 @@ browsers=gaming
 
 ## Managed Software Center branding (GUI)
 
-The MSC WinUI app reads branding from
-`C:\ProgramData\ManagedInstalls\client_resources\branding.yaml` and applies a
-policy override for the Software-page hero heading from the **Policies** hive
-(same path agent policy uses today):
+Managed Software Center and CimianStatus read branding from
+`C:\ProgramData\ManagedInstalls\client_resources\branding.yaml` and apply
+overrides from the **Policies** hive (same path agent policy uses today):
 
 ```
 HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
@@ -269,14 +266,42 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
 
 | YAML (`branding.yaml`) | Registry (REG_SZ) | Effect |
 |---|---|---|
-| `app_title` | *(not policy-backed)* | Window / title-bar name; also feeds the hero title when `banner_title` is unset |
-| `banner_title` | `BannerTitle` | Software hero overlay text. **Policy wins over YAML.** Empty string hides the overlay. |
+| `app_title` | `AppTitle` | Window, title-bar and taskbar name; also the hero title when `banner_title` is unset |
+| `banner_title` | `BannerTitle` | Software hero heading. Empty string hides it. |
+| `accent_color` | `AccentColor` | Accent colour as `#RRGGBB` |
+| `logo` | `Logo` | Title-bar logo (a file name in the branding folders) |
+| `app_icon` | `AppIcon` | Window and taskbar `.ico` (a file name in the branding folders) |
+| `sidebar_header` | `SidebarHeader` | Image above the sidebar (a file name in the branding folders) |
+
+**Policy wins over YAML** when the value exists. An empty value counts as unset,
+except `BannerTitle`, where empty hides the heading. The full branding guide,
+including banners and banner links, is
+[Branding Managed Software Center](client-resources-sync.md).
 
 Hero title precedence:
 
 1. Explicit `banner_title` / `BannerTitle` (including blank → hide)
-2. Else non-empty `app_title`
+2. Else non-empty `app_title` / `AppTitle`
 3. Else `"Managed Software Center"`
+
+### Example: set the accent colour via policy
+
+```
+Name: Cimian MSC Accent Color
+Description: Brand accent for Managed Software Center and CimianStatus
+OMA-URI: ./Device/Vendor/MSFT/Policy/Config/CimianPrefs/AccentColor
+Data type: String
+Value: #0B5CAD
+```
+
+Registry preference equivalent:
+
+```
+Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
+Value: AccentColor
+Type: REG_SZ
+Data: #0B5CAD
+```
 
 ### Example: hide the hero text via policy
 
@@ -288,21 +313,11 @@ Data type: String
 Value: (empty string to hide, or custom text such as "Unchained Software")
 ```
 
-Registry preference equivalent:
-
-```
-Key: HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Cimian
-Value: BannerTitle
-Type: REG_SZ
-Data:   (empty = hide overlay)
-```
-
-> **Note:** Presence of the `BannerTitle` value name matters. An empty REG_SZ is
-> a deliberate hide; omitting the value leaves YAML / `app_title` / default in
-> effect. The OMA-URI path above assumes an ADMX-ingested **CimianPrefs**
+> **Note:** The OMA-URI paths above assume an ADMX-ingested **CimianPrefs**
 > Policy CSP category (same delivery model as agent keys under
-> `SOFTWARE\Policies\Cimian`). Custom OMA-URIs that write that hive directly
-> also work.
+> `SOFTWARE\Policies\Cimian`). Custom OMA-URIs or Registry preferences that
+> write that hive directly also work. `Logo`, `AppIcon` and `SidebarHeader` name
+> files the `client_resources` zip delivers; they cannot point anywhere else.
 
 ## Group Policy Deployment
 

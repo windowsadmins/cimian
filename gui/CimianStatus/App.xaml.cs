@@ -1,10 +1,44 @@
 using System.Windows;
+using System.Windows.Media;
+using Cimian.Core.Branding;
 using Microsoft.Win32;
 
 namespace Cimian.Status
 {
     public partial class App : Application
     {
+        /// <summary>Branding shared with Managed Software Center (policy > branding.yaml > defaults).</summary>
+        public MscBranding Branding { get; private set; } = MscBranding.Default;
+
+        /// <summary>
+        /// Reads branding and swaps the accent into the app resources. Program calls this
+        /// after App.xaml loads and before the window is built, so the window picks it up.
+        /// </summary>
+        public void ApplyBranding()
+        {
+            try
+            {
+                Branding = MscBrandingResolver.Load();
+            }
+            catch
+            {
+                Branding = MscBranding.Default;
+            }
+
+            if (Branding.Accent is not { } accent)
+                return;
+
+            var color = Color.FromRgb(accent.R, accent.G, accent.B);
+            var dark = accent.DarkShades()[0];
+            var primary = Color.FromRgb(dark.R, dark.G, dark.B);
+
+            Resources["AccentColor"] = color;
+            Resources["AccentBrush"] = new SolidColorBrush(color);
+            Resources["PrimaryColor"] = primary;
+            Resources["PrimaryBrush"] = new SolidColorBrush(primary);
+            ModernWpf.ThemeManager.Current.AccentColor = color;
+        }
+
         protected override void OnStartup(StartupEventArgs e)
         {
             // Set theme preference based on system settings

@@ -104,6 +104,12 @@ public partial class App : Application
                 LogStartup($"Protocol activation: {pendingUri}");
             }
 
+            // Brand colours have to be in the resource system before the first control loads.
+            var branding = Services.GetRequiredService<IBrandingService>().Current;
+            BrandingTheme.ApplyAccent(Resources, branding.Accent);
+            foreach (var warning in branding.Warnings)
+                LogStartup($"Branding: {warning}");
+
             LogStartup("OnLaunched starting - creating MainWindow...");
             s_mainWindow = new MainWindow();
             LogStartup("MainWindow created - activating...");

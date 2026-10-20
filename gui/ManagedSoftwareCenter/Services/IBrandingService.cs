@@ -1,5 +1,6 @@
 // IBrandingService.cs - Interface for custom client branding
 
+using Cimian.Core.Branding;
 using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace Cimian.GUI.ManagedSoftwareCenter.Services;
@@ -7,7 +8,13 @@ namespace Cimian.GUI.ManagedSoftwareCenter.Services;
 public interface IBrandingService
 {
     /// <summary>
-    /// Custom application title from branding.yaml, or null for default chrome title.
+    /// Branding as resolved from policy, branding.yaml and defaults. Read synchronously at
+    /// startup so the accent and title are in place before the first window draws.
+    /// </summary>
+    MscBranding Current { get; }
+
+    /// <summary>
+    /// Custom application title, or null for the default chrome title.
     /// </summary>
     string? AppTitle { get; }
 
@@ -28,7 +35,22 @@ public interface IBrandingService
     BitmapImage? SidebarHeaderImage { get; }
 
     /// <summary>
-    /// Load branding resources from disk and apply policy overrides.
+    /// Custom logo for the title bar, or null for none.
+    /// </summary>
+    BitmapImage? LogoImage { get; }
+
+    /// <summary>
+    /// Re-reads branding from disk and policy. Cheap; safe to call from any page.
+    /// </summary>
+    MscBranding Reload();
+
+    /// <summary>
+    /// Reloads branding and decodes its images. Must run on the UI thread.
     /// </summary>
     Task LoadAsync();
+
+    /// <summary>
+    /// Decodes an image file without holding it open, or returns null.
+    /// </summary>
+    Task<BitmapImage?> LoadImageAsync(string? path);
 }

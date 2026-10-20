@@ -62,6 +62,17 @@ public class ClientResourcesSyncService
             }
 
             ConsoleLogger.Detail("    No client_resources zip found in repo for any candidate name");
+
+            // Munki deletes its custom.zip when the repo no longer has one; the equivalent
+            // here is taking back the files the last zip put down.
+            var stale = await LoadStateAsync();
+            if (stale?.ExtractedFiles is { Count: > 0 })
+            {
+                var removed = RemoveExtractedFiles(stale.ExtractedFiles, keep: null);
+                ConsoleLogger.Info($"Client resources removed from repo; cleared {removed} file(s)");
+            }
+            if (stale != null)
+                File.Delete(SyncStatePath);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -75,8 +86,19 @@ public class ClientResourcesSyncService
 
     private enum ZipSyncResult { Applied, Unchanged, NotFound, Failed }
 
-    private string BuildZipUrl(string zipBaseName) =>
-        $"{_config.SoftwareRepoURL.TrimEnd('/')}/client_resources/{Uri.EscapeDataString(zipBaseName)}.zip";
+    private string BuildZipUrl(string zipBaseName) => BuildZipUrl(_config, zipBaseName);
+
+    /// <summary>
+    /// <c>ClientResourceURL</c> when set, otherwise <c>SoftwareRepoURL/client_resources</c>,
+    /// as Munki builds it.
+    /// </summary>
+    internal static string BuildZipUrl(CimianConfig config, string zipBaseName)
+    {
+        var baseUrl = string.IsNullOrWhiteSpace(config.ClientResourceURL)
+            ? $"{config.SoftwareRepoURL.TrimEnd('/')}/client_resources"
+            : config.ClientResourceURL.Trim().TrimEnd('/');
+        return $"{baseUrl}/{Uri.EscapeDataString(zipBaseName)}.zip";
+    }
 
     /// <summary>
     /// Candidate zip base names (without .zip), first match wins.
@@ -95,6 +117,13 @@ public class ClientResourcesSyncService
             if (seen.Add(trimmed))
                 names.Add(trimmed);
         }
+
+        // Munki tries ClientResourcesFilename before the manifest name.
+        var fileName = config.ClientResourcesFilename?.Trim();
+        if (!string.IsNullOrEmpty(fileName) &&
+            fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            fileName = fileName[..^".zip".Length];
+        Add(fileName);
 
         if (config.UseClientCertificate && config.UseClientCertificateCNAsClientIdentifier)
         {
@@ -146,7 +175,15 @@ public class ClientResourcesSyncService
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await ExtractZipAsync(stream, cancellationToken);
+            var extracted = await ExtractZipAsync(stream, cancellationToken);
+
+            // A file the previous zip had and this one does not would otherwise stay
+            // on screen for ever, e.g. a banner the admin took out.
+            if (priorState?.ExtractedFiles is { Count: > 0 })
+            {
+                var keep = new HashSet<string>(extracted.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
+                RemoveExtractedFiles(priorState.ExtractedFiles, keep);
+            }
 
             var etag = response.Headers.ETag?.Tag;
             DateTimeOffset? lastMod = response.Content.Headers.LastModified;
@@ -157,6 +194,7 @@ public class ClientResourcesSyncService
                 ETag = etag,
                 LastModifiedUtc = lastMod?.UtcDateTime,
                 ExtractedUtc = DateTime.UtcNow,
+                ExtractedFiles = extracted,
             });
 
             return ZipSyncResult.Applied;
@@ -172,8 +210,9 @@ public class ClientResourcesSyncService
         }
     }
 
-    private static async Task ExtractZipAsync(Stream zipStream, CancellationToken cancellationToken)
+    private static async Task<List<ExtractedFile>> ExtractZipAsync(Stream zipStream, CancellationToken cancellationToken)
     {
+        var extracted = new List<ExtractedFile>();
         using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
         foreach (var entry in archive.Entries)
@@ -202,7 +241,44 @@ public class ClientResourcesSyncService
                 FileAccess.Write,
                 FileShare.None);
             await entryStream.CopyToAsync(fileStream, cancellationToken);
+            await fileStream.DisposeAsync();
+            extracted.Add(new ExtractedFile
+            {
+                Path = fullTarget,
+                WrittenUtc = File.GetLastWriteTimeUtc(fullTarget),
+            });
         }
+
+        return extracted;
+    }
+
+    /// <summary>
+    /// Deletes files an earlier zip extracted, except those in <paramref name="keep"/>.
+    /// A file changed since it was extracted belongs to someone else now and is left alone.
+    /// </summary>
+    internal static int RemoveExtractedFiles(IEnumerable<ExtractedFile> files, ISet<string>? keep)
+    {
+        var removed = 0;
+        foreach (var file in files)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(file.Path) || keep?.Contains(file.Path) == true)
+                    continue;
+                var full = Path.GetFullPath(file.Path);
+                if (!ClientResourcesPathMapper.IsUnderManagedInstalls(full) || !File.Exists(full))
+                    continue;
+                if (File.GetLastWriteTimeUtc(full) != file.WrittenUtc)
+                    continue;
+                File.Delete(full);
+                removed++;
+            }
+            catch (Exception ex)
+            {
+                ConsoleLogger.Detail($"    Could not remove old client resource {file.Path}: {ex.Message}");
+            }
+        }
+        return removed;
     }
 
     private static async Task<SyncState?> LoadStateAsync()
@@ -234,6 +310,13 @@ public class ClientResourcesSyncService
         public string? ETag { get; set; }
         public DateTime? LastModifiedUtc { get; set; }
         public DateTime ExtractedUtc { get; set; }
+        public List<ExtractedFile>? ExtractedFiles { get; set; }
+    }
+
+    internal sealed class ExtractedFile
+    {
+        public string Path { get; set; } = string.Empty;
+        public DateTime WrittenUtc { get; set; }
     }
 }
 
@@ -271,6 +354,10 @@ public static class ClientResourcesPathMapper
 
         if (string.Equals(normalized, "preferences.yaml", StringComparison.OrdinalIgnoreCase))
             return CimianPaths.PreferencesYaml;
+
+        // branding.yaml at the zip root is where an admin most often puts it.
+        if (string.Equals(normalized, "branding.yaml", StringComparison.OrdinalIgnoreCase))
+            return Path.Combine(CimianPaths.ClientResourcesDir, "branding.yaml");
 
         if (normalized.StartsWith("branding/", StringComparison.OrdinalIgnoreCase))
         {
