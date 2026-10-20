@@ -52,7 +52,10 @@ namespace Cimian.Status.Views
             var branding = app.Branding;
 
             if (branding.AppTitle != null)
+            {
                 Title = branding.AppTitle;
+                HeaderTitleText.Text = branding.AppTitle;
+            }
 
             if (LoadBitmap(branding.LogoPath) is { } logo)
                 LogoImage.Source = logo;

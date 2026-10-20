@@ -204,6 +204,27 @@ public sealed class MscBrandingTests : IDisposable
     }
 
     [Fact]
+    public void DefaultTitle_IsNotDrawnOverBanners()
+    {
+        Touch(_branding, "branding.png");
+
+        var b = MscBrandingResolver.Resolve(new BrandingDocument { AppTitle = "Acme" }, BrandingPolicy.Empty, Dirs);
+
+        Assert.Equal("Acme", b.BannerTitle);
+        Assert.False(b.ShowBannerTitle);
+    }
+
+    [Fact]
+    public void ExplicitBannerTitle_IsDrawnOverBanners()
+    {
+        Touch(_branding, "branding.png");
+
+        var b = MscBrandingResolver.Resolve(new BrandingDocument { BannerTitle = "Welcome" }, BrandingPolicy.Empty, Dirs);
+
+        Assert.True(b.ShowBannerTitle);
+    }
+
+    [Fact]
     public void Banners_AreCapped()
     {
         var doc = new BrandingDocument { Banners = [] };

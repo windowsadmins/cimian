@@ -111,7 +111,8 @@
             </Border>
 
             <!-- Centered Title Section (spans entire window width) -->
-            <TextBlock Text="Managed Software Update" 
+            <TextBlock x:Name="HeaderTitleText"
+                      Text="Managed Software Update" 
                       Style="{StaticResource TitleTextStyle}"
                       VerticalAlignment="Center" 
                       HorizontalAlignment="Center"/>

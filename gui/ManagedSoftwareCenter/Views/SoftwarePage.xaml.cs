@@ -143,6 +143,11 @@ public partial class SoftwarePage : Page
         if (BrandingTheme.HeroGradient(current.Accent) is { } gradient)
             HeroGradientBorder.Background = gradient;
 
+        // The Featured tile follows the brand; the Updates tile keeps its orange,
+        // which reads as "needs attention" whatever the brand colour.
+        if (BrandingTheme.TileGradient(current.Accent) is { } tile)
+            FeaturedTile.Background = tile;
+
         await LoadBannersAsync(branding, current.Banners);
     }
 

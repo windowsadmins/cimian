@@ -165,7 +165,8 @@
 
                 <!-- Secondary promotional tiles (like Microsoft Store) -->
                 <StackPanel Grid.Column="1">
-                    <Border CornerRadius="8" Height="102"
+                    <Border x:Name="FeaturedTile"
+                            CornerRadius="8" Height="102"
                             Tapped="FeaturedButton_Click">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">

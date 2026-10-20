@@ -61,6 +61,22 @@ public static class BrandingTheme
         return brush;
     }
 
+    /// <summary>A lighter accent gradient for the Featured tile beside the hero banner.</summary>
+    public static Brush? TileGradient(BrandingColor? accent)
+    {
+        if (accent is not { } a)
+            return null;
+
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Windows.Foundation.Point(0, 0),
+            EndPoint = new Windows.Foundation.Point(1, 1),
+        };
+        brush.GradientStops.Add(new GradientStop { Color = ToColor(a.LightShades()[0]), Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = ToColor(a.DarkShades()[0]), Offset = 1 });
+        return brush;
+    }
+
     public static Color ToColor(BrandingColor c) => Color.FromArgb(255, c.R, c.G, c.B);
 
     private static void SetThemeBrush(ResourceDictionary resources, string theme, string key, BrandingColor color)

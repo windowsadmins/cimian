@@ -268,16 +268,24 @@ public static class MscBrandingResolver
                      ?? FindFile("sidebar_header.png", ImageExtensions, searchDirectories, out _)
                      ?? FindFile("sidebar_header.jpg", ImageExtensions, searchDirectories, out _);
 
+        var banners = ResolveBanners(document.Banners, searchDirectories, warnings);
+
+        // Munki's showcase never draws text over banner images, and a default title on
+        // top of artwork collides with whatever the artwork says. Only an explicit
+        // banner_title / BannerTitle is drawn over banners.
+        var showBanner = MscBannerTitleResolver.ShouldShow(bannerTitle) &&
+                         (bannerExplicit || banners.Count == 0);
+
         return new MscBranding
         {
             AppTitle = appTitle,
             BannerTitle = bannerTitle,
-            ShowBannerTitle = MscBannerTitleResolver.ShouldShow(bannerTitle),
+            ShowBannerTitle = showBanner,
             Accent = accent,
             LogoPath = logo,
             AppIconPath = icon,
             SidebarHeaderPath = header,
-            Banners = ResolveBanners(document.Banners, searchDirectories, warnings),
+            Banners = banners,
             Warnings = warnings,
         };
     }
