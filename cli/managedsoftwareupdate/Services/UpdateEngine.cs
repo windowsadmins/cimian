@@ -2691,6 +2691,7 @@ public class UpdateEngine : IDisposable
         LogInfo($"Config Path: {CimianConfig.ConfigPath}");
         LogInfo($"Cache Path: {_config.CachePath}");
         LogInfo($"Software Repo URL: {_config.SoftwareRepoURL}");
+        LogInfo($"Repository Format: {_config.DescribeRepoFormat()}");
         LogInfo($"Client Identifier: {_config.ClientIdentifier}");
         LogInfo("================================================================================");
         Log();

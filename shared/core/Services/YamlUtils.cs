@@ -55,6 +55,27 @@ public static class YamlUtils
     private const string MetadataKey = "_metadata";
 
     /// <summary>
+    /// The YAML text of a downloaded repository file in the form the client's setting
+    /// names: a plist is converted, YAML is returned as it is. The Deserialize methods
+    /// below read YAML exactly, so the caller passes the form its setting names. The
+    /// other form is refused rather than guessed. Local files never pass through it.
+    /// </summary>
+    public static string AsYaml(string text, RepoFileKind kind, RepoFormat format)
+    {
+        if (format == RepoFormat.Plist)
+        {
+            return PlistUtils.LooksLikePlist(text) || PlistUtils.IsBinaryPlist(text)
+                ? PlistUtils.ToYaml(text, kind)
+                : throw new InvalidDataException("The file is not an XML plist, but RepoFormat is plist");
+        }
+        if (PlistUtils.LooksLikePlist(text) || PlistUtils.IsBinaryPlist(text))
+        {
+            throw new InvalidDataException("The file is a plist, but RepoFormat is yaml");
+        }
+        return text;
+    }
+
+    /// <summary>
     /// Serializes a pkginfo to the canonical Cimian form:
     /// name → display_name → version → (alphabetical) → _metadata last.
     /// Matches the pre-consolidation cimiimport SerializePkgsInfoWithKeyOrder

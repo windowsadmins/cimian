@@ -9,7 +9,7 @@ For the engineering-level parity ledger (which individual Munki features are imp
 ## The 30-second mental model
 
 - **The repo is the same tree.** `pkgsinfo/`, `catalogs/`, `manifests/`, `icons/`, `pkgs/`. Drop it on any HTTPS server and point clients at it, exactly like Munki.
-- **Pkginfo is YAML, with the field names you already know.** `name`, `version`, `catalogs`, `requires`, `update_for`, `blocking_applications`, `installs`, `preinstall_script`, `postinstall_script`, `installcheck_script`, `uninstallcheck_script`, `OnDemand`, `force_install_after_date`, `unattended_install`, and friends - all present, all behaving the same way.
+- **Pkginfo is YAML, with the field names you already know.** `name`, `version`, `catalogs`, `requires`, `update_for`, `blocking_applications`, `installs`, `preinstall_script`, `postinstall_script`, `installcheck_script`, `uninstallcheck_script`, `OnDemand`, `force_install_after_date`, `unattended_install`, and friends - all present, all behaving the same way. A client can also read a repository kept as XML plists in Munki's layout, with Cimian's keys: set `RepoFormat: plist` on the clients and serve the manifests and catalogs as plists without an extension.
 - **The client runs the same loop.** `managedsoftwareupdate.exe` downloads catalogs, walks the manifest, resolves conditional items, checks receipts, downloads pkgs, runs the installer, and writes reports. If you squint at the log output, you might not notice you are on Windows.
 
 ## Rosetta stone
@@ -63,7 +63,7 @@ This is the section worth reading slowly. Everything above just works. Everythin
 
 ### Config is YAML, not plist
 
-`C:\ProgramData\ManagedInstalls\Config.yaml` replaces `ManagedInstalls.plist`. The keys are the same - `SoftwareRepoURL`, `ClientIdentifier`, `Catalogs`, and so on - but the file is YAML with the same case-sensitivity rules Munki applies. You can also override values via the registry at `HKLM\SOFTWARE\Cimian\Config` or via Intune CSP, which is handy for MDM-managed config that does not require writing a file.
+`C:\ProgramData\ManagedInstalls\Config.yaml` replaces `ManagedInstalls.plist`. The keys are the same - `SoftwareRepoURL`, `ClientIdentifier`, `Catalogs`, and so on - but the file is YAML with the same case-sensitivity rules Munki applies. It stays YAML when the repository is in plist form (`RepoFormat: plist`), as do the cache and `InstallInfo.yaml`. You can also override values via the registry at `HKLM\SOFTWARE\Cimian\Config` or via Intune CSP, which is handy for MDM-managed config that does not require writing a file.
 
 ### Logs are JSON-structured per-session directories
 
