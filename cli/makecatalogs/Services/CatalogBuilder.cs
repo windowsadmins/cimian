@@ -46,7 +46,7 @@ public class CatalogBuilder
             throw new DirectoryNotFoundException($"pkgsinfo directory not found: {pkgsInfoDir}");
         }
 
-        foreach (var file in Directory.EnumerateFiles(pkgsInfoDir, "*.yaml", SearchOption.AllDirectories))
+        foreach (var file in EnumeratePkgsInfoFiles(pkgsInfoDir))
         {
             try
             {
@@ -66,6 +66,41 @@ public class CatalogBuilder
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Every <c>.yaml</c> and <c>.yml</c> file below pkgsinfo, skipping any file or folder
+    /// whose name starts with a dot, as Munki's makecatalogs does. A Mac that mounts the
+    /// repo over SMB writes binary AppleDouble sidecars (<c>._name.yaml</c>) beside files it
+    /// touches, and those are not pkgsinfo. <c>.yml</c> is read because the repo hooks
+    /// accept it: a pkgsinfo saved that way used to pass every hook and then never reach a
+    /// catalog.
+    /// </summary>
+    private static IEnumerable<string> EnumeratePkgsInfoFiles(string pkgsInfoDir)
+    {
+        var directories = new Stack<string>();
+        directories.Push(pkgsInfoDir);
+        while (directories.TryPop(out var directory))
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                if (Path.GetFileName(entry).StartsWith('.'))
+                    continue;
+
+                if ((File.GetAttributes(entry) & FileAttributes.Directory) != 0)
+                {
+                    directories.Push(entry);
+                    continue;
+                }
+
+                var extension = Path.GetExtension(entry);
+                if (extension.Equals(".yaml", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".yml", StringComparison.OrdinalIgnoreCase))
+                {
+                    yield return entry;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -358,7 +393,7 @@ public class CatalogBuilder
     {
         if (!silent)
         {
-            _log($"Scanning {repoPath} for .yaml pkginfo...");
+            _log($"Scanning {repoPath} for .yaml and .yml pkginfo...");
             if (hashCheck)
             {
                 _log("Hash validation enabled (this may be slow for large repos)");

@@ -199,9 +199,10 @@ cimitrigger.exe debug
 
 Cimian is distributed in multiple formats to support different deployment scenarios:
 
-- **MSI Packages**: `Cimian-x64-{version}.msi` and `Cimian-arm64-{version}.msi` for traditional Windows deployment
-- **NuGet Packages**: `CimianTools-x64-{version}.nupkg` and `CimianTools-arm64-{version}.nupkg` for Chocolatey-based deployment  
-- **Intune Packages**: `.intunewin` files for Microsoft Intune deployment
+- **MSI Packages**: `CimianTools-x64-{version}.msi` and `CimianTools-arm64-{version}.msi` for traditional Windows deployment
+- **NuGet Packages**: `CimianTools-x64-{version}.nupkg` and `CimianTools-arm64-{version}.nupkg` for Chocolatey-based deployment
+- **Raw Binaries**: `CimianTools-x64-{version}.zip` and `CimianTools-arm64-{version}.zip`
+- **Intune Packages**: `CimianTools-{arch}-{version}.intunewin` files for Microsoft Intune deployment
 
 ### Quick Start
 

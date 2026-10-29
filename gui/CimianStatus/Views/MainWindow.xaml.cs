@@ -21,6 +21,7 @@ namespace Cimian.Status.Views
         public MainWindow(MainViewModel viewModel, IStatusServer statusServer, ILogger<MainWindow> logger)
         {
             InitializeComponent();
+            ApplyBranding();
             
             _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
             _statusServer = statusServer ?? throw new ArgumentNullException(nameof(statusServer));
@@ -38,6 +39,50 @@ namespace Cimian.Status.Views
             Loaded += OnLoaded;
 
             _logger.LogInformation("Cimian Status main window initialized");
+        }
+
+        /// <summary>
+        /// Logo, icon and title from the same branding as Managed Software Center.
+        /// Anything not set keeps the Cimian default.
+        /// </summary>
+        private void ApplyBranding()
+        {
+            if (Application.Current is not App app)
+                return;
+            var branding = app.Branding;
+
+            if (branding.AppTitle != null)
+            {
+                Title = branding.AppTitle;
+                HeaderTitleText.Text = branding.AppTitle;
+            }
+
+            if (LoadBitmap(branding.LogoPath) is { } logo)
+                LogoImage.Source = logo;
+
+            if (LoadBitmap(branding.AppIconPath) is { } icon)
+                Icon = icon;
+        }
+
+        private static System.Windows.Media.Imaging.BitmapImage? LoadBitmap(string? path)
+        {
+            if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path))
+                return null;
+            try
+            {
+                // OnLoad reads the file now and lets go of it.
+                var bitmap = new System.Windows.Media.Imaging.BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bitmap.UriSource = new Uri(path, UriKind.Absolute);
+                bitmap.EndInit();
+                bitmap.Freeze();
+                return bitmap;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private void OnStatusMessageReceived(object? sender, Models.StatusMessage message)

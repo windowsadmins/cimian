@@ -328,10 +328,15 @@ function Clean-OldPackages {
     
     foreach ($arch in @('x64', 'arm64')) {
         # IntuneWin packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch-*.intunewin"
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-*-$arch.intunewin"
         Remove-OldFiles -Directory $OutputDirectory -Pattern "Cimian-*-$arch.intunewin"
         # MSI packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch-*.msi"
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-*-$arch.msi"
         Remove-OldFiles -Directory $OutputDirectory -Pattern "Cimian-*-$arch.msi"
         # NuGet packages
+        Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch-*.nupkg"
         Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch.*.nupkg"
         # PKG packages
         Remove-OldFiles -Directory $OutputDirectory -Pattern "CimianTools-$arch-*.pkg"
@@ -989,7 +994,7 @@ function Build-MsiPackage {
             if (Test-Path $buildDir) {
                 $createdMsiFiles = Get-ChildItem -Path $buildDir -Filter "*.msi"
                 foreach ($msiFile in $createdMsiFiles) {
-                    $expectedName = "Cimian-$releaseVersion-$Architecture.msi"
+                    $expectedName = "CimianTools-$Architecture-$releaseVersion.msi"
                     $targetPath = "release\$expectedName"
                     Copy-Item $msiFile.FullName $targetPath -Force
                     Write-BuildLog "MSI package: $expectedName ($([math]::Round($msiFile.Length / 1MB, 2)) MB)" "SUCCESS"
@@ -1052,7 +1057,7 @@ function Build-NuGetPackage {
     $nuspecContent = (Get-Content $nuspecTemplate -Raw) -replace '\{\{VERSION\}\}', $Version.Semantic
     [System.IO.File]::WriteAllText($nuspecPath, $nuspecContent, [System.Text.Encoding]::UTF8)
 
-    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
+    $nupkgOutput = Join-Path $OutputDir "CimianTools-$Architecture-$($Version.Semantic).nupkg"
 
     # Method 1: Try using nuget.exe directly (simplest, most reliable)
     if (Test-Command "nuget") {
@@ -1062,7 +1067,12 @@ function Build-NuGetPackage {
             & nuget pack "nupkg.$Architecture.generated.nuspec" -OutputDirectory $OutputDir -NonInteractive -ForceEnglishOutput 2>&1 | Out-Null
             Pop-Location
 
-            if ($LASTEXITCODE -eq 0 -and (Test-Path $nupkgOutput)) {
+            $nugetExitCode = $LASTEXITCODE
+            $packedOutput = Join-Path $OutputDir "CimianTools-$Architecture.$($Version.Semantic).nupkg"
+            if ($nugetExitCode -eq 0 -and (Test-Path $packedOutput)) {
+                Move-Item -LiteralPath $packedOutput -Destination $nupkgOutput -Force
+            }
+            if ($nugetExitCode -eq 0 -and (Test-Path $nupkgOutput)) {
                 Write-BuildLog "Created NuGet package: $(Split-Path $nupkgOutput -Leaf)" "SUCCESS"
 
                 if ($Sign) {
@@ -1339,14 +1349,14 @@ function Build-IntuneWinPackage {
         return $null
     }
     
-    $msiFile = Join-Path $OutputDir "Cimian-$($Version.Full)-$Architecture.msi"
+    $msiFile = Join-Path $OutputDir "CimianTools-$Architecture-$($Version.Full).msi"
     
     if (-not (Test-Path $msiFile)) {
         Write-BuildLog "MSI file not found for $Architecture - cannot create IntuneWin package" "WARNING"
         return $null
     }
     
-    $intunewinOutput = Join-Path $OutputDir "Cimian-$($Version.Full)-$Architecture.intunewin"
+    $intunewinOutput = Join-Path $OutputDir "CimianTools-$Architecture-$($Version.Full).intunewin"
     
     # Remove existing
     if (Test-Path $intunewinOutput) {
@@ -1646,6 +1656,10 @@ try {
             $certStore = $certInfo.Store
             Write-BuildLog "Enterprise certificate auto-detected: $actualThumbprint" "SUCCESS"
         }
+        elseif ($Sign) {
+            # An explicit -Sign must not quietly produce unsigned binaries.
+            throw "-Sign was given but no signing certificate was found. Set CIMIAN_CERT_SUBJECT in .env (see .env.example), or pass -Thumbprint."
+        }
         else {
             Write-BuildLog "No enterprise certificate found - binaries will be unsigned" "WARNING"
             $shouldSign = $false
@@ -1753,8 +1767,13 @@ try {
         
         # MSI packages (unless skipped)
         if (-not $SkipMSI -and -not $NupkgOnly -and -not $PkgOnly) {
+            $failedMsiArchs = @()
             foreach ($arch in $archs) {
                 $msiPath = Build-MsiPackage -Architecture $arch -Version $version -Sign:$shouldSign -Thumbprint $actualThumbprint -CertStore $certStore
+                if (-not $msiPath) { $failedMsiArchs += $arch }
+            }
+            if ($failedMsiArchs.Count -gt 0) {
+                throw "MSI package failed for: $($failedMsiArchs -join ', ')"
             }
         }
         
@@ -1789,10 +1808,10 @@ try {
         Enter-DevelopmentMode
         
         $currentArch = if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") { "x64" } else { "arm64" }
-        $msiToInstall = Join-Path $OutputDir "Cimian-$($version.Full)-$currentArch.msi"
+        $msiToInstall = Join-Path $OutputDir "CimianTools-$currentArch-$($version.Full).msi"
         
         if (-not (Test-Path $msiToInstall)) {
-            $msiToInstall = Get-ChildItem -Path $OutputDir -Filter "Cimian-*-$currentArch.msi" | Select-Object -First 1
+            $msiToInstall = Get-ChildItem -Path $OutputDir -Filter "CimianTools-$currentArch-*.msi" | Select-Object -First 1
             if ($msiToInstall) { $msiToInstall = $msiToInstall.FullName }
         }
         

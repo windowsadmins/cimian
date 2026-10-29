@@ -15,6 +15,20 @@ public class CimianConfig
     public string ClientIdentifier { get; set; } = string.Empty;
 
     /// <summary>
+    /// Where client_resources zips are downloaded from, as in Munki's setting of the same
+    /// name. Unset means <c>SoftwareRepoURL/client_resources</c>.
+    /// </summary>
+    [YamlMember(Alias = "ClientResourceURL")]
+    public string? ClientResourceURL { get; set; }
+
+    /// <summary>
+    /// The client_resources zip to use ahead of the identity-based names, as in Munki's
+    /// setting of the same name. <c>.zip</c> is added when it has no extension.
+    /// </summary>
+    [YamlMember(Alias = "ClientResourcesFilename")]
+    public string? ClientResourcesFilename { get; set; }
+
+    /// <summary>
     /// The format of the repository's catalogs and manifests: "yaml" (the default) or
     /// "plist". With plist the client asks for catalogs and manifests without an
     /// extension (Munki's layout) and parses the XML plist. The cache stays YAML either

@@ -17,7 +17,7 @@
 | Pre-action alerts | ContentDialog via AlertService | preinstall_alert, preuninstall_alert, preupgrade_alert |
 | Screenshots | FlipView carousel in `ItemDetailPage.xaml` | Full image gallery support |
 | Custom sidebar | `preferences.yaml` → `sidebar_items` | Configurable sidebar sections |
-| Custom branding | `branding.yaml` → `app_title`, `banner_title`, `sidebar_header`; CSP `HKLM\SOFTWARE\Policies\Cimian\BannerTitle` | Window title + Software hero text (blank hides) + header image |
+| Custom branding | `branding.yaml` + `HKLM\SOFTWARE\Policies\Cimian` (`AppTitle`, `BannerTitle`, `AccentColor`, `Logo`, `AppIcon`, `SidebarHeader`); `ClientResourceURL` / `ClientResourcesFilename` | Title, accent, logo, icon, sidebar header, linked banner carousel (`cimian://` / `munki://` / http(s)); also brands CimianStatus. See [branding](client-resources-sync.md) |
 | Notification escalation | "Obnoxious mode" via `aggressive_notification_days` | Progressively intrusive notifications |
 | Toast notifications | Windows AppNotifications API | System-level notifications |
 | `installable_condition` | `repoclean` models | Conditional installability |

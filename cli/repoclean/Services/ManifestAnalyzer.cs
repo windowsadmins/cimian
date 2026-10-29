@@ -5,111 +5,73 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Cimian.CLI.Repoclean.Services;
 
 public class ManifestAnalyzer : IManifestAnalyzer
 {
     private readonly ILogger<ManifestAnalyzer> _logger;
-    private readonly IDeserializer _yamlDeserializer;
 
     public ManifestAnalyzer(ILogger<ManifestAnalyzer> logger)
     {
         _logger = logger;
-        _yamlDeserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .Build();
     }
 
-    public async Task<(HashSet<string> manifestItems, HashSet<(string name, string version)> manifestItemsWithVersions)> AnalyzeManifestsAsync(IFileRepository repository)
+    // Every manifest key that names items. default_installs and featured_items are
+    // Cimian keys; an item listed only there is still in use.
+    private static readonly string[] ItemKeys =
+    {
+        "managed_installs", "managed_uninstalls", "managed_updates",
+        "optional_installs", "default_installs", "featured_items"
+    };
+
+    public async Task<ManifestAnalysis> AnalyzeManifestsAsync(IFileRepository repository)
     {
         Console.WriteLine("Analyzing manifest files...");
-        
-        var manifestItems = new HashSet<string>();
-        var manifestItemsWithVersions = new HashSet<(string name, string version)>();
 
-        try
+        var analysis = new ManifestAnalysis();
+        var manifestsList = await repository.GetItemListAsync("manifests");
+
+        foreach (var manifestName in manifestsList)
         {
-            var manifestsList = await repository.GetItemListAsync("manifests");
-            
-            foreach (var manifestName in manifestsList)
+            var manifestPath = Path.Combine("manifests", manifestName);
+            try
             {
-                try
-                {
-                    var manifestPath = Path.Combine("manifests", manifestName);
-                    var data = await repository.GetContentAsync(manifestPath);
-                    var manifest = ParseManifestData(data, manifestName);
-
-                    if (manifest == null) continue;
-
-                    // Process standard manifest keys
-                    var keysToProcess = new[] { "managed_installs", "managed_uninstalls", "managed_updates", "optional_installs" };
-                    
-                    foreach (var key in keysToProcess)
-                    {
-                        ProcessManifestItems(manifest, key, manifestItems, manifestItemsWithVersions);
-                    }
-
-                    // Process conditional items
-                    if (manifest.ContainsKey("conditional_items") && manifest["conditional_items"] is Newtonsoft.Json.Linq.JArray conditionalItems)
-                    {
-                        foreach (var conditionalItem in conditionalItems)
-                        {
-                            if (conditionalItem is Newtonsoft.Json.Linq.JObject conditionalItemObj)
-                            {
-                                var conditionalDict = conditionalItemObj.ToObject<Dictionary<string, object>>();
-                                if (conditionalDict != null)
-                                {
-                                    foreach (var key in keysToProcess)
-                                    {
-                                        ProcessManifestItems(conditionalDict, key, manifestItems, manifestItemsWithVersions);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing manifest {ManifestName}", manifestName);
-                    Console.WriteLine($"Error processing manifest {manifestName}: {ex.Message}");
-                }
+                var data = await repository.GetContentAsync(manifestPath);
+                ProcessManifest(ParseManifestData(data, manifestName), analysis);
+            }
+            catch (Exception ex)
+            {
+                // The items this manifest names are now unprotected, so this is not a
+                // warning to scroll past: the caller refuses to delete anything.
+                _logger.LogDebug(ex, "Error processing manifest {ManifestName}", manifestName);
+                analysis.ParseErrors.Add($"{manifestPath}: {ex.Message}");
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting manifest list");
-            Console.WriteLine($"Error getting manifest list: {ex.Message}");
-        }
 
-        return (manifestItems, manifestItemsWithVersions);
+        return analysis;
     }
 
-    private void ProcessManifestItems(
-        Dictionary<string, object> manifest,
-        string key,
-        HashSet<string> manifestItems,
-        HashSet<(string name, string version)> manifestItemsWithVersions)
+    private void ProcessManifest(IReadOnlyDictionary<string, object> manifest, ManifestAnalysis analysis)
     {
-        if (!manifest.ContainsKey(key)) return;
-
-        if (manifest[key] is Newtonsoft.Json.Linq.JArray items)
+        foreach (var key in ItemKeys)
         {
-            foreach (var item in items)
+            foreach (var itemString in YamlValues.AsStringList(manifest.GetValueOrDefault(key)))
             {
-                if (item is Newtonsoft.Json.Linq.JValue itemValue && itemValue.Value is string itemString)
+                var (itemName, itemVersion) = ParseNameAndVersion(itemString);
+                analysis.Items.Add(itemName);
+
+                if (!string.IsNullOrEmpty(itemVersion))
                 {
-                    var (itemName, itemVersion) = ParseNameAndVersion(itemString);
-                    manifestItems.Add(itemName);
-                    
-                    if (!string.IsNullOrEmpty(itemVersion))
-                    {
-                        manifestItemsWithVersions.Add((itemName, itemVersion));
-                    }
+                    analysis.ItemsWithVersions.Add((itemName, itemVersion));
                 }
             }
+        }
+
+        // conditional_items can nest, so recurse
+        foreach (var conditional in YamlValues.AsMappingList(manifest.GetValueOrDefault("conditional_items")))
+        {
+            ProcessManifest(conditional, analysis);
         }
     }
 
@@ -137,24 +99,15 @@ public class ManifestAnalyzer : IManifestAnalyzer
         return (itemString, string.Empty);
     }
 
-    private Dictionary<string, object>? ParseManifestData(string data, string manifestName)
+    private static IReadOnlyDictionary<string, object> ParseManifestData(string data, string manifestName)
     {
-        try
+        if (manifestName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
-            // First try YAML parsing
-            if (manifestName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) || 
-                manifestName.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
-            {
-                return _yamlDeserializer.Deserialize<Dictionary<string, object>>(data);
-            }
+            return JsonConvert.DeserializeObject<Dictionary<string, object>>(data)
+                ?? throw new InvalidDataException("the document is empty");
+        }
 
-            // Fall back to JSON parsing
-            return JsonConvert.DeserializeObject<Dictionary<string, object>>(data);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error processing manifest {ManifestName}", manifestName);
-            return null;
-        }
+        // Cimian manifests are YAML, with or without an extension
+        return YamlValues.ParseYamlMapping(data);
     }
 }
