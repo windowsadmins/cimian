@@ -259,24 +259,33 @@ public class ManifestService : IDisposable
     }
 
     /// <summary>
-    /// Reads the hardware serial number from the system BIOS for use as a
-    /// manifest fallback identifier. Returns null if it cannot be determined.
+    /// Reads a usable BIOS or motherboard serial for manifest fallback.
+    /// Returns null when neither firmware source supplies an identifier.
     /// </summary>
     private static string? GetSerialNumber()
+        => HardwareSerialNumber.Resolve(
+            () => ReadSerialNumber("Win32_BIOS"),
+            () => ReadSerialNumber("Win32_BaseBoard"));
+
+    private static string? ReadSerialNumber(string className)
     {
         try
         {
-            using var searcher = new System.Management.ManagementObjectSearcher("SELECT SerialNumber FROM Win32_BIOS");
-            foreach (var obj in searcher.Get())
+            using var searcher = new System.Management.ManagementObjectSearcher($"SELECT SerialNumber FROM {className}");
+            using var results = searcher.Get();
+            foreach (var obj in results)
             {
-                var serial = obj["SerialNumber"]?.ToString()?.Trim();
-                if (!string.IsNullOrWhiteSpace(serial))
-                    return serial;
+                using (obj)
+                {
+                    var serial = HardwareSerialNumber.Normalize(obj["SerialNumber"]?.ToString());
+                    if (serial != null)
+                        return serial;
+                }
             }
         }
         catch (Exception ex)
         {
-            ConsoleLogger.Debug($"Serial number lookup for manifest fallback failed: {ex.Message}");
+            ConsoleLogger.Debug($"{className} serial lookup for manifest fallback failed: {ex.Message}");
         }
         return null;
     }
