@@ -204,6 +204,8 @@ Cimian is distributed in multiple formats to support different deployment scenar
 - **Raw Binaries**: `CimianTools-x64-{version}.zip` and `CimianTools-arm64-{version}.zip`
 - **Intune Packages**: `CimianTools-{arch}-{version}.intunewin` files for Microsoft Intune deployment
 
+For HTTPS origins, authentication gateways and signed object-storage redirects, see [hosting a Cimian repository](docs/cloud-repositories.md).
+
 ### Quick Start
 
 1. **Download and Install**: Deploy the appropriate MSI package for your architecture
