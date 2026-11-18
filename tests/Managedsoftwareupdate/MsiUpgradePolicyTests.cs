@@ -71,10 +71,38 @@ public class MsiUpgradePolicyTests
     [InlineData("REINSTALLMODE=amus")]
     [InlineData("reinstall=ALL")]
     [InlineData("\"REINSTALL=ALL\"")]
+    [InlineData("VENDOR=1 REINSTALLMODE=amus")]
+    [InlineData("VENDOR=\"two words\" REINSTALL=FeatureOne")]
+    [InlineData("VENDOR=1\tREINSTALLMODE=\"amus\"")]
     public void ConfiguredMaintenanceProperty_IsNotOverridden(string configuredArgument)
     {
         Assert.Empty(MsiUpgradePolicy.GetAdditionalArguments(
             Product, "2.5.1.200", Product, "2.5.1.100", new[] { configuredArgument }));
+    }
+
+    [Theory]
+    [InlineData("TRANSFORMS=instance.mst")]
+    [InlineData("VENDOR=1 TRANSFORMS=\"C:\\Msi transforms\\instance.mst\"")]
+    [InlineData("MSINEWINSTANCE=1")]
+    [InlineData("/n {AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}")]
+    public void TransformedOrSelectedInstance_DoesNotUseRawPackageIdentity(string configuredArgument)
+    {
+        Assert.Empty(MsiUpgradePolicy.GetAdditionalArguments(
+            Product, "2.5.1.200", Product, "2.5.1.100", new[] { configuredArgument }));
+        // The guard must run before even opening the untransformed MSI database.
+        Assert.Empty(MsiUpgradePolicy.GetAdditionalArgumentsForPackage(
+            "missing-package.msi", new[] { configuredArgument }));
+    }
+
+    [Theory]
+    [InlineData("VENDOR=\"text REINSTALL=ALL TRANSFORMS=instance.mst\"")]
+    [InlineData("VENDOR=\"text \"\"quoted\"\" REINSTALLMODE=amus\"")]
+    [InlineData("INSTALLDIR=\"C:\\Program Files\\Example\" VENDOR=1")]
+    public void PropertyNamesInsideQuotedVendorValues_DoNotDisableUpgrade(string configuredArgument)
+    {
+        Assert.Equal(new[] { "REINSTALL=ALL", "REINSTALLMODE=vomus" },
+            MsiUpgradePolicy.GetAdditionalArguments(
+                Product, "2.5.1.200", Product, "2.5.1.100", new[] { configuredArgument }));
     }
 
     [Theory]

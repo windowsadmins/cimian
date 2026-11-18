@@ -1,3 +1,4 @@
+using Cimian.Core.Services;
 using WixToolset.Dtf.WindowsInstaller;
 
 namespace Cimian.CLI.managedsoftwareupdate.Services;
@@ -11,6 +12,9 @@ internal static class MsiUpgradePolicy
     internal static IReadOnlyList<string> GetAdditionalArgumentsForPackage(
         string msiPath, IReadOnlyList<string> configuredArguments)
     {
+        if (HasExplicitMaintenanceOrInstanceArguments(configuredArguments))
+            return Array.Empty<string>();
+
         using var database = new Database(msiPath, DatabaseOpenMode.ReadOnly);
         var productCode = database.ExecuteScalar(
             "SELECT `Value` FROM `Property` WHERE `Property` = 'ProductCode'") as string;
@@ -36,13 +40,7 @@ internal static class MsiUpgradePolicy
         string? installedVersion,
         IEnumerable<string> configuredArguments)
     {
-        // An authored maintenance mode takes precedence over automatic selection.
-        if (configuredArguments.Any(argument =>
-        {
-            var property = argument.Trim().Trim('"').Split('=', 2)[0].Trim();
-            return property.Equals("REINSTALL", StringComparison.OrdinalIgnoreCase) ||
-                   property.Equals("REINSTALLMODE", StringComparison.OrdinalIgnoreCase);
-        }))
+        if (HasExplicitMaintenanceOrInstanceArguments(configuredArguments))
             return Array.Empty<string>();
 
         if (!Guid.TryParse(packageProductCode, out var packageCode) ||
@@ -60,5 +58,23 @@ internal static class MsiUpgradePolicy
             return Array.Empty<string>();
 
         return new[] { "REINSTALL=ALL", "REINSTALLMODE=vomus" };
+    }
+
+    private static bool HasExplicitMaintenanceOrInstanceArguments(IEnumerable<string> configuredArguments)
+    {
+        // InstallerService joins these entries into one command line, so an entry
+        // may contain several properties. Quoted property values remain one token.
+        var tokens = BootstrapArgsBuilder.TokenizeWindowsCommandLine(string.Join(" ", configuredArguments));
+        return tokens.Any(token =>
+        {
+            var property = token.Split('=', 2)[0];
+            // A transform can change ProductCode/ProductVersion; the raw database
+            // is not authoritative for that installation. Preserve its normal path.
+            return property.Equals("REINSTALL", StringComparison.OrdinalIgnoreCase) ||
+                   property.Equals("REINSTALLMODE", StringComparison.OrdinalIgnoreCase) ||
+                   property.Equals("TRANSFORMS", StringComparison.OrdinalIgnoreCase) ||
+                   property.Equals("MSINEWINSTANCE", StringComparison.OrdinalIgnoreCase) ||
+                   property.Equals("/n", StringComparison.OrdinalIgnoreCase);
+        });
     }
 }
