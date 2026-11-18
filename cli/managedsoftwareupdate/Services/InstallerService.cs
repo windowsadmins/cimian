@@ -941,7 +941,9 @@ public class InstallerService
             for (int attempt = 1; attempt <= MsiexecMaxRetries; attempt++)
             {
                 var args = BuildArgs();
-                args.AddRange(item.Installer.GetAllArgs());
+                var configuredArgs = item.Installer.GetAllArgs();
+                args.AddRange(GetMsiUpgradeArguments(localFile, configuredArgs));
+                args.AddRange(configuredArgs);
 
                 var startInfo = new ProcessStartInfo
                 {
@@ -1001,6 +1003,25 @@ public class InstallerService
         finally
         {
             _msiexecMutex.Release();
+        }
+    }
+
+    private static IReadOnlyList<string> GetMsiUpgradeArguments(
+        string msiPath, IReadOnlyList<string> configuredArguments)
+    {
+        try
+        {
+            var arguments = MsiUpgradePolicy.GetAdditionalArgumentsForPackage(msiPath, configuredArguments);
+            if (arguments.Count > 0)
+                ConsoleLogger.Info("An older build of this MSI product is installed; using reinstall/recache mode.");
+            return arguments;
+        }
+        catch (Exception ex)
+        {
+            // Preserve normal installation behavior when package or registration
+            // metadata cannot be read; never guess that a fresh install is a repair.
+            ConsoleLogger.Debug($"Could not determine MSI maintenance mode: {ex.Message}");
+            return Array.Empty<string>();
         }
     }
 
