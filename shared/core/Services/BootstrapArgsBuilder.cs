@@ -139,7 +139,7 @@ public static class BootstrapArgsBuilder
     /// run-of-backslashes-before-quote escaping). Pure inverse of QuoteArgument
     /// for the values it produces.
     /// </summary>
-    internal static IReadOnlyList<string> TokenizeWindowsCommandLine(string input)
+    public static IReadOnlyList<string> TokenizeWindowsCommandLine(string input)
     {
         var tokens = new List<string>();
         if (string.IsNullOrEmpty(input)) return tokens;
