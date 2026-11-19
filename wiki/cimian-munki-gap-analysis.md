@@ -32,6 +32,7 @@
 | `default_installs` | `ManifestFile`, `ManifestService`, `UpdateEngine` | Install-once semantics, not re-enforced after first install |
 | `precache` | `CatalogItem`, `UpdateEngine.PrecacheOptionalItemsAsync()` | Download-only for optional items; `Precached` flag in InstallInfo |
 | SSL client certificates | `CimianConfig`, `CimianHttpClientFactory` | mTLS via PFX file or Windows cert store thumbprint; custom CA support |
+| Plist repositories | `PlistUtils`, `RepoPaths`, `RepoFormat` | Catalogs and manifests read as XML plists in Munki's layout (#182); YAML stays the default |
 
 ## True Remaining Gaps (Prioritized)
 
