@@ -928,24 +928,8 @@ public class InstallerService
             // one. Newest attempt is _install.1.log.
             RotateMsiInstallLogs(item.Name);
             var logPath = Path.Combine(InstallLogsDir, $"{item.Name}_install.1.log");
-            var configuredArgs = item.Installer.GetAllArgs();
-            var upgrade = GetMsiUpgradePlan(localFile, configuredArgs);
-            var installSource = localFile;
-            if (upgrade.Arguments.Count > 0)
-            {
-                try
-                {
-                    installSource = MsiSourceStaging.Prepare(localFile, upgrade.RegisteredPackageName);
-                    if (!string.Equals(installSource, localFile, StringComparison.OrdinalIgnoreCase))
-                        ConsoleLogger.Info("Staged the incoming MSI under its registered source filename.");
-                }
-                catch (Exception ex)
-                {
-                    return (false, $"Could not prepare the MSI upgrade source: {ex.Message}");
-                }
-            }
 
-            List<string> BuildArgs() => new()
+            List<string> BuildArgs(string installSource) => new()
             {
                 "/i",
                 $"\"{installSource}\"",
@@ -956,7 +940,25 @@ public class InstallerService
 
             for (int attempt = 1; attempt <= MsiexecMaxRetries; attempt++)
             {
-                var args = BuildArgs();
+                // Another installer may change the registered version while we
+                // back off after 1618. Re-evaluate before every attempt.
+                var configuredArgs = item.Installer!.GetAllArgs();
+                var upgrade = GetMsiUpgradePlan(localFile, configuredArgs);
+                var installSource = localFile;
+                if (upgrade.Arguments.Count > 0)
+                {
+                    try
+                    {
+                        installSource = MsiSourceStaging.Prepare(localFile, upgrade.RegisteredPackageName);
+                        if (!string.Equals(installSource, localFile, StringComparison.OrdinalIgnoreCase))
+                            ConsoleLogger.Info("Staged the incoming MSI under its registered source filename.");
+                    }
+                    catch (Exception ex)
+                    {
+                        return (false, $"Could not prepare the MSI upgrade source: {ex.Message}");
+                    }
+                }
+                var args = BuildArgs(installSource);
                 args.AddRange(upgrade.Arguments);
                 args.AddRange(configuredArgs);
 
