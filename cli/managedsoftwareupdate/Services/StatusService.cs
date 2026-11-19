@@ -717,7 +717,7 @@ public class StatusService
     /// If the script returns a version >= catalog version, no action is needed.
     /// If the script fails or returns a lower version, install/update is needed.
     /// </summary>
-    private StatusCheckResult CheckVersionScript(CatalogItem item)
+    internal static StatusCheckResult CheckVersionScript(CatalogItem item)
     {
         var result = new StatusCheckResult
         {
