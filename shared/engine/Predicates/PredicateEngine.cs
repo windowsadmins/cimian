@@ -310,15 +310,19 @@ public class PredicateEngine : IPredicateEngine
         return factStr.EndsWith(conditionStr);
     }
 
-    private bool CompareLike(object? factValue, object? conditionValue)
+    /// <summary>
+    /// LIKE as NSPredicate defines it: the pattern must match the whole value, with
+    /// <c>*</c> matching any run of characters and <c>?</c> exactly one. So
+    /// <c>'LAB*'</c> is a prefix match and <c>'LAB'</c> with no wildcard is an exact
+    /// match, not a substring one. Case-insensitive, like every Cimian comparison.
+    /// </summary>
+    internal static bool CompareLike(object? factValue, object? conditionValue)
     {
-        // Simple wildcard implementation - * matches any sequence
-        var factStr = factValue?.ToString()?.ToLowerInvariant() ?? "";
-        var pattern = conditionValue?.ToString()?.ToLowerInvariant() ?? "";
-        
-        // Remove wildcards and check if the pattern is contained
-        pattern = pattern.Replace("*", "");
-        return factStr.Contains(pattern);
+        var factStr = factValue?.ToString() ?? "";
+        var pattern = conditionValue?.ToString() ?? "";
+
+        var regex = "^" + Regex.Escape(pattern).Replace(@"\*", ".*").Replace(@"\?", ".") + "$";
+        return Regex.IsMatch(factStr, regex, RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
     }
 
     private bool IsValueInCollection(object? value, object? collection)
@@ -381,7 +385,17 @@ public class ExpressionParser
         _tokens = Tokenize(expression);
         _position = 0;
 
-        return ParseOrExpression();
+        var parsed = ParseOrExpression();
+
+        // A complete expression followed by more tokens is a malformed condition, not
+        // a shorter valid one. Ignoring the rest made a typo parse to something
+        // plausible, such as a list that silently matched only its first value.
+        if (_position < _tokens.Count)
+        {
+            throw new ParseException($"Unexpected '{_tokens[_position].Value}' after a complete condition");
+        }
+
+        return parsed;
     }
 
     private ParsedExpression ParseOrExpression()
@@ -486,7 +500,9 @@ public class ExpressionParser
     {
         var left = ConsumeIdentifier("Expected identifier");
         var op = ConsumeOperator();
-        var right = ConsumeValue();
+        object right = op == "IN" && _position < _tokens.Count && _tokens[_position].Type == TokenType.List
+            ? _tokens[_position++].Items!
+            : ConsumeValue();
 
         return new ComparisonExpression
         {
@@ -589,6 +605,14 @@ public class ExpressionParser
                 continue;
             }
 
+            // Handle a literal list, as in: domain IN ["CORP", "EDU"]. NSPredicate
+            // writes the same list with braces, so both forms are read.
+            if (expression[i] is '[' or '{')
+            {
+                tokens.Add(TokenizeList(expression, ref i));
+                continue;
+            }
+
             // Handle quoted strings
             if (expression[i] == '"' || expression[i] == '\'')
             {
@@ -628,8 +652,11 @@ public class ExpressionParser
             // Handle identifiers and keywords
             if (char.IsLetterOrDigit(expression[i]) || expression[i] == '_')
             {
+                // A bare value may carry '-' and '.' after its first character, so an
+                // unquoted LAB-01 or 10.0.19041 is one value. These were skipped before,
+                // which turned "hostname CONTAINS ENG-LAB" into a test for "ENG".
                 var start = i;
-                while (i < expression.Length && (char.IsLetterOrDigit(expression[i]) || expression[i] == '_'))
+                while (i < expression.Length && (char.IsLetterOrDigit(expression[i]) || expression[i] is '_' or '-' or '.'))
                 {
                     i++;
                 }
@@ -660,11 +687,77 @@ public class ExpressionParser
                 continue;
             }
 
-            // Skip unknown characters
-            i++;
+            // A single '=' is NSPredicate's equality, the same as '=='.
+            if (expression[i] == '=')
+            {
+                tokens.Add(new Token(TokenType.Operator, "=="));
+                i++;
+                continue;
+            }
+
+            // Anything else is not part of the condition language. Skipping it let a
+            // malformed condition parse to something plausible and evaluate silently.
+            throw new ParseException($"Unexpected character '{expression[i]}' at position {i}");
         }
 
         return tokens;
+    }
+
+    /// <summary>
+    /// Reads a bracketed or braced list of quoted or bare values, starting at its
+    /// opening bracket, and leaves <paramref name="i"/> after the closing one.
+    /// </summary>
+    private static Token TokenizeList(string expression, ref int i)
+    {
+        var close = expression[i] == '[' ? ']' : '}';
+        i++;
+        var items = new List<string>();
+
+        while (true)
+        {
+            while (i < expression.Length && char.IsWhiteSpace(expression[i])) i++;
+            if (i >= expression.Length)
+                throw new ParseException($"Expected '{close}' to close the list");
+
+            if (items.Count == 0 && expression[i] == close)
+            {
+                i++;
+                break;
+            }
+
+            if (expression[i] is '"' or '\'')
+            {
+                var quote = expression[i++];
+                var start = i;
+                while (i < expression.Length && expression[i] != quote) i++;
+                if (i >= expression.Length)
+                    throw new ParseException("Unterminated string in the list");
+                items.Add(expression.Substring(start, i - start));
+                i++;
+            }
+            else
+            {
+                var start = i;
+                while (i < expression.Length && expression[i] != ',' && expression[i] != close && !char.IsWhiteSpace(expression[i])) i++;
+                if (i == start)
+                    throw new ParseException("Expected a value in the list");
+                items.Add(expression.Substring(start, i - start));
+            }
+
+            while (i < expression.Length && char.IsWhiteSpace(expression[i])) i++;
+            if (i >= expression.Length)
+                throw new ParseException($"Expected '{close}' to close the list");
+            if (expression[i] == close)
+            {
+                i++;
+                break;
+            }
+            if (expression[i] != ',')
+                throw new ParseException($"Expected ',' or '{close}' in the list");
+            i++;
+        }
+
+        return new Token(TokenType.List, string.Join(", ", items)) { Items = items };
     }
 }
 
@@ -676,10 +769,15 @@ public enum TokenType
     String,
     Number,
     LeftParen,
-    RightParen
+    RightParen,
+    List
 }
 
-public record Token(TokenType Type, string Value);
+public record Token(TokenType Type, string Value)
+{
+    /// <summary>The values of a <see cref="TokenType.List"/> token.</summary>
+    public List<string>? Items { get; init; }
+}
 
 public class ParseException : Exception
 {
