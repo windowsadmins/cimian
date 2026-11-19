@@ -32,8 +32,7 @@ CimianTools/
 │   ├── cimipkg/                         # Package management
 │   ├── cimiimport/                      # Package importer
 │   ├── cimitrigger/                     # Trigger utility
-│   ├── cimiwatcher/                     # Windows service / file watcher
-│   └── cimistatus/                      # CLI status tool
+│   └── cimiwatcher/                     # Windows service / file watcher
 │
 ├── shared/                              # Shared Libraries
 │   ├── core/                            # Domain models, interfaces, constants
@@ -121,9 +120,8 @@ Solution
 | cli/cimiimport | `cimiimport.exe` |
 | cli/cimitrigger | `cimitrigger.exe` |
 | cli/cimiwatcher | `cimiwatcher.exe` |
-| cli/cimistatus | `cimistatus.exe` |
 | gui/ManagedSoftwareCenter | `ManagedSoftwareCenter.exe` |
-| gui/CimianStatus | `CimianStatus.exe` |
+| gui/CimianStatus | `cimistatus.exe` |
 
 ## Build Commands
 
