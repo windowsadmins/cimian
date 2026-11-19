@@ -929,10 +929,10 @@ public class InstallerService
             RotateMsiInstallLogs(item.Name);
             var logPath = Path.Combine(InstallLogsDir, $"{item.Name}_install.1.log");
 
-            List<string> BuildArgs() => new()
+            List<string> BuildArgs(string installSource) => new()
             {
                 "/i",
-                $"\"{localFile}\"",
+                $"\"{installSource}\"",
                 "/qn",  // Quiet, no UI
                 "/norestart",
                 $"/l*v \"{logPath}\""
@@ -940,9 +940,26 @@ public class InstallerService
 
             for (int attempt = 1; attempt <= MsiexecMaxRetries; attempt++)
             {
-                var args = BuildArgs();
-                var configuredArgs = item.Installer.GetAllArgs();
-                args.AddRange(GetMsiUpgradeArguments(localFile, configuredArgs));
+                // Another installer may change the registered version while we
+                // back off after 1618. Re-evaluate before every attempt.
+                var configuredArgs = item.Installer!.GetAllArgs();
+                var upgrade = GetMsiUpgradePlan(localFile, configuredArgs);
+                var installSource = localFile;
+                if (upgrade.Arguments.Count > 0)
+                {
+                    try
+                    {
+                        installSource = MsiSourceStaging.Prepare(localFile, upgrade.RegisteredPackageName);
+                        if (!string.Equals(installSource, localFile, StringComparison.OrdinalIgnoreCase))
+                            ConsoleLogger.Info("Staged the incoming MSI under its registered source filename.");
+                    }
+                    catch (Exception ex)
+                    {
+                        return (false, $"Could not prepare the MSI upgrade source: {ex.Message}");
+                    }
+                }
+                var args = BuildArgs(installSource);
+                args.AddRange(upgrade.Arguments);
                 args.AddRange(configuredArgs);
 
                 var startInfo = new ProcessStartInfo
@@ -1006,22 +1023,22 @@ public class InstallerService
         }
     }
 
-    private static IReadOnlyList<string> GetMsiUpgradeArguments(
+    private static MsiUpgradePolicy.UpgradePlan GetMsiUpgradePlan(
         string msiPath, IReadOnlyList<string> configuredArguments)
     {
         try
         {
-            var arguments = MsiUpgradePolicy.GetAdditionalArgumentsForPackage(msiPath, configuredArguments);
-            if (arguments.Count > 0)
+            var plan = MsiUpgradePolicy.GetPlanForPackage(msiPath, configuredArguments);
+            if (plan.Arguments.Count > 0)
                 ConsoleLogger.Info("An older build of this MSI product is installed; using reinstall/recache mode.");
-            return arguments;
+            return plan;
         }
         catch (Exception ex)
         {
             // Preserve normal installation behavior when package or registration
             // metadata cannot be read; never guess that a fresh install is a repair.
             ConsoleLogger.Debug($"Could not determine MSI maintenance mode: {ex.Message}");
-            return Array.Empty<string>();
+            return new(Array.Empty<string>());
         }
     }
 

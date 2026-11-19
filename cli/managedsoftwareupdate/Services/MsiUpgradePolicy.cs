@@ -11,9 +11,15 @@ internal static class MsiUpgradePolicy
 {
     internal static IReadOnlyList<string> GetAdditionalArgumentsForPackage(
         string msiPath, IReadOnlyList<string> configuredArguments)
+        => GetPlanForPackage(msiPath, configuredArguments).Arguments;
+
+    internal sealed record UpgradePlan(IReadOnlyList<string> Arguments, string? RegisteredPackageName = null);
+
+    internal static UpgradePlan GetPlanForPackage(
+        string msiPath, IReadOnlyList<string> configuredArguments)
     {
         if (HasExplicitMaintenanceOrInstanceArguments(configuredArguments))
-            return Array.Empty<string>();
+            return new(Array.Empty<string>());
 
         using var database = new Database(msiPath, DatabaseOpenMode.ReadOnly);
         var productCode = database.ExecuteScalar(
@@ -21,16 +27,19 @@ internal static class MsiUpgradePolicy
         var packageVersion = database.ExecuteScalar(
             "SELECT `Value` FROM `Property` WHERE `Property` = 'ProductVersion'") as string;
         if (!Guid.TryParse(productCode, out _))
-            return Array.Empty<string>();
+            return new(Array.Empty<string>());
 
         // Query the package's actual ProductCode, not a related UpgradeCode
         // product: a different-product major upgrade must use normal /i.
         var installation = new ProductInstallation(productCode);
         if (!installation.IsInstalled)
-            return Array.Empty<string>();
+            return new(Array.Empty<string>());
 
-        return GetAdditionalArguments(productCode, packageVersion,
+        var arguments = GetAdditionalArguments(productCode, packageVersion,
             installation.ProductCode, installation["VersionString"], configuredArguments);
+        // SourceList retains the original MSI basename even after its product
+        // version changes. Read it only for the exact-product update path.
+        return new(arguments, arguments.Count > 0 ? installation["PackageName"] : null);
     }
 
     internal static IReadOnlyList<string> GetAdditionalArguments(
